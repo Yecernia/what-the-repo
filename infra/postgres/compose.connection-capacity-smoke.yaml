@@ -1,0 +1,117 @@
+x-postgres-image: &postgres-image
+  build:
+    context: ../..
+    dockerfile: infra/docker/postgres-walg.Dockerfile
+  image: what-the-repo-postgres-walg:local
+
+x-runtime-environment: &runtime-environment
+  DATABASE_URL: postgresql://wtr_capacity_runtime:wtr-capacity-runtime-test-only@postgres:5432/wtr_capacity
+  WHAT_THE_REPO_LOAD_LOCAL_ENV: "0"
+  WTR_CONNECTION_CAPACITY_EXPECT: success
+  WTR_CONNECTION_CAPACITY_EXPECT_SUPERUSER: "false"
+  WTR_CONNECTION_CAPACITY_CONNECTIONS: "3"
+  WTR_CONNECTION_CAPACITY_HOLD_MS: "600000"
+  WTR_CONNECTION_CAPACITY_TIMEOUT_MS: "2000"
+
+x-connection-client: &connection-client
+  build:
+    context: ../..
+    dockerfile: infra/docker/server.Dockerfile
+  image: what-the-repo-server:local
+  restart: "no"
+  environment: *runtime-environment
+  command: ["node", "dist/smoke/postgres-connection-capacity-main.js"]
+
+services:
+  postgres:
+    <<: *postgres-image
+    command:
+      - postgres
+      - -c
+      - max_connections=12
+      - -c
+      - superuser_reserved_connections=3
+      - -c
+      - archive_mode=off
+    environment:
+      POSTGRES_DB: wtr_capacity
+      POSTGRES_USER: wtr_capacity_admin
+      POSTGRES_PASSWORD: wtr-capacity-admin-test-only
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wtr_capacity_admin -d wtr_capacity"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  postgres-role-bootstrap:
+    <<: *postgres-image
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: wtr_capacity
+      PGUSER: wtr_capacity_admin
+      PGPASSWORD: wtr-capacity-admin-test-only
+      POSTGRES_RUNTIME_USER: wtr_capacity_runtime
+      POSTGRES_RUNTIME_PASSWORD: wtr-capacity-runtime-test-only
+    entrypoint: ["/usr/local/bin/wtr-postgres-role-bootstrap"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migration:
+    <<: *connection-client
+    environment:
+      DATABASE_URL: postgresql://wtr_capacity_admin:wtr-capacity-admin-test-only@postgres:5432/wtr_capacity
+      WHAT_THE_REPO_LOAD_LOCAL_ENV: "0"
+      WHAT_THE_REPO_ROOT: /app
+      WHAT_THE_REPO_DATA_DIR: /tmp/what-the-repo
+      WHAT_THE_REPO_DB_POOL_MAX: "2"
+      WHAT_THE_REPO_KEY_ENCRYPTION_SECRET: connection-capacity-test-key-with-more-than-32-characters
+    command: ["node", "dist/db-cli.js", "migrate"]
+    depends_on:
+      postgres-role-bootstrap:
+        condition: service_completed_successfully
+
+  holder-a:
+    <<: *connection-client
+    environment:
+      <<: *runtime-environment
+      WTR_CONNECTION_CAPACITY_MODE: hold
+      WTR_CONNECTION_CAPACITY_APPLICATION_NAME: what-the-repo:api-replica-1
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+
+  holder-b:
+    <<: *connection-client
+    environment:
+      <<: *runtime-environment
+      WTR_CONNECTION_CAPACITY_MODE: hold
+      WTR_CONNECTION_CAPACITY_APPLICATION_NAME: what-the-repo:api-replica-2
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+
+  holder-c:
+    <<: *connection-client
+    environment:
+      <<: *runtime-environment
+      WTR_CONNECTION_CAPACITY_MODE: hold
+      WTR_CONNECTION_CAPACITY_APPLICATION_NAME: what-the-repo:analysis-worker-replica-1
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+
+  connection-client:
+    <<: *connection-client
+    environment:
+      <<: *runtime-environment
+      WTR_CONNECTION_CAPACITY_MODE: probe
+      WTR_CONNECTION_CAPACITY_APPLICATION_NAME: what-the-repo:capacity-probe
+
+volumes:
+  postgres-data:

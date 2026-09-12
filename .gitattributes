@@ -1,0 +1,9 @@
+*.sh text eol=lf
+infra/postgres/wtr-* text eol=lf
+
+# Preserve verbatim third-party notices and SVG asset checksums across platforms.
+/licenses/** -text -whitespace
+*.svg -text -whitespace
+/web/public/fonts/OFL-JasonHandwriting.txt -whitespace
+# Canonical text for the generated browser notice bundle.
+/web/public/third-party-notices.txt text eol=lf

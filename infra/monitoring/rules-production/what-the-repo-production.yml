@@ -1,0 +1,78 @@
+groups:
+  - name: what-the-repo-production-host
+    rules:
+      - alert: WhatTheRepoNodeExporterDown
+        expr: absent(up{job="what-the-repo-node"}) or up{job="what-the-repo-node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: what-the-repo host metrics are unavailable
+          description: Prometheus has been unable to scrape the production node exporter for two minutes.
+
+      - alert: WhatTheRepoRootDiskSpaceLow
+        expr: |
+          node_filesystem_avail_bytes{job="what-the-repo-node",mountpoint="/",fstype!~"tmpfs|overlay"}
+          /
+          node_filesystem_size_bytes{job="what-the-repo-node",mountpoint="/",fstype!~"tmpfs|overlay"}
+          < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: production root filesystem has less than 15 percent free
+          description: Database, Docker images, logs or analysis workspaces may exhaust the server disk.
+
+      - alert: WhatTheRepoPostgresBackupFailed
+        expr: what_the_repo_postgres_backup_last_run_unixtime > 0 and what_the_repo_postgres_backup_last_run_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: the latest PostgreSQL base backup failed
+          description: The production backup timer completed unsuccessfully; inspect its systemd journal.
+
+      - alert: WhatTheRepoPostgresBackupStale
+        expr: what_the_repo_postgres_backup_last_success_unixtime > 0 and time() - what_the_repo_postgres_backup_last_success_unixtime > 129600
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: no successful PostgreSQL base backup within 36 hours
+          description: Continuous WAL alone is insufficient without a recent base backup.
+
+      - alert: WhatTheRepoRestoreDrillFailed
+        expr: what_the_repo_postgres_restore_drill_last_run_unixtime > 0 and what_the_repo_postgres_restore_drill_last_run_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: the latest PostgreSQL restore drill failed
+          description: The latest isolated COS restore verification did not complete successfully.
+
+      - alert: WhatTheRepoRestoreDrillStale
+        expr: what_the_repo_postgres_restore_drill_last_success_unixtime > 0 and time() - what_the_repo_postgres_restore_drill_last_success_unixtime > 691200
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: no successful PostgreSQL restore drill within eight days
+          description: Backups have not recently been proven readable in a new isolated database volume.
+
+      - alert: WhatTheRepoPublicHttpsProbeFailed
+        expr: what_the_repo_public_https_probe_last_run_unixtime > 0 and what_the_repo_public_https_probe_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: the public HTTPS product probe is failing
+          description: The production host cannot complete the configured domain and PostgreSQL health check.
+
+      - alert: WhatTheRepoTlsCertificateExpiring
+        expr: what_the_repo_tls_certificate_not_after_unixtime > 0 and what_the_repo_tls_certificate_not_after_unixtime - time() < 1209600
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: the public TLS certificate expires within 14 days
+          description: Check Certbot renewal and the host Nginx deploy hook before the certificate expires.

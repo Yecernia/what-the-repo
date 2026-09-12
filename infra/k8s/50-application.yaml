@@ -1,0 +1,303 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  selector:
+    app.kubernetes.io/name: api
+  ports:
+    - name: http
+      port: 8307
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+        app.kubernetes.io/part-of: what-the-repo
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: api
+          image: what-the-repo-server:__WTR_IMAGE_TAG__
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8307
+          envFrom:
+            - configMapRef:
+                name: wtr-config
+          env:
+            - name: DATABASE_URL_FILE
+              value: /run/secrets/database-runtime-url
+            - name: WHAT_THE_REPO_GITHUB_GATEWAY_SHARED_SECRET_FILE
+              value: /run/secrets/github-gateway-shared-secret
+            - name: WHAT_THE_REPO_SESSION_SECRET_FILE
+              value: /run/secrets/session-secret
+            - name: WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE
+              value: /run/secrets/key-encryption-secret
+            - name: WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE
+              value: /run/secrets/free-provider-api-key
+            - name: WHAT_THE_REPO_FEEDBACK_PROVIDER_API_KEY_FILE
+              value: /run/secrets/feedback-provider-api-key
+            - name: WHAT_THE_REPO_COS_SECRET_ID_FILE
+              value: /run/secrets/cos-secret-id
+            - name: WHAT_THE_REPO_COS_SECRET_KEY_FILE
+              value: /run/secrets/cos-secret-key
+            - name: WHAT_THE_REPO_MCP_TOKEN_FILE
+              value: /run/secrets/mcp-token
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: product-data
+              mountPath: /var/lib/what-the-repo
+            - name: api-secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+      volumes:
+        - name: product-data
+          persistentVolumeClaim:
+            claimName: product-data
+        - name: api-secrets
+          secret:
+            secretName: wtr-api-secrets
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analysis-worker
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: analysis-worker
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: analysis-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: analysis-worker
+        app.kubernetes.io/part-of: what-the-repo
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: analysis-worker
+          image: what-the-repo-server:__WTR_IMAGE_TAG__
+          imagePullPolicy: Never
+          args: ["node", "dist/analysis/worker-main.js"]
+          envFrom:
+            - configMapRef:
+                name: wtr-config
+          env:
+            - name: DATABASE_URL_FILE
+              value: /run/secrets/database-runtime-url
+            - name: WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE
+              value: /run/secrets/key-encryption-secret
+            - name: WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE
+              value: /run/secrets/free-provider-api-key
+            - name: WHAT_THE_REPO_GITHUB_GATEWAY_SHARED_SECRET_FILE
+              value: /run/secrets/github-gateway-shared-secret
+            - name: WHAT_THE_REPO_COS_SECRET_ID_FILE
+              value: /run/secrets/cos-secret-id
+            - name: WHAT_THE_REPO_COS_SECRET_KEY_FILE
+              value: /run/secrets/cos-secret-key
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: product-data
+              mountPath: /var/lib/what-the-repo
+            - name: worker-secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      volumes:
+        - name: product-data
+          persistentVolumeClaim:
+            claimName: product-data
+        - name: worker-secrets
+          secret:
+            secretName: wtr-worker-secrets
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            sizeLimit: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: web
+        app.kubernetes.io/part-of: what-the-repo
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: web
+          image: what-the-repo-web:__WTR_IMAGE_TAG__
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+      volumes:
+        - name: nginx-cache
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: nginx-run
+          emptyDir:
+            sizeLimit: 4Mi

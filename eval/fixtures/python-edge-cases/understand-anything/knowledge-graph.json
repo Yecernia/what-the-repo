@@ -1,0 +1,1928 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "python-edge-cases",
+    "languages": [
+      "python"
+    ],
+    "frameworks": [],
+    "description": "A controlled Python fixture covering inheritance, data models, dispatch, builders, decorators, closures, package exports, utilities, and intentionally unused code.",
+    "analyzedAt": "2026-08-10T17:14:20.805295+00:00",
+    "gitCommitHash": "not-a-git-repository"
+  },
+  "nodes": [
+    {
+      "id": "file:core/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "core/__init__.py",
+      "summary": "Defines the public surface of the core package by re-exporting the animal hierarchy, profile model, and configuration type from their implementation modules.",
+      "tags": [
+        "entry-point",
+        "barrel",
+        "re-export",
+        "python-package"
+      ],
+      "complexity": "simple",
+      "languageNotes": "Python package initializer used purely as a re-export barrel."
+    },
+    {
+      "id": "file:core/base.py",
+      "type": "file",
+      "name": "base.py",
+      "filePath": "core/base.py",
+      "summary": "Defines an abstract animal contract, concrete dog, cat, and duck implementations, and a swimming mixin used to exercise polymorphism and multiple inheritance.",
+      "tags": [
+        "data-model",
+        "inheritance",
+        "polymorphism",
+        "abstract-base-class"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Uses ABC, abstractmethod, staticmethod, classmethod, and multiple inheritance through a mixin."
+    },
+    {
+      "id": "class:core/base.py:SwimmingMixin",
+      "type": "class",
+      "name": "SwimmingMixin",
+      "filePath": "core/base.py",
+      "lineRange": [
+        28,
+        30
+      ],
+      "summary": "Provides a reusable swim behavior that can be combined with animal classes through inheritance.",
+      "tags": [
+        "mixin",
+        "inheritance",
+        "behavior"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:core/base.py:Animal",
+      "type": "class",
+      "name": "Animal",
+      "filePath": "core/base.py",
+      "lineRange": [
+        33,
+        45
+      ],
+      "summary": "Establishes the abstract animal interface, stores each animal's name, and supplies shared string and representation behavior.",
+      "tags": [
+        "data-model",
+        "abstract-base-class",
+        "polymorphism"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:core/base.py:Dog",
+      "type": "class",
+      "name": "Dog",
+      "filePath": "core/base.py",
+      "lineRange": [
+        48,
+        58
+      ],
+      "summary": "Implements dog-specific speech and exposes static fetch behavior plus a class-level named constructor.",
+      "tags": [
+        "data-model",
+        "inheritance",
+        "factory-method",
+        "polymorphism"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:core/base.py:Cat",
+      "type": "class",
+      "name": "Cat",
+      "filePath": "core/base.py",
+      "lineRange": [
+        61,
+        63
+      ],
+      "summary": "Provides the cat implementation of the abstract animal speech contract.",
+      "tags": [
+        "data-model",
+        "inheritance",
+        "polymorphism"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:core/base.py:Duck",
+      "type": "class",
+      "name": "Duck",
+      "filePath": "core/base.py",
+      "lineRange": [
+        66,
+        71
+      ],
+      "summary": "Combines the animal contract with the swimming mixin and returns both speaking and swimming actions.",
+      "tags": [
+        "data-model",
+        "multiple-inheritance",
+        "mixin",
+        "polymorphism"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:core/models.py",
+      "type": "file",
+      "name": "models.py",
+      "filePath": "core/models.py",
+      "summary": "Defines runtime configuration data and a user profile model with nested address handling, property accessors, and email-based identity semantics.",
+      "tags": [
+        "data-model",
+        "dataclass",
+        "value-object",
+        "encapsulation"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Combines a dataclass with default_factory, a nested class, properties, and custom equality and hashing."
+    },
+    {
+      "id": "class:core/models.py:Config",
+      "type": "class",
+      "name": "Config",
+      "filePath": "core/models.py",
+      "lineRange": [
+        28,
+        31
+      ],
+      "summary": "Stores debug, retry, and tag settings in a compact dataclass with an isolated list default.",
+      "tags": [
+        "configuration",
+        "dataclass",
+        "data-model"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:core/models.py:UserProfile",
+      "type": "class",
+      "name": "UserProfile",
+      "filePath": "core/models.py",
+      "lineRange": [
+        34,
+        73
+      ],
+      "summary": "Models a user with controlled name and email access, optional nested address data, formatted summaries, and equality based on email.",
+      "tags": [
+        "data-model",
+        "encapsulation",
+        "nested-class",
+        "value-object"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/pipeline.py",
+      "type": "file",
+      "name": "pipeline.py",
+      "filePath": "core/pipeline.py",
+      "summary": "Collects animal dispatch, fluent query construction, profile helpers, functional list transformations, factories, and composed pipelines that connect core models to utility functions.",
+      "tags": [
+        "service",
+        "data-pipeline",
+        "dispatch",
+        "factory",
+        "utility"
+      ],
+      "complexity": "complex",
+      "languageNotes": "Demonstrates dictionary dispatch, a fluent builder, map/filter callables, argument forwarding, nested calls, and conditional call chains."
+    },
+    {
+      "id": "function:core/pipeline.py:_handle_dog",
+      "type": "function",
+      "name": "_handle_dog",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        48,
+        49
+      ],
+      "summary": "Formats the sound produced by a dog for the dispatch table's dog branch.",
+      "tags": [
+        "dispatch-handler",
+        "strategy",
+        "polymorphism"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:_handle_cat",
+      "type": "function",
+      "name": "_handle_cat",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        52,
+        53
+      ],
+      "summary": "Formats the sound produced by a cat for the dispatch table's cat branch.",
+      "tags": [
+        "dispatch-handler",
+        "strategy",
+        "polymorphism"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:_handle_default",
+      "type": "function",
+      "name": "_handle_default",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        56,
+        57
+      ],
+      "summary": "Formats an animal sound when no type-specific dispatch handler is registered.",
+      "tags": [
+        "dispatch-handler",
+        "fallback",
+        "polymorphism"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:dispatch",
+      "type": "function",
+      "name": "dispatch",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        66,
+        68
+      ],
+      "summary": "Selects a handler by an animal's concrete type and invokes the default handler for unregistered types.",
+      "tags": [
+        "dispatcher",
+        "strategy",
+        "polymorphism"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:core/pipeline.py:QueryBuilder",
+      "type": "class",
+      "name": "QueryBuilder",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        74,
+        97
+      ],
+      "summary": "Accumulates filters, sorting, and a result limit through chainable methods before producing a query dictionary.",
+      "tags": [
+        "builder",
+        "query",
+        "fluent-api"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:core/pipeline.py:build_query",
+      "type": "function",
+      "name": "build_query",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        100,
+        101
+      ],
+      "summary": "Constructs a fixed active-user query through the fluent QueryBuilder API.",
+      "tags": [
+        "factory",
+        "query",
+        "fluent-api"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:get_profile_city",
+      "type": "function",
+      "name": "get_profile_city",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        107,
+        110
+      ],
+      "summary": "Builds a user profile with an address and extracts the formatted address portion of its summary.",
+      "tags": [
+        "service",
+        "data-model",
+        "transformation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:double",
+      "type": "function",
+      "name": "double",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        116,
+        117
+      ],
+      "summary": "Doubles an integer by passing it twice to the shared addition helper.",
+      "tags": [
+        "utility",
+        "arithmetic",
+        "higher-order-function"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:is_positive",
+      "type": "function",
+      "name": "is_positive",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        120,
+        121
+      ],
+      "summary": "Tests whether an integer is positive using the shared subtraction helper.",
+      "tags": [
+        "utility",
+        "validation",
+        "higher-order-function"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:transform_list",
+      "type": "function",
+      "name": "transform_list",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        124,
+        126
+      ],
+      "summary": "Filters out non-positive integers and doubles the remaining values through map and filter callables.",
+      "tags": [
+        "data-pipeline",
+        "higher-order-function",
+        "transformation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:create_profile",
+      "type": "function",
+      "name": "create_profile",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        132,
+        133
+      ],
+      "summary": "Forwards positional and keyword arguments into the UserProfile constructor.",
+      "tags": [
+        "factory",
+        "argument-forwarding",
+        "data-model"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:create_and_summarize",
+      "type": "function",
+      "name": "create_and_summarize",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        136,
+        138
+      ],
+      "summary": "Creates a user profile through the forwarding factory and returns its formatted summary.",
+      "tags": [
+        "service",
+        "argument-forwarding",
+        "serialization"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:generate_animals",
+      "type": "function",
+      "name": "generate_animals",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        144,
+        145
+      ],
+      "summary": "Creates a fixed collection containing dog, cat, and duck model instances.",
+      "tags": [
+        "factory",
+        "data-pipeline",
+        "data-model"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:animal_names",
+      "type": "function",
+      "name": "animal_names",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        148,
+        149
+      ],
+      "summary": "Formats each animal's name together with its concrete class name.",
+      "tags": [
+        "transformation",
+        "formatting",
+        "data-pipeline"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:pipeline",
+      "type": "function",
+      "name": "pipeline",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        152,
+        155
+      ],
+      "summary": "Orchestrates animal creation and name formatting into a compact two-stage data pipeline.",
+      "tags": [
+        "data-pipeline",
+        "orchestration",
+        "transformation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:compute_nested",
+      "type": "function",
+      "name": "compute_nested",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        161,
+        162
+      ],
+      "summary": "Computes a fixed arithmetic expression by nesting shared addition and subtraction helper calls.",
+      "tags": [
+        "utility",
+        "arithmetic",
+        "composition"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/pipeline.py:conditional_dispatch",
+      "type": "function",
+      "name": "conditional_dispatch",
+      "filePath": "core/pipeline.py",
+      "lineRange": [
+        168,
+        172
+      ],
+      "summary": "Dispatches an animal and optionally prefixes the result with a formatted type-aware name.",
+      "tags": [
+        "dispatcher",
+        "formatting",
+        "conditional-logic"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:main.py",
+      "type": "file",
+      "name": "main.py",
+      "filePath": "main.py",
+      "summary": "Serves as the executable integration entry point, invoking services, models, and pipeline helpers to exercise the project's major call patterns.",
+      "tags": [
+        "entry-point",
+        "orchestration",
+        "integration",
+        "demo"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:main.py:main",
+      "type": "function",
+      "name": "main",
+      "filePath": "main.py",
+      "lineRange": [
+        35,
+        80
+      ],
+      "summary": "Coordinates animal processing, profile creation, arithmetic services, configuration, dispatch, and transformation examples, returning their collected results.",
+      "tags": [
+        "entry-point",
+        "orchestration",
+        "integration"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/services.py",
+      "type": "file",
+      "name": "services.py",
+      "filePath": "core/services.py",
+      "summary": "Provides small domain services that create animals and user profiles, transform animal data, perform bounded arithmetic, and expose configuration values. It also exercises Python decorators, closures, lambdas, and calls across the core and utility packages.",
+      "tags": [
+        "service",
+        "factory",
+        "decorator",
+        "data-transformation",
+        "configuration"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Uses a decorator with an inner wrapper, a closure-producing factory, a module-level lambda, type annotations, and cross-module function and class calls."
+    },
+    {
+      "id": "function:core/services.py:log_call",
+      "type": "function",
+      "name": "log_call",
+      "filePath": "core/services.py",
+      "lineRange": [
+        28,
+        32
+      ],
+      "summary": "Builds and returns a wrapper that forwards arbitrary positional and keyword arguments to a supplied function.",
+      "tags": [
+        "decorator",
+        "higher-order-function",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/services.py:create_dog",
+      "type": "function",
+      "name": "create_dog",
+      "filePath": "core/services.py",
+      "lineRange": [
+        36,
+        37
+      ],
+      "summary": "Creates a Dog through the domain class factory while being wrapped by the module's logging decorator.",
+      "tags": [
+        "factory",
+        "service",
+        "domain-object"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/services.py:process_animals",
+      "type": "function",
+      "name": "process_animals",
+      "filePath": "core/services.py",
+      "lineRange": [
+        40,
+        41
+      ],
+      "summary": "Invokes each animal's polymorphic speak method and returns the collected text results.",
+      "tags": [
+        "service",
+        "polymorphism",
+        "data-transformation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/services.py:build_profile",
+      "type": "function",
+      "name": "build_profile",
+      "filePath": "core/services.py",
+      "lineRange": [
+        44,
+        47
+      ],
+      "summary": "Constructs a user profile, assigns its street and city through the model API, and returns the populated object.",
+      "tags": [
+        "factory",
+        "data-model",
+        "service"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/services.py:compute",
+      "type": "function",
+      "name": "compute",
+      "filePath": "core/services.py",
+      "lineRange": [
+        50,
+        52
+      ],
+      "summary": "Adds two integers with the shared helper and clamps the result to the configured nonnegative maximum.",
+      "tags": [
+        "utility",
+        "calculation",
+        "validation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/services.py:make_multiplier",
+      "type": "function",
+      "name": "make_multiplier",
+      "filePath": "core/services.py",
+      "lineRange": [
+        55,
+        59
+      ],
+      "summary": "Creates a closure that multiplies future inputs by a captured factor.",
+      "tags": [
+        "factory",
+        "closure",
+        "higher-order-function"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/services.py:apply_config",
+      "type": "function",
+      "name": "apply_config",
+      "filePath": "core/services.py",
+      "lineRange": [
+        65,
+        70
+      ],
+      "summary": "Projects selected Config attributes into a plain dictionary for downstream consumption.",
+      "tags": [
+        "configuration",
+        "serialization",
+        "data-transformation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:utils/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "utils/__init__.py",
+      "summary": "Defines the public utility package surface by re-exporting the add and clamp helpers from utils.helpers.",
+      "tags": [
+        "entry-point",
+        "barrel",
+        "re-export"
+      ],
+      "complexity": "simple",
+      "languageNotes": "Uses Python package-level imports to expose selected implementation symbols through the package namespace."
+    },
+    {
+      "id": "file:utils/helpers.py",
+      "type": "file",
+      "name": "helpers.py",
+      "filePath": "utils/helpers.py",
+      "summary": "Provides dependency-free arithmetic, range-clamping, and name-formatting helpers together with shared numeric and text defaults.",
+      "tags": [
+        "utility",
+        "calculation",
+        "validation",
+        "formatting"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:utils/helpers.py:add",
+      "type": "function",
+      "name": "add",
+      "filePath": "utils/helpers.py",
+      "lineRange": [
+        17,
+        18
+      ],
+      "summary": "Returns the arithmetic sum of two integer inputs.",
+      "tags": [
+        "utility",
+        "calculation",
+        "arithmetic"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:utils/helpers.py:subtract",
+      "type": "function",
+      "name": "subtract",
+      "filePath": "utils/helpers.py",
+      "lineRange": [
+        21,
+        22
+      ],
+      "summary": "Returns the arithmetic difference between two integer inputs.",
+      "tags": [
+        "utility",
+        "calculation",
+        "arithmetic"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:utils/helpers.py:clamp",
+      "type": "function",
+      "name": "clamp",
+      "filePath": "utils/helpers.py",
+      "lineRange": [
+        25,
+        30
+      ],
+      "summary": "Constrains a numeric value to the inclusive interval defined by minimum and maximum bounds.",
+      "tags": [
+        "utility",
+        "validation",
+        "range-check"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:utils/helpers.py:format_name",
+      "type": "function",
+      "name": "format_name",
+      "filePath": "utils/helpers.py",
+      "lineRange": [
+        33,
+        34
+      ],
+      "summary": "Combines first and last name values into a single space-separated display name.",
+      "tags": [
+        "utility",
+        "formatting",
+        "string-processing"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:unused/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "unused/__init__.py",
+      "summary": "Empty Python package initializer for the intentionally unused package; it defines no imports or public symbols.",
+      "tags": [
+        "package",
+        "initializer",
+        "empty-module"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:unused/dead_code.py",
+      "type": "file",
+      "name": "dead_code.py",
+      "filePath": "unused/dead_code.py",
+      "summary": "Deliberately unreferenced Python module containing a minimal class, function, and constant for dead-code detection and static-analysis edge-case coverage.",
+      "tags": [
+        "dead-code",
+        "analysis-fixture",
+        "class-definition",
+        "function-definition"
+      ],
+      "complexity": "simple",
+      "languageNotes": "The module has no imports or project-internal callers, making it a deliberate orphan fixture."
+    },
+    {
+      "id": "class:unused/dead_code.py:OrphanClass",
+      "type": "class",
+      "name": "OrphanClass",
+      "filePath": "unused/dead_code.py",
+      "lineRange": [
+        18,
+        20
+      ],
+      "summary": "Small standalone class retained as an intentionally orphaned analysis fixture; its orphan_method returns a fixed sentinel string.",
+      "tags": [
+        "dead-code",
+        "analysis-fixture",
+        "class",
+        "orphan-symbol"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:unused/dead_code.py:never_called",
+      "type": "function",
+      "name": "never_called",
+      "filePath": "unused/dead_code.py",
+      "lineRange": [
+        23,
+        24
+      ],
+      "summary": "Top-level function intentionally never referenced by the project; it returns the integer sentinel 42.",
+      "tags": [
+        "dead-code",
+        "analysis-fixture",
+        "function",
+        "orphan-symbol"
+      ],
+      "complexity": "simple"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:core/__init__.py",
+      "target": "file:core/base.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/__init__.py",
+      "target": "file:core/models.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/__init__.py",
+      "target": "class:core/base.py:Animal",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/__init__.py",
+      "target": "class:core/base.py:Dog",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/__init__.py",
+      "target": "class:core/base.py:Cat",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/__init__.py",
+      "target": "class:core/base.py:SwimmingMixin",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/__init__.py",
+      "target": "class:core/models.py:UserProfile",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/__init__.py",
+      "target": "class:core/models.py:Config",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:SwimmingMixin",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:Animal",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:Dog",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:Cat",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:Duck",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:SwimmingMixin",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:Animal",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:Dog",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:Cat",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/base.py",
+      "target": "class:core/base.py:Duck",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:core/base.py:Dog",
+      "target": "class:core/base.py:Animal",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:core/base.py:Cat",
+      "target": "class:core/base.py:Animal",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:core/base.py:Duck",
+      "target": "class:core/base.py:Animal",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:core/base.py:Duck",
+      "target": "class:core/base.py:SwimmingMixin",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "file:core/models.py",
+      "target": "class:core/models.py:Config",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/models.py",
+      "target": "class:core/models.py:UserProfile",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/models.py",
+      "target": "class:core/models.py:Config",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/models.py",
+      "target": "class:core/models.py:UserProfile",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "file:core/base.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "file:core/models.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "file:utils/helpers.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:_handle_dog",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:_handle_cat",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:_handle_default",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:dispatch",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "class:core/pipeline.py:QueryBuilder",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:build_query",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:get_profile_city",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:double",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:is_positive",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:transform_list",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:create_profile",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:create_and_summarize",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:generate_animals",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:animal_names",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:pipeline",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:compute_nested",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:conditional_dispatch",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:_handle_dog",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:_handle_cat",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:_handle_default",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:dispatch",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "class:core/pipeline.py:QueryBuilder",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:build_query",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:get_profile_city",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:double",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:is_positive",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:transform_list",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:create_profile",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:create_and_summarize",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:generate_animals",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:animal_names",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:pipeline",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:compute_nested",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/pipeline.py",
+      "target": "function:core/pipeline.py:conditional_dispatch",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:dispatch",
+      "target": "function:core/pipeline.py:_handle_dog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:dispatch",
+      "target": "function:core/pipeline.py:_handle_cat",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:dispatch",
+      "target": "function:core/pipeline.py:_handle_default",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:build_query",
+      "target": "class:core/pipeline.py:QueryBuilder",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:get_profile_city",
+      "target": "class:core/models.py:UserProfile",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:double",
+      "target": "function:utils/helpers.py:add",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:is_positive",
+      "target": "function:utils/helpers.py:subtract",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:transform_list",
+      "target": "function:core/pipeline.py:is_positive",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:transform_list",
+      "target": "function:core/pipeline.py:double",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:create_profile",
+      "target": "class:core/models.py:UserProfile",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:create_and_summarize",
+      "target": "function:core/pipeline.py:create_profile",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:generate_animals",
+      "target": "class:core/base.py:Dog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:generate_animals",
+      "target": "class:core/base.py:Cat",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:generate_animals",
+      "target": "class:core/base.py:Duck",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:animal_names",
+      "target": "function:utils/helpers.py:format_name",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:pipeline",
+      "target": "function:core/pipeline.py:generate_animals",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:pipeline",
+      "target": "function:core/pipeline.py:animal_names",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:compute_nested",
+      "target": "function:utils/helpers.py:add",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:compute_nested",
+      "target": "function:utils/helpers.py:subtract",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:conditional_dispatch",
+      "target": "function:utils/helpers.py:format_name",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/pipeline.py:conditional_dispatch",
+      "target": "function:core/pipeline.py:dispatch",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:core/base.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:core/models.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:core/pipeline.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:core/services.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:main.py:main",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:main.py:main",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/services.py:create_dog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "class:core/base.py:Cat",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "class:core/base.py:Duck",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/services.py:process_animals",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/services.py:build_profile",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/services.py:compute",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/services.py:make_multiplier",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "class:core/models.py:Config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/services.py:apply_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/pipeline.py:dispatch",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/pipeline.py:build_query",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/pipeline.py:get_profile_city",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/pipeline.py:transform_list",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/pipeline.py:create_and_summarize",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/pipeline.py:pipeline",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/pipeline.py:compute_nested",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:main",
+      "target": "function:core/pipeline.py:conditional_dispatch",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "file:core/base.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "file:core/models.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "file:utils/helpers.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:log_call",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:log_call",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:create_dog",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:create_dog",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:process_animals",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:process_animals",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:build_profile",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:build_profile",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:compute",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:compute",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:make_multiplier",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:make_multiplier",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:apply_config",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/services.py",
+      "target": "function:core/services.py:apply_config",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/services.py:create_dog",
+      "target": "class:core/base.py:Dog",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/services.py:process_animals",
+      "target": "class:core/base.py:Animal",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/services.py:build_profile",
+      "target": "class:core/models.py:UserProfile",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/services.py:compute",
+      "target": "function:utils/helpers.py:add",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/services.py:compute",
+      "target": "function:utils/helpers.py:clamp",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:utils/__init__.py",
+      "target": "file:utils/helpers.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:utils/__init__.py",
+      "target": "function:utils/helpers.py:add",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:utils/__init__.py",
+      "target": "function:utils/helpers.py:clamp",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:utils/helpers.py",
+      "target": "function:utils/helpers.py:add",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:utils/helpers.py",
+      "target": "function:utils/helpers.py:add",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:utils/helpers.py",
+      "target": "function:utils/helpers.py:subtract",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:utils/helpers.py",
+      "target": "function:utils/helpers.py:subtract",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:utils/helpers.py",
+      "target": "function:utils/helpers.py:clamp",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:utils/helpers.py",
+      "target": "function:utils/helpers.py:clamp",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:utils/helpers.py",
+      "target": "function:utils/helpers.py:format_name",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:utils/helpers.py",
+      "target": "function:utils/helpers.py:format_name",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:unused/dead_code.py",
+      "target": "class:unused/dead_code.py:OrphanClass",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:unused/dead_code.py",
+      "target": "function:unused/dead_code.py:never_called",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:unused/dead_code.py",
+      "target": "class:unused/dead_code.py:OrphanClass",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:unused/dead_code.py",
+      "target": "function:unused/dead_code.py:never_called",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer:entry",
+      "name": "Application Entry",
+      "description": "The executable integration entry point that drives the sample's core services, models, and composed pipelines.",
+      "nodeIds": [
+        "file:main.py"
+      ]
+    },
+    {
+      "id": "layer:core",
+      "name": "Core Domain and Workflows",
+      "description": "Animal abstractions, profile and configuration models, domain services, and workflow composition for the sample application.",
+      "nodeIds": [
+        "file:core/__init__.py",
+        "file:core/base.py",
+        "file:core/models.py",
+        "file:core/pipeline.py",
+        "file:core/services.py"
+      ]
+    },
+    {
+      "id": "layer:utility",
+      "name": "Shared Utilities",
+      "description": "Dependency-free arithmetic, clamping, and name-formatting helpers together with the utility package's public exports.",
+      "nodeIds": [
+        "file:utils/__init__.py",
+        "file:utils/helpers.py"
+      ]
+    },
+    {
+      "id": "layer:analysis-fixtures",
+      "name": "Static Analysis Fixtures",
+      "description": "Intentionally unreferenced package files that provide dead-code and orphan-symbol cases for static-analysis evaluation.",
+      "nodeIds": [
+        "file:unused/__init__.py",
+        "file:unused/dead_code.py"
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "order": 1,
+      "title": "Executable Overview",
+      "description": "Start with main.py because it is the real execution entry point and the only file that directly reaches all four core modules. Its imports and calls provide a compact map of the sample before you study the individual language features.",
+      "nodeIds": [
+        "file:main.py"
+      ]
+    },
+    {
+      "order": 2,
+      "title": "Domain Vocabulary",
+      "description": "Next establish the objects that the rest of the sample manipulates. base.py defines the animal hierarchy and models.py defines configuration and profile data, so together they supply the contracts used by both services and pipelines.",
+      "nodeIds": [
+        "file:core/base.py",
+        "file:core/models.py"
+      ],
+      "languageLesson": "Python abstract base classes define required behavior, while mixins and multiple inheritance add focused capabilities. Dataclasses and properties provide a compact way to model state while preserving validation and derived values."
+    },
+    {
+      "order": 3,
+      "title": "Domain Services",
+      "description": "services.py turns the domain objects from the previous step into small operations for creation, transformation, bounded arithmetic, and configuration access. It also concentrates several Python implementation techniques, making it a useful bridge from data definitions to executable behavior.",
+      "nodeIds": [
+        "file:core/services.py"
+      ],
+      "languageLesson": "Decorators wrap behavior around a function, closures retain values from an enclosing scope, and lambdas provide small inline callables. These features are compact, but their hidden control flow should remain easy to trace."
+    },
+    {
+      "order": 4,
+      "title": "Composition Pipeline",
+      "description": "pipeline.py has the highest fan-out in the graph and combines dispatch, fluent query construction, generators, factories, and functional transformations. Read it after the domain and service layers so each composed operation has an already-known input and dependency.",
+      "nodeIds": [
+        "file:core/pipeline.py"
+      ],
+      "languageLesson": "A fluent builder returns itself from methods so calls can be chained before a final build step. Dispatch tables replace long conditional chains with a mapping from a type or key to the function that handles it."
+    },
+    {
+      "order": 5,
+      "title": "Package Surfaces",
+      "description": "The two __init__.py files define which core and utility names are re-exported as package-level APIs. They are easy to overlook because they contain little behavior, but changing these files can change how callers import otherwise unchanged implementations.",
+      "nodeIds": [
+        "file:core/__init__.py",
+        "file:utils/__init__.py"
+      ],
+      "languageLesson": "A Python package initializer can act as a barrel module by re-exporting selected symbols. This creates a convenient public surface, but it also introduces import-time coupling that static analysis should record separately from runtime calls."
+    },
+    {
+      "order": 6,
+      "title": "Utility Foundation",
+      "description": "helpers.py sits at depth two from main.py and is reused by both services and the pipeline. Its arithmetic, clamping, and formatting helpers are deliberately dependency-free, illustrating how a small foundational module can support several higher-level paths without depending on them.",
+      "nodeIds": [
+        "file:utils/helpers.py"
+      ]
+    },
+    {
+      "order": 7,
+      "title": "Orphan Code Detection",
+      "description": "Finish with the unused package, which is intentionally disconnected from the execution path that starts at main.py. Comparing its real symbols with its zero import reachability shows why file coverage, symbol extraction, and runtime relevance are different measurements.",
+      "nodeIds": [
+        "file:unused/__init__.py",
+        "file:unused/dead_code.py"
+      ]
+    }
+  ]
+}

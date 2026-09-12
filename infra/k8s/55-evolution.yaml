@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evolution-worker
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: evolution-worker
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: evolution-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: evolution-worker
+        app.kubernetes.io/part-of: what-the-repo
+      annotations:
+        what-the-repo/security-boundary: host-docker-sandbox-launcher
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        supplementalGroups:
+          - 988
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: evolution-worker
+          image: what-the-repo-evolution-worker:__WTR_IMAGE_TAG__
+          imagePullPolicy: Never
+          command: ["/usr/bin/tini", "--", "sh", "-ec"]
+          args:
+            - |
+              install -d -m 0700 /tmp/evolution-home
+              exec node .dist/src/worker-main.js
+          envFrom:
+            - configMapRef:
+                name: wtr-config
+          env:
+            - name: DATABASE_URL_FILE
+              value: /run/secrets/database-runtime-url
+            - name: WHAT_THE_REPO_EVOLUTION_PROVIDER_API_KEY_FILE
+              value: /run/secrets/evolution-provider-api-key
+            - name: WHAT_THE_REPO_DOCKER
+              value: /usr/bin/docker
+            - name: WHAT_THE_REPO_EVOLUTION_DOCKER_CONFIG
+              value: /run/what-the-repo-docker-config
+            - name: WHAT_THE_REPO_EVOLUTION_SANDBOX_IMAGE
+              value: what-the-repo-pi-sandbox:__WTR_IMAGE_TAG__
+            - name: HOME
+              value: /tmp/evolution-home
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: product-data
+              mountPath: /var/lib/what-the-repo
+            - name: evolution-secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: docker-socket
+              mountPath: /var/run/docker.sock
+            - name: docker-config
+              mountPath: /run/what-the-repo-docker-config
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+      volumes:
+        - name: product-data
+          persistentVolumeClaim:
+            claimName: product-data
+        - name: evolution-secrets
+          secret:
+            secretName: wtr-evolution-secrets
+            defaultMode: 0444
+        - name: docker-socket
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+        - name: docker-config
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

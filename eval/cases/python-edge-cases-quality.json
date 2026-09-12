@@ -1,0 +1,138 @@
+{
+  "id": "python-edge-cases-quality-v1",
+  "kind": "quality-rubric",
+  "base_case": "python-edge-cases",
+  "purpose": "人工比较架构分组、项目价值点和学习导览的质量；不把主观质量冒充为确定性指标。",
+  "scale": {
+    "0": "缺失、错误或无法由产物核对",
+    "1": "部分正确，但遗漏明显或证据很弱",
+    "2": "基本正确，证据和组织方式可用",
+    "3": "准确、清楚、可行动，并且证据覆盖充分"
+  },
+  "dimensions": [
+    {
+      "id": "architecture_coherence",
+      "question": "同一组件或架构层中的成员是否具有共同职责，边界是否清楚？",
+      "score_anchors": {
+        "0": "把明显无关或孤立代码混在一起，或无法说明分组依据",
+        "1": "大致按目录/连接分组，但职责重叠或遗漏明显",
+        "2": "主要分组合理，少量边界问题不影响阅读",
+        "3": "分组能解释真实职责、依赖方向和特殊孤立区域"
+      }
+    },
+    {
+      "id": "architecture_naming",
+      "question": "组件和架构层名称是否表达语义，而不是只复述目录或使用匿名编号？",
+      "score_anchors": {
+        "0": "没有名称或名称与成员职责矛盾",
+        "1": "名称能猜出大类，但不能帮助新人理解",
+        "2": "名称基本准确，能支持文件导航",
+        "3": "名称简洁、准确，并能提示值得关注的设计主题"
+      }
+    },
+    {
+      "id": "value_point_quality",
+      "question": "候选价值点是否值得学习、彼此区分，并能指出可迁移的工程启发？",
+      "score_anchors": {
+        "0": "只是功能列表、空泛表扬或与源码无关",
+        "1": "有一个可能的亮点，但理由或迁移启发不足",
+        "2": "亮点与源码相符，能给出基本取舍和迁移方向",
+        "3": "亮点重要且具体，能说明问题、实现、代价、边界和迁移条件"
+      }
+    },
+    {
+      "id": "evidence_grounding",
+      "question": "解释和价值判断是否引用了正确的文件、符号、行号和关系？",
+      "score_anchors": {
+        "0": "没有证据或证据明显不存在",
+        "1": "有路径但无法支撑结论，或存在明显幻觉",
+        "2": "主要结论有可核对证据，少量细节遗漏",
+        "3": "关键结论均可追溯，且明确区分事实、推断和建议"
+      }
+    },
+    {
+      "id": "tour_teaching_quality",
+      "question": "导览是否让新人知道先学什么、为什么先学、下一步如何验证理解？",
+      "score_anchors": {
+        "0": "只是文件清单，没有学习逻辑",
+        "1": "顺序大致合理，但缺少原因或检验",
+        "2": "有明确顺序、目标和部分证据",
+        "3": "顺序、理由、证据和理解检验形成闭环，并能根据回答调整"
+      }
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q01-value-points",
+      "task": "从样本中选出最多三个最值得学习的设计，并分别说明它解决的问题、实现位置、主要代价和可迁移条件。",
+      "required_evidence": [
+        "core/base.py",
+        "core/pipeline.py",
+        "core/services.py",
+        "core/models.py"
+      ],
+      "expected_focus": [
+        "多态/策略式分派",
+        "QueryBuilder 链式构建",
+        "服务门面与领域对象的边界",
+        "闭包、装饰器或函数式组合"
+      ]
+    },
+    {
+      "id": "Q02-architecture-boundary",
+      "task": "检查产物给出的组件或架构层，指出一个合理边界、一个可疑边界和一个被遗漏但应该保留的事实。",
+      "required_evidence": [
+        "main.py",
+        "core/services.py",
+        "core/pipeline.py",
+        "unused/dead_code.py"
+      ],
+      "expected_focus": [
+        "入口与服务/流程的依赖方向",
+        "孤立代码不应被误并入核心业务",
+        "组件名称应表达职责而非 Cluster 编号"
+      ]
+    },
+    {
+      "id": "Q03-tour-order",
+      "task": "为一个刚接触该仓库的开发者重新排列前五步阅读顺序，并为每一步写一句为什么。",
+      "required_evidence": [
+        "main.py",
+        "core/base.py",
+        "core/services.py",
+        "core/pipeline.py",
+        "core/models.py"
+      ],
+      "expected_focus": [
+        "先建立入口和领域词汇，再进入流程和实现技巧",
+        "每一步只引入当前需要的证据",
+        "顺序要能支撑后续理解检验"
+      ]
+    },
+    {
+      "id": "Q04-evidence-audit",
+      "task": "从一个解释中挑出三条事实、两条推断和一条尚未确认的说法，并核对它们的证据引用。",
+      "required_evidence": [
+        "out/product-eval/report.json",
+        "server/src/domain/snapshot.ts"
+      ],
+      "expected_focus": [
+        "事实与模型解释分层",
+        "引用必须指向存在的节点或关系",
+        "缺少静态证据时必须标注不确定性"
+      ]
+    }
+  ],
+  "protocol": {
+    "raters": 2,
+    "blind_to_artifact_name": true,
+    "score_each_dimension": true,
+    "record_rationale": true,
+    "report": [
+      "每个维度的平均分和分歧",
+      "每道问题的证据覆盖和关键错误",
+      "两位标注者的一致性",
+      "无法由当前产物判断的项目"
+    ]
+  }
+}

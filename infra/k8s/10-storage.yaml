@@ -1,0 +1,95 @@
+# These are deliberately explicit host paths rather than a second storage
+# product: the first release has exactly one k3s node. Retain prevents an
+# accidental PVC deletion from deleting the underlying server data.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: wtr-postgres-data
+  labels:
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  capacity:
+    storage: 80Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /var/lib/what-the-repo/k3s/postgres
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: what-the-repo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: wtr-postgres-data
+  resources:
+    requests:
+      storage: 80Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: wtr-redis-data
+  labels:
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /var/lib/what-the-repo/k3s/redis
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: what-the-repo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: wtr-redis-data
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: wtr-product-data
+  labels:
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  capacity:
+    storage: 30Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /var/lib/what-the-repo/k3s/product-data
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: product-data
+  namespace: what-the-repo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  volumeName: wtr-product-data
+  resources:
+    requests:
+      storage: 30Gi

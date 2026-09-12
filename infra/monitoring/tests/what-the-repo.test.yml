@@ -1,0 +1,121 @@
+rule_files:
+  - ../rules/what-the-repo.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: missing scrape targets become availability alerts
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: WhatTheRepoApiDown
+        exp_alerts:
+          - exp_labels:
+              job: what-the-repo-api
+              severity: critical
+            exp_annotations:
+              summary: what-the-repo API metrics target is down
+              description: Prometheus has been unable to scrape an API replica for two minutes.
+      - eval_time: 2m
+        alertname: WhatTheRepoAnalysisWorkerDown
+        exp_alerts:
+          - exp_labels:
+              job: what-the-repo-analysis-worker
+              severity: critical
+            exp_annotations:
+              summary: what-the-repo analysis worker metrics target is down
+              description: An analysis worker has been unreachable for two minutes.
+      - eval_time: 2m
+        alertname: WhatTheRepoSchedulerLeaderMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: no retention scheduler leader is active
+              description: No scheduler replica currently holds the PostgreSQL leadership lock.
+
+  - name: duplicate API observations do not double count database connections
+    interval: 1m
+    input_series:
+      - series: 'what_the_repo_database_connections{job="what-the-repo-api",instance="api-a:8307",role="all"}'
+        values: '40x6'
+      - series: 'what_the_repo_database_connections{job="what-the-repo-api",instance="api-b:8307",role="all"}'
+        values: '40x6'
+      - series: 'what_the_repo_database_connection_limit{job="what-the-repo-api",instance="api-a:8307",kind="usable_budget"}'
+        values: '87x6'
+      - series: 'what_the_repo_database_connection_limit{job="what-the-repo-api",instance="api-b:8307",kind="usable_budget"}'
+        values: '87x6'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: WhatTheRepoDatabaseConnectionBudgetHigh
+        exp_alerts: []
+
+  - name: stale scheduler target after Prometheus restart does not create multiple leaders
+    interval: 1m
+    input_series:
+      - series: 'what_the_repo_retention_scheduler_leader{job="what-the-repo-scheduler",instance="scheduler-old:9464"}'
+        values: '1 _ _'
+      - series: 'up{job="what-the-repo-scheduler",instance="scheduler-old:9464"}'
+        values: '1 _ _'
+      - series: 'what_the_repo_retention_scheduler_leader{job="what-the-repo-scheduler",instance="scheduler-new:9464"}'
+        values: '_ 1x2'
+      - series: 'up{job="what-the-repo-scheduler",instance="scheduler-new:9464"}'
+        values: '_ 1x2'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: WhatTheRepoMultipleSchedulerLeaders
+        exp_alerts: []
+
+  - name: two current scheduler leaders still alert
+    interval: 1m
+    input_series:
+      - series: 'what_the_repo_retention_scheduler_leader{job="what-the-repo-scheduler",instance="scheduler-a:9464"}'
+        values: '1x2'
+      - series: 'up{job="what-the-repo-scheduler",instance="scheduler-a:9464"}'
+        values: '1x2'
+      - series: 'what_the_repo_retention_scheduler_leader{job="what-the-repo-scheduler",instance="scheduler-b:9464"}'
+        values: '1x2'
+      - series: 'up{job="what-the-repo-scheduler",instance="scheduler-b:9464"}'
+        values: '1x2'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: WhatTheRepoMultipleSchedulerLeaders
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: multiple retention scheduler leaders are active
+              description: More than one scheduler reports leadership; retention may execute twice.
+
+  - name: failed scheduler scrape does not preserve stale leadership
+    interval: 1m
+    input_series:
+      - series: 'what_the_repo_retention_scheduler_leader{job="what-the-repo-scheduler",instance="scheduler-a:9464"}'
+        values: '1 _ _ _'
+      - series: 'up{job="what-the-repo-scheduler",instance="scheduler-a:9464"}'
+        values: '1 0x3'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: WhatTheRepoSchedulerLeaderMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: no retention scheduler leader is active
+              description: No scheduler replica currently holds the PostgreSQL leadership lock.
+
+  - name: real database pressure still alerts
+    interval: 1m
+    input_series:
+      - series: 'what_the_repo_database_connections{job="what-the-repo-api",instance="api-a:8307",role="all"}'
+        values: '75x6'
+      - series: 'what_the_repo_database_connection_limit{job="what-the-repo-api",instance="api-a:8307",kind="usable_budget"}'
+        values: '87x6'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: WhatTheRepoDatabaseConnectionBudgetHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: PostgreSQL business connection budget is above 80 percent
+              description: The deployment is approaching its reserved PostgreSQL connection budget.

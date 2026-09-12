@@ -1,0 +1,26 @@
+services:
+  postgres:
+    environment:
+      WALG_FILE_PREFIX: /var/lib/postgresql/backup
+      WALG_S3_PREFIX: ""
+
+  migration:
+    environment: &disable-smoke-cos
+      WHAT_THE_REPO_COS_BUCKET: ""
+      WHAT_THE_REPO_COS_SECRET_ID: ""
+      WHAT_THE_REPO_COS_SECRET_ID_FILE: ""
+      WHAT_THE_REPO_COS_SECRET_KEY: ""
+      WHAT_THE_REPO_COS_SECRET_KEY_FILE: ""
+
+  api:
+    environment: *disable-smoke-cos
+
+  analysis-worker:
+    environment: *disable-smoke-cos
+
+  scheduler:
+    environment: *disable-smoke-cos
+
+  web:
+    ports: !override
+      - 127.0.0.1:${WTR_PRODUCTION_SMOKE_WEB_PORT:-15327}:8080

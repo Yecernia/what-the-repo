@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${PGPASSWORD:-}" ] && [ -n "${PGPASSWORD_FILE:-}" ]; then
+  echo "Set either PGPASSWORD or PGPASSWORD_FILE, not both." >&2
+  exit 64
+fi
+if [ -n "${PGPASSWORD_FILE:-}" ]; then
+  if [ ! -f "$PGPASSWORD_FILE" ] || [ ! -r "$PGPASSWORD_FILE" ]; then
+    echo "PGPASSWORD_FILE is not a readable regular file." >&2
+    exit 66
+  fi
+  PGPASSWORD=$(cat -- "$PGPASSWORD_FILE")
+  if [ -z "$PGPASSWORD" ]; then
+    echo "PGPASSWORD_FILE is empty." >&2
+    exit 65
+  fi
+  export PGPASSWORD
+fi
+
+pgdata="${PGDATA:-/var/lib/postgresql/data}"
+retain_full="${POSTGRES_BACKUP_RETAIN_FULL:-7}"
+
+case "$retain_full" in
+  ''|*[!0-9]*)
+    echo "POSTGRES_BACKUP_RETAIN_FULL must be a positive integer." >&2
+    exit 64
+    ;;
+esac
+if [ "$retain_full" -lt 1 ]; then
+  echo "POSTGRES_BACKUP_RETAIN_FULL must be at least 1." >&2
+  exit 64
+fi
+if [ ! -f "$pgdata/PG_VERSION" ]; then
+  echo "PGDATA does not contain an initialized PostgreSQL cluster: $pgdata" >&2
+  exit 66
+fi
+
+/usr/local/bin/wtr-wal-g backup-push "$pgdata"
+/usr/local/bin/wtr-wal-g delete retain FULL "$retain_full" --use-sentinel-time --confirm
+/usr/local/bin/wtr-wal-g backup-list

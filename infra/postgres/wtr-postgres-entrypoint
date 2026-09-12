@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${WALG_FILE_PREFIX:-}" ]; then
+  case "$WALG_FILE_PREFIX" in
+    /*)
+      mkdir -p "$WALG_FILE_PREFIX"
+      chown postgres:postgres "$WALG_FILE_PREFIX"
+      chmod 0700 "$WALG_FILE_PREFIX"
+      ;;
+    *)
+      echo "WALG_FILE_PREFIX must be an absolute path." >&2
+      exit 64
+      ;;
+  esac
+fi
+
+exec /usr/local/bin/docker-entrypoint.sh "$@"

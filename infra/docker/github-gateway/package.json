@@ -1,0 +1,13 @@
+{
+  "name": "what-the-repo-github-gateway-runtime",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "fastify": "5.12.0"
+  },
+  "license": "MIT"
+}

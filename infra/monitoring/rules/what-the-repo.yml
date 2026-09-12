@@ -1,0 +1,124 @@
+groups:
+  - name: what-the-repo-availability
+    rules:
+      - alert: WhatTheRepoApiDown
+        expr: absent(up{job="what-the-repo-api"}) or up{job="what-the-repo-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: what-the-repo API metrics target is down
+          description: Prometheus has been unable to scrape an API replica for two minutes.
+
+      - alert: WhatTheRepoAnalysisWorkerDown
+        expr: absent(up{job="what-the-repo-analysis-worker"}) or up{job="what-the-repo-analysis-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: what-the-repo analysis worker metrics target is down
+          description: An analysis worker has been unreachable for two minutes.
+
+      - alert: WhatTheRepoSchedulerLeaderMissing
+        expr: |
+          (
+            sum(
+              what_the_repo_retention_scheduler_leader
+                * on(instance, job) up{job="what-the-repo-scheduler"}
+                * on(instance, job) (time() - timestamp(up{job="what-the-repo-scheduler"}) < bool 45)
+            )
+            or vector(0)
+          ) < 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: no retention scheduler leader is active
+          description: No scheduler replica currently holds the PostgreSQL leadership lock.
+
+      - alert: WhatTheRepoMultipleSchedulerLeaders
+        expr: |
+          sum(
+            what_the_repo_retention_scheduler_leader
+              * on(instance, job) up{job="what-the-repo-scheduler"}
+              * on(instance, job) (time() - timestamp(up{job="what-the-repo-scheduler"}) < bool 45)
+          ) > 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: multiple retention scheduler leaders are active
+          description: More than one scheduler reports leadership; retention may execute twice.
+
+  - name: what-the-repo-capacity
+    rules:
+      - alert: WhatTheRepoQueueBacklogOld
+        expr: max by (queue) (what_the_repo_queue_oldest_wait_ms) > 300000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: queue {{ $labels.queue }} has old waiting work
+          description: The oldest waiting or delayed job has exceeded five minutes for ten minutes.
+
+      - alert: WhatTheRepoQueueFailuresPresent
+        expr: max by (queue) (what_the_repo_queue_jobs_failed) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: queue {{ $labels.queue }} contains failed jobs
+          description: BullMQ reports failed jobs that need inspection or cleanup.
+
+      - alert: WhatTheRepoDatabaseConnectionBudgetHigh
+        expr: max(what_the_repo_database_connections{job="what-the-repo-api",role="all"}) / max(what_the_repo_database_connection_limit{job="what-the-repo-api",kind="usable_budget"}) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: PostgreSQL business connection budget is above 80 percent
+          description: The deployment is approaching its reserved PostgreSQL connection budget.
+
+      - alert: WhatTheRepoDatabasePoolWaiting
+        expr: max by (job, role) (what_the_repo_database_pool_connections{state="waiting"}) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: database pool {{ $labels.role }} has waiting callers
+          description: A process has waited for a PostgreSQL pool connection for at least two minutes.
+
+  - name: what-the-repo-provider-and-jobs
+    rules:
+      - alert: WhatTheRepoProviderErrorRatioHigh
+        expr: sum(rate(what_the_repo_provider_calls_total{outcome=~"error|gate_error"}[5m])) / clamp_min(sum(rate(what_the_repo_provider_calls_total[5m])), 0.001) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Provider error ratio is above 20 percent
+          description: Model calls have remained unhealthy for ten minutes.
+
+      - alert: WhatTheRepoProviderBudgetRejected
+        expr: sum by (scope, kind) (increase(what_the_repo_provider_budget_rejects_total[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Provider budget rejected calls at {{ $labels.scope }} scope
+          description: A configured calls-per-minute or cost-per-day budget has rejected work.
+
+      - alert: WhatTheRepoRetentionSweepFailed
+        expr: sum(increase(what_the_repo_retention_sweeps_total{outcome="error"}[1h])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: retention sweep failed
+          description: At least one retention sweep failed during the last hour.
+
+      - alert: WhatTheRepoQueueMetricsUnavailable
+        expr: sum(increase(what_the_repo_queue_metric_errors_total[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis queue metrics refresh failed
+          description: A process could not read BullMQ queue state during the last ten minutes.

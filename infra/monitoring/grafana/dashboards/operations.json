@@ -1,0 +1,108 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "what-the-repo-prometheus" },
+      "fieldConfig": { "defaults": { "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "expr": "min(up{job=~\"what-the-repo-.*\"})", "refId": "A" }],
+      "title": "All targets available",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "what-the-repo-prometheus" },
+      "fieldConfig": { "defaults": { "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "expr": "sum(what_the_repo_retention_scheduler_leader * on(instance, job) up{job=\"what-the-repo-scheduler\"} * on(instance, job) (time() - timestamp(up{job=\"what-the-repo-scheduler\"}) < bool 45))", "refId": "A" }],
+      "title": "Scheduler leaders",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "what-the-repo-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "expr": "sum(increase(what_the_repo_provider_cost_usd_total[24h]))", "refId": "A" }],
+      "title": "Provider cost, last 24h",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "what-the-repo-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "expr": "sum(increase(what_the_repo_provider_budget_rejects_total[24h]))", "refId": "A" }],
+      "title": "Budget rejects, last 24h",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "what-the-repo-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 5,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "max by (queue) (what_the_repo_queue_jobs_waiting)", "legendFormat": "{{queue}} waiting", "refId": "A" },
+        { "expr": "max by (queue) (what_the_repo_queue_jobs_active)", "legendFormat": "{{queue}} active", "refId": "B" },
+        { "expr": "max by (queue) (what_the_repo_queue_jobs_delayed)", "legendFormat": "{{queue}} delayed", "refId": "C" },
+        { "expr": "max by (queue) (what_the_repo_queue_jobs_failed)", "legendFormat": "{{queue}} failed", "refId": "D" }
+      ],
+      "title": "BullMQ queue state",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "what-the-repo-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 6,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [{ "expr": "max by (queue) (what_the_repo_queue_oldest_wait_ms)", "legendFormat": "{{queue}}", "refId": "A" }],
+      "title": "Oldest queued work",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "what-the-repo-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "id": 7,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [{ "expr": "sum by (outcome) (rate(what_the_repo_provider_calls_total[5m]))", "legendFormat": "{{outcome}}", "refId": "A" }],
+      "title": "Provider calls by outcome",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "what-the-repo-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "id": 8,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "max by (role) (what_the_repo_database_connections{job=\"what-the-repo-api\"})", "legendFormat": "{{role}} actual", "refId": "A" },
+        { "expr": "max(what_the_repo_database_connection_limit{job=\"what-the-repo-api\",kind=\"usable_budget\"})", "legendFormat": "usable budget", "refId": "B" }
+      ],
+      "title": "PostgreSQL connections",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": ["what-the-repo", "operations"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "what-the-repo Operations",
+  "uid": "what-the-repo-operations",
+  "version": 1
+}

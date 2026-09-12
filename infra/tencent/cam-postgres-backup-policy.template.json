@@ -1,0 +1,33 @@
+{
+  "version": "2.0",
+  "statement": [
+    {
+      "effect": "allow",
+      "action": [
+        "name/cos:HeadBucket",
+        "name/cos:GetBucket",
+        "name/cos:ListMultipartUploads"
+      ],
+      "resource": [
+        "qcs::cos:ap-guangzhou:uid/1234567890:your-product-data-1234567890"
+      ]
+    },
+    {
+      "effect": "allow",
+      "action": [
+        "name/cos:PutObject",
+        "name/cos:GetObject",
+        "name/cos:HeadObject",
+        "name/cos:DeleteObject",
+        "name/cos:InitiateMultipartUpload",
+        "name/cos:UploadPart",
+        "name/cos:CompleteMultipartUpload",
+        "name/cos:AbortMultipartUpload",
+        "name/cos:ListParts"
+      ],
+      "resource": [
+        "qcs::cos:ap-guangzhou:uid/1234567890:your-product-data-1234567890/postgresql/production/*"
+      ]
+    }
+  ]
+}

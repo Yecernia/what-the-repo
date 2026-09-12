@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16.15-bookworm
+    environment:
+      POSTGRES_DB: wtr_session_lock
+      POSTGRES_USER: wtr_session_lock
+      POSTGRES_PASSWORD: wtr-session-lock-test-only
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wtr_session_lock -d wtr_session_lock"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  migration:
+    build:
+      context: ../..
+      dockerfile: infra/docker/server.Dockerfile
+    image: what-the-repo-server:local
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://wtr_session_lock:wtr-session-lock-test-only@postgres:5432/wtr_session_lock
+      WHAT_THE_REPO_LOAD_LOCAL_ENV: "0"
+      WHAT_THE_REPO_ROOT: /app
+      WHAT_THE_REPO_DATA_DIR: /tmp/what-the-repo
+      WHAT_THE_REPO_DB_POOL_MAX: "2"
+      WHAT_THE_REPO_KEY_ENCRYPTION_SECRET: session-lock-test-key-with-more-than-32-characters
+    command: ["node", "dist/db-cli.js", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  session-worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/server.Dockerfile
+    image: what-the-repo-server:local
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://wtr_session_lock:wtr-session-lock-test-only@postgres:5432/wtr_session_lock
+      WHAT_THE_REPO_LOAD_LOCAL_ENV: "0"
+    command: ["node", "dist/smoke/postgres-session-lock-worker.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

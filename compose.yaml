@@ -1,0 +1,429 @@
+name: what-the-repo
+
+x-postgres-image: &postgres-image
+  build:
+    context: .
+    dockerfile: infra/docker/postgres-walg.Dockerfile
+  image: what-the-repo-postgres-walg:${WTR_IMAGE_TAG:-local}
+
+x-postgres-backup-environment: &postgres-backup-environment
+  WALG_FILE_PREFIX: ${POSTGRES_BACKUP_FILE_PREFIX-/var/lib/postgresql/backup}
+  WALG_S3_PREFIX: ${POSTGRES_BACKUP_S3_PREFIX:-}
+  WALG_PREVENT_WAL_OVERWRITE: ${POSTGRES_BACKUP_PREVENT_WAL_OVERWRITE:-true}
+  WALG_S3_SSE: ${POSTGRES_BACKUP_S3_SSE:-}
+  AWS_ENDPOINT: ${POSTGRES_BACKUP_AWS_ENDPOINT:-}
+  AWS_REGION: ${POSTGRES_BACKUP_AWS_REGION:-}
+  AWS_S3_FORCE_PATH_STYLE: ${POSTGRES_BACKUP_AWS_FORCE_PATH_STYLE:-false}
+  AWS_ACCESS_KEY_ID: ${POSTGRES_BACKUP_AWS_ACCESS_KEY_ID:-}
+  AWS_ACCESS_KEY_ID_FILE: ${POSTGRES_BACKUP_AWS_ACCESS_KEY_ID_FILE:-}
+  AWS_SECRET_ACCESS_KEY: ${POSTGRES_BACKUP_AWS_SECRET_ACCESS_KEY:-}
+  AWS_SECRET_ACCESS_KEY_FILE: ${POSTGRES_BACKUP_AWS_SECRET_ACCESS_KEY_FILE:-}
+  AWS_SESSION_TOKEN: ${POSTGRES_BACKUP_AWS_SESSION_TOKEN:-}
+  AWS_SESSION_TOKEN_FILE: ${POSTGRES_BACKUP_AWS_SESSION_TOKEN_FILE:-}
+
+x-server-environment: &server-environment
+  DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_RUNTIME_USER:-what_the_repo_runtime}:${POSTGRES_RUNTIME_PASSWORD:-${POSTGRES_PASSWORD:-}}@postgres:5432/${POSTGRES_DB:-what_the_repo}}
+  DATABASE_URL_FILE: ${DATABASE_URL_FILE:-}
+  WHAT_THE_REPO_REDIS_URL: ${WHAT_THE_REPO_REDIS_URL:-redis://redis:6379}
+  WHAT_THE_REPO_REDIS_PREFIX: ${WHAT_THE_REPO_REDIS_PREFIX:-what-the-repo}
+  WHAT_THE_REPO_ANALYSIS_QUEUE_CONCURRENCY: ${WHAT_THE_REPO_ANALYSIS_QUEUE_CONCURRENCY:-1}
+  WHAT_THE_REPO_PROVIDER_CONCURRENCY: ${WHAT_THE_REPO_PROVIDER_CONCURRENCY:-4}
+  WHAT_THE_REPO_PROVIDER_GATE_POLL_MS: ${WHAT_THE_REPO_PROVIDER_GATE_POLL_MS:-100}
+  WHAT_THE_REPO_RETENTION_ENABLED: ${WHAT_THE_REPO_RETENTION_ENABLED:-false}
+  WHAT_THE_REPO_DB_CONNECTION_RESERVE: ${WHAT_THE_REPO_DB_CONNECTION_RESERVE:-10}
+  WHAT_THE_REPO_DB_IDLE_TIMEOUT_MS: ${WHAT_THE_REPO_DB_IDLE_TIMEOUT_MS:-30000}
+  WHAT_THE_REPO_DB_CONNECTION_TIMEOUT_MS: ${WHAT_THE_REPO_DB_CONNECTION_TIMEOUT_MS:-10000}
+  WHAT_THE_REPO_SESSION_LOCK_WAIT_TIMEOUT_MS: ${WHAT_THE_REPO_SESSION_LOCK_WAIT_TIMEOUT_MS:-600000}
+  WHAT_THE_REPO_METRICS_TOKEN: ${WHAT_THE_REPO_METRICS_TOKEN:-}
+  WHAT_THE_REPO_METRICS_TOKEN_FILE: ${WHAT_THE_REPO_METRICS_TOKEN_FILE:-}
+  WHAT_THE_REPO_COS_BUCKET: ${WHAT_THE_REPO_COS_BUCKET:-}
+  WHAT_THE_REPO_COS_REGION: ${WHAT_THE_REPO_COS_REGION:-}
+  WHAT_THE_REPO_COS_SECRET_ID: ${WHAT_THE_REPO_COS_SECRET_ID:-}
+  WHAT_THE_REPO_COS_SECRET_ID_FILE: ${WHAT_THE_REPO_COS_SECRET_ID_FILE:-}
+  WHAT_THE_REPO_COS_SECRET_KEY: ${WHAT_THE_REPO_COS_SECRET_KEY:-}
+  WHAT_THE_REPO_COS_SECRET_KEY_FILE: ${WHAT_THE_REPO_COS_SECRET_KEY_FILE:-}
+  WHAT_THE_REPO_COS_SECURITY_TOKEN: ${WHAT_THE_REPO_COS_SECURITY_TOKEN:-}
+  WHAT_THE_REPO_COS_SECURITY_TOKEN_FILE: ${WHAT_THE_REPO_COS_SECURITY_TOKEN_FILE:-}
+  WHAT_THE_REPO_COS_PREFIX: ${WHAT_THE_REPO_COS_PREFIX:-what-the-repo}
+  WHAT_THE_REPO_COS_DOMAIN: ${WHAT_THE_REPO_COS_DOMAIN:-}
+  WHAT_THE_REPO_ROOT: /app
+  WHAT_THE_REPO_DATA_DIR: /var/lib/what-the-repo
+  WHAT_THE_REPO_SERVER_HOST: 0.0.0.0
+  WHAT_THE_REPO_SERVER_PORT: "8307"
+  NODE_ENV: ${NODE_ENV:-development}
+  GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:?set GITHUB_OAUTH_CLIENT_ID}
+  GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+  GITHUB_OAUTH_CLIENT_SECRET_FILE: ${GITHUB_OAUTH_CLIENT_SECRET_FILE:-}
+  GITHUB_OAUTH_CALLBACK_URL: ${GITHUB_OAUTH_CALLBACK_URL:?set GITHUB_OAUTH_CALLBACK_URL}
+  WHAT_THE_REPO_WEB_URL: ${WHAT_THE_REPO_WEB_URL:?set WHAT_THE_REPO_WEB_URL}
+  WHAT_THE_REPO_SESSION_SECRET: ${WHAT_THE_REPO_SESSION_SECRET:-}
+  WHAT_THE_REPO_SESSION_SECRET_FILE: ${WHAT_THE_REPO_SESSION_SECRET_FILE:-}
+  WHAT_THE_REPO_KEY_ENCRYPTION_SECRET: ${WHAT_THE_REPO_KEY_ENCRYPTION_SECRET:-}
+  WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE: ${WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE:-}
+  WHAT_THE_REPO_FREE_PROVIDER_BASE_URL: ${WHAT_THE_REPO_FREE_PROVIDER_BASE_URL:-https://api.deepseek.com}
+  WHAT_THE_REPO_FREE_PROVIDER_MODEL: ${WHAT_THE_REPO_FREE_PROVIDER_MODEL:-deepseek-v4-flash}
+  WHAT_THE_REPO_WEB_SEARCH_API_KEY: ${WHAT_THE_REPO_WEB_SEARCH_API_KEY:-}
+  WHAT_THE_REPO_WEB_SEARCH_API_KEY_FILE: ${WHAT_THE_REPO_WEB_SEARCH_API_KEY_FILE:-}
+  WHAT_THE_REPO_FREE_PROVIDER_API_KEY: ${WHAT_THE_REPO_FREE_PROVIDER_API_KEY:-}
+  WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE: ${WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE:-}
+  WHAT_THE_REPO_FEEDBACK_PROVIDER_ID: ${WHAT_THE_REPO_FEEDBACK_PROVIDER_ID:-deepseek}
+  WHAT_THE_REPO_FEEDBACK_PROVIDER_BASE_URL: ${WHAT_THE_REPO_FEEDBACK_PROVIDER_BASE_URL:-https://api.deepseek.com}
+  WHAT_THE_REPO_FEEDBACK_PROVIDER_MODEL: ${WHAT_THE_REPO_FEEDBACK_PROVIDER_MODEL:-deepseek-v4-flash}
+  WHAT_THE_REPO_FEEDBACK_PROVIDER_API_KEY: ${WHAT_THE_REPO_FEEDBACK_PROVIDER_API_KEY:-}
+  WHAT_THE_REPO_FEEDBACK_PROVIDER_API_KEY_FILE: ${WHAT_THE_REPO_FEEDBACK_PROVIDER_API_KEY_FILE:-}
+  WHAT_THE_REPO_MCP_TOKEN: ${WHAT_THE_REPO_MCP_TOKEN:-}
+  WHAT_THE_REPO_MCP_TOKEN_FILE: ${WHAT_THE_REPO_MCP_TOKEN_FILE:-}
+  WHAT_THE_REPO_MCP_TOKENS_JSON: ${WHAT_THE_REPO_MCP_TOKENS_JSON:-}
+  WHAT_THE_REPO_MCP_TOKENS_JSON_FILE: ${WHAT_THE_REPO_MCP_TOKENS_JSON_FILE:-}
+  WHAT_THE_REPO_MCP_OWNER_ID: ${WHAT_THE_REPO_MCP_OWNER_ID:-}
+  WHAT_THE_REPO_MCP_REQUESTS_PER_MINUTE: ${WHAT_THE_REPO_MCP_REQUESTS_PER_MINUTE:-60}
+  WHAT_THE_REPO_QUOTA_MAX_PROJECTS: ${WHAT_THE_REPO_QUOTA_MAX_PROJECTS:-20}
+  WHAT_THE_REPO_QUOTA_CREATIONS_PER_HOUR: ${WHAT_THE_REPO_QUOTA_CREATIONS_PER_HOUR:-30}
+  WHAT_THE_REPO_QUOTA_ACTIVE_ANALYSIS_JOBS: ${WHAT_THE_REPO_QUOTA_ACTIVE_ANALYSIS_JOBS:-2}
+  WHAT_THE_REPO_QUOTA_STORAGE_BYTES: ${WHAT_THE_REPO_QUOTA_STORAGE_BYTES:-4294967296}
+  WHAT_THE_REPO_QUOTA_PROVIDER_CALLS_PER_MINUTE: ${WHAT_THE_REPO_QUOTA_PROVIDER_CALLS_PER_MINUTE:-60}
+  WHAT_THE_REPO_QUOTA_PROVIDER_COST_USD_PER_DAY: ${WHAT_THE_REPO_QUOTA_PROVIDER_COST_USD_PER_DAY:-10}
+  WHAT_THE_REPO_QUOTA_PROVIDER_RESERVATION_USD: ${WHAT_THE_REPO_QUOTA_PROVIDER_RESERVATION_USD:-0.01}
+  WHAT_THE_REPO_QUOTA_PROVIDER_DEPLOYMENT_CALLS_PER_MINUTE: ${WHAT_THE_REPO_QUOTA_PROVIDER_DEPLOYMENT_CALLS_PER_MINUTE:-240}
+  WHAT_THE_REPO_QUOTA_PROVIDER_DEPLOYMENT_COST_USD_PER_DAY: ${WHAT_THE_REPO_QUOTA_PROVIDER_DEPLOYMENT_COST_USD_PER_DAY:-20}
+
+x-server-service: &server-service
+  build:
+    context: .
+    dockerfile: infra/docker/server.Dockerfile
+  image: what-the-repo-server:${WTR_IMAGE_TAG:-local}
+  restart: unless-stopped
+  environment: *server-environment
+  volumes:
+    - product-data:/var/lib/what-the-repo
+
+x-evolution-environment: &evolution-environment
+  DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_RUNTIME_USER:-what_the_repo_runtime}:${POSTGRES_RUNTIME_PASSWORD:-${POSTGRES_PASSWORD:-}}@postgres:5432/${POSTGRES_DB:-what_the_repo}}
+  DATABASE_URL_FILE: ${DATABASE_URL_FILE:-}
+  WHAT_THE_REPO_ROOT: /app
+  WHAT_THE_REPO_DATA_DIR: /var/lib/what-the-repo
+  WHAT_THE_REPO_REDIS_URL: ${WHAT_THE_REPO_REDIS_URL:-redis://redis:6379}
+  WHAT_THE_REPO_REDIS_PREFIX: ${WHAT_THE_REPO_REDIS_PREFIX:-what-the-repo}
+  WHAT_THE_REPO_EVOLUTION_PROVIDER_ID: ${WHAT_THE_REPO_EVOLUTION_PROVIDER_ID:-deepseek}
+  WHAT_THE_REPO_EVOLUTION_PROVIDER_BASE_URL: ${WHAT_THE_REPO_EVOLUTION_PROVIDER_BASE_URL:-https://api.deepseek.com}
+  WHAT_THE_REPO_EVOLUTION_PROVIDER_MODEL: ${WHAT_THE_REPO_EVOLUTION_PROVIDER_MODEL:-deepseek-v4-flash}
+  WHAT_THE_REPO_EVOLUTION_PROVIDER_API_KEY: ${WHAT_THE_REPO_EVOLUTION_PROVIDER_API_KEY:-}
+  WHAT_THE_REPO_EVOLUTION_PROVIDER_API_KEY_FILE: ${WHAT_THE_REPO_EVOLUTION_PROVIDER_API_KEY_FILE:-}
+  WHAT_THE_REPO_EVOLUTION_SANDBOX_IMAGE: what-the-repo-pi-sandbox:${WTR_IMAGE_TAG:-local}
+  WHAT_THE_REPO_EVOLUTION_SANDBOX_PLATFORM: ${WHAT_THE_REPO_EVOLUTION_SANDBOX_PLATFORM:-linux/amd64}
+  WHAT_THE_REPO_EVOLUTION_INTERVAL_MS: ${WHAT_THE_REPO_EVOLUTION_INTERVAL_MS:-30000}
+  WHAT_THE_REPO_EVOLUTION_TASK_LIMIT: ${WHAT_THE_REPO_EVOLUTION_TASK_LIMIT:-4}
+  WHAT_THE_REPO_EVOLUTION_QUEUE_LIMIT: ${WHAT_THE_REPO_EVOLUTION_QUEUE_LIMIT:-20}
+  WHAT_THE_REPO_EVOLUTION_DB_POOL_MAX: ${WHAT_THE_REPO_EVOLUTION_DB_POOL_MAX:-4}
+  WHAT_THE_REPO_EVOLUTION_MAX_STEPS: ${WHAT_THE_REPO_EVOLUTION_MAX_STEPS:-40}
+  WHAT_THE_REPO_EVOLUTION_MAX_TIME_MS: ${WHAT_THE_REPO_EVOLUTION_MAX_TIME_MS:-900000}
+  WHAT_THE_REPO_EVOLUTION_MAX_TOKENS: ${WHAT_THE_REPO_EVOLUTION_MAX_TOKENS:-120000}
+  WHAT_THE_REPO_EVOLUTION_MAX_COST_USD: ${WHAT_THE_REPO_EVOLUTION_MAX_COST_USD:-10}
+
+services:
+  postgres:
+    <<: *postgres-image
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
+      - -c
+      - archive_mode=${POSTGRES_ARCHIVE_MODE:-on}
+      - -c
+      - archive_command=/usr/local/bin/wtr-wal-g wal-push %p
+      - -c
+      - archive_timeout=${POSTGRES_ARCHIVE_TIMEOUT:-60s}
+    environment:
+      <<: *postgres-backup-environment
+      POSTGRES_DB: ${POSTGRES_DB:-what_the_repo}
+      POSTGRES_USER: ${POSTGRES_USER:-what_the_repo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+      POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS:---data-checksums}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-backup-data:/var/lib/postgresql/backup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  postgres-backup:
+    <<: *postgres-image
+    profiles: ["operations"]
+    restart: "no"
+    user: postgres
+    environment:
+      <<: *postgres-backup-environment
+      PGDATA: /var/lib/postgresql/data
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-what_the_repo}
+      PGUSER: ${POSTGRES_USER:-what_the_repo}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      PGPASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+      POSTGRES_BACKUP_RETAIN_FULL: ${POSTGRES_BACKUP_RETAIN_FULL:-7}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data:ro
+      - postgres-backup-data:/var/lib/postgresql/backup
+    entrypoint: ["/usr/local/bin/wtr-postgres-backup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres-role-bootstrap:
+    <<: *postgres-image
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-what_the_repo}
+      PGUSER: ${POSTGRES_USER:-what_the_repo}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      PGPASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+      POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-what_the_repo_runtime}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:-${POSTGRES_PASSWORD:-}}
+      POSTGRES_RUNTIME_PASSWORD_FILE: ${POSTGRES_RUNTIME_PASSWORD_FILE:-}
+    entrypoint: ["/usr/local/bin/wtr-postgres-role-bootstrap"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  migration:
+    <<: *server-service
+    restart: "no"
+    environment:
+      <<: *server-environment
+      DATABASE_URL: ${DATABASE_ADMIN_URL:-postgresql://${POSTGRES_USER:-what_the_repo}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-what_the_repo}}
+      DATABASE_URL_FILE: ${DATABASE_ADMIN_URL_FILE:-}
+      WHAT_THE_REPO_DB_POOL_MAX: ${WHAT_THE_REPO_MIGRATION_DB_POOL_MAX:-2}
+    command: ["node", "dist/db-cli.js", "migrate"]
+    depends_on:
+      postgres-role-bootstrap:
+        condition: service_completed_successfully
+
+  api:
+    <<: *server-service
+    environment:
+      <<: *server-environment
+      WHAT_THE_REPO_DB_POOL_MAX: ${WHAT_THE_REPO_API_DB_POOL_MAX:-10}
+      WHAT_THE_REPO_RETENTION_ENABLED: "false"
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8307:8307"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:8307/api/health').then(async r=>{const body=await r.json();if(!r.ok||body.storage!=='postgres')process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  analysis-worker:
+    <<: *server-service
+    environment:
+      <<: *server-environment
+      WHAT_THE_REPO_DB_POOL_MAX: ${WHAT_THE_REPO_ANALYSIS_DB_POOL_MAX:-8}
+      WHAT_THE_REPO_METRICS_HOST: 0.0.0.0
+      WHAT_THE_REPO_METRICS_PORT: 9464
+    command: ["node", "dist/analysis/worker-main.js"]
+    expose:
+      - "9464"
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    <<: *server-service
+    environment:
+      <<: *server-environment
+      WHAT_THE_REPO_DB_POOL_MAX: ${WHAT_THE_REPO_SCHEDULER_DB_POOL_MAX:-2}
+      WHAT_THE_REPO_RETENTION_ENABLED: "true"
+      WHAT_THE_REPO_METRICS_HOST: 0.0.0.0
+      WHAT_THE_REPO_METRICS_PORT: 9464
+    command: ["node", "dist/services/scheduler-main.js"]
+    expose:
+      - "9464"
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+      args:
+        VITE_ICP_RECORD: ${VITE_ICP_RECORD:-}
+    image: what-the-repo-web:${WTR_IMAGE_TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5307:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.13.2
+    restart: unless-stopped
+    read_only: true
+    environment:
+      WHAT_THE_REPO_METRICS_TOKEN: ${WHAT_THE_REPO_METRICS_TOKEN:-}
+    entrypoint: ["/bin/sh", "/etc/prometheus/prometheus-entrypoint.sh"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}
+      - --web.enable-lifecycle
+    volumes:
+      - ./infra/monitoring/prometheus-entrypoint.sh:/etc/prometheus/prometheus-entrypoint.sh:ro
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=1048576,mode=1777
+    ports:
+      - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "/bin/wget", "-q", "-T", "2", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy
+      analysis-worker:
+        condition: service_started
+      scheduler:
+        condition: service_started
+      alertmanager:
+        condition: service_healthy
+
+  alertmanager:
+    profiles: ["monitoring"]
+    image: prom/alertmanager:v0.33.1
+    restart: unless-stopped
+    read_only: true
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./infra/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=1048576,mode=1777
+    ports:
+      - "127.0.0.1:9093:9093"
+    healthcheck:
+      test: ["CMD", "/bin/wget", "-q", "-T", "2", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:13.1.0
+    restart: unless-stopped
+    read_only: true
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+    entrypoint: ["/bin/sh", "/etc/grafana/grafana-entrypoint.sh"]
+    volumes:
+      - ./infra/monitoring/grafana-entrypoint.sh:/etc/grafana/grafana-entrypoint.sh:ro
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=67108864,mode=1777
+    ports:
+      - "127.0.0.1:5308:3000"
+    healthcheck:
+      test: ["CMD", "/usr/bin/wget", "-q", "-T", "2", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 18
+      start_period: 20s
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
+  evolution-sandbox-image:
+    profiles: ["evolution"]
+    build:
+      context: evolution/pi/sandbox
+    image: what-the-repo-pi-sandbox:${WTR_IMAGE_TAG:-local}
+    entrypoint: ["/bin/true"]
+    restart: "no"
+
+  evolution-worker:
+    profiles: ["evolution"]
+    build:
+      context: .
+      dockerfile: infra/docker/evolution-worker.Dockerfile
+    image: what-the-repo-evolution-worker:${WTR_IMAGE_TAG:-local}
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    environment: *evolution-environment
+    volumes:
+      - product-data:/var/lib/what-the-repo
+      - /var/run/docker.sock:/var/run/docker.sock
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=67108864,mode=1777
+      - /run/what-the-repo-docker-config:rw,nosuid,nodev,size=1048576,mode=0700
+    depends_on:
+      api:
+        condition: service_healthy
+      evolution-sandbox-image:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+
+volumes:
+  postgres-data:
+  postgres-backup-data:
+  redis-data:
+  product-data:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:

@@ -1,0 +1,72 @@
+#!/bin/sh
+set -eu
+
+load_secret_file() {
+  variable_name="$1"
+  direct_value="$2"
+  file_path="$3"
+
+  if [ -n "$direct_value" ] && [ -n "$file_path" ]; then
+    echo "Set either ${variable_name} or ${variable_name}_FILE, not both." >&2
+    exit 64
+  fi
+  if [ -z "$file_path" ]; then
+    return
+  fi
+  if [ ! -f "$file_path" ] || [ ! -r "$file_path" ]; then
+    echo "Secret file for ${variable_name} is not a readable regular file." >&2
+    exit 66
+  fi
+
+  secret_value=$(cat -- "$file_path")
+  if [ -z "$secret_value" ]; then
+    echo "Secret file for ${variable_name} is empty." >&2
+    exit 65
+  fi
+  export "${variable_name}=${secret_value}"
+}
+
+load_secret_file \
+  AWS_ACCESS_KEY_ID \
+  "${AWS_ACCESS_KEY_ID:-}" \
+  "${AWS_ACCESS_KEY_ID_FILE:-}"
+load_secret_file \
+  AWS_SECRET_ACCESS_KEY \
+  "${AWS_SECRET_ACCESS_KEY:-}" \
+  "${AWS_SECRET_ACCESS_KEY_FILE:-}"
+load_secret_file \
+  AWS_SESSION_TOKEN \
+  "${AWS_SESSION_TOKEN:-}" \
+  "${AWS_SESSION_TOKEN_FILE:-}"
+
+backend_count=0
+if [ -n "${WALG_FILE_PREFIX:-}" ]; then
+  backend_count=$((backend_count + 1))
+fi
+if [ -n "${WALG_S3_PREFIX:-}" ]; then
+  backend_count=$((backend_count + 1))
+fi
+if [ "$backend_count" -ne 1 ]; then
+  echo "Configure exactly one PostgreSQL backup backend: file or S3-compatible object storage." >&2
+  exit 64
+fi
+
+if [ "${1:-}" = "wal-fetch" ]; then
+  set +e
+  /usr/local/bin/wal-g "$@"
+  status=$?
+  set -e
+  case "$status" in
+    0|74)
+      exit "$status"
+      ;;
+    *)
+      if [ "$status" -ge 126 ]; then
+        exit "$status"
+      fi
+      exit 126
+      ;;
+  esac
+fi
+
+exec /usr/local/bin/wal-g "$@"

@@ -1,0 +1,128 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wtr-migrate
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: migration
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: migration
+        app.kubernetes.io/part-of: what-the-repo
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: bootstrap-postgres-runtime-role
+          image: what-the-repo-postgres-walg:__WTR_IMAGE_TAG__
+          imagePullPolicy: Never
+          command:
+            - sh
+            - -ec
+            - |
+              until pg_isready -h postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do
+                sleep 2
+              done
+              exec /usr/local/bin/wtr-postgres-role-bootstrap
+          envFrom:
+            - configMapRef:
+                name: wtr-config
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: wtr-config
+                  key: POSTGRES_DB
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: wtr-config
+                  key: POSTGRES_USER
+            - name: PGPASSWORD_FILE
+              value: /run/role-secrets/postgres-admin-password
+            - name: POSTGRES_RUNTIME_PASSWORD_FILE
+              value: /run/role-secrets/postgres-runtime-password
+          volumeMounts:
+            - name: role-secrets
+              mountPath: /run/role-secrets
+              readOnly: true
+        - name: wait-for-redis
+          image: redis:7.4-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ec
+            - until redis-cli -h redis ping | grep -qx PONG; do sleep 2; done
+      containers:
+        - name: migration
+          image: what-the-repo-server:__WTR_IMAGE_TAG__
+          imagePullPolicy: Never
+          args: ["node", "dist/db-cli.js", "migrate"]
+          envFrom:
+            - configMapRef:
+                name: wtr-config
+          env:
+            - name: DATABASE_URL_FILE
+              value: /run/secrets/database-admin-url
+            # Schema migration does not call GitHub. Override the shared
+            # application ConfigMap so it cannot require the gateway Secret.
+            - name: GITHUB_OAUTH_CLIENT_ID
+              value: ""
+            - name: GITHUB_OAUTH_CALLBACK_URL
+              value: ""
+            - name: WHAT_THE_REPO_GITHUB_GATEWAY_URL
+              value: ""
+            - name: WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE
+              value: /run/secrets/key-encryption-secret
+            - name: WHAT_THE_REPO_COS_SECRET_ID_FILE
+              value: /run/secrets/cos-secret-id
+            - name: WHAT_THE_REPO_COS_SECRET_KEY_FILE
+              value: /run/secrets/cos-secret-key
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: migration-secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: data-dir
+              mountPath: /var/lib/what-the-repo
+              readOnly: false
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: role-secrets
+          secret:
+            secretName: wtr-role-bootstrap
+            defaultMode: 0444
+        - name: migration-secrets
+          secret:
+            secretName: wtr-migration-secrets
+            defaultMode: 0444
+        - name: data-dir
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

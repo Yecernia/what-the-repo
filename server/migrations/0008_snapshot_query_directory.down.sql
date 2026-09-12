@@ -1,0 +1,10 @@
+BEGIN;
+DROP TABLE IF EXISTS snapshot_query_evidence_links;
+DROP TABLE IF EXISTS snapshot_query_value_points;
+DROP TABLE IF EXISTS snapshot_query_layers;
+DROP TABLE IF EXISTS snapshot_query_evidence;
+DROP TABLE IF EXISTS snapshot_query_edges;
+DROP TABLE IF EXISTS snapshot_query_nodes;
+DROP TABLE IF EXISTS snapshot_query_directories;
+DELETE FROM schema_migrations WHERE version = '0008_snapshot_query_directory';
+COMMIT;

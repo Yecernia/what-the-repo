@@ -1,0 +1,11 @@
+# k3s server configuration for the first public deployment. Host Nginx keeps
+# 80/443 and TLS, while the application Web service is reachable only on the
+# loopback-bound NodePort configured below.
+write-kubeconfig-mode: "0600"
+secrets-encryption: true
+disable:
+  - traefik
+  - servicelb
+  - metrics-server
+kube-proxy-arg:
+  - nodeport-addresses=127.0.0.0/8

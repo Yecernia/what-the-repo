@@ -1,0 +1,10 @@
+{
+  "component-explanation": { "model": "deepseek-flash" },
+  "architecture-planning": { "model": "deepseek-flash" },
+  "repository-value-discovery": { "model": "deepseek-flash" },
+  "snapshot-language-overlay": { "model": "deepseek-flash" },
+  "learning-route": { "model": "deepseek-flash" },
+  "understanding-assessment": { "model": "deepseek-flash" },
+  "citation-review": { "model": "deepseek-flash" },
+  "memory-maintenance": { "model": "deepseek-flash" }
+}

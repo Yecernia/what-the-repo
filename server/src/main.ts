@@ -1,0 +1,103 @@
+import { assertApiSessionSecret, loadConfig } from "./config.js";
+import { PiMemoryStore } from "./agent/memory-store.js";
+import { PiSessionStore } from "./agent/session-store.js";
+import { buildApp } from "./api/app.js";
+import { createProductStore } from "./persistence/factory.js";
+import { PostgresStore } from "./persistence/postgres-store.js";
+import { PostgresMemoryStore } from "./persistence/postgres-memory-store.js";
+import { PostgresPiSessionBackend } from "./persistence/postgres-session-backend.js";
+import { AnalysisCoordinator } from "./analysis/coordinator.js";
+import { configureProductSkillRegistry } from "./agent/skill-registry.js";
+import { runRetentionSweep } from "./services/lifecycle-service.js";
+import { RetentionScheduler } from "./services/retention-scheduler.js";
+import { createTaskQueue } from "./queue/task-queue.js";
+import { createProviderGateFactory } from "./agent/provider-gate.js";
+import { createProviderUsageBudget } from "./agent/provider-budget.js";
+import { defaultRuntimeMetrics } from "./observability/metrics.js";
+import { DatabaseMetricsCollector } from "./observability/database-metrics.js";
+
+const config = loadConfig();
+assertApiSessionSecret(config);
+configureProductSkillRegistry(config.skillVersionsRoot);
+const store = createProductStore(config, "api");
+await store.init();
+const databaseMetrics = store instanceof PostgresStore
+  ? new DatabaseMetricsCollector({
+      pool: store.pool,
+      metrics: defaultRuntimeMetrics,
+      localRole: "api",
+      configuredPoolMax: config.databasePoolMax ?? 10,
+      deploymentReserve: config.databaseConnectionReserve ?? 10,
+    })
+  : null;
+const sessions = new PiSessionStore(
+  store instanceof PostgresStore
+    ? new PostgresPiSessionBackend(store.pool)
+    : config.sessionDir,
+);
+const memories = store instanceof PostgresStore
+  ? new PostgresMemoryStore(store.pool)
+  : new PiMemoryStore(config.memoryDir);
+const providerGateFactory = createProviderGateFactory({
+  pool: store instanceof PostgresStore ? store.pool : null,
+  maxConcurrent: config.providerConcurrency ?? 4,
+  pollMs: config.providerGatePollMs ?? 100,
+});
+const providerBudget = createProviderUsageBudget({
+  pool: store instanceof PostgresStore ? store.pool : null,
+  maxCallsPerMinute: config.quotaProviderCallsPerMinute ?? 60,
+  maxCostUsdPerDay: config.quotaProviderCostUsdPerDay ?? 10,
+  minimumReservationUsd: config.quotaProviderReservationUsd ?? 0.01,
+  deploymentMaxCallsPerMinute: config.quotaProviderDeploymentCallsPerMinute ?? 240,
+  deploymentMaxCostUsdPerDay: config.quotaProviderDeploymentCostUsdPerDay ?? 20,
+});
+const taskQueue = createTaskQueue({
+  redisUrl: config.redisUrl,
+  prefix: config.redisPrefix,
+  concurrency: config.analysisQueueConcurrency,
+  metrics: defaultRuntimeMetrics,
+});
+const queueMetricsTimer = setInterval(() => { void taskQueue.refreshMetrics?.(); }, 15_000);
+queueMetricsTimer.unref();
+void taskQueue.refreshMetrics?.();
+const analysis = new AnalysisCoordinator(store, config, providerGateFactory, defaultRuntimeMetrics, providerBudget);
+// Redis mode delegates analysis to the dedicated worker process. A direct
+// local start without Redis keeps polling as a development/test fallback.
+if (!config.redisUrl) await analysis.start();
+const app = buildApp({
+  config,
+  store,
+  sessions,
+  memories,
+  analysis,
+  taskQueue,
+  providerGateFactory,
+  providerBudget,
+  metrics: defaultRuntimeMetrics,
+  metricsRefresh: databaseMetrics ? async () => { await databaseMetrics.refresh(); } : undefined,
+});
+
+// Compose runs retention in the singleton scheduler service. Direct local
+// startup keeps the sweep as a compatibility fallback unless disabled.
+const retentionScheduler = config.retentionEnabled
+  ? new RetentionScheduler(async () => { await runRetentionSweep({ store, sessions, memories }); })
+  : null;
+if (retentionScheduler) {
+  await retentionScheduler.runNow().catch(() => undefined);
+  retentionScheduler.start();
+}
+
+await app.listen({ host: config.host, port: config.port });
+process.stdout.write(`what-the-repo server listening on http://${config.host}:${config.port}\n`);
+
+const shutdown = async (): Promise<void> => {
+  clearInterval(queueMetricsTimer);
+  await retentionScheduler?.stop();
+  await analysis.stop();
+  await taskQueue.close();
+  await app.close();
+  await store.close();
+  process.exit(0);
+};
+process.once("SIGINT", () => void shutdown());
+process.once("SIGTERM", () => void shutdown());

@@ -1,0 +1,89 @@
+# This Job is only used during the one-time Compose -> k3s cutover. The cutover
+# script writes a root-only custom-format dump at the mounted path while the old
+# API and Worker are stopped, so PostgreSQL remains the only migrated authority.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wtr-compose-restore
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: compose-restore
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: compose-restore
+        app.kubernetes.io/part-of: what-the-repo
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: restore
+          image: what-the-repo-postgres-walg:__WTR_IMAGE_TAG__
+          imagePullPolicy: Never
+          command:
+            - sh
+            - -ec
+            - |
+              if [ ! -f "$PGPASSWORD_FILE" ] || [ ! -r "$PGPASSWORD_FILE" ]; then
+                echo "PGPASSWORD_FILE is not a readable regular file." >&2
+                exit 66
+              fi
+              PGPASSWORD=$(cat -- "$PGPASSWORD_FILE")
+              if [ -z "$PGPASSWORD" ]; then
+                echo "PGPASSWORD_FILE is empty." >&2
+                exit 65
+              fi
+              export PGPASSWORD
+              until pg_isready -h postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do
+                sleep 2
+              done
+              exec pg_restore \
+                --exit-on-error \
+                --clean \
+                --if-exists \
+                --no-owner \
+                --no-privileges \
+                --host postgres \
+                --port 5432 \
+                --username "$POSTGRES_USER" \
+                --dbname "$POSTGRES_DB" \
+                /migration/compose-latest.dump
+          envFrom:
+            - configMapRef:
+                name: wtr-config
+          env:
+            - name: PGPASSWORD_FILE
+              value: /run/secrets/postgres-admin-password
+          volumeMounts:
+            - name: postgres-init-secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: migration-dump
+              mountPath: /migration/compose-latest.dump
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: postgres-init-secrets
+          secret:
+            secretName: wtr-postgres-init
+            defaultMode: 0444
+        - name: migration-dump
+          hostPath:
+            path: /var/lib/what-the-repo/k3s/migration/compose-latest.dump
+            type: File

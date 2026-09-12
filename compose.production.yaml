@@ -1,0 +1,371 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ""
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      AWS_ACCESS_KEY_ID: ""
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/postgres_backup_access_key_id
+      AWS_SECRET_ACCESS_KEY: ""
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/postgres_backup_secret_access_key
+      AWS_SESSION_TOKEN: ""
+      AWS_SESSION_TOKEN_FILE: ""
+    secrets:
+      - postgres_admin_password
+      - postgres_backup_access_key_id
+      - postgres_backup_secret_access_key
+    cpus: "1.50"
+    mem_limit: 3g
+    pids_limit: 512
+
+  postgres-backup:
+    environment:
+      PGPASSWORD: ""
+      PGPASSWORD_FILE: /run/secrets/postgres_admin_password
+      AWS_ACCESS_KEY_ID: ""
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/postgres_backup_access_key_id
+      AWS_SECRET_ACCESS_KEY: ""
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/postgres_backup_secret_access_key
+      AWS_SESSION_TOKEN: ""
+      AWS_SESSION_TOKEN_FILE: ""
+    secrets:
+      - postgres_admin_password
+      - postgres_backup_access_key_id
+      - postgres_backup_secret_access_key
+    cpus: "1.00"
+    mem_limit: 1g
+    pids_limit: 256
+
+  redis:
+    cpus: "0.50"
+    mem_limit: 768m
+    pids_limit: 256
+
+  postgres-role-bootstrap:
+    environment:
+      PGPASSWORD: ""
+      PGPASSWORD_FILE: /run/secrets/postgres_admin_password
+      POSTGRES_RUNTIME_PASSWORD: ""
+      POSTGRES_RUNTIME_PASSWORD_FILE: /run/secrets/postgres_runtime_password
+    secrets:
+      - postgres_admin_password
+      - postgres_runtime_password
+    cpus: "0.50"
+    mem_limit: 512m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+
+  migration:
+    environment:
+      <<: &clear-server-secrets
+        DATABASE_URL: ""
+        DATABASE_URL_FILE: ""
+        GITHUB_OAUTH_CLIENT_SECRET: ""
+        GITHUB_OAUTH_CLIENT_SECRET_FILE: ""
+        WHAT_THE_REPO_SESSION_SECRET: ""
+        WHAT_THE_REPO_SESSION_SECRET_FILE: ""
+        WHAT_THE_REPO_KEY_ENCRYPTION_SECRET: ""
+        WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE: ""
+        WHAT_THE_REPO_FREE_PROVIDER_API_KEY: ""
+        WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE: ""
+        WHAT_THE_REPO_FEEDBACK_PROVIDER_API_KEY: ""
+        WHAT_THE_REPO_FEEDBACK_PROVIDER_API_KEY_FILE: ""
+        WHAT_THE_REPO_COS_SECRET_ID: ""
+        WHAT_THE_REPO_COS_SECRET_ID_FILE: ""
+        WHAT_THE_REPO_COS_SECRET_KEY: ""
+        WHAT_THE_REPO_COS_SECRET_KEY_FILE: ""
+        WHAT_THE_REPO_COS_SECURITY_TOKEN: ""
+        WHAT_THE_REPO_COS_SECURITY_TOKEN_FILE: ""
+        WHAT_THE_REPO_MCP_TOKEN: ""
+        WHAT_THE_REPO_MCP_TOKEN_FILE: ""
+        WHAT_THE_REPO_MCP_TOKENS_JSON: ""
+        WHAT_THE_REPO_MCP_TOKENS_JSON_FILE: ""
+        WHAT_THE_REPO_METRICS_TOKEN: ""
+        WHAT_THE_REPO_METRICS_TOKEN_FILE: ""
+      NODE_ENV: production
+      DATABASE_URL: ""
+      DATABASE_URL_FILE: /run/secrets/postgres_admin_database_url
+      WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE: /run/secrets/key_encryption_secret
+      WHAT_THE_REPO_COS_SECRET_ID_FILE: /run/secrets/cos_secret_id
+      WHAT_THE_REPO_COS_SECRET_KEY_FILE: /run/secrets/cos_secret_key
+    secrets:
+      - key_encryption_secret
+      - cos_secret_id
+      - cos_secret_key
+      - postgres_admin_database_url
+    cpus: "1.00"
+    mem_limit: 1g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    environment:
+      <<: *clear-server-secrets
+      NODE_ENV: production
+      DATABASE_URL: ""
+      DATABASE_URL_FILE: /run/secrets/postgres_runtime_database_url
+      GITHUB_OAUTH_CLIENT_SECRET_FILE: /run/secrets/github_oauth_client_secret
+      WHAT_THE_REPO_SESSION_SECRET_FILE: /run/secrets/session_secret
+      WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE: /run/secrets/key_encryption_secret
+      WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE: /run/secrets/free_provider_api_key
+      WHAT_THE_REPO_FEEDBACK_PROVIDER_API_KEY_FILE: /run/secrets/feedback_provider_api_key
+      WHAT_THE_REPO_COS_SECRET_ID_FILE: /run/secrets/cos_secret_id
+      WHAT_THE_REPO_COS_SECRET_KEY_FILE: /run/secrets/cos_secret_key
+      WHAT_THE_REPO_MCP_TOKEN_FILE: /run/secrets/mcp_token
+      WHAT_THE_REPO_METRICS_TOKEN_FILE: /run/secrets/metrics_token
+    secrets:
+      - github_oauth_client_secret
+      - session_secret
+      - key_encryption_secret
+      - free_provider_api_key
+      - feedback_provider_api_key
+      - cos_secret_id
+      - cos_secret_key
+      - mcp_token
+      - metrics_token
+      - postgres_runtime_database_url
+    ports: !reset []
+    expose:
+      - "8307"
+    cpus: "1.00"
+    mem_limit: 1536m
+    pids_limit: 512
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=268435456,mode=1777
+
+  analysis-worker:
+    environment:
+      <<: *clear-server-secrets
+      NODE_ENV: production
+      DATABASE_URL: ""
+      DATABASE_URL_FILE: /run/secrets/postgres_runtime_database_url
+      GITHUB_OAUTH_CLIENT_SECRET_FILE: /run/secrets/github_oauth_client_secret
+      WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE: /run/secrets/key_encryption_secret
+      WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE: /run/secrets/free_provider_api_key
+      WHAT_THE_REPO_COS_SECRET_ID_FILE: /run/secrets/cos_secret_id
+      WHAT_THE_REPO_COS_SECRET_KEY_FILE: /run/secrets/cos_secret_key
+      WHAT_THE_REPO_METRICS_TOKEN_FILE: /run/secrets/metrics_token
+    secrets:
+      - github_oauth_client_secret
+      - key_encryption_secret
+      - free_provider_api_key
+      - cos_secret_id
+      - cos_secret_key
+      - metrics_token
+      - postgres_runtime_database_url
+    cpus: "1.50"
+    mem_limit: 3g
+    pids_limit: 768
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=1073741824,mode=1777
+
+  scheduler:
+    environment:
+      <<: *clear-server-secrets
+      NODE_ENV: production
+      DATABASE_URL: ""
+      DATABASE_URL_FILE: /run/secrets/postgres_runtime_database_url
+      WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE: /run/secrets/key_encryption_secret
+      WHAT_THE_REPO_COS_SECRET_ID_FILE: /run/secrets/cos_secret_id
+      WHAT_THE_REPO_COS_SECRET_KEY_FILE: /run/secrets/cos_secret_key
+      WHAT_THE_REPO_METRICS_TOKEN_FILE: /run/secrets/metrics_token
+    secrets:
+      - key_encryption_secret
+      - cos_secret_id
+      - cos_secret_key
+      - metrics_token
+      - postgres_runtime_database_url
+    cpus: "0.25"
+    mem_limit: 512m
+    pids_limit: 256
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=67108864,mode=1777
+
+  web:
+    user: "101:101"
+    cpus: "0.50"
+    mem_limit: 256m
+    pids_limit: 128
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /var/cache/nginx:rw,nosuid,nodev,size=16777216,uid=101,gid=101,mode=0755
+      - /var/run:rw,nosuid,nodev,size=1048576,uid=101,gid=101,mode=0755
+
+  prometheus:
+    environment:
+      WHAT_THE_REPO_METRICS_TOKEN: ""
+      WHAT_THE_REPO_METRICS_TOKEN_FILE: /run/secrets/metrics_token
+    secrets:
+      - metrics_token
+    volumes:
+      - ./infra/monitoring/prometheus.production.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/rules-production:/etc/prometheus/rules-production:ro
+    cpus: "0.50"
+    mem_limit: 1g
+    pids_limit: 256
+
+  alertmanager:
+    command:
+      - --config.file=/run/secrets/alertmanager_config
+      - --storage.path=/alertmanager
+    secrets:
+      - alertmanager_config
+    cpus: "0.25"
+    mem_limit: 256m
+    pids_limit: 128
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ""
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_admin_password
+    secrets:
+      - grafana_admin_password
+    cpus: "0.50"
+    mem_limit: 512m
+    pids_limit: 256
+
+  node-exporter:
+    profiles: ["monitoring"]
+    image: prom/node-exporter:v1.12.1
+    restart: unless-stopped
+    read_only: true
+    command:
+      - --path.rootfs=/host
+      - --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($|/)
+    volumes:
+      - /:/host:ro,rslave
+      - ${WTR_OPERATIONS_ROOT:-/var/lib/what-the-repo-operations}/metrics:/var/lib/node_exporter/textfile_collector:ro
+    expose:
+      - "9100"
+    cpus: "0.10"
+    mem_limit: 128m
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+
+  postgres-restore:
+    profiles: ["operations"]
+    image: what-the-repo-postgres-walg:${WTR_IMAGE_TAG:-local}
+    restart: "no"
+    environment:
+      WALG_FILE_PREFIX: ""
+      WALG_S3_PREFIX: ${POSTGRES_BACKUP_S3_PREFIX:?set POSTGRES_BACKUP_S3_PREFIX}
+      WALG_PREVENT_WAL_OVERWRITE: ${POSTGRES_BACKUP_PREVENT_WAL_OVERWRITE:-true}
+      WALG_S3_SSE: ${POSTGRES_BACKUP_S3_SSE:-AES256}
+      AWS_ENDPOINT: ${POSTGRES_BACKUP_AWS_ENDPOINT:?set POSTGRES_BACKUP_AWS_ENDPOINT}
+      AWS_REGION: ${POSTGRES_BACKUP_AWS_REGION:?set POSTGRES_BACKUP_AWS_REGION}
+      AWS_S3_FORCE_PATH_STYLE: ${POSTGRES_BACKUP_AWS_FORCE_PATH_STYLE:-false}
+      AWS_ACCESS_KEY_ID: ""
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/postgres_backup_access_key_id
+      AWS_SECRET_ACCESS_KEY: ""
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/postgres_backup_secret_access_key
+      POSTGRES_RESTORE_BACKUP_NAME: ${POSTGRES_RESTORE_BACKUP_NAME:-LATEST}
+      POSTGRES_RECOVERY_TARGET_TIME: ${POSTGRES_RECOVERY_TARGET_TIME:-}
+    volumes:
+      - postgres-restore-data:/var/lib/postgresql/restore
+    secrets:
+      - postgres_backup_access_key_id
+      - postgres_backup_secret_access_key
+    entrypoint: ["/usr/local/bin/wtr-postgres-restore"]
+    cpus: "1.00"
+    mem_limit: 2g
+    pids_limit: 256
+
+  postgres-restored:
+    profiles: ["operations"]
+    image: what-the-repo-postgres-walg:${WTR_IMAGE_TAG:-local}
+    restart: "no"
+    command:
+      - postgres
+      - -c
+      - archive_mode=off
+      - -c
+      - max_connections=20
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-what_the_repo}
+      POSTGRES_USER: ${POSTGRES_USER:-what_the_repo}
+      POSTGRES_PASSWORD: ""
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      WALG_FILE_PREFIX: ""
+      WALG_S3_PREFIX: ${POSTGRES_BACKUP_S3_PREFIX:?set POSTGRES_BACKUP_S3_PREFIX}
+      WALG_PREVENT_WAL_OVERWRITE: ${POSTGRES_BACKUP_PREVENT_WAL_OVERWRITE:-true}
+      WALG_S3_SSE: ${POSTGRES_BACKUP_S3_SSE:-AES256}
+      AWS_ENDPOINT: ${POSTGRES_BACKUP_AWS_ENDPOINT:?set POSTGRES_BACKUP_AWS_ENDPOINT}
+      AWS_REGION: ${POSTGRES_BACKUP_AWS_REGION:?set POSTGRES_BACKUP_AWS_REGION}
+      AWS_S3_FORCE_PATH_STYLE: ${POSTGRES_BACKUP_AWS_FORCE_PATH_STYLE:-false}
+      AWS_ACCESS_KEY_ID: ""
+      AWS_ACCESS_KEY_ID_FILE: /run/secrets/postgres_backup_access_key_id
+      AWS_SECRET_ACCESS_KEY: ""
+      AWS_SECRET_ACCESS_KEY_FILE: /run/secrets/postgres_backup_secret_access_key
+    volumes:
+      - postgres-restore-data:/var/lib/postgresql/data
+    secrets:
+      - postgres_admin_password
+      - postgres_backup_access_key_id
+      - postgres_backup_secret_access_key
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    cpus: "1.00"
+    mem_limit: 2g
+    pids_limit: 256
+
+secrets:
+  postgres_admin_password:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/postgres-admin-password
+  postgres_runtime_password:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/postgres-runtime-password
+  postgres_admin_database_url:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/postgres-admin-database-url
+  postgres_runtime_database_url:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/postgres-runtime-database-url
+  github_oauth_client_secret:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/github-oauth-client-secret
+  session_secret:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/session-secret
+  key_encryption_secret:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/key-encryption-secret
+  free_provider_api_key:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/free-provider-api-key
+  feedback_provider_api_key:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/feedback-provider-api-key
+  cos_secret_id:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/cos-secret-id
+  cos_secret_key:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/cos-secret-key
+  mcp_token:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/mcp-token
+  metrics_token:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/metrics-token
+  grafana_admin_password:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/grafana-admin-password
+  alertmanager_config:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/alertmanager.yml
+  postgres_backup_access_key_id:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/postgres-backup-access-key-id
+  postgres_backup_secret_access_key:
+    file: ${WTR_SECRET_ROOT:-.secrets/production}/postgres-backup-secret-access-key
+
+volumes:
+  postgres-restore-data:
+    name: ${POSTGRES_RESTORE_VOLUME_NAME:-what-the-repo-postgres-restore-data}

@@ -1,0 +1,334 @@
+name: quality-gates
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  license-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/check-license-inventory.mjs
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - run: npm run build
+        working-directory: server
+      - run: npm test
+        working-directory: server
+      - run: npm run eval:fixture -- --output-dir ../out/product-eval
+        working-directory: server
+      - run: npm run eval:conversation -- --output-dir ../out/conversation-eval
+        working-directory: server
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: typescript-server-eval
+          path: |
+            out/product-eval
+            out/conversation-eval
+
+  medium-eval:
+    runs-on: ubuntu-latest
+    needs: server
+    env:
+      CODEBOARDING_COMMIT: 164d75247ab933978790a9b4a42f4192ca54f484
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - name: Fetch fixed CodeBoarding source
+        shell: bash
+        run: |
+          mkdir -p research/CodeBoarding
+          git -C research/CodeBoarding init
+          git -C research/CodeBoarding config core.hooksPath /dev/null
+          git -C research/CodeBoarding remote add origin https://github.com/CodeBoarding/CodeBoarding.git
+          git -C research/CodeBoarding fetch --depth=1 origin "$CODEBOARDING_COMMIT"
+          git -C research/CodeBoarding checkout --detach FETCH_HEAD
+          test "$(git -C research/CodeBoarding rev-parse HEAD)" = "$CODEBOARDING_COMMIT"
+      - name: Run read-only medium repository Eval
+        run: >-
+          npm run eval:local --
+          --target ../research/CodeBoarding
+          --expected-commit "$CODEBOARDING_COMMIT"
+          --output-dir ../out/medium-product-eval
+        working-directory: server
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: medium-product-eval-report
+          path: out/medium-product-eval
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: web
+      - run: npm run lint
+        working-directory: web
+      - run: npm test
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+
+  web-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/test-web-gateway.mjs
+
+  k3s-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check k3s manifests and deployment scripts
+        run: node scripts/test-k3s-manifests.mjs
+
+  k3d-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create ephemeral k3d cluster
+        uses: AbsaOSS/k3d-action@v2
+        with:
+          cluster-name: wtr-ci
+          k3d-version: v5.9.0
+          args: >-
+            --agents 0
+            --no-lb
+            --wait
+            --timeout 120s
+            --image docker.io/rancher/k3s:v1.36.3-k3s1
+            --k3s-arg "--disable=traefik@server:*"
+            --k3s-arg "--disable=servicelb@server:*"
+            --k3s-arg "--disable=metrics-server@server:*"
+      - name: Run real cluster smoke
+        shell: bash
+        env:
+          K3D_CLUSTER_NAME: wtr-ci
+          K3D_SMOKE_CREATE_CLUSTER: "0"
+          K3D_SMOKE_DELETE_CLUSTER: "0"
+        run: bash scripts/test-k3d-smoke.sh
+      - name: Collect k3d diagnostics
+        if: always()
+        shell: bash
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl get pods -A -o wide || true
+          kubectl get events -A --sort-by=.lastTimestamp || true
+          k3d cluster list || true
+      - name: Delete ephemeral k3d cluster
+        if: always()
+        shell: bash
+        run: k3d cluster delete wtr-ci || true
+
+  production-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/test-production-operations.mjs
+      - name: Check production shell syntax
+        shell: bash
+        run: >-
+          bash -n
+          scripts/lib/production-common.sh
+          scripts/run-production-backup.sh
+          scripts/run-production-restore-drill.sh
+          scripts/run-production-public-probe.sh
+          scripts/production-preflight.sh
+          scripts/prepare-production-secret-permissions.sh
+          scripts/install-production-operations.sh
+          scripts/production-converge.sh
+          scripts/rollback-production-release.sh
+          infra/monitoring/prometheus-entrypoint.sh
+          infra/monitoring/grafana-entrypoint.sh
+          infra/postgres/wtr-postgres-role-bootstrap
+          infra/postgres/wtr-postgres-backup
+      - name: Create non-secret Compose fixtures
+        shell: bash
+        run: |
+          mkdir -p .secrets/production
+          for name in \
+            postgres-admin-password postgres-runtime-password \
+            postgres-admin-database-url postgres-runtime-database-url \
+            github-oauth-client-secret session-secret key-encryption-secret \
+            free-provider-api-key feedback-provider-api-key cos-secret-id cos-secret-key \
+            mcp-token metrics-token grafana-admin-password \
+            postgres-backup-access-key-id postgres-backup-secret-access-key; do
+            printf 'ci-%s-012345678901234567890123456789' "$name" > ".secrets/production/$name"
+          done
+          cat > .secrets/production/alertmanager.yml <<'EOF'
+          route:
+            receiver: production-webhook
+          receivers:
+            - name: production-webhook
+              webhook_configs:
+                - url: https://example.invalid/alert
+                  send_resolved: true
+          EOF
+      - name: Validate merged production Compose
+        env:
+          WTR_SECRET_ROOT: .secrets/production
+        run: >-
+          docker compose
+          --env-file .env.production.example
+          -f compose.yaml
+          -f compose.production.yaml
+          --profile monitoring
+          --profile operations
+          config --quiet
+      - name: Validate production monitoring rules
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD/infra/monitoring:/etc/what-the-repo-monitoring:ro" \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.13.2 \
+            check rules \
+            /etc/what-the-repo-monitoring/rules/what-the-repo.yml \
+            /etc/what-the-repo-monitoring/rules-production/what-the-repo-production.yml
+          docker run --rm \
+            -v "$PWD/infra/monitoring:/etc/what-the-repo-monitoring:ro" \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.13.2 \
+            test rules \
+            /etc/what-the-repo-monitoring/tests/what-the-repo.test.yml \
+            /etc/what-the-repo-monitoring/tests/what-the-repo-production.test.yml
+
+  web-e2e:
+    runs-on: ubuntu-latest
+    needs: [server, web]
+    # Public PR checks use no paid-provider credentials.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm run test:e2e
+        working-directory: web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-e2e-report
+          path: web/test-results
+
+  pi-evolution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: evolution/pi/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: evolution/pi
+      - run: npm test
+        working-directory: evolution/pi
+      - run: npm run probe:docker -- --output ../../out/pi-runtime-probe/report.json
+        working-directory: evolution/pi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pi-runtime-probe
+          path: out/pi-runtime-probe/report.json
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    needs: [server, web, web-gateway, pi-evolution]
+    env:
+      POSTGRES_PASSWORD: ci-postgres-password-not-for-production
+      GITHUB_OAUTH_CLIENT_ID: ci-client-id
+      GITHUB_OAUTH_CLIENT_SECRET: ci-client-secret
+      GITHUB_OAUTH_CALLBACK_URL: http://127.0.0.1:8307/api/auth/github/callback
+      WHAT_THE_REPO_WEB_URL: http://127.0.0.1:5307
+      WHAT_THE_REPO_SESSION_SECRET: ci-session-secret-012345678901234567890123456789
+      WHAT_THE_REPO_KEY_ENCRYPTION_SECRET: ci-encryption-secret-01234567890123456789012345
+      WHAT_THE_REPO_MCP_TOKEN: ci-mcp-token-not-for-production-0123456789
+      WHAT_THE_REPO_MCP_OWNER_ID: github:ci-owner
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up --build -d --wait --wait-timeout 240
+      - run: curl --fail --show-error --silent http://127.0.0.1:8307/api/health
+      - run: curl --fail --show-error --silent http://127.0.0.1:5307/healthz
+      - run: docker compose exec -T web nginx -t
+      - run: docker compose ps
+      - run: docker compose logs --no-color
+        if: always()
+      - run: docker compose down --volumes --remove-orphans
+        if: always()
+
+  production-compose-smoke:
+    runs-on: ubuntu-latest
+    needs: [server, web, web-gateway, production-config]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run isolated two-API production topology
+        shell: pwsh
+        run: ./scripts/test-production-compose.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-compose-smoke-report
+          path: |
+            out/production-compose-smoke/report.json
+            out/production-compose-smoke/compose.log
+
+  final-quality:
+    runs-on: ubuntu-latest
+    needs: [license-inventory, server, medium-eval, web, web-gateway, k3s-manifests, k3d-smoke, production-config, web-e2e, pi-evolution, docker-smoke, production-compose-smoke]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record completed quality gates
+        run: >-
+          node -e "const fs=require('fs');fs.mkdirSync('out/final-quality',{recursive:true});fs.writeFileSync('out/final-quality/report.json',JSON.stringify({schema_version:'typescript-final-quality-v1',passed:true,complete:true,completed_at:new Date().toISOString(),gates:['license-inventory','server','fixture-eval','conversation-eval','medium-eval','web','web-gateway','k3s-manifests','k3d-smoke','production-config','chromium-e2e','pi-evolution','docker-smoke','production-compose-smoke']},null,2)+'\n')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-quality-report
+          path: out/final-quality/report.json

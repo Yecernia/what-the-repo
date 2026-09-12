@@ -1,0 +1,11 @@
+{
+  "lastAnalyzedAt": "2026-08-10T17:14:20.805295+00:00",
+  "gitCommitHash": "not-a-git-repository",
+  "version": "1.0.0",
+  "analyzedFiles": 10,
+  "contentDigest": "eca006ed0d7ade8ea0cd3061d5608b361ec884610470e147098af4de2faa8cd6",
+  "pluginCommit": "fe8c5bc591716aafd79b4765549328f08ef5a52e",
+  "pluginVersion": "2.9.4",
+  "analysisDataExcluded": true,
+  "intermediatePreservedForEvaluation": true
+}

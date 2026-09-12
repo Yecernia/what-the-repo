@@ -1,0 +1,78 @@
+rule_files:
+  - ../rules-production/what-the-repo-production.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: failed operational jobs become production alerts
+    interval: 1m
+    input_series:
+      - series: what_the_repo_postgres_backup_last_run_unixtime
+        values: "100x7"
+      - series: what_the_repo_postgres_backup_last_run_success
+        values: "0x7"
+      - series: what_the_repo_postgres_restore_drill_last_run_unixtime
+        values: "100x7"
+      - series: what_the_repo_postgres_restore_drill_last_run_success
+        values: "0x7"
+      - series: what_the_repo_public_https_probe_last_run_unixtime
+        values: "100x7"
+      - series: what_the_repo_public_https_probe_success
+        values: "0x7"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: WhatTheRepoPostgresBackupFailed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: the latest PostgreSQL base backup failed
+              description: The production backup timer completed unsuccessfully; inspect its systemd journal.
+      - eval_time: 5m
+        alertname: WhatTheRepoRestoreDrillFailed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: the latest PostgreSQL restore drill failed
+              description: The latest isolated COS restore verification did not complete successfully.
+      - eval_time: 5m
+        alertname: WhatTheRepoPublicHttpsProbeFailed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: the public HTTPS product probe is failing
+              description: The production host cannot complete the configured domain and PostgreSQL health check.
+
+  - name: fresh successful operations remain quiet
+    interval: 1m
+    input_series:
+      - series: what_the_repo_postgres_backup_last_run_unixtime
+        values: "100x10"
+      - series: what_the_repo_postgres_backup_last_run_success
+        values: "1x10"
+      - series: what_the_repo_postgres_backup_last_success_unixtime
+        values: "100x10"
+      - series: what_the_repo_postgres_restore_drill_last_run_unixtime
+        values: "100x10"
+      - series: what_the_repo_postgres_restore_drill_last_run_success
+        values: "1x10"
+      - series: what_the_repo_postgres_restore_drill_last_success_unixtime
+        values: "100x10"
+      - series: what_the_repo_public_https_probe_last_run_unixtime
+        values: "100x10"
+      - series: what_the_repo_public_https_probe_success
+        values: "1x10"
+      - series: what_the_repo_tls_certificate_not_after_unixtime
+        values: "2000000x10"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: WhatTheRepoPostgresBackupFailed
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: WhatTheRepoRestoreDrillFailed
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: WhatTheRepoPublicHttpsProbeFailed
+        exp_alerts: []

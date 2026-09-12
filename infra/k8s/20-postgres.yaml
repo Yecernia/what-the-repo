@@ -1,0 +1,156 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: what-the-repo
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: what-the-repo
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: what-the-repo
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: postgres
+          image: what-the-repo-postgres-walg:__WTR_IMAGE_TAG__
+          imagePullPolicy: Never
+          command:
+            - sh
+            - -ec
+            - |
+              exec /usr/local/bin/docker-entrypoint.sh postgres \
+                -c max_connections="$POSTGRES_MAX_CONNECTIONS" \
+                -c archive_mode="$POSTGRES_ARCHIVE_MODE" \
+                -c archive_command='/usr/local/bin/wtr-wal-g wal-push %p' \
+                -c archive_timeout="$POSTGRES_ARCHIVE_TIMEOUT"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: wtr-config
+          env:
+            - name: WALG_FILE_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: wtr-config
+                  key: POSTGRES_BACKUP_FILE_PREFIX
+            - name: WALG_S3_PREFIX
+              valueFrom:
+                configMapKeyRef:
+                  name: wtr-config
+                  key: POSTGRES_BACKUP_S3_PREFIX
+            - name: WALG_PREVENT_WAL_OVERWRITE
+              valueFrom:
+                configMapKeyRef:
+                  name: wtr-config
+                  key: POSTGRES_BACKUP_PREVENT_WAL_OVERWRITE
+            - name: WALG_S3_SSE
+              valueFrom:
+                configMapKeyRef:
+                  name: wtr-config
+                  key: POSTGRES_BACKUP_S3_SSE
+            - name: AWS_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: wtr-config
+                  key: POSTGRES_BACKUP_AWS_ENDPOINT
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: wtr-config
+                  key: POSTGRES_BACKUP_AWS_REGION
+            - name: AWS_S3_FORCE_PATH_STYLE
+              valueFrom:
+                configMapKeyRef:
+                  name: wtr-config
+                  key: POSTGRES_BACKUP_AWS_FORCE_PATH_STYLE
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/secrets/postgres-admin-password
+            - name: AWS_ACCESS_KEY_ID_FILE
+              value: /run/backup-secrets/access-key-id
+            - name: AWS_SECRET_ACCESS_KEY_FILE
+              value: /run/backup-secrets/secret-access-key
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-init-secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: postgres-backup-secrets
+              mountPath: /run/backup-secrets
+              readOnly: true
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -ec
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -ec
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: 1500m
+              memory: 4Gi
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-data
+        - name: postgres-init-secrets
+          secret:
+            secretName: wtr-postgres-init
+            defaultMode: 0444
+        - name: postgres-backup-secrets
+          secret:
+            secretName: wtr-backup-secrets
+            items:
+              - key: access-key-id
+                path: access-key-id
+              - key: secret-access-key
+                path: secret-access-key
+            defaultMode: 0444

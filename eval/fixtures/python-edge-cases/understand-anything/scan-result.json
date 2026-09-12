@@ -1,0 +1,115 @@
+{
+    "name":  "python-edge-cases-understand-20260810",
+    "description":  "No description available",
+    "languages":  [
+                      "python"
+                  ],
+    "frameworks":  [
+
+                   ],
+    "files":  [
+                  {
+                      "path":  "core/__init__.py",
+                      "language":  "python",
+                      "sizeLines":  12,
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "core/base.py",
+                      "language":  "python",
+                      "sizeLines":  71,
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "core/models.py",
+                      "language":  "python",
+                      "sizeLines":  73,
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "core/pipeline.py",
+                      "language":  "python",
+                      "sizeLines":  172,
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "core/services.py",
+                      "language":  "python",
+                      "sizeLines":  70,
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "main.py",
+                      "language":  "python",
+                      "sizeLines":  84,
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "unused/__init__.py",
+                      "language":  "python",
+                      "sizeLines":  6,
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "unused/dead_code.py",
+                      "language":  "python",
+                      "sizeLines":  27,
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "utils/__init__.py",
+                      "language":  "python",
+                      "sizeLines":  9,
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "utils/helpers.py",
+                      "language":  "python",
+                      "sizeLines":  34,
+                      "fileCategory":  "code"
+                  }
+              ],
+    "totalFiles":  10,
+    "filteredByIgnore":  0,
+    "estimatedComplexity":  "small",
+    "importMap":  {
+                      "core/__init__.py":  [
+                                               "core/base.py",
+                                               "core/models.py"
+                                           ],
+                      "core/base.py":  [
+
+                                       ],
+                      "core/models.py":  [
+
+                                         ],
+                      "core/pipeline.py":  [
+                                               "core/base.py",
+                                               "core/models.py",
+                                               "utils/helpers.py"
+                                           ],
+                      "core/services.py":  [
+                                               "core/base.py",
+                                               "core/models.py",
+                                               "utils/helpers.py"
+                                           ],
+                      "main.py":  [
+                                      "core/base.py",
+                                      "core/models.py",
+                                      "core/pipeline.py",
+                                      "core/services.py"
+                                  ],
+                      "unused/__init__.py":  [
+
+                                             ],
+                      "unused/dead_code.py":  [
+
+                                              ],
+                      "utils/__init__.py":  [
+                                                "utils/helpers.py"
+                                            ],
+                      "utils/helpers.py":  [
+
+                                           ]
+                  }
+}
