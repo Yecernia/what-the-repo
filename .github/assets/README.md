@@ -2,7 +2,9 @@
 
 ## Promotional illustration
 
-`product-hero.png` was supplied and approved by the project maintainer on 2026-09-13 after generating the illustration in ChatGPT. It is included unchanged, with its original Chinese lettering, in both README languages. It is promotional artwork, not a product screenshot.
+`product-hero.svg` is a static vector export of the original project homepage illustration from [FieldIllustration.tsx](../../web/src/FieldIllustration.tsx), [pen-path.ts](../../web/src/pen-path.ts), and [BrandWordmark.tsx](../../web/src/BrandWordmark.tsx). It has a transparent canvas, adapts its ink colors to light/dark mode, and keeps the Chinese captions in both README languages. The illustration and wordmark are paths, with no embedded screenshot, external font request or script. The two caption lines use system font fallbacks, so their appearance may vary by device.
+
+The wordmark outlines come from the bundled JasonHandwriting6p font under [SIL OFL 1.1](../../web/public/fonts/OFL-JasonHandwriting.txt). Original project illustration code retains the project license. This asset was exported from the project source; it was not generated in ChatGPT. The earlier PNG was a user-supplied screenshot crop and has been superseded.
 
 ## Product screenshots
 

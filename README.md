@@ -14,7 +14,7 @@
   <a href="CONTRIBUTING.zh-CN.md"><img src="https://img.shields.io/badge/%E5%8F%82%E4%B8%8E%E8%B4%A1%E7%8C%AE-536878?style=flat-square" alt="参与贡献"></a>
 </p>
 
-<p><a href="https://bottlecapduel.com"><img src=".github/assets/product-hero.png" width="680" alt="what-the-repo：从好奇开始。树下长椅上的人用电脑探索仓库。"></a></p>
+<p><img src=".github/assets/product-hero.svg" width="600" alt="what-the-repo：从好奇开始。树下长椅上的人用电脑探索仓库。"></p>
 
 <p><a href="https://bottlecapduel.com"><strong>打开 what-the-repo ↗</strong></a> · <a href="https://github.com/Yecernia/what-the-repo/issues">反馈与建议</a></p>
 
