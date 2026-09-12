@@ -14,7 +14,7 @@
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contribute-536878?style=flat-square" alt="Contribute"></a>
 </p>
 
-<p><a href="https://bottlecapduel.com"><img src=".github/assets/product-hero.png" width="680" alt="what-the-repo — Start with curiosity. A line drawing of a person exploring code on a park bench."></a></p>
+<p><img src=".github/assets/product-hero.svg" width="600" alt="what-the-repo — Start with curiosity. A line drawing of a person exploring code on a park bench."></p>
 
 <p><a href="https://bottlecapduel.com"><strong>Open what-the-repo ↗</strong></a> · <a href="https://github.com/Yecernia/what-the-repo/issues">Feedback & ideas</a></p>
 
