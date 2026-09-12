@@ -36,3 +36,5 @@ Fetched license snapshots for assets are tied to upstream revisions in
 [upstream-sources.json](upstream-sources.json). A license snapshot's revision is
 not automatically the original import revision of every associated asset;
 per-file evidence in `assets.json` makes that distinction explicit.
+
+Preserve package identifiers, versions, SPDX identifiers and upstream notice text when updating the dependency tables.

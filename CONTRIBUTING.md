@@ -1,6 +1,11 @@
 # Contributing to what-the-repo
 
+[简体中文](CONTRIBUTING.zh-CN.md) · **English**
+
+[Back to product overview](README.en.md)
+
 This repository contains the hosted Web product. A separate offline/desktop edition is outside the current scope.
+
 
 ## Changes and pull requests
 
@@ -17,6 +22,6 @@ Use Conventional Commit titles such as `fix: restore cancelled analysis jobs`, `
 
 Explain why a dependency is needed. Update the lockfile, license inventory and applicable notices when changing dependencies or third-party assets; preserve existing copyright and modification notices. The inventory includes exact manifest hashes and will report stale records. See [license records](licenses/README.md).
 
-## Reporting security issues
+## Community and security
 
-Do not paste a live credential, private source or an exploit against the hosted service into a public issue. Use GitHub's private vulnerability reporting when enabled; otherwise request a private contact channel without posting sensitive details. Never test against other users' data.
+Please follow the [code of conduct](CODE_OF_CONDUCT.md) in issues, pull requests and discussions. See the [security policy](SECURITY.md) for supported code and private vulnerability reporting. Do not post credentials, private source or vulnerability details in a public issue, or test against other users' data.
