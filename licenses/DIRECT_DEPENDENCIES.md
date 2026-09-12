@@ -1,5 +1,7 @@
 # Direct npm dependencies
 
+[简体中文](DIRECT_DEPENDENCIES.zh-CN.md) · **English**
+
 Resolved versions are from the checked-in lockfiles. Package metadata `private: true` prevents accidental npm publication; it does not make the GitHub source private.
 
 | Scope | Package | Resolved version | Use | Declared license |

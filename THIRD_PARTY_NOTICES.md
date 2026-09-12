@@ -1,5 +1,9 @@
 # Third-party notices
 
+[简体中文](THIRD_PARTY_NOTICES.zh-CN.md) · **English**
+
+[Back to product overview](README.en.md)
+
 The root [LICENSE](LICENSE) applies to original what-the-repo code. Third-party
 code, fonts, logos, dependency packages and other materials retain their own
 copyrights and licenses. They are not relicensed solely by being included here.

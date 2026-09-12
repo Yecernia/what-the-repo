@@ -1,5 +1,7 @@
 # License inventory maintenance
 
+[简体中文](README.zh-CN.md) · **English**
+
 Start with [third-party notices](../THIRD_PARTY_NOTICES.md). This directory keeps
 original upstream LICENSE/NOTICE texts separate from the project's root MIT.
 Content-addressed files under `npm/` are shared by packages with identical notice
@@ -36,3 +38,5 @@ Fetched license snapshots for assets are tied to upstream revisions in
 [upstream-sources.json](upstream-sources.json). A license snapshot's revision is
 not automatically the original import revision of every associated asset;
 per-file evidence in `assets.json` makes that distinction explicit.
+
+Keep the Chinese and English explanatory pages in sync. Preserve package identifiers, versions, SPDX identifiers and upstream notice text when updating the translated dependency tables.

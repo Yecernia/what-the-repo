@@ -1,5 +1,7 @@
 # Distribution and license boundaries
 
+[简体中文](DISTRIBUTION.zh-CN.md) · **English**
+
 ## Scope of this inventory
 
 The checked-in inventory covers 846 unique npm name/version pairs from four

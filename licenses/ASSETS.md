@@ -1,5 +1,7 @@
 # Distributed visual assets
 
+[简体中文](ASSETS.zh-CN.md) · **English**
+
 Logos identify third-party services and languages. Copyright licenses do not grant trademark rights or imply endorsement. All bundled assets are inventoried by SHA-256 in [assets.json](assets.json). No Microsoft/system fonts are bundled.
 
 | Files | Source / license |

@@ -1,79 +1,89 @@
-# what-the-repo
+<div align="center">
 
-An evidence-grounded AI learning companion for understanding unfamiliar public
-GitHub repositories.
+<h1>what-the-repo</h1>
 
-what-the-repo 的在线 Web 产品源码。系统从公开仓库建立文件、符号和关系事实，
-再生成架构视图、学习价值点与研学路线，并在对话中提供可核对的代码证据。
+<p><strong>发现一个开源项目值得学的地方，沿着代码真正弄懂它。</strong></p>
+<p>面向公开 GitHub 仓库的 AI 研学伙伴。</p>
 
-## Scope
+<p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
-This repository contains the hosted Web application, API, analysis worker,
-controlled Evolution worker, tests and deployment recipes. Local launch scripts
-are for development and testing. A separate login-free local/desktop edition is
-a future product, not the purpose of these development scripts.
+<p>
+  <a href="https://bottlecapduel.com"><img src="https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-7C5CBF?style=flat-square" alt="在线体验 what-the-repo"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/MIT%20%E8%AE%B8%E5%8F%AF%E8%AF%81-D4A72C?style=flat-square" alt="查看 MIT 许可证"></a>
+  <a href="https://github.com/Yecernia/what-the-repo"><img src="https://img.shields.io/badge/%E6%9F%A5%E7%9C%8B%E6%BA%90%E7%A0%81-39815A?style=flat-square" alt="查看源码"></a>
+  <a href="CONTRIBUTING.zh-CN.md"><img src="https://img.shields.io/badge/%E5%8F%82%E4%B8%8E%E8%B4%A1%E7%8C%AE-536878?style=flat-square" alt="参与贡献"></a>
+</p>
 
-## Code layout
+<p><a href="https://bottlecapduel.com"><img src=".github/assets/product-hero.png" width="680" alt="what-the-repo：从好奇开始。树下长椅上的人用电脑探索仓库。"></a></p>
 
-- `server/`: TypeScript/Node.js, Fastify, Pi Agent runtime, static analysis,
-  PostgreSQL persistence, Redis/BullMQ delivery and object-store adapters.
-- `web/`: React/Vite workbench, conversation UI and evidence/architecture views.
-- `evolution/pi/`: isolated candidate generation and human-reviewed Skill updates.
-- `eval/`: deterministic test fixtures and evaluation cases.
-- `infra/`, `compose*.yaml`, `scripts/`: development, validation and deployment recipes.
+<p><a href="https://bottlecapduel.com"><strong>打开 what-the-repo ↗</strong></a> · <a href="https://github.com/Yecernia/what-the-repo/issues">反馈与建议</a></p>
 
-The application analyzes untrusted repositories without running their install,
-build, test, hook or plugin scripts.
+</div>
 
-## Development
+## 遇到一个好项目，然后呢？
 
-Use Node.js 22.19 or later (current CI uses Node.js 24). Install the three product
-packages with `npm ci` in `server/`, `web/` and `evolution/pi/`.
+你可能知道它很厉害，却不知道该先读哪个文件、哪些设计值得学，或者为什么要这样实现。
 
-The local dependency workflow runs PostgreSQL/Redis in Docker and runs the API,
-analysis worker and Vite on the host. On Windows, configuration is kept in the
-Git-ignored `.secrets/local.env`; `.env.example` documents the variables.
-Use your own development OAuth application, callback and provider credentials.
-For the default Web URL, the OAuth callback is
-`http://127.0.0.1:5307/api/auth/github/callback`.
-Keep your test OAuth application separate from the production application.
-Never commit the filled-in file.
+**what-the-repo 帮你把这份好奇变成有方向的学习。** 提供一个公开 GitHub 仓库，先看清主要结构，再找到感兴趣的设计与实现，结合源码追问、理解，并尝试用自己的话解释。
 
-```powershell
-New-Item -ItemType Directory -Force .secrets
-# Only for first-time setup; do not overwrite existing credentials.
-if (-not (Test-Path .secrets/local.env)) { Copy-Item .env.example .secrets/local.env }
-# Fill .secrets/local.env before starting.
-powershell -ExecutionPolicy Bypass -File scripts/start-local-dev-deps.ps1
-```
+## 从“想学”到“弄懂”
 
-Web defaults to `http://127.0.0.1:5307` and API to `http://127.0.0.1:8307`.
-Development launch is not an end-user standalone edition or proof of production
-deployment readiness.
+### 定一个目标，沿着路线一步步学
 
-## Configuration and deployment
+把感兴趣的主题拆成可以逐步掌握的小目标。确认路线后，结合代码听讲解、追问，再通过理解检验检查自己是否掌握；学习进度也会保留下来。
 
-Configuration names use `WHAT_THE_REPO_*`; GitHub OAuth variables remain `GITHUB_OAUTH_*`. Filled environment files and credential files stay local and are ignored by Git. Example domains, buckets and account IDs must be replaced with your own values. Set optional `VITE_ICP_RECORD` to your own public filing label before building the Web image; the footer is hidden when it is empty.
+![what-the-repo 中真实的 DSH 学习路线、分步讲解和学习进度。](.github/assets/dsh-learning.jpg)
 
-Docker supplies PostgreSQL and Redis for host development. The full Compose files support integration testing; `infra/k8s/` and the k3s scripts describe the hosted single-node deployment. Deployment requires separate configuration and access to your own infrastructure. CI validates code and recipes; it does not publish or deploy them.
+*实际页面示例：研学 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的 Agent 运行时。*
 
-Existing installations must migrate environment names and explicitly preserve their database names, object prefixes and storage mounts before deploying renamed code. Version 1 provider-key encryption retains its original KDF identifier so stored keys remain readable. Browser cookies and cache keys use the new name; existing browser sessions require signing in again.
+### 读讲解，也能顺着证据看实现
 
-## Contributing
+点击引用文件查看解释背后的代码；需要整体脉络时，再通过架构图探索组件职责和它们之间的关系。
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests, checks and dependency changes. CI starts after a PR is created; passing CI does not replace maintainer review.
+![点选 DSH 会话任务清单组件，突出相关连线并淡化其他节点。](.github/assets/dsh-component.jpg)
 
-## License and attribution
+## 可以用它做什么
 
-Original project code is licensed under [MIT](LICENSE), copyright 2026 Yecernia.
-Third-party material keeps its own terms. See [Third-party notices](THIRD_PARTY_NOTICES.md),
-[direct dependencies](licenses/DIRECT_DEPENDENCIES.md),
-[all npm dependencies](licenses/NPM_DEPENDENCIES.md),
-[visual assets](licenses/ASSETS.md) and [distribution boundaries](licenses/DISTRIBUTION.md).
+| 你想弄明白的事 | what-the-repo 怎么帮你 |
+| --- | --- |
+| **有哪些值得我学习的东西？** | 从架构设计、关键实现和工程取舍中发现值得深入的主题，结合仓库内容说明原因。 |
+| **这段解释有代码依据吗？** | 顺着文件、符号和行号查看源码，核对解释中的结论，也区分事实、推断和待确认内容。 |
+| **我想系统学会这一部分。** | 确认学习目标后生成分步路线，围绕小主题讲解、提问和检查理解；也可以随时自由追问。 |
+| **这个项目是怎么组织起来的？** | 浏览架构图、组件及其关系，把入口、职责和主要流程连起来。 |
+| **下次还能接着学吗？** | 保存项目、对话和学习状态，用可控制的记忆摘要帮助延续学习。 |
 
-```sh
-node scripts/check-license-inventory.mjs
-```
+你可以这样问：
 
-The license inventory covers the source snapshot and its declared dependencies;
-it is not a completed binary/container redistribution audit.
+> “这个仓库最值得我学习的三个设计是什么？请结合代码说明。”
+>
+> “从请求入口开始，带我走一遍主要调用链。”
+>
+> “我想理解这里的任务恢复机制，先帮我制定一条学习路线。”
+
+## 在线开始
+
+1. 打开 **[bottlecapduel.com](https://bottlecapduel.com)**，通过 GitHub 登录或使用访客入口。
+2. 输入一个**公开 GitHub 仓库链接**，等待分析完成。
+3. 浏览项目视图，选择感兴趣的内容提问，或开始一段引导式学习。
+
+界面和研学内容支持中文、英文。首次分析需要时间，耗时会随仓库规模和模型响应变化。
+
+## 这个仓库包含什么
+
+这里开源的是 **what-the-repo 在线 Web 产品的源码**，包括前端、后端、仓库分析、Agent、测试与部署配置。直接体验产品不需要下载本仓库，也不需要安装 Docker。
+
+如果你想阅读实现、参与开发或研究部署方式，请看 [开发说明](DEVELOPMENT.zh-CN.md) 和 [贡献指南](CONTRIBUTING.zh-CN.md)。目前没有单独发布免登录的本地版或桌面客户端。
+
+## 反馈与贡献
+
+发现解释有误、证据缺失或操作不顺手，欢迎 [提交 Issue](https://github.com/Yecernia/what-the-repo/issues)。附上公开仓库链接、复现步骤和预期结果，会更容易定位问题；请不要附带密钥或私人数据。
+
+代码和文档改进欢迎通过 PR 提交，具体流程见 [贡献指南](CONTRIBUTING.zh-CN.md)。
+
+参与交流请遵守[社区行为规范](CODE_OF_CONDUCT.zh-CN.md)；报告漏洞请先阅读[安全报告说明](SECURITY.zh-CN.md)。
+
+## 许可与致谢
+
+项目自有代码采用 [MIT 许可证](LICENSE)。第三方代码、图标和字体保留各自的许可条款。
+
+项目使用 **Pi SDK**，并在研究与实现过程中参考了 **CodeBoarding、Understand Anything** 等项目。具体采用范围、其他参考来源和版权声明见 [第三方声明](THIRD_PARTY_NOTICES.zh-CN.md)。
