@@ -1,0 +1,101 @@
+#!/bin/sh
+set -eu
+
+load_secret_file() {
+  variable_name="$1"
+  direct_value="$2"
+  file_path="$3"
+
+  if [ -n "$direct_value" ] && [ -n "$file_path" ]; then
+    echo "Set either ${variable_name} or ${variable_name}_FILE, not both." >&2
+    exit 64
+  fi
+  if [ -z "$file_path" ]; then
+    return
+  fi
+  if [ ! -f "$file_path" ] || [ ! -r "$file_path" ]; then
+    echo "Secret file for ${variable_name} is not a readable regular file." >&2
+    exit 66
+  fi
+  secret_value=$(cat -- "$file_path")
+  if [ -z "$secret_value" ]; then
+    echo "Secret file for ${variable_name} is empty." >&2
+    exit 65
+  fi
+  export "${variable_name}=${secret_value}"
+}
+
+load_secret_file PGPASSWORD "${PGPASSWORD:-}" "${PGPASSWORD_FILE:-}"
+load_secret_file \
+  POSTGRES_RUNTIME_PASSWORD \
+  "${POSTGRES_RUNTIME_PASSWORD:-}" \
+  "${POSTGRES_RUNTIME_PASSWORD_FILE:-}"
+
+: "${PGHOST:?PGHOST is required}"
+: "${PGDATABASE:?PGDATABASE is required}"
+: "${PGUSER:?PGUSER is required}"
+: "${POSTGRES_RUNTIME_USER:?POSTGRES_RUNTIME_USER is required}"
+: "${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}"
+
+if [ "$POSTGRES_RUNTIME_USER" = "$PGUSER" ]; then
+  echo "POSTGRES_RUNTIME_USER must differ from the PostgreSQL administrator." >&2
+  exit 64
+fi
+
+psql -X --set ON_ERROR_STOP=1 <<'SQL'
+\getenv runtime_role POSTGRES_RUNTIME_USER
+\getenv runtime_password POSTGRES_RUNTIME_PASSWORD
+
+SELECT format('CREATE ROLE %I LOGIN', :'runtime_role')
+WHERE NOT EXISTS (
+  SELECT 1 FROM pg_roles WHERE rolname = :'runtime_role'
+) \gexec
+
+SELECT format(
+  'ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS',
+  :'runtime_role',
+  :'runtime_password'
+) \gexec
+
+SELECT format('GRANT pg_read_all_stats TO %I', :'runtime_role') \gexec
+
+SELECT format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()) \gexec
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+
+SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), :'runtime_role') \gexec
+SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'runtime_role') \gexec
+SELECT format(
+  'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I',
+  :'runtime_role'
+) \gexec
+SELECT format(
+  'GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %I',
+  :'runtime_role'
+) \gexec
+SELECT format('GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO %I', :'runtime_role') \gexec
+
+SELECT format(
+  'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I',
+  current_user,
+  :'runtime_role'
+) \gexec
+SELECT format(
+  'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %I',
+  current_user,
+  :'runtime_role'
+) \gexec
+SELECT format(
+  'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO %I',
+  current_user,
+  :'runtime_role'
+) \gexec
+SELECT format(
+  'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC',
+  current_user
+) \gexec
+SQL
+
+printf '%s\n' '{"ok":true,"runtime_role_configured":true}'

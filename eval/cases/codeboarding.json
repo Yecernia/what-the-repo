@@ -1,0 +1,83 @@
+{
+  "id": "codeboarding",
+  "target_root": "research/CodeBoarding",
+  "file_expectation": "anchors",
+  "expected_files": [
+    "main.py",
+    "codeboarding_workflows/orchestration.py",
+    "codeboarding_workflows/analysis.py",
+    "diagram_analysis/diagram_generator.py",
+    "diagram_analysis/analysis_json.py",
+    "agents/agent.py",
+    "agents/meta_agent.py",
+    "agents/details_agent.py",
+    "static_analyzer/analysis_result.py",
+    "static_analyzer/graph.py"
+  ],
+  "symbol_anchors": [
+    {"path": "codeboarding_workflows/orchestration.py", "name": "run_analysis_pipeline", "kind": "function"},
+    {"path": "codeboarding_workflows/analysis.py", "name": "run_full", "kind": "function"},
+    {"path": "diagram_analysis/diagram_generator.py", "name": "DiagramGenerator", "kind": "class"},
+    {"path": "diagram_analysis/diagram_generator.py", "name": "pre_analysis", "kind": "function"},
+    {"path": "diagram_analysis/diagram_generator.py", "name": "generate_analysis", "kind": "function"},
+    {"path": "agents/agent.py", "name": "CodeBoardingAgent", "kind": "class"},
+    {"path": "agents/meta_agent.py", "name": "MetaAgent", "kind": "class"},
+    {"path": "agents/details_agent.py", "name": "DetailsAgent", "kind": "class"},
+    {"path": "static_analyzer/analysis_result.py", "name": "StaticAnalysisResults", "kind": "class"},
+    {"path": "static_analyzer/graph.py", "name": "CallGraph", "kind": "class"}
+  ],
+  "inheritance_anchors": [],
+  "import_anchors": [],
+  "excluded_output_prefixes": [".codeboarding/", ".ua/"],
+  "artifacts": {
+    "codeboarding": {
+      "path": "research/CodeBoarding/.codeboarding/analysis.json",
+      "coverage_path": "research/CodeBoarding/.codeboarding/file_coverage.json",
+      "fingerprint_path": "research/CodeBoarding/.codeboarding/fingerprint.json",
+      "target_root": "research/CodeBoarding"
+    },
+    "understand_anything": {
+      "path": "research/CodeBoarding/.ua/knowledge-graph.json",
+      "scan_path": "research/CodeBoarding/.ua/intermediate/scan-result.json",
+      "meta_path": "research/CodeBoarding/.ua/meta.json",
+      "target_root": "research/CodeBoarding"
+    }
+  },
+  "learning_questions": [
+    {
+      "id": "Q01-full-analysis-lifecycle",
+      "category": "business-data-flow",
+      "question": "一次 full --local 分析怎样从命令入口流到 analysis.json？",
+      "evidence_paths": ["main.py", "codeboarding_workflows/orchestration.py", "codeboarding_workflows/analysis.py", "diagram_analysis/diagram_generator.py"],
+      "expected_anchors": ["run_analysis_pipeline", "run_full", "DiagramGenerator", "pre_analysis", "generate_analysis"]
+    },
+    {
+      "id": "Q02-fact-and-llm-boundary",
+      "category": "architecture-design",
+      "question": "静态分析事实与 LLM 组件解释在哪些位置分工并汇合？",
+      "evidence_paths": ["static_analyzer/analysis_result.py", "static_analyzer/graph.py", "agents/abstraction_agent.py", "diagram_analysis/diagram_generator.py"],
+      "expected_anchors": ["StaticAnalysisResults", "CallGraph", "AbstractionAgent", "DiagramGenerator"]
+    },
+    {
+      "id": "Q03-agent-specialization",
+      "category": "architecture-design",
+      "question": "MetaAgent 与 DetailsAgent 除了 Prompt 之外还有哪些职责差异？",
+      "evidence_paths": ["agents/agent.py", "agents/meta_agent.py", "agents/details_agent.py"],
+      "expected_anchors": ["CodeBoardingAgent", "MetaAgent", "DetailsAgent"]
+    },
+    {
+      "id": "Q04-incremental-analysis",
+      "category": "engineering-tradeoff",
+      "question": "增量分析如何复用旧事实，又怎样避免静默退化成错误的全量结果？",
+      "evidence_paths": ["repo_utils/change_detector.py", "static_analyzer/incremental_orchestrator.py", "agents/incremental_planning_agent.py", "agents/incremental_agent.py"],
+      "expected_anchors": ["change", "incremental", "plan", "baseline"]
+    },
+    {
+      "id": "Q05-security-boundary",
+      "category": "engineering-tradeoff",
+      "question": "为什么当前缓存和输出路径设计不能直接用于不可信公开仓库？",
+      "evidence_paths": ["caching", "diagram_analysis/run_context.py", "agents/content_hash.py", "telemetry"],
+      "expected_anchors": ["pickle", ".codeboarding", "cache", "telemetry"]
+    }
+  ]
+}

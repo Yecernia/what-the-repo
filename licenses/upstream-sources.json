@@ -1,0 +1,92 @@
+[
+  {
+    "name": "devicon",
+    "repo": "devicons/devicon",
+    "ref": "master",
+    "sha": "7330accdbc47e2dc0c19789a48533c4a3c50fe58",
+    "file": "LICENSE",
+    "url": "https://raw.githubusercontent.com/devicons/devicon/7330accdbc47e2dc0c19789a48533c4a3c50fe58/LICENSE",
+    "sha256": "121194741d4a915b9f5890fdd6dd95121f9b1f816517c792358d72d7c838d664",
+    "path": "licenses/upstream/devicon.txt"
+  },
+  {
+    "name": "iconpark",
+    "repo": "bytedance/IconPark",
+    "ref": "master",
+    "sha": "8dc132da4c85671ba6a5962c87aa2bdafbf158e9",
+    "file": "LICENSE",
+    "url": "https://raw.githubusercontent.com/bytedance/IconPark/8dc132da4c85671ba6a5962c87aa2bdafbf158e9/LICENSE",
+    "sha256": "81268f00802b1a9cffae4df43f78c3a0809845e03fef3da68f26ad2e4c49681e",
+    "path": "licenses/upstream/iconpark.txt"
+  },
+  {
+    "name": "lobehub-icons",
+    "repo": "lobehub/lobe-icons",
+    "ref": "master",
+    "sha": "a94750e3f5f8fc33757b839d85030e742284e43a",
+    "file": "LICENSE",
+    "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/a94750e3f5f8fc33757b839d85030e742284e43a/LICENSE",
+    "sha256": "add9d7531d1b21646317a8958e38fc727506fa39d24bdecb44154d943c82753a",
+    "path": "licenses/upstream/lobehub-icons.txt"
+  },
+  {
+    "name": "lucide",
+    "repo": "lucide-icons/lucide",
+    "ref": "main",
+    "sha": "a79b2d131dab2bf20cb224bd0937b439a9c4fa99",
+    "file": "LICENSE",
+    "url": "https://raw.githubusercontent.com/lucide-icons/lucide/a79b2d131dab2bf20cb224bd0937b439a9c4fa99/LICENSE",
+    "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
+    "path": "licenses/upstream/lucide.txt"
+  },
+  {
+    "name": "svgl",
+    "repo": "pheralb/svgl",
+    "sha": "b49649915224db817b89ff400b940a2a93bdb3d3",
+    "url": "https://raw.githubusercontent.com/pheralb/svgl/b49649915224db817b89ff400b940a2a93bdb3d3/LICENSE",
+    "path": "licenses/upstream/svgl.txt",
+    "sha256": "8140f413cb8bf477735c35b7b1c1e0a5731a5b41406c042304a98c39e6b8ba47"
+  },
+  {
+    "name": "wal-g",
+    "repo": "wal-g/wal-g",
+    "ref": "v3.0.9",
+    "sha": "3e493188db28335fb93a45bd680c6ff8fc3028c1",
+    "file": "LICENSE.md",
+    "url": "https://raw.githubusercontent.com/wal-g/wal-g/3e493188db28335fb93a45bd680c6ff8fc3028c1/LICENSE.md",
+    "sha256": "0f352dc56c4f9700b33371b8673c2c7d6c154ccb34e43163d1fe285f9a4af3e0",
+    "path": "licenses/upstream/wal-g.txt"
+  },
+  {
+    "name": "codeboarding",
+    "repo": "CodeBoarding/CodeBoarding",
+    "ref": "164d75247ab933978790a9b4a42f4192ca54f484",
+    "url": "https://github.com/CodeBoarding/CodeBoarding/blob/164d75247ab933978790a9b4a42f4192ca54f484/LICENSE",
+    "path": "licenses/upstream/codeboarding.txt",
+    "sha256": "7ca8b46929986079c008a0cd6b002a5f1dc67c7500c37bc1a39bfb23ac290263"
+  },
+  {
+    "name": "understand-anything",
+    "repo": "Egonex-AI/Understand-Anything",
+    "ref": "fe8c5bc591716aafd79b4765549328f08ef5a52e",
+    "url": "https://github.com/Egonex-AI/Understand-Anything/blob/fe8c5bc591716aafd79b4765549328f08ef5a52e/LICENSE",
+    "path": "licenses/upstream/understand-anything.txt",
+    "sha256": "39c324f3c75ae857351f805f49e98ec06d2cd6f8313df4a56bded5d769b27e72"
+  },
+  {
+    "name": "pi",
+    "repo": "earendil-works/pi",
+    "ref": "v0.84.1",
+    "url": "https://github.com/earendil-works/pi/blob/v0.84.1/LICENSE",
+    "path": "licenses/upstream/pi.txt",
+    "sha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
+  },
+  {
+    "name": "deepseek-harness",
+    "repo": "deepseek-ai/deepseek-harness",
+    "ref": "d347e703908d0406b7a7ef80e3a0e594d86b2215",
+    "url": "https://github.com/deepseek-ai/deepseek-harness/blob/d347e703908d0406b7a7ef80e3a0e594d86b2215/LICENSE",
+    "path": "licenses/upstream/deepseek-harness.txt",
+    "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be"
+  }
+]

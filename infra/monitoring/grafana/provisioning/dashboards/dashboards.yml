@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: what-the-repo
+    orgId: 1
+    folder: what-the-repo
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

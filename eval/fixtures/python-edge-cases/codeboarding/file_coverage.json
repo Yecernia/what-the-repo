@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "generated_at": "2026-07-21T11:51:56.827847+00:00",
+  "analyzed_files": [
+    "core\\__init__.py",
+    "core\\base.py",
+    "core\\models.py",
+    "core\\pipeline.py",
+    "core\\services.py",
+    "main.py",
+    "unused\\__init__.py",
+    "unused\\dead_code.py",
+    "utils\\__init__.py",
+    "utils\\helpers.py"
+  ],
+  "not_analyzed_files": [],
+  "summary": {
+    "total_files": 10,
+    "analyzed": 10,
+    "not_analyzed": 0,
+    "not_analyzed_by_reason": {}
+  }
+}

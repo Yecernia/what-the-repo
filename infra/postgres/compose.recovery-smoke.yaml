@@ -1,0 +1,108 @@
+services:
+  postgres:
+    build:
+      context: ../..
+      dockerfile: infra/docker/postgres-walg.Dockerfile
+    image: what-the-repo-postgres-walg:local
+    command:
+      - postgres
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=/usr/local/bin/wtr-wal-g wal-push %p
+      - -c
+      - archive_timeout=1s
+    environment:
+      POSTGRES_DB: wtr_recovery
+      POSTGRES_USER: wtr_recovery
+      POSTGRES_PASSWORD: wtr-recovery-test-only
+      POSTGRES_INITDB_ARGS: --data-checksums
+      WALG_FILE_PREFIX: /var/lib/postgresql/backup
+      WALG_PREVENT_WAL_OVERWRITE: "true"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-backup-data:/var/lib/postgresql/backup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wtr_recovery -d wtr_recovery"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 3s
+
+  migration:
+    build:
+      context: ../..
+      dockerfile: infra/docker/server.Dockerfile
+    image: what-the-repo-server:local
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://wtr_recovery:wtr-recovery-test-only@postgres:5432/wtr_recovery
+      WHAT_THE_REPO_LOAD_LOCAL_ENV: "0"
+      WHAT_THE_REPO_ROOT: /app
+      WHAT_THE_REPO_DATA_DIR: /tmp/what-the-repo
+      WHAT_THE_REPO_DB_POOL_MAX: "2"
+      WHAT_THE_REPO_KEY_ENCRYPTION_SECRET: recovery-test-key-with-more-than-32-characters
+    command: ["node", "dist/db-cli.js", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backup:
+    image: what-the-repo-postgres-walg:local
+    restart: "no"
+    user: postgres
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: wtr_recovery
+      PGUSER: wtr_recovery
+      PGPASSWORD: wtr-recovery-test-only
+      POSTGRES_BACKUP_RETAIN_FULL: "2"
+      WALG_FILE_PREFIX: /var/lib/postgresql/backup
+      WALG_PREVENT_WAL_OVERWRITE: "true"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data:ro
+      - postgres-backup-data:/var/lib/postgresql/backup
+    entrypoint: ["/usr/local/bin/wtr-postgres-backup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  restore:
+    image: what-the-repo-postgres-walg:local
+    restart: "no"
+    environment:
+      WALG_FILE_PREFIX: /var/lib/postgresql/backup
+      POSTGRES_RESTORE_TARGET: /var/lib/postgresql/restore
+      POSTGRES_RESTORE_BACKUP_NAME: LATEST
+    volumes:
+      - postgres-backup-data:/var/lib/postgresql/backup:ro
+      - postgres-restore-data:/var/lib/postgresql/restore
+    entrypoint: ["/usr/local/bin/wtr-postgres-restore"]
+
+  restored:
+    image: what-the-repo-postgres-walg:local
+    restart: "no"
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    command: ["postgres", "-c", "archive_mode=off"]
+    environment:
+      PGDATA: /var/lib/postgresql/restore
+      POSTGRES_DB: wtr_recovery
+      POSTGRES_USER: wtr_recovery
+      POSTGRES_PASSWORD: wtr-recovery-test-only
+      WALG_FILE_PREFIX: /var/lib/postgresql/backup
+    volumes:
+      - postgres-backup-data:/var/lib/postgresql/backup:ro
+      - postgres-restore-data:/var/lib/postgresql/restore
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wtr_recovery -d wtr_recovery"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+      start_period: 3s
+
+volumes:
+  postgres-data:
+  postgres-backup-data:
+  postgres-restore-data:

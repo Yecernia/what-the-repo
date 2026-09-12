@@ -1,0 +1,168 @@
+name: quality-gates
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  license-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/check-license-inventory.mjs
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - run: npm run build
+        working-directory: server
+      - run: npm test
+        working-directory: server
+      - run: npm run eval:fixture -- --output-dir ../out/product-eval
+        working-directory: server
+      - run: npm run eval:conversation -- --output-dir ../out/conversation-eval
+        working-directory: server
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: typescript-server-eval
+          path: |
+            out/product-eval
+            out/conversation-eval
+
+  medium-eval:
+    runs-on: ubuntu-latest
+    needs: server
+    env:
+      CODEBOARDING_COMMIT: 164d75247ab933978790a9b4a42f4192ca54f484
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - name: Fetch fixed CodeBoarding source
+        shell: bash
+        run: |
+          mkdir -p research/CodeBoarding
+          git -C research/CodeBoarding init
+          git -C research/CodeBoarding config core.hooksPath /dev/null
+          git -C research/CodeBoarding remote add origin https://github.com/CodeBoarding/CodeBoarding.git
+          git -C research/CodeBoarding fetch --depth=1 origin "$CODEBOARDING_COMMIT"
+          git -C research/CodeBoarding checkout --detach FETCH_HEAD
+          test "$(git -C research/CodeBoarding rev-parse HEAD)" = "$CODEBOARDING_COMMIT"
+      - name: Run read-only medium repository Eval
+        run: >-
+          npm run eval:local --
+          --target ../research/CodeBoarding
+          --expected-commit "$CODEBOARDING_COMMIT"
+          --output-dir ../out/medium-product-eval
+        working-directory: server
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: medium-product-eval-report
+          path: out/medium-product-eval
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: web
+      - run: npm run lint
+        working-directory: web
+      - run: npm test
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+
+  web-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/test-web-gateway.mjs
+
+  web-e2e:
+    runs-on: ubuntu-latest
+    needs: [server, web]
+    # Public PR checks use no paid-provider credentials.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm run test:e2e
+        working-directory: web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-e2e-report
+          path: web/test-results
+
+  pi-evolution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: evolution/pi/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: evolution/pi
+      - run: npm test
+        working-directory: evolution/pi
+      - run: npm run probe:docker -- --output ../../out/pi-runtime-probe/report.json
+        working-directory: evolution/pi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pi-runtime-probe
+          path: out/pi-runtime-probe/report.json
+
+  final-quality:
+    runs-on: ubuntu-latest
+    needs: [license-inventory, server, medium-eval, web, web-gateway, web-e2e, pi-evolution]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record completed quality gates
+        run: >-
+          node -e "const fs=require('fs');fs.mkdirSync('out/final-quality',{recursive:true});fs.writeFileSync('out/final-quality/report.json',JSON.stringify({schema_version:'typescript-final-quality-v1',passed:true,complete:true,completed_at:new Date().toISOString(),gates:['license-inventory','server','fixture-eval','conversation-eval','medium-eval','web','web-gateway','chromium-e2e','pi-evolution']},null,2)+'\n')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-quality-report
+          path: out/final-quality/report.json

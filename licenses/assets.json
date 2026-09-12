@@ -1,0 +1,687 @@
+{
+  "schemaVersion": 1,
+  "auditedAt": "2026-09-12",
+  "assets": [
+    {
+      "path": "web/public/app-icon-1024.png",
+      "sha256": "f044fe6a9ed55821c142366983de98596d34d6caadb5b658da4104e0c579e250",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "web/public/app-icon.svg",
+      "sha256": "bbcd5071fe6cac12488cd9d7b23f1614da9389f774fbf045d836cdc78f25d902",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "web/public/favicon-ink.svg",
+      "sha256": "231ea807d55148c1abf2e2ccde7fd3a46cd878d3174ea0203ee32fdb907a6556",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "web/public/favicon.png",
+      "sha256": "16cb20b3c0ece9d18a0d4d935e2956e4f94b344edc451841774bcddfa20ae722",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "web/public/favicon.svg",
+      "sha256": "61bc9a161de58248288e6905425d7180f0624c2865007b97d763fdac12043a66",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon-font/devicon.eot",
+      "sha256": "b30cab266217f88a2c5aa2e5ef4331afb0ba01f90e1c1db437cad796a7584842",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon-font/devicon.svg",
+      "sha256": "e5ff52661e575a4d245a0f6b2a187bd3bb598a12a9fd9220a770e4fa63dcc2d9",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon-font/devicon.ttf",
+      "sha256": "6930fe0a0f9eeac18728656da121214fa7a2fbbc8f42e3d8a103342735c4f7e8",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon-font/devicon.woff",
+      "sha256": "ea88166c9cfc9d616638df36a84b6dcab1aeeb2ad933c50d2e76f44096b4b258",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon-font/fonts/devicon.eot",
+      "sha256": "b30cab266217f88a2c5aa2e5ef4331afb0ba01f90e1c1db437cad796a7584842",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon-font/fonts/devicon.svg",
+      "sha256": "e5ff52661e575a4d245a0f6b2a187bd3bb598a12a9fd9220a770e4fa63dcc2d9",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon-font/fonts/devicon.ttf",
+      "sha256": "6930fe0a0f9eeac18728656da121214fa7a2fbbc8f42e3d8a103342735c4f7e8",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon-font/fonts/devicon.woff",
+      "sha256": "ea88166c9cfc9d616638df36a84b6dcab1aeeb2ad933c50d2e76f44096b4b258",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/bash-original.svg",
+      "sha256": "245b0a04420e82f3fe945ad79fd3bbbbc1c29f115baaf7b43b904fb05d748616",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/c-original.svg",
+      "sha256": "37f1130a754b5878974c9eb29243e1258bc3a7a8443275016f3efb6ea0eba998",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/cplusplus-original.svg",
+      "sha256": "8771c8dfa7171e58fbf781a5115cdf3819df24ee8021dd90114b387055a92988",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/csharp-original.svg",
+      "sha256": "7093478d0888e22a224b6fa832da6c9ffd14c433de8bd14aab0c1cb50925f3ee",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/css3-original.svg",
+      "sha256": "36b7d94b657d571d3f94042acbf6a4c86a5301a222f83f4b4583ad2acf6e297d",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/dart-original.svg",
+      "sha256": "8dec3d6f6d92d5c8db294baf7ea89cbad5c3dd0f7fde5ca972ffc6cebf9b2d40",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/go-original.svg",
+      "sha256": "b60af472a354601ae2cabea883210e08048c18e77e41354c7cf676ce7a835360",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/html5-original.svg",
+      "sha256": "34826e5b3315daadf4fa15f723a3c1d5ba4a89277bfd94e22ac4d7d3d54338c5",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/java-original.svg",
+      "sha256": "7582e518a9c02425f97155e5a3bd39d1a3a7d421b78caf9c8df7443dad3edc5d",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/javascript-original.svg",
+      "sha256": "0656ff65fc8eeacda5c78d7f9ffe91ec1eb919db64f56e0b7dcd460af4bbd36c",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/json-original.svg",
+      "sha256": "34f0b800bd3584eb3b93114824aa33598a7c3e5565953b433f3c2ac471e683df",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/kotlin-original.svg",
+      "sha256": "0ff06e427f7466d442e235f7d9b1180df48130b0215d4ae32d6673bad49fabef",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/markdown-original.svg",
+      "sha256": "c8a6f4cd36fbe861d291e75a021afab85aac08cb4431614eb7591e53c343a0a4",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/mysql-original.svg",
+      "sha256": "463ab6405208efe46aa3b353e6ae8729e86ecafaa4eb9fe666abe7c728fe4b1a",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/php-original.svg",
+      "sha256": "2d430d26d66b8ba93f2d97bbc480b767bc45447680520d0d7236b7eafd3fd9de",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/postgresql-original.svg",
+      "sha256": "f220a436258ed014c512ba4f9c0de6b9e5c2c4b55331a0a29f8c7a1a12c36443",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/python-original.svg",
+      "sha256": "e8fa899312415cc86d62e992b4d30113a726c8ea53d39573cde800474551feee",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/ruby-original.svg",
+      "sha256": "74ead50b8f0f31e1b34618088bc0b0e16c04f1d4539039ef9358717d8505a63c",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/rust-original.svg",
+      "sha256": "c04e8f283458c68cb08a2837cd9d696f5b8f3a5828463b75c3f9995cd72b191d",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/swift-original.svg",
+      "sha256": "46b6e4abd3ab12c589b8e276295f9439e2869bc4788d918efbc6e76147e8a06e",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/devicon/typescript-original.svg",
+      "sha256": "c9191199f4049920c2fc19035b8a6664f37f4689fcd9e8434e786097e78863f0",
+      "source": "https://github.com/devicons/devicon",
+      "license": "MIT",
+      "evidence": "Existing Devicon asset directory and import history; upstream license snapshot recorded separately.",
+      "notices": [
+        "licenses/upstream/devicon.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/field-slides.svg",
+      "sha256": "1529c1747645114b4cf1c28e4a0e5ca0f0ac4e6ce1e831e86bd20f45a9d1f3ba",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/iconpark/file-code-one.svg",
+      "sha256": "dca3b036c01580ab8493e97e9eede780ae13b367ab8caf65b3d04b31950b6d34",
+      "source": "https://github.com/bytedance/IconPark",
+      "license": "Apache-2.0",
+      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
+      "notices": [
+        "licenses/upstream/iconpark.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/iconpark/file-excel.svg",
+      "sha256": "a07381dd20f353510bf54793c9f565abdd7ed05acd72799eb1f40990a8ff4765",
+      "source": "https://github.com/bytedance/IconPark",
+      "license": "Apache-2.0",
+      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
+      "notices": [
+        "licenses/upstream/iconpark.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/iconpark/file-pdf-one.svg",
+      "sha256": "feebc0e47478600426e7a6d602fb4e761efd2a6b0f33d1567d5248180ff0a995",
+      "source": "https://github.com/bytedance/IconPark",
+      "license": "Apache-2.0",
+      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
+      "notices": [
+        "licenses/upstream/iconpark.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/iconpark/file-pdf.svg",
+      "sha256": "fa4ce1bfc3816b8e967e717bb8136565ee704373fc858324e0ee917fb0a1110d",
+      "source": "https://github.com/bytedance/IconPark",
+      "license": "Apache-2.0",
+      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
+      "notices": [
+        "licenses/upstream/iconpark.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/iconpark/file-text-one.svg",
+      "sha256": "e415383207c9fe3b35aed075944cb7a22d4ab6489c29626df26394244229c4b3",
+      "source": "https://github.com/bytedance/IconPark",
+      "license": "Apache-2.0",
+      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
+      "notices": [
+        "licenses/upstream/iconpark.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/iconpark/file-text.svg",
+      "sha256": "e7195c4aa19291b53e445a59520921aadf2a4042aabc3b521faa96b905fc6f00",
+      "source": "https://github.com/bytedance/IconPark",
+      "license": "Apache-2.0",
+      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
+      "notices": [
+        "licenses/upstream/iconpark.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/iconpark/file-txt-one.svg",
+      "sha256": "c93c729e23b4b28a0c2a0158b25359b2a9a5766651d63e9542d6d00036eae48e",
+      "source": "https://github.com/bytedance/IconPark",
+      "license": "Apache-2.0",
+      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
+      "notices": [
+        "licenses/upstream/iconpark.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/iconpark/file-word.svg",
+      "sha256": "307aacb11df90d5c6220e935aecaf9d736ba5268ac492f2084efd83c59bb5118",
+      "source": "https://github.com/bytedance/IconPark",
+      "license": "Apache-2.0",
+      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
+      "notices": [
+        "licenses/upstream/iconpark.txt"
+      ]
+    },
+    {
+      "path": "web/public/file-icons/iconpark/file-zip.svg",
+      "sha256": "4f427f9b93d53b7e9c2a36e000a95a3216bb44252675f758ae499f82474044d1",
+      "source": "https://github.com/bytedance/IconPark",
+      "license": "Apache-2.0",
+      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
+      "notices": [
+        "licenses/upstream/iconpark.txt"
+      ]
+    },
+    {
+      "path": "web/public/fonts/JasonHandwriting6p.woff2",
+      "sha256": "e70d320487a411c6dbe6212b9afa704b6f7c44882ee6932367f4f9f051891224",
+      "source": "https://github.com/jasonhandwriting/JasonHandwriting/blob/e488583c07077850aa4a2a6280baa20374cccde2/JasonHandwriting6p.ttf",
+      "license": "OFL-1.1",
+      "evidence": "Full-font TTF to WOFF2 conversion; outlines/advances/character map retained. Original TTF SHA-256 761cced23f78f56c8254ecfc7d0f8566d53eded61dcb0a7b7936bdde747dedee.",
+      "notices": [
+        "licenses/upstream/jason-handwriting.txt"
+      ]
+    },
+    {
+      "path": "web/public/github.svg",
+      "sha256": "3bf8cceead820aec50d4ee825a3fd02c5a1cd6665cc9cf4cbf3d9c8861a204bb",
+      "source": "https://github.com/simple-icons/simple-icons/tree/16.28.0",
+      "license": "CC0-1.0; trademark rights reserved",
+      "evidence": "SVG path matches locally retained Simple Icons 16.28.0 and 14.15.0.",
+      "notices": [
+        "licenses/upstream/simple-icons-cc0.txt",
+        "licenses/upstream/simple-icons-disclaimer.md"
+      ]
+    },
+    {
+      "path": "web/public/paper-folds.png",
+      "sha256": "6dc870bcddc26fb7fa02ded133016ae18632492fdd2af030d627fd34eece1cf0",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "AI-generated paper texture; no third-party reference image is distributed.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "web/public/providers/anthropic.svg",
+      "sha256": "51635844d2ae983077bb8c81f46b10d142542da4c23a06e9c2faf9154cc20af4",
+      "source": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/anthropic.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/chatglm-color.png",
+      "sha256": "4d3db10e2191d9df313e0ff72e94eed5b7f33fbde798c41d52fe8ce5f16e61a1",
+      "source": "https://lobehub.com/icons",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/claude.svg",
+      "sha256": "0df6dad23995f5a76c6db8cc2a4e646ff45bd7a0626ef98662a7025646e5eea1",
+      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/claude-ai-icon.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/svgl.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/deepseek-color.png",
+      "sha256": "f98596fd7802ca0c5290c498fec578fa823988646332ee36c43b7920dc4936eb",
+      "source": "https://lobehub.com/icons",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/deepseek.svg",
+      "sha256": "360336e87a3336f60b7d2432ecdea2982537806886e20b170163fd5d3dda825b",
+      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/deepseek.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/svgl.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/doubao-color.png",
+      "sha256": "e2a9ade3d125e2965ed06bb1910223b8723a2a9402ad608eb49f540272209847",
+      "source": "https://lobehub.com/icons",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/google.svg",
+      "sha256": "c11d94a9e3ecb32f67dd9350848cf3124d617680533275c672e1e6bf61ce8cd4",
+      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/gemini.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/svgl.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/grok.svg",
+      "sha256": "a127a7cd42b0450f7d3827a331b0730aab49fd99c3fe920d172475b9ffc83992",
+      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/grok-dark.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/svgl.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/hunyuan-color.png",
+      "sha256": "0f2f9af09b698f4cfa3158d43b29e90a5f30297b09401c49133c9f195899556d",
+      "source": "https://lobehub.com/icons",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/kimi-color.png",
+      "sha256": "fb460178c19cd28fc953fb446eb200b4050f4046eae3d84d1a15189eb50f717c",
+      "source": "https://lobehub.com/icons",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/kimi-user.webp",
+      "sha256": "c2bd76c0f0f3e775c19eb123402046b011c1f88d17c76ba8cb2fef5d442f45c4",
+      "source": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-avatar/avatars/kimi.webp",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Byte-for-byte match; owner also supplied https://lobehub.com/zh/icons/kimi.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/minimax-color.png",
+      "sha256": "9e596627348deb4030938a948243cc94e96cc1548d645ce4faf1de0e51b9043a",
+      "source": "https://lobehub.com/icons",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/moonshotai.svg",
+      "sha256": "0ba35ce31b57bb6db39d4e454925e39f88f46a3b52a07898bd8262c3902df7fc",
+      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/kimi-icon.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/svgl.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/openai.svg",
+      "sha256": "a4b4dae5e28790a0fb3dc7b5d8bb199b0dd6938a002e52a8b6355394c321718e",
+      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/openai.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/svgl.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/qwen-color.png",
+      "sha256": "de9bc7e285164e0d284a7b9555511c7f7767af7699d6272b3b67b376eeddbfb3",
+      "source": "https://lobehub.com/icons",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/qwen.svg",
+      "sha256": "dcb3ba2f2b55ccbacbade0ca0bf98921fbaf8a07848972974b4a9bf8077376cf",
+      "source": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/qwen-color.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/xai.svg",
+      "sha256": "a805762f862713b85a68f05b6a7cb15d4bc42fd3a5f17cda706b77bccca6d7b2",
+      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/xai_dark.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/svgl.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/xiaomimimo.png",
+      "sha256": "04f78ad5b2ebd628ddaa59261c3696971dc54799c1ae3401454977810ca1f63b",
+      "source": "https://lobehub.com/icons",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/zai-user.svg",
+      "sha256": "e748cb5108ce37b116d7a5ba97d37e0ae97eadf6849b0de11afb248e244a01e1",
+      "source": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/zai.svg",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/providers/zhipu-color.png",
+      "sha256": "612dca42bba94fd6e760eea79bb34ee8f40f23e24944e58075d6a9ff43b6801a",
+      "source": "https://lobehub.com/icons",
+      "license": "MIT; trademark rights reserved",
+      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
+      "notices": [
+        "licenses/upstream/lobehub-icons.txt"
+      ]
+    },
+    {
+      "path": "web/public/what-the-repo-icon.png",
+      "sha256": "07ff979e2e844a8f197aa6bd2abfe5af23f944cc669687805ce93b70c2ae81a8",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    }
+  ]
+}

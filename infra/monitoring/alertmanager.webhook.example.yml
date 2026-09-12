@@ -1,0 +1,14 @@
+route:
+  receiver: production-webhook
+  group_by:
+    - alertname
+    - severity
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: production-webhook
+    webhook_configs:
+      - url: https://example.invalid/replace-with-real-webhook
+        send_resolved: true

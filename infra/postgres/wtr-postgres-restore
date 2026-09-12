@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+target="${POSTGRES_RESTORE_TARGET:-/var/lib/postgresql/restore}"
+backup_name="${POSTGRES_RESTORE_BACKUP_NAME:-LATEST}"
+target_time="${POSTGRES_RECOVERY_TARGET_TIME:-}"
+
+if [ "$target" != "/var/lib/postgresql/restore" ]; then
+  echo "Refusing to restore outside the dedicated restore directory." >&2
+  exit 64
+fi
+
+install -d -m 0700 -o postgres -g postgres "$target"
+if find "$target" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+  echo "Restore target is not empty; use a new dedicated volume." >&2
+  exit 73
+fi
+
+if [ -n "$target_time" ]; then
+  if ! printf '%s\n' "$target_time" | grep -Eq \
+    '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'; then
+    echo "POSTGRES_RECOVERY_TARGET_TIME must be an RFC 3339 timestamp with a timezone." >&2
+    exit 64
+  fi
+fi
+
+gosu postgres /usr/local/bin/wtr-wal-g backup-fetch "$target" "$backup_name"
+
+{
+  printf "restore_command = '/usr/local/bin/wtr-wal-g wal-fetch %%f %%p'\n"
+  printf "recovery_target_timeline = 'latest'\n"
+  printf "recovery_target_action = 'promote'\n"
+  printf "archive_mode = 'off'\n"
+  if [ -n "$target_time" ]; then
+    printf "recovery_target_time = '%s'\n" "$target_time"
+  fi
+} >> "$target/postgresql.auto.conf"
+
+touch "$target/recovery.signal"
+chown -R postgres:postgres "$target"
+chmod 0700 "$target"

@@ -1,0 +1,108 @@
+{
+  "schema_version": "2.0",
+  "eval_id": "typescript-primary-conversation-v2",
+  "expected_case_count": 20,
+  "description": "全 TypeScript + Pi 在线主对话的确定性行为契约；不声称替代真实 Provider 或人工质量判断。",
+  "cases": [
+    {
+      "case_id": "ordinary_chat_without_forced_tools",
+      "requirement": "普通交流可以直接自然回答，不强制调用仓库工具。",
+      "node_test": "Pi can answer ordinary chat directly without forcing a tool call"
+    },
+    {
+      "case_id": "interest_or_readonly_query_preserves_progress",
+      "requirement": "兴趣引导、项目概览和只读证据查询不会自动修改教学进度。",
+      "node_test": "read-only repository tools preserve the existing teaching state"
+    },
+    {
+      "case_id": "repository_evidence_and_bounded_source",
+      "requirement": "仓库事实来自绑定快照，源码读取必须先取得真实证据路径。",
+      "node_test": "conversation tools use a bound public snapshot and gate source reads"
+    },
+    {
+      "case_id": "selected_component_context",
+      "requirement": "用户说讲讲图里组件时，工具使用当前 UI 选择和真实相邻关系。",
+      "node_test": "selected component context returns only real adjacent components"
+    },
+    {
+      "case_id": "validated_assessment_state_candidate",
+      "requirement": "理解评估绑定原始回答，只生成经过校验的状态候选。",
+      "node_test": "teaching tools bind the original answer and only create validated state candidates"
+    },
+    {
+      "case_id": "structured_failure_is_sanitized",
+      "requirement": "专项 Worker 结构化失败只返回稳定原因，不泄露 Provider、Prompt 或堆栈。",
+      "node_test": "structured worker failure returns a stable reason without provider details"
+    },
+    {
+      "case_id": "fabricated_graph_entities_rejected",
+      "requirement": "不存在的组件和关系失败关闭，不能暴露或升级证据。",
+      "node_test": "fabricated graph identifiers fail closed without exposing evidence"
+    },
+    {
+      "case_id": "fabricated_locations_rejected",
+      "requirement": "不存在的路径和越界行号不能成为回答证据。",
+      "node_test": "citation validation accepts real lines and rejects fabricated locations"
+    },
+    {
+      "case_id": "online_tools_have_no_arbitrary_execution",
+      "requirement": "在线 Pi 工具目录不包含 Shell、数据库、任意写文件或任意执行。",
+      "node_test": "online tool catalog contains no shell database or arbitrary file capability"
+    },
+    {
+      "case_id": "untrusted_reply_not_replayed",
+      "requirement": "未通过引用校验的 Assistant 仓库正文不会进入下一轮可信上下文。",
+      "node_test": "Pi runtime only commits a rejected turn's user message"
+    },
+    {
+      "case_id": "cancelled_run_skips_provider",
+      "requirement": "已经取消的请求不会继续调用 Provider 或污染 Session。",
+      "node_test": "Pi runtime does not contact the provider when already cancelled"
+    },
+    {
+      "case_id": "pi_session_survives_restart",
+      "requirement": "Pi Session 可以跨进程式重启恢复。",
+      "node_test": "Pi session survives a process-style reopen"
+    },
+    {
+      "case_id": "pi_native_compaction_restored",
+      "requirement": "Pi 原生 compaction entry 会作为摘要上下文恢复。",
+      "node_test": "Pi compaction entry is restored as a native summary message"
+    },
+    {
+      "case_id": "memory_is_sourced_and_secret_safe",
+      "requirement": "长期记忆只接受有用户原文依据的稳定信息并拒绝凭证。",
+      "node_test": "memory maintenance keeps sourced learning facts and rejects secrets"
+    },
+    {
+      "case_id": "mcp_reuses_product_services",
+      "requirement": "MCP 通过 Bearer 暴露六个共享 TypeScript 领域工具，不复制 Agent 编排。",
+      "node_test": "MCP exposes the six shared TypeScript product tools behind Bearer auth"
+    },
+    {
+      "case_id": "evidence_explanation_filters_fabricated_ids",
+      "requirement": "证据讲解只接受输入中的 Evidence ID，伪造 ID 被过滤。",
+      "node_test": "evidence explanation accepts only bound Evidence IDs"
+    },
+    {
+      "case_id": "evidence_explanation_fails_without_supported_fact",
+      "requirement": "没有可支持事实时，证据讲解返回局部失败而不编造故事。",
+      "node_test": "evidence explanation fails closed when every cited Evidence ID is fabricated"
+    },
+    {
+      "case_id": "assessment_requires_evidence",
+      "requirement": "理解评估的 mastered 结果必须有有效证据，伪造证据不能产生状态候选。",
+      "node_test": "understanding assessment requires valid evidence for a mastered verdict"
+    },
+    {
+      "case_id": "study_authorization_exact_target",
+      "requirement": "学习动作授权要求 action 和 target 与程序候选精确一致。",
+      "node_test": "study action authorization requires the exact proposed target"
+    },
+    {
+      "case_id": "empty_route_preserves_state",
+      "requirement": "明确学习请求在证据不足时可以返回空路线，不修改学习状态。",
+      "node_test": "learning route can honestly return no steps without a state candidate"
+    }
+  ]
+}

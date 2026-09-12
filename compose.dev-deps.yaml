@@ -1,0 +1,94 @@
+name: what-the-repo-dev-deps
+
+# This file intentionally contains only development infrastructure. The API,
+# analysis worker, and Vite Web run from the Windows checkout.
+x-postgres-image: &postgres-image
+  build:
+    context: .
+    dockerfile: infra/docker/postgres-walg.Dockerfile
+  image: what-the-repo-postgres-walg:dev-deps
+
+services:
+  postgres:
+    <<: *postgres-image
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-what_the_repo}
+      POSTGRES_USER: ${POSTGRES_USER:-what_the_repo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+      POSTGRES_INITDB_ARGS: ${POSTGRES_INITDB_ARGS:---data-checksums}
+    ports:
+      - "127.0.0.1:${WTR_DEV_DEPS_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - dev-deps-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${WTR_DEV_DEPS_REDIS_PORT:-16379}:6379"
+    volumes:
+      - dev-deps-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  postgres-role-bootstrap:
+    <<: *postgres-image
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-what_the_repo}
+      PGUSER: ${POSTGRES_USER:-what_the_repo}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      PGPASSWORD_FILE: ${POSTGRES_PASSWORD_FILE:-}
+      POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-what_the_repo_runtime}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:-${POSTGRES_PASSWORD:-}}
+      POSTGRES_RUNTIME_PASSWORD_FILE: ${POSTGRES_RUNTIME_PASSWORD_FILE:-}
+    entrypoint: ["/usr/local/bin/wtr-postgres-role-bootstrap"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migration:
+    build:
+      context: .
+      dockerfile: infra/docker/server.Dockerfile
+    image: what-the-repo-dev-migration:local-v2
+    restart: "no"
+    environment:
+      # The migration container uses Docker DNS. Windows host addresses belong
+      # only in the host-run API/worker environment assembled by the script.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-what_the_repo}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-what_the_repo}
+      DATABASE_URL_FILE: ""
+      WHAT_THE_REPO_ROOT: /app
+      WHAT_THE_REPO_DATA_DIR: /tmp/what-the-repo
+      WHAT_THE_REPO_LOAD_LOCAL_ENV: "0"
+      WHAT_THE_REPO_KEY_ENCRYPTION_SECRET: ${WHAT_THE_REPO_KEY_ENCRYPTION_SECRET:-${WHAT_THE_REPO_SESSION_SECRET:?set WHAT_THE_REPO_SESSION_SECRET}}
+      NODE_ENV: development
+    command: ["node", "dist/db-cli.js", "migrate"]
+    depends_on:
+      postgres-role-bootstrap:
+        condition: service_completed_successfully
+
+volumes:
+  dev-deps-postgres-data:
+    name: what-the-repo-dev-deps-postgres-data
+  dev-deps-redis-data:
+    name: what-the-repo-dev-deps-redis-data

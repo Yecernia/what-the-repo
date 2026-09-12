@@ -1,0 +1,174 @@
+{
+  "id": "python-edge-cases",
+  "target_root": "eval/fixtures/python-edge-cases/source",
+  "file_expectation": "exact",
+  "artifacts": {
+    "codeboarding": {
+      "path": "eval/fixtures/python-edge-cases/codeboarding/analysis.json",
+      "coverage_path": "eval/fixtures/python-edge-cases/codeboarding/file_coverage.json",
+      "fingerprint_path": "eval/fixtures/python-edge-cases/codeboarding/fingerprint.json",
+      "target_root": "eval/fixtures/python-edge-cases/source"
+    },
+    "understand_anything": {
+      "path": "eval/fixtures/python-edge-cases/understand-anything/knowledge-graph.json",
+      "scan_path": "eval/fixtures/python-edge-cases/understand-anything/scan-result.json",
+      "meta_path": "eval/fixtures/python-edge-cases/understand-anything/meta.json",
+      "target_root": "eval/fixtures/python-edge-cases/source",
+      "run_root": "eval/fixtures/python-edge-cases/source"
+    }
+  },
+  "excluded_output_prefixes": [".codeboarding/", ".ua/"],
+  "expected_files": [
+    "core/__init__.py",
+    "core/base.py",
+    "core/models.py",
+    "core/pipeline.py",
+    "core/services.py",
+    "main.py",
+    "unused/__init__.py",
+    "unused/dead_code.py",
+    "utils/__init__.py",
+    "utils/helpers.py"
+  ],
+  "symbol_anchors": [
+    {"path": "core/base.py", "name": "Animal", "kind": "class"},
+    {"path": "core/base.py", "name": "Dog", "kind": "class"},
+    {"path": "core/base.py", "name": "Cat", "kind": "class"},
+    {"path": "core/base.py", "name": "Duck", "kind": "class"},
+    {"path": "core/base.py", "name": "SwimmingMixin", "kind": "class"},
+    {"path": "core/models.py", "name": "UserProfile", "kind": "class"},
+    {"path": "core/models.py", "name": "Address", "kind": "class"},
+    {"path": "core/services.py", "name": "create_dog", "kind": "function"},
+    {"path": "core/services.py", "name": "compute", "kind": "function"},
+    {"path": "core/pipeline.py", "name": "QueryBuilder", "kind": "class"},
+    {"path": "core/pipeline.py", "name": "build_query", "kind": "function"},
+    {"path": "core/pipeline.py", "name": "dispatch", "kind": "function"},
+    {"path": "main.py", "name": "main", "kind": "function"},
+    {"path": "unused/dead_code.py", "name": "OrphanClass", "kind": "class"},
+    {"path": "utils/helpers.py", "name": "add", "kind": "function"}
+  ],
+  "inheritance_anchors": [
+    ["Dog", "Animal"],
+    ["Cat", "Animal"],
+    ["Duck", "Animal"],
+    ["Duck", "SwimmingMixin"]
+  ],
+  "import_anchors": [
+    ["main.py", "core/base.py"],
+    ["main.py", "core/services.py"],
+    ["main.py", "core/models.py"],
+    ["main.py", "core/pipeline.py"],
+    ["core/services.py", "core/base.py"],
+    ["core/services.py", "core/models.py"],
+    ["core/services.py", "utils/helpers.py"],
+    ["core/pipeline.py", "core/base.py"],
+    ["core/pipeline.py", "core/models.py"],
+    ["core/pipeline.py", "utils/helpers.py"],
+    ["core/__init__.py", "core/base.py"],
+    ["core/__init__.py", "core/models.py"],
+    ["utils/__init__.py", "utils/helpers.py"]
+  ],
+  "relation_anchors": {
+    "calls": [
+      ["main.py|main", "core/services.py|create_dog"],
+      ["main.py|main", "core/base.py|Cat"],
+      ["main.py|main", "core/base.py|Duck"],
+      ["main.py|main", "core/services.py|process_animals"],
+      ["main.py|main", "core/services.py|build_profile"],
+      ["main.py|main", "core/models.py|UserProfile.get_summary"],
+      ["main.py|main", "core/services.py|compute"],
+      ["main.py|main", "core/services.py|make_multiplier"],
+      ["main.py|main", "core/models.py|Config"],
+      ["main.py|main", "core/services.py|apply_config"],
+      ["main.py|main", "core/pipeline.py|dispatch"],
+      ["main.py|main", "core/pipeline.py|build_query"],
+      ["main.py|main", "core/pipeline.py|get_profile_city"],
+      ["main.py|main", "core/pipeline.py|transform_list"],
+      ["main.py|main", "core/pipeline.py|create_and_summarize"],
+      ["main.py|main", "core/pipeline.py|pipeline"],
+      ["main.py|main", "core/pipeline.py|compute_nested"],
+      ["main.py|main", "core/pipeline.py|conditional_dispatch"],
+      ["core/base.py|Animal.__repr__", "core/base.py|Animal.__str__"],
+      ["core/base.py|Dog.create", "core/base.py|Dog"],
+      ["core/base.py|Duck.actions", "core/base.py|Duck.speak"],
+      ["core/base.py|Duck.actions", "core/base.py|SwimmingMixin.swim"],
+      ["core/models.py|UserProfile.set_address", "core/models.py|UserProfile.Address"],
+      ["core/models.py|UserProfile.get_summary", "core/models.py|UserProfile.Address.full_address"],
+      ["core/pipeline.py|_handle_dog", "core/base.py|Animal.speak"],
+      ["core/pipeline.py|_handle_cat", "core/base.py|Animal.speak"],
+      ["core/pipeline.py|_handle_default", "core/base.py|Animal.speak"],
+      ["core/pipeline.py|build_query", "core/pipeline.py|QueryBuilder"],
+      ["core/pipeline.py|build_query", "core/pipeline.py|QueryBuilder.where"],
+      ["core/pipeline.py|build_query", "core/pipeline.py|QueryBuilder.order_by"],
+      ["core/pipeline.py|build_query", "core/pipeline.py|QueryBuilder.limit"],
+      ["core/pipeline.py|build_query", "core/pipeline.py|QueryBuilder.build"],
+      ["core/pipeline.py|get_profile_city", "core/models.py|UserProfile"],
+      ["core/pipeline.py|get_profile_city", "core/models.py|UserProfile.set_address"],
+      ["core/pipeline.py|get_profile_city", "core/models.py|UserProfile.get_summary"],
+      ["core/pipeline.py|double", "utils/helpers.py|add"],
+      ["core/pipeline.py|is_positive", "utils/helpers.py|subtract"],
+      ["core/pipeline.py|transform_list", "core/pipeline.py|is_positive"],
+      ["core/pipeline.py|transform_list", "core/pipeline.py|double"],
+      ["core/pipeline.py|create_profile", "core/models.py|UserProfile"],
+      ["core/pipeline.py|create_and_summarize", "core/pipeline.py|create_profile"],
+      ["core/pipeline.py|create_and_summarize", "core/models.py|UserProfile.get_summary"],
+      ["core/pipeline.py|generate_animals", "core/base.py|Dog"],
+      ["core/pipeline.py|generate_animals", "core/base.py|Cat"],
+      ["core/pipeline.py|generate_animals", "core/base.py|Duck"],
+      ["core/pipeline.py|animal_names", "utils/helpers.py|format_name"],
+      ["core/pipeline.py|pipeline", "core/pipeline.py|generate_animals"],
+      ["core/pipeline.py|pipeline", "core/pipeline.py|animal_names"],
+      ["core/pipeline.py|compute_nested", "utils/helpers.py|add"],
+      ["core/pipeline.py|compute_nested", "utils/helpers.py|subtract"],
+      ["core/pipeline.py|conditional_dispatch", "utils/helpers.py|format_name"],
+      ["core/pipeline.py|conditional_dispatch", "core/pipeline.py|dispatch"],
+      ["core/services.py|create_dog", "core/base.py|Dog.create"],
+      ["core/services.py|process_animals", "core/base.py|Animal.speak"],
+      ["core/services.py|build_profile", "core/models.py|UserProfile"],
+      ["core/services.py|build_profile", "core/models.py|UserProfile.set_address"],
+      ["core/services.py|compute", "utils/helpers.py|add"],
+      ["core/services.py|compute", "utils/helpers.py|clamp"]
+    ],
+    "returns": [
+      ["core/services.py|log_call", "core/services.py|log_call.wrapper"],
+      ["core/services.py|make_multiplier", "core/services.py|make_multiplier.multiplier"]
+    ]
+  },
+  "learning_questions": [
+    {
+      "id": "Q01-polymorphic-dispatch",
+      "category": "architecture-design",
+      "question": "这个样例如何同时支持多种动物行为和按具体类型选择处理器？",
+      "evidence_paths": ["core/base.py", "core/pipeline.py", "core/services.py"],
+      "expected_anchors": ["Animal", "Dog", "Cat", "Duck", "HANDLERS", "dispatch"]
+    },
+    {
+      "id": "Q02-builder-pattern",
+      "category": "implementation-technique",
+      "question": "QueryBuilder 的链式调用如何把多个条件累积成最终字典？",
+      "evidence_paths": ["core/pipeline.py"],
+      "expected_anchors": ["QueryBuilder", "where", "order_by", "limit", "build", "build_query"]
+    },
+    {
+      "id": "Q03-service-facade",
+      "category": "architecture-design",
+      "question": "core/services.py 在 main.py、领域对象和工具函数之间承担什么作用？",
+      "evidence_paths": ["main.py", "core/services.py", "core/models.py", "utils/helpers.py"],
+      "expected_anchors": ["create_dog", "build_profile", "compute", "apply_config"]
+    },
+    {
+      "id": "Q04-closure-and-forwarding",
+      "category": "implementation-technique",
+      "question": "make_multiplier 和 create_profile 分别展示了什么函数边界问题？",
+      "evidence_paths": ["main.py", "core/pipeline.py", "core/services.py"],
+      "expected_anchors": ["make_multiplier", "multiplier", "create_profile", "create_and_summarize"]
+    },
+    {
+      "id": "Q05-unused-code",
+      "category": "engineering-tradeoff",
+      "question": "如何从图谱或覆盖结果发现 unused/dead_code.py 没有被主流程引用？",
+      "evidence_paths": ["unused/dead_code.py", "file_coverage.json"],
+      "expected_anchors": ["OrphanClass", "never_called", "UNUSED_CONSTANT"]
+    }
+  ]
+}

@@ -1,0 +1,1481 @@
+{
+  "metadata": {
+    "generated_at": "2026-07-21T11:51:56.825857+00:00",
+    "source_tree_hash": "2ee1b84f15b0c0b22864c13d69062525ad90698f958cebf89824a7be1b01c6e3",
+    "repo_name": "python_edge_cases_project",
+    "depth_level": 1,
+    "file_coverage_summary": {
+      "total_files": 10,
+      "analyzed": 10,
+      "not_analyzed": 0,
+      "not_analyzed_by_reason": {}
+    }
+  },
+  "description": "This fixture is organized around a composition root that executes independent profile, arithmetic transformation, animal polymorphism and dispatch, and fluent query-building scenarios. The application orchestration component initializes shared inputs and invokes services, while each domain component encapsulates its respective modeling or workflow pattern for static-analysis demonstrations.",
+  "files": {
+    "core/base.py": {
+      "method_keys": [
+        "core/base.py|core.base.SwimmingMixin",
+        "core/base.py|core.base.SwimmingMixin.swim",
+        "core/base.py|core.base.Animal",
+        "core/base.py|core.base.Animal.__init__",
+        "core/base.py|core.base.Animal.speak",
+        "core/base.py|core.base.Animal.__str__",
+        "core/base.py|core.base.Animal.__repr__",
+        "core/base.py|core.base.Dog",
+        "core/base.py|core.base.Dog.speak",
+        "core/base.py|core.base.Dog.fetch",
+        "core/base.py|core.base.Dog.create",
+        "core/base.py|core.base.Cat",
+        "core/base.py|core.base.Cat.speak",
+        "core/base.py|core.base.Duck",
+        "core/base.py|core.base.Duck.speak",
+        "core/base.py|core.base.Duck.actions"
+      ],
+      "content_hash": "da550750c320ea0c"
+    },
+    "core/models.py": {
+      "method_keys": [
+        "core/models.py|core.models.Config",
+        "core/models.py|core.models.UserProfile",
+        "core/models.py|core.models.UserProfile.Address",
+        "core/models.py|core.models.UserProfile.Address.__init__",
+        "core/models.py|core.models.UserProfile.Address.full_address",
+        "core/models.py|core.models.UserProfile.__init__",
+        "core/models.py|core.models.UserProfile.name",
+        "core/models.py|core.models.UserProfile.email",
+        "core/models.py|core.models.UserProfile.set_address",
+        "core/models.py|core.models.UserProfile.get_summary",
+        "core/models.py|core.models.UserProfile.__eq__",
+        "core/models.py|core.models.UserProfile.__hash__"
+      ],
+      "content_hash": "68c54af68690789d"
+    },
+    "core/services.py": {
+      "method_keys": [
+        "core/services.py|core.services.log_call",
+        "core/services.py|core.services.log_call.wrapper",
+        "core/services.py|core.services.create_dog",
+        "core/services.py|core.services.process_animals",
+        "core/services.py|core.services.build_profile",
+        "core/services.py|core.services.compute",
+        "core/services.py|core.services.make_multiplier",
+        "core/services.py|core.services.make_multiplier.multiplier",
+        "core/services.py|core.services.apply_config"
+      ],
+      "content_hash": "d53a86664663e5bd"
+    },
+    "main.py": {
+      "method_keys": [
+        "main.py|main.main"
+      ],
+      "content_hash": "e7c41cdf264764fd"
+    },
+    "unused/dead_code.py": {
+      "method_keys": [
+        "unused/dead_code.py|unused.dead_code.OrphanClass",
+        "unused/dead_code.py|unused.dead_code.OrphanClass.orphan_method",
+        "unused/dead_code.py|unused.dead_code.never_called"
+      ],
+      "content_hash": "396fcd2b1e1b278f"
+    },
+    "core/pipeline.py": {
+      "method_keys": [
+        "core/pipeline.py|core.pipeline._handle_dog",
+        "core/pipeline.py|core.pipeline._handle_cat",
+        "core/pipeline.py|core.pipeline._handle_default",
+        "core/pipeline.py|core.pipeline.dispatch",
+        "core/pipeline.py|core.pipeline.QueryBuilder",
+        "core/pipeline.py|core.pipeline.QueryBuilder.__init__",
+        "core/pipeline.py|core.pipeline.QueryBuilder.where",
+        "core/pipeline.py|core.pipeline.QueryBuilder.order_by",
+        "core/pipeline.py|core.pipeline.QueryBuilder.limit",
+        "core/pipeline.py|core.pipeline.QueryBuilder.build",
+        "core/pipeline.py|core.pipeline.build_query",
+        "core/pipeline.py|core.pipeline.get_profile_city",
+        "core/pipeline.py|core.pipeline.double",
+        "core/pipeline.py|core.pipeline.is_positive",
+        "core/pipeline.py|core.pipeline.transform_list",
+        "core/pipeline.py|core.pipeline.create_profile",
+        "core/pipeline.py|core.pipeline.create_and_summarize",
+        "core/pipeline.py|core.pipeline.generate_animals",
+        "core/pipeline.py|core.pipeline.animal_names",
+        "core/pipeline.py|core.pipeline.pipeline",
+        "core/pipeline.py|core.pipeline.compute_nested",
+        "core/pipeline.py|core.pipeline.conditional_dispatch"
+      ],
+      "content_hash": "e35d741a62ee4e58"
+    },
+    "utils/helpers.py": {
+      "method_keys": [
+        "utils/helpers.py|utils.helpers.add",
+        "utils/helpers.py|utils.helpers.subtract",
+        "utils/helpers.py|utils.helpers.clamp",
+        "utils/helpers.py|utils.helpers.format_name"
+      ],
+      "content_hash": "02f0f50119d8ca85"
+    }
+  },
+  "methods_index": {
+    "core/base.py|core.base.SwimmingMixin": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.SwimmingMixin",
+      "start_line": 28,
+      "end_line": 30,
+      "type": "CLASS",
+      "content_hash": "56ac67ee6ee9db40"
+    },
+    "core/base.py|core.base.SwimmingMixin.swim": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.SwimmingMixin.swim",
+      "start_line": 29,
+      "end_line": 30,
+      "type": "METHOD",
+      "content_hash": "15c45f3e1063317c"
+    },
+    "core/base.py|core.base.Animal": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Animal",
+      "start_line": 33,
+      "end_line": 45,
+      "type": "CLASS",
+      "content_hash": "e56b290d9b561468"
+    },
+    "core/base.py|core.base.Animal.__init__": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Animal.__init__",
+      "start_line": 34,
+      "end_line": 35,
+      "type": "METHOD",
+      "content_hash": "2fb05f8920c327a7"
+    },
+    "core/base.py|core.base.Animal.speak": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Animal.speak",
+      "start_line": 38,
+      "end_line": 39,
+      "type": "METHOD",
+      "content_hash": "15e2a17ac89bdd8c"
+    },
+    "core/base.py|core.base.Animal.__str__": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Animal.__str__",
+      "start_line": 41,
+      "end_line": 42,
+      "type": "METHOD",
+      "content_hash": "e2cd6d758894191f"
+    },
+    "core/base.py|core.base.Animal.__repr__": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Animal.__repr__",
+      "start_line": 44,
+      "end_line": 45,
+      "type": "METHOD",
+      "content_hash": "10d96d39b807869f"
+    },
+    "core/base.py|core.base.Dog": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Dog",
+      "start_line": 48,
+      "end_line": 58,
+      "type": "CLASS",
+      "content_hash": "d9499ab269026359"
+    },
+    "core/base.py|core.base.Dog.speak": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Dog.speak",
+      "start_line": 49,
+      "end_line": 50,
+      "type": "METHOD",
+      "content_hash": "cef83575c4776a4f"
+    },
+    "core/base.py|core.base.Dog.fetch": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Dog.fetch",
+      "start_line": 53,
+      "end_line": 54,
+      "type": "METHOD",
+      "content_hash": "9c7b09d875076f35"
+    },
+    "core/base.py|core.base.Dog.create": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Dog.create",
+      "start_line": 57,
+      "end_line": 58,
+      "type": "METHOD",
+      "content_hash": "22e413bb3c5463a9"
+    },
+    "core/base.py|core.base.Cat": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Cat",
+      "start_line": 61,
+      "end_line": 63,
+      "type": "CLASS",
+      "content_hash": "cff436ed31638d13"
+    },
+    "core/base.py|core.base.Cat.speak": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Cat.speak",
+      "start_line": 62,
+      "end_line": 63,
+      "type": "METHOD",
+      "content_hash": "ae6659761d8694dc"
+    },
+    "core/base.py|core.base.Duck": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Duck",
+      "start_line": 66,
+      "end_line": 71,
+      "type": "CLASS",
+      "content_hash": "cdf2e699b1cfdf04"
+    },
+    "core/base.py|core.base.Duck.speak": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Duck.speak",
+      "start_line": 67,
+      "end_line": 68,
+      "type": "METHOD",
+      "content_hash": "b27769412adc6938"
+    },
+    "core/base.py|core.base.Duck.actions": {
+      "file_path": "core/base.py",
+      "qualified_name": "core.base.Duck.actions",
+      "start_line": 70,
+      "end_line": 71,
+      "type": "METHOD",
+      "content_hash": "30d437d1ed3a0f4b"
+    },
+    "core/models.py|core.models.Config": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.Config",
+      "start_line": 28,
+      "end_line": 31,
+      "type": "CLASS",
+      "content_hash": "081701afb1fdc74a"
+    },
+    "core/models.py|core.models.UserProfile": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile",
+      "start_line": 34,
+      "end_line": 73,
+      "type": "CLASS",
+      "content_hash": "a6e27814db640d18"
+    },
+    "core/models.py|core.models.UserProfile.Address": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.Address",
+      "start_line": 35,
+      "end_line": 41,
+      "type": "CLASS",
+      "content_hash": "9f41bf9d279d8cea"
+    },
+    "core/models.py|core.models.UserProfile.Address.__init__": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.Address.__init__",
+      "start_line": 36,
+      "end_line": 38,
+      "type": "METHOD",
+      "content_hash": "038e536856e0c18c"
+    },
+    "core/models.py|core.models.UserProfile.Address.full_address": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.Address.full_address",
+      "start_line": 40,
+      "end_line": 41,
+      "type": "METHOD",
+      "content_hash": "5bbe23078484f860"
+    },
+    "core/models.py|core.models.UserProfile.__init__": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.__init__",
+      "start_line": 43,
+      "end_line": 46,
+      "type": "METHOD",
+      "content_hash": "bc1e0a20a65fab50"
+    },
+    "core/models.py|core.models.UserProfile.name": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.name",
+      "start_line": 53,
+      "end_line": 54,
+      "type": "METHOD",
+      "content_hash": "7f63fa39eeb0c043"
+    },
+    "core/models.py|core.models.UserProfile.email": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.email",
+      "start_line": 57,
+      "end_line": 58,
+      "type": "METHOD",
+      "content_hash": "38111228356afea4"
+    },
+    "core/models.py|core.models.UserProfile.set_address": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.set_address",
+      "start_line": 60,
+      "end_line": 61,
+      "type": "METHOD",
+      "content_hash": "b18673814417f79e"
+    },
+    "core/models.py|core.models.UserProfile.get_summary": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.get_summary",
+      "start_line": 63,
+      "end_line": 65,
+      "type": "METHOD",
+      "content_hash": "8efb49ef06a33551"
+    },
+    "core/models.py|core.models.UserProfile.__eq__": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.__eq__",
+      "start_line": 67,
+      "end_line": 70,
+      "type": "METHOD",
+      "content_hash": "553a39fb26240c28"
+    },
+    "core/models.py|core.models.UserProfile.__hash__": {
+      "file_path": "core/models.py",
+      "qualified_name": "core.models.UserProfile.__hash__",
+      "start_line": 72,
+      "end_line": 73,
+      "type": "METHOD",
+      "content_hash": "eca1a0d250393512"
+    },
+    "core/services.py|core.services.log_call": {
+      "file_path": "core/services.py",
+      "qualified_name": "core.services.log_call",
+      "start_line": 28,
+      "end_line": 32,
+      "type": "FUNCTION",
+      "content_hash": "923037d594d13d3f"
+    },
+    "core/services.py|core.services.log_call.wrapper": {
+      "file_path": "core/services.py",
+      "qualified_name": "core.services.log_call.wrapper",
+      "start_line": 29,
+      "end_line": 30,
+      "type": "FUNCTION",
+      "content_hash": "b84c23f1558db395"
+    },
+    "core/services.py|core.services.create_dog": {
+      "file_path": "core/services.py",
+      "qualified_name": "core.services.create_dog",
+      "start_line": 36,
+      "end_line": 37,
+      "type": "FUNCTION",
+      "content_hash": "b5aaac23a9d0ac66"
+    },
+    "core/services.py|core.services.process_animals": {
+      "file_path": "core/services.py",
+      "qualified_name": "core.services.process_animals",
+      "start_line": 40,
+      "end_line": 41,
+      "type": "FUNCTION",
+      "content_hash": "8428a79b614e5eda"
+    },
+    "core/services.py|core.services.build_profile": {
+      "file_path": "core/services.py",
+      "qualified_name": "core.services.build_profile",
+      "start_line": 44,
+      "end_line": 47,
+      "type": "FUNCTION",
+      "content_hash": "ccf79871e3002914"
+    },
+    "core/services.py|core.services.compute": {
+      "file_path": "core/services.py",
+      "qualified_name": "core.services.compute",
+      "start_line": 50,
+      "end_line": 52,
+      "type": "FUNCTION",
+      "content_hash": "70c9b7e9aaff21bc"
+    },
+    "core/services.py|core.services.make_multiplier": {
+      "file_path": "core/services.py",
+      "qualified_name": "core.services.make_multiplier",
+      "start_line": 55,
+      "end_line": 59,
+      "type": "FUNCTION",
+      "content_hash": "12e7c4bc78bf44cd"
+    },
+    "core/services.py|core.services.make_multiplier.multiplier": {
+      "file_path": "core/services.py",
+      "qualified_name": "core.services.make_multiplier.multiplier",
+      "start_line": 56,
+      "end_line": 57,
+      "type": "FUNCTION",
+      "content_hash": "2c85c43bd46fcd69"
+    },
+    "core/services.py|core.services.apply_config": {
+      "file_path": "core/services.py",
+      "qualified_name": "core.services.apply_config",
+      "start_line": 65,
+      "end_line": 70,
+      "type": "FUNCTION",
+      "content_hash": "d8e44efc1de642c2"
+    },
+    "main.py|main.main": {
+      "file_path": "main.py",
+      "qualified_name": "main.main",
+      "start_line": 35,
+      "end_line": 80,
+      "type": "FUNCTION",
+      "content_hash": "5e50cecabf40fac8"
+    },
+    "unused/dead_code.py|unused.dead_code.OrphanClass": {
+      "file_path": "unused/dead_code.py",
+      "qualified_name": "unused.dead_code.OrphanClass",
+      "start_line": 18,
+      "end_line": 20,
+      "type": "CLASS",
+      "content_hash": "cb15076f7ea595e4"
+    },
+    "unused/dead_code.py|unused.dead_code.OrphanClass.orphan_method": {
+      "file_path": "unused/dead_code.py",
+      "qualified_name": "unused.dead_code.OrphanClass.orphan_method",
+      "start_line": 19,
+      "end_line": 20,
+      "type": "METHOD",
+      "content_hash": "22e505ee0b18f2ef"
+    },
+    "unused/dead_code.py|unused.dead_code.never_called": {
+      "file_path": "unused/dead_code.py",
+      "qualified_name": "unused.dead_code.never_called",
+      "start_line": 23,
+      "end_line": 24,
+      "type": "FUNCTION",
+      "content_hash": "49aed86e8e0146ad"
+    },
+    "core/pipeline.py|core.pipeline._handle_dog": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline._handle_dog",
+      "start_line": 48,
+      "end_line": 49,
+      "type": "FUNCTION",
+      "content_hash": "2cc83158bd803d85"
+    },
+    "core/pipeline.py|core.pipeline._handle_cat": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline._handle_cat",
+      "start_line": 52,
+      "end_line": 53,
+      "type": "FUNCTION",
+      "content_hash": "08b720b72cad8c76"
+    },
+    "core/pipeline.py|core.pipeline._handle_default": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline._handle_default",
+      "start_line": 56,
+      "end_line": 57,
+      "type": "FUNCTION",
+      "content_hash": "9fbc1c1e22c94e16"
+    },
+    "core/pipeline.py|core.pipeline.dispatch": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.dispatch",
+      "start_line": 66,
+      "end_line": 68,
+      "type": "FUNCTION",
+      "content_hash": "cfb39ca2ef74fbea"
+    },
+    "core/pipeline.py|core.pipeline.QueryBuilder": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.QueryBuilder",
+      "start_line": 74,
+      "end_line": 97,
+      "type": "CLASS",
+      "content_hash": "4c2ea8524e6358a9"
+    },
+    "core/pipeline.py|core.pipeline.QueryBuilder.__init__": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.QueryBuilder.__init__",
+      "start_line": 75,
+      "end_line": 78,
+      "type": "METHOD",
+      "content_hash": "ee3c9ce3e9611892"
+    },
+    "core/pipeline.py|core.pipeline.QueryBuilder.where": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.QueryBuilder.where",
+      "start_line": 80,
+      "end_line": 82,
+      "type": "METHOD",
+      "content_hash": "d5b21f050cbd3fef"
+    },
+    "core/pipeline.py|core.pipeline.QueryBuilder.order_by": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.QueryBuilder.order_by",
+      "start_line": 84,
+      "end_line": 86,
+      "type": "METHOD",
+      "content_hash": "ce1427bc40fda817"
+    },
+    "core/pipeline.py|core.pipeline.QueryBuilder.limit": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.QueryBuilder.limit",
+      "start_line": 88,
+      "end_line": 90,
+      "type": "METHOD",
+      "content_hash": "aae03910eac8fc2c"
+    },
+    "core/pipeline.py|core.pipeline.QueryBuilder.build": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.QueryBuilder.build",
+      "start_line": 92,
+      "end_line": 97,
+      "type": "METHOD",
+      "content_hash": "62996ec9cfdfd54f"
+    },
+    "core/pipeline.py|core.pipeline.build_query": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.build_query",
+      "start_line": 100,
+      "end_line": 101,
+      "type": "FUNCTION",
+      "content_hash": "0f82a61eb697581d"
+    },
+    "core/pipeline.py|core.pipeline.get_profile_city": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.get_profile_city",
+      "start_line": 107,
+      "end_line": 110,
+      "type": "FUNCTION",
+      "content_hash": "335c9af8355dec50"
+    },
+    "core/pipeline.py|core.pipeline.double": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.double",
+      "start_line": 116,
+      "end_line": 117,
+      "type": "FUNCTION",
+      "content_hash": "5de4579a2384930d"
+    },
+    "core/pipeline.py|core.pipeline.is_positive": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.is_positive",
+      "start_line": 120,
+      "end_line": 121,
+      "type": "FUNCTION",
+      "content_hash": "4f51750a9642dd27"
+    },
+    "core/pipeline.py|core.pipeline.transform_list": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.transform_list",
+      "start_line": 124,
+      "end_line": 126,
+      "type": "FUNCTION",
+      "content_hash": "19109269cd7cd6f8"
+    },
+    "core/pipeline.py|core.pipeline.create_profile": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.create_profile",
+      "start_line": 132,
+      "end_line": 133,
+      "type": "FUNCTION",
+      "content_hash": "94ad150f68e64c22"
+    },
+    "core/pipeline.py|core.pipeline.create_and_summarize": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.create_and_summarize",
+      "start_line": 136,
+      "end_line": 138,
+      "type": "FUNCTION",
+      "content_hash": "562ee5249f693a6b"
+    },
+    "core/pipeline.py|core.pipeline.generate_animals": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.generate_animals",
+      "start_line": 144,
+      "end_line": 145,
+      "type": "FUNCTION",
+      "content_hash": "256f40537eece2af"
+    },
+    "core/pipeline.py|core.pipeline.animal_names": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.animal_names",
+      "start_line": 148,
+      "end_line": 149,
+      "type": "FUNCTION",
+      "content_hash": "8e678b7d81010bb3"
+    },
+    "core/pipeline.py|core.pipeline.pipeline": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.pipeline",
+      "start_line": 152,
+      "end_line": 155,
+      "type": "FUNCTION",
+      "content_hash": "eb6ef518a4601666"
+    },
+    "core/pipeline.py|core.pipeline.compute_nested": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.compute_nested",
+      "start_line": 161,
+      "end_line": 162,
+      "type": "FUNCTION",
+      "content_hash": "b129a3807c7a54d0"
+    },
+    "core/pipeline.py|core.pipeline.conditional_dispatch": {
+      "file_path": "core/pipeline.py",
+      "qualified_name": "core.pipeline.conditional_dispatch",
+      "start_line": 168,
+      "end_line": 172,
+      "type": "FUNCTION",
+      "content_hash": "b777b73a1fbd2742"
+    },
+    "utils/helpers.py|utils.helpers.add": {
+      "file_path": "utils/helpers.py",
+      "qualified_name": "utils.helpers.add",
+      "start_line": 17,
+      "end_line": 18,
+      "type": "FUNCTION",
+      "content_hash": "deadc39260c03caa"
+    },
+    "utils/helpers.py|utils.helpers.subtract": {
+      "file_path": "utils/helpers.py",
+      "qualified_name": "utils.helpers.subtract",
+      "start_line": 21,
+      "end_line": 22,
+      "type": "FUNCTION",
+      "content_hash": "e2ee3e8b155081cb"
+    },
+    "utils/helpers.py|utils.helpers.clamp": {
+      "file_path": "utils/helpers.py",
+      "qualified_name": "utils.helpers.clamp",
+      "start_line": 25,
+      "end_line": 30,
+      "type": "FUNCTION",
+      "content_hash": "3f331e15c3b778c8"
+    },
+    "utils/helpers.py|utils.helpers.format_name": {
+      "file_path": "utils/helpers.py",
+      "qualified_name": "utils.helpers.format_name",
+      "start_line": 33,
+      "end_line": 34,
+      "type": "FUNCTION",
+      "content_hash": "24b5aaf9c4876695"
+    }
+  },
+  "components": [
+    {
+      "name": "Application Orchestration and Service Invocation",
+      "description": "Owns executable startup, construction of shared inputs, and service-level invocation semantics, including the decorator and closure mechanism that may wrap service calls.",
+      "key_entities": [
+        {
+          "qualified_name": "main.main",
+          "reference_file": "main.py",
+          "reference_start_line": 35,
+          "reference_end_line": 80
+        },
+        {
+          "qualified_name": "core.models.Config",
+          "reference_file": "core\\models.py",
+          "reference_start_line": 28,
+          "reference_end_line": 31
+        },
+        {
+          "qualified_name": "core.services.apply_config",
+          "reference_file": "core\\services.py",
+          "reference_start_line": 65,
+          "reference_end_line": 70
+        },
+        {
+          "qualified_name": "core.services.make_multiplier",
+          "reference_file": "core\\services.py",
+          "reference_start_line": 55,
+          "reference_end_line": 59
+        },
+        {
+          "qualified_name": "core.services.log_call",
+          "reference_file": "core\\services.py",
+          "reference_start_line": 28,
+          "reference_end_line": 32
+        }
+      ],
+      "source_cluster_ids": [
+        "5",
+        "9"
+      ],
+      "file_methods": [
+        {
+          "file_path": "core/base.py",
+          "methods": [
+            "core.base.Dog.create"
+          ]
+        },
+        {
+          "file_path": "core/models.py",
+          "methods": [
+            "core.models.Config"
+          ]
+        },
+        {
+          "file_path": "core/services.py",
+          "methods": [
+            "core.services.log_call",
+            "core.services.log_call.wrapper",
+            "core.services.create_dog",
+            "core.services.make_multiplier",
+            "core.services.make_multiplier.multiplier",
+            "core.services.apply_config"
+          ]
+        },
+        {
+          "file_path": "main.py",
+          "methods": [
+            "main.main"
+          ]
+        },
+        {
+          "file_path": "unused/dead_code.py",
+          "methods": [
+            "unused.dead_code.OrphanClass",
+            "unused.dead_code.OrphanClass.orphan_method",
+            "unused.dead_code.never_called"
+          ]
+        }
+      ],
+      "component_id": "1",
+      "can_expand": true,
+      "components": [],
+      "components_relations": []
+    },
+    {
+      "name": "Profile Workflows",
+      "description": "Owns the in-memory UserProfile aggregate, its nested address value object, and workflows that construct, enrich, retrieve, and summarize profile information.",
+      "key_entities": [
+        {
+          "qualified_name": "core.models.UserProfile",
+          "reference_file": "core\\models.py",
+          "reference_start_line": 34,
+          "reference_end_line": 73
+        },
+        {
+          "qualified_name": "core.models.UserProfile.Address",
+          "reference_file": "core\\models.py",
+          "reference_start_line": 35,
+          "reference_end_line": 41
+        },
+        {
+          "qualified_name": "core.models.UserProfile.set_address",
+          "reference_file": "core\\models.py",
+          "reference_start_line": 60,
+          "reference_end_line": 61
+        },
+        {
+          "qualified_name": "core.pipeline.create_and_summarize",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 136,
+          "reference_end_line": 138
+        },
+        {
+          "qualified_name": "core.services.build_profile",
+          "reference_file": "core\\services.py",
+          "reference_start_line": 44,
+          "reference_end_line": 47
+        }
+      ],
+      "source_cluster_ids": [
+        "1"
+      ],
+      "file_methods": [
+        {
+          "file_path": "core/models.py",
+          "methods": [
+            "core.models.UserProfile",
+            "core.models.UserProfile.Address",
+            "core.models.UserProfile.Address.__init__",
+            "core.models.UserProfile.Address.full_address",
+            "core.models.UserProfile.__init__",
+            "core.models.UserProfile.name",
+            "core.models.UserProfile.email",
+            "core.models.UserProfile.set_address",
+            "core.models.UserProfile.get_summary",
+            "core.models.UserProfile.__eq__",
+            "core.models.UserProfile.__hash__"
+          ]
+        },
+        {
+          "file_path": "core/pipeline.py",
+          "methods": [
+            "core.pipeline.QueryBuilder.__init__",
+            "core.pipeline.get_profile_city",
+            "core.pipeline.create_profile",
+            "core.pipeline.create_and_summarize"
+          ]
+        },
+        {
+          "file_path": "core/services.py",
+          "methods": [
+            "core.services.build_profile"
+          ]
+        }
+      ],
+      "component_id": "2",
+      "can_expand": true,
+      "components": [],
+      "components_relations": []
+    },
+    {
+      "name": "Transformation and Computation Workflows",
+      "description": "Owns collection transformations and higher-level arithmetic computation scenarios, including predicate, filter, map, and nested calculation behavior.",
+      "key_entities": [
+        {
+          "qualified_name": "core.pipeline.transform_list",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 124,
+          "reference_end_line": 126
+        },
+        {
+          "qualified_name": "core.pipeline.compute_nested",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 161,
+          "reference_end_line": 162
+        },
+        {
+          "qualified_name": "core.pipeline.is_positive",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 120,
+          "reference_end_line": 121
+        },
+        {
+          "qualified_name": "core.pipeline.double",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 116,
+          "reference_end_line": 117
+        },
+        {
+          "qualified_name": "core.services.compute",
+          "reference_file": "core\\services.py",
+          "reference_start_line": 50,
+          "reference_end_line": 52
+        }
+      ],
+      "source_cluster_ids": [
+        "2"
+      ],
+      "file_methods": [
+        {
+          "file_path": "core/pipeline.py",
+          "methods": [
+            "core.pipeline.double",
+            "core.pipeline.is_positive",
+            "core.pipeline.transform_list",
+            "core.pipeline.compute_nested"
+          ]
+        },
+        {
+          "file_path": "core/services.py",
+          "methods": [
+            "core.services.compute"
+          ]
+        },
+        {
+          "file_path": "utils/helpers.py",
+          "methods": [
+            "utils.helpers.add",
+            "utils.helpers.subtract",
+            "utils.helpers.clamp"
+          ]
+        }
+      ],
+      "component_id": "3",
+      "can_expand": true,
+      "components": [],
+      "components_relations": []
+    },
+    {
+      "name": "Animal Domain and Dispatch Workflows",
+      "description": "Owns the polymorphic animal hierarchy and behavior exercised over it, including object generation, abstract and concrete behavior, mixin specialization, collection processing, and strategy-style dispatch.",
+      "key_entities": [
+        {
+          "qualified_name": "core.base.Dog",
+          "reference_file": "core\\base.py",
+          "reference_start_line": 48,
+          "reference_end_line": 58
+        },
+        {
+          "qualified_name": "core.base.Duck",
+          "reference_file": "core\\base.py",
+          "reference_start_line": 66,
+          "reference_end_line": 71
+        },
+        {
+          "qualified_name": "core.pipeline.dispatch",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 66,
+          "reference_end_line": 68
+        },
+        {
+          "qualified_name": "core.services.process_animals",
+          "reference_file": "core\\services.py",
+          "reference_start_line": 40,
+          "reference_end_line": 41
+        }
+      ],
+      "source_cluster_ids": [
+        "3",
+        "4",
+        "7",
+        "8"
+      ],
+      "file_methods": [
+        {
+          "file_path": "core/base.py",
+          "methods": [
+            "core.base.SwimmingMixin",
+            "core.base.SwimmingMixin.swim",
+            "core.base.Animal",
+            "core.base.Animal.__init__",
+            "core.base.Animal.speak",
+            "core.base.Animal.__str__",
+            "core.base.Animal.__repr__",
+            "core.base.Dog",
+            "core.base.Dog.speak",
+            "core.base.Dog.fetch",
+            "core.base.Cat",
+            "core.base.Cat.speak",
+            "core.base.Duck",
+            "core.base.Duck.speak",
+            "core.base.Duck.actions"
+          ]
+        },
+        {
+          "file_path": "core/pipeline.py",
+          "methods": [
+            "core.pipeline._handle_dog",
+            "core.pipeline._handle_cat",
+            "core.pipeline._handle_default",
+            "core.pipeline.dispatch",
+            "core.pipeline.generate_animals",
+            "core.pipeline.animal_names",
+            "core.pipeline.pipeline",
+            "core.pipeline.conditional_dispatch"
+          ]
+        },
+        {
+          "file_path": "core/services.py",
+          "methods": [
+            "core.services.process_animals"
+          ]
+        },
+        {
+          "file_path": "utils/helpers.py",
+          "methods": [
+            "utils.helpers.format_name"
+          ]
+        }
+      ],
+      "component_id": "4",
+      "can_expand": true,
+      "components": [],
+      "components_relations": []
+    },
+    {
+      "name": "Fluent Query Construction",
+      "description": "Owns the self-contained builder-pattern scenario for incrementally assembling an in-memory query representation through chained configuration and terminal result construction.",
+      "key_entities": [
+        {
+          "qualified_name": "core.pipeline.QueryBuilder",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 74,
+          "reference_end_line": 97
+        },
+        {
+          "qualified_name": "core.pipeline.QueryBuilder.where",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 80,
+          "reference_end_line": 82
+        },
+        {
+          "qualified_name": "core.pipeline.QueryBuilder.order_by",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 84,
+          "reference_end_line": 86
+        },
+        {
+          "qualified_name": "core.pipeline.QueryBuilder.limit",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 88,
+          "reference_end_line": 90
+        },
+        {
+          "qualified_name": "core.pipeline.build_query",
+          "reference_file": "core\\pipeline.py",
+          "reference_start_line": 100,
+          "reference_end_line": 101
+        }
+      ],
+      "source_cluster_ids": [
+        "6"
+      ],
+      "file_methods": [
+        {
+          "file_path": "core/pipeline.py",
+          "methods": [
+            "core.pipeline.QueryBuilder",
+            "core.pipeline.QueryBuilder.where",
+            "core.pipeline.QueryBuilder.order_by",
+            "core.pipeline.QueryBuilder.limit",
+            "core.pipeline.QueryBuilder.build",
+            "core.pipeline.build_query"
+          ]
+        }
+      ],
+      "component_id": "5",
+      "can_expand": true,
+      "components": [],
+      "components_relations": []
+    }
+  ],
+  "components_relations": [
+    {
+      "relation": "orchestrates profile lifecycle and reads profile views",
+      "src_name": "Application Orchestration and Service Invocation",
+      "dst_name": "Profile Workflows",
+      "evidence": "`main.main` constructs/enriches profiles through the service facade, then consumes both aggregate-derived summary data and pipeline-derived profile views. The exchange is entirely in-memory; `UserProfile` instances and summary/city values cross the boundary.",
+      "key_edges": [
+        {
+          "source": "main.py|main.main",
+          "target": "core/services.py|core.services.build_profile",
+          "call_sites": [
+            {
+              "line": 43,
+              "column": 15
+            }
+          ],
+          "description": "Constructs and enriches a user profile through the service facade."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/models.py|core.models.UserProfile.get_summary",
+          "call_sites": [
+            {
+              "line": 44,
+              "column": 23
+            }
+          ],
+          "description": "Reads aggregate-derived profile summary data."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.get_profile_city",
+          "call_sites": [
+            {
+              "line": 63,
+              "column": 12
+            }
+          ],
+          "description": "Reads a pipeline-derived profile city view."
+        }
+      ],
+      "src_id": "1",
+      "dst_id": "2",
+      "is_static": true,
+      "all_edges": [
+        {
+          "source": "main.py|main.main",
+          "target": "core/models.py|core.models.UserProfile.get_summary",
+          "call_sites": [
+            {
+              "line": 44,
+              "column": 23
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.create_and_summarize",
+          "call_sites": [
+            {
+              "line": 69,
+              "column": 25
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.get_profile_city",
+          "call_sites": [
+            {
+              "line": 63,
+              "column": 12
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/services.py|core.services.build_profile",
+          "call_sites": [
+            {
+              "line": 43,
+              "column": 15
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/services.py|core.services.build_profile",
+          "call_sites": [
+            {
+              "line": 43,
+              "column": 15
+            }
+          ],
+          "description": "Constructs and enriches a user profile through the service facade."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/models.py|core.models.UserProfile.get_summary",
+          "call_sites": [
+            {
+              "line": 44,
+              "column": 23
+            }
+          ],
+          "description": "Reads aggregate-derived profile summary data."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.get_profile_city",
+          "call_sites": [
+            {
+              "line": 63,
+              "column": 12
+            }
+          ],
+          "description": "Reads a pipeline-derived profile city view."
+        }
+      ]
+    },
+    {
+      "relation": "invokes calculation and collection-transformation scenarios",
+      "src_name": "Application Orchestration and Service Invocation",
+      "dst_name": "Transformation and Computation Workflows",
+      "evidence": "`main.main` supplies scalar and collection inputs to the computation APIs and consumes their returned values. In addition to direct service calls, it invokes the closure returned by `make_multiplier(2)`, which captures its factor lexically and is therefore a runtime callback-style communication path rather than a module-level static target.",
+      "key_edges": [
+        {
+          "source": "main.py|main.main",
+          "target": "core/services.py|core.services.compute",
+          "call_sites": [
+            {
+              "line": 46,
+              "column": 14
+            }
+          ],
+          "description": "Invokes scalar computation through the service API."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.transform_list",
+          "call_sites": [
+            {
+              "line": 66,
+              "column": 19
+            }
+          ],
+          "description": "Invokes collection transformation."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.compute_nested",
+          "call_sites": [
+            {
+              "line": 75,
+              "column": 21
+            }
+          ],
+          "description": "Invokes nested computation."
+        }
+      ],
+      "src_id": "1",
+      "dst_id": "3",
+      "is_static": true,
+      "all_edges": [
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.compute_nested",
+          "call_sites": [
+            {
+              "line": 75,
+              "column": 21
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.transform_list",
+          "call_sites": [
+            {
+              "line": 66,
+              "column": 19
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/services.py|core.services.compute",
+          "call_sites": [
+            {
+              "line": 46,
+              "column": 14
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/services.py|core.services.compute",
+          "call_sites": [
+            {
+              "line": 46,
+              "column": 14
+            }
+          ],
+          "description": "Invokes scalar computation through the service API."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.transform_list",
+          "call_sites": [
+            {
+              "line": 66,
+              "column": 19
+            }
+          ],
+          "description": "Invokes collection transformation."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.compute_nested",
+          "call_sites": [
+            {
+              "line": 75,
+              "column": 21
+            }
+          ],
+          "description": "Invokes nested computation."
+        }
+      ]
+    },
+    {
+      "relation": "constructs animal inputs and exercises polymorphic dispatch",
+      "src_name": "Application Orchestration and Service Invocation",
+      "dst_name": "Animal Domain and Dispatch Workflows",
+      "evidence": "`main.main` creates concrete animal instances, submits collections to `process_animals`, and invokes dispatch-oriented workflows. `process_animals` communicates through the `Animal.speak` abstraction with runtime subtype resolution; `dispatch` additionally selects a handler from the mutable exact-type `HANDLERS` registry, making it an intentional plugin/extension hook.",
+      "key_edges": [
+        {
+          "source": "main.py|main.main",
+          "target": "core/services.py|core.services.process_animals",
+          "call_sites": [
+            {
+              "line": 41,
+              "column": 14
+            }
+          ],
+          "description": "Submits concrete animal instances for polymorphic processing."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.dispatch",
+          "call_sites": [
+            {
+              "line": 55,
+              "column": 17
+            },
+            {
+              "line": 56,
+              "column": 17
+            },
+            {
+              "line": 57,
+              "column": 18
+            }
+          ],
+          "description": "Invokes registry-based dispatch."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.conditional_dispatch",
+          "call_sites": [
+            {
+              "line": 78,
+              "column": 21
+            }
+          ],
+          "description": "Invokes conditional dispatch workflow."
+        }
+      ],
+      "src_id": "1",
+      "dst_id": "4",
+      "is_static": true,
+      "all_edges": [
+        {
+          "source": "main.py|main.main",
+          "target": "core/base.py|core.base.Cat",
+          "call_sites": [
+            {
+              "line": 37,
+              "column": 11
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/base.py|core.base.Duck",
+          "call_sites": [
+            {
+              "line": 38,
+              "column": 12
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.conditional_dispatch",
+          "call_sites": [
+            {
+              "line": 78,
+              "column": 21
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.dispatch",
+          "call_sites": [
+            {
+              "line": 55,
+              "column": 17
+            },
+            {
+              "line": 56,
+              "column": 17
+            },
+            {
+              "line": 57,
+              "column": 18
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.pipeline",
+          "call_sites": [
+            {
+              "line": 72,
+              "column": 13
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/services.py|core.services.process_animals",
+          "call_sites": [
+            {
+              "line": 41,
+              "column": 14
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/services.py|core.services.process_animals",
+          "call_sites": [
+            {
+              "line": 41,
+              "column": 14
+            }
+          ],
+          "description": "Submits concrete animal instances for polymorphic processing."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.dispatch",
+          "call_sites": [
+            {
+              "line": 55,
+              "column": 17
+            },
+            {
+              "line": 56,
+              "column": 17
+            },
+            {
+              "line": 57,
+              "column": 18
+            }
+          ],
+          "description": "Invokes registry-based dispatch."
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.conditional_dispatch",
+          "call_sites": [
+            {
+              "line": 78,
+              "column": 21
+            }
+          ],
+          "description": "Invokes conditional dispatch workflow."
+        }
+      ]
+    },
+    {
+      "relation": "requests an in-memory query representation",
+      "src_name": "Application Orchestration and Service Invocation",
+      "dst_name": "Fluent Query Construction",
+      "evidence": "`main.main` invokes the query facade and consumes its terminal dictionary result. Internally, `build_query` coordinates a fluent sequence over one mutable `QueryBuilder`; no database, network, or external query executor participates in this relation.",
+      "key_edges": [
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.build_query",
+          "call_sites": [
+            {
+              "line": 60,
+              "column": 13
+            }
+          ],
+          "description": "Requests the terminal in-memory query dictionary."
+        }
+      ],
+      "src_id": "1",
+      "dst_id": "5",
+      "is_static": true,
+      "all_edges": [
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.build_query",
+          "call_sites": [
+            {
+              "line": 60,
+              "column": 13
+            }
+          ],
+          "description": ""
+        },
+        {
+          "source": "main.py|main.main",
+          "target": "core/pipeline.py|core.pipeline.build_query",
+          "call_sites": [
+            {
+              "line": 60,
+              "column": 13
+            }
+          ],
+          "description": "Requests the terminal in-memory query dictionary."
+        }
+      ]
+    }
+  ]
+}
