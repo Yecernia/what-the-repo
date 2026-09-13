@@ -2,6 +2,7 @@
 import { detailedAnalysisStages } from './analysis-stage-catalog';
 
 export const englishMessages: Record<string, string> = {
+  '在GitHub查看源码，或点个Star :D': 'View the source on GitHub, or leave a Star :D',
   '发送编辑后的消息': 'Send edited message',
   '发送': 'Send',
   '返回聊天': 'Back to chat',

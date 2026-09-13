@@ -58,6 +58,16 @@ import { PaperScroll } from './PaperScroll';
 import { ProviderModelList } from './ProviderModelList';
 import './index.css';
 
+function ProjectGitHubLink({ compact = false }: { compact?: boolean }) {
+  const label = t('在GitHub查看源码，或点个Star :D');
+  return <a className={`project-github-link${compact ? ' compact' : ''}`}
+    href="https://github.com/Yecernia/what-the-repo" target="_blank" rel="noopener noreferrer"
+    aria-label={label} title={label}>
+    <img className="github-login-icon" src="/github.svg" alt="" />
+    <span className="project-github-label">GitHub <span aria-hidden="true">↗</span></span>
+  </a>;
+}
+
 const BARE_FILE_REFERENCE_NAMES = new Set([
   '.dockerignore', '.env', '.gitignore', '.npmrc', '.prettierrc', '.yarnrc',
   'containerfile', 'dockerfile', 'gemfile', 'gnumakefile', 'gradlew', 'license', 'makefile', 'mvnw', 'pipfile', 'procfile', 'rakefile', 'readme',
@@ -3131,9 +3141,12 @@ export default function App() {
   return (
     <div className={`layout${isMobile && mobileSidebarOpen ? ' mobile-sidebar-open' : ''}`}>
       {isMobile && <header className="mobile-topbar">
-        <button ref={mobileSidebarTrigger} type="button" className="btn btn-icon"
-          aria-label={t('展开项目栏')} aria-expanded={mobileSidebarOpen} aria-controls="project-sidebar"
-          onClick={() => setMobileSidebarOpen(true)}><PanelLeftOpen size={22} /></button>
+        <div className="mobile-topbar-start">
+          <button ref={mobileSidebarTrigger} type="button" className="btn btn-icon"
+            aria-label={t('展开项目栏')} aria-expanded={mobileSidebarOpen} aria-controls="project-sidebar"
+            onClick={() => setMobileSidebarOpen(true)}><PanelLeftOpen size={22} /></button>
+          <ProjectGitHubLink compact />
+        </div>
         {project && snapshot && <button type="button" className="btn mobile-project-toggle"
           aria-label={repositoryOpen ? t('返回聊天') : t('展开项目视图')}
           aria-expanded={repositoryOpen} onClick={() => setRepositoryOpen(value => !value)}>
@@ -3315,6 +3328,9 @@ export default function App() {
 
       {/* Main */}
       <div className="main" ref={mainRef} inert={isMobile && mobileSidebarOpen}>
+        {!project && !isMobile && <div className="chat-toolbar">
+          <ProjectGitHubLink />
+        </div>}
         {!project ? (
           activeId && loadError ? (
             <div className="empty-state">
@@ -3336,9 +3352,10 @@ export default function App() {
         ) : (
           <div className={`product-workspace${repositoryOpen ? ' repository-open' : ''}${singlePageProject ? ' single-page-project' : ''}`}>
             <aside className="teaching-pane" inert={singlePageProject && repositoryOpen}>
-              {snapshot && !isMobile && (
+              {!isMobile && (
                 <div className="chat-toolbar">
-                  <button className={`repository-peek${repositoryOpen ? ' active' : ''}`}
+                  <ProjectGitHubLink />
+                  {snapshot && <button className={`repository-peek${repositoryOpen ? ' active' : ''}`}
                     type="button"
                     aria-label={repositoryOpen ? t("收起项目视图") : t("展开项目视图")}
                     onClick={() => setRepositoryOpen(value => !value)}>
@@ -3349,7 +3366,7 @@ export default function App() {
                       <strong>{t("项目视图")}</strong>
                       <span>{snapshot.graph.nodes.filter(node => (node.entity_kind ?? 'component') === 'component').length} {t(" 组件 · ")}{snapshot.graph.edges.filter(edge => !edge.id.startsWith('hierarchy:edge:')).length} {t(" 关系")}</span>
                     </span>
-                  </button>
+                  </button>}
                 </div>
               )}
               {project.messages.some(message => message.role === 'user') && (
