@@ -18,8 +18,10 @@ const envExample = read(".env.k3s.example");
 const common = read("scripts/lib/k3s-common.sh");
 const installer = read("scripts/install-k3s.sh");
 const secretInitializer = read("scripts/k3s-initialize-local-secrets.sh");
+const applySecrets = read("scripts/k3s-apply-secrets.sh");
 const bootstrap = read("scripts/k3s-bootstrap-services.sh");
 const buildImages = read("scripts/k3s-build-images.sh");
+const dockerignore = read(".dockerignore");
 const converge = read("scripts/k3s-converge.sh");
 const applyApplication = read("scripts/k3s-apply-application.sh");
 const cutover = read("scripts/k3s-cutover-from-compose.sh");
@@ -71,6 +73,8 @@ const required = [
   [evolution, "supplementalGroups:\n          - 988", "Docker socket group access"],
   [evolution, "/var/run/docker.sock", "isolated host Docker boundary"],
   [evolution, "WHAT_THE_REPO_EVOLUTION_PROVIDER_API_KEY_FILE", "file-backed Evolution Provider key"],
+  [evolution, "WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE\n              value: /run/secrets/key-encryption-secret", "shared encrypted platform configuration in Evolution"],
+  [applySecrets, "apply_secret wtr-evolution-secrets \\\n  database-runtime-url:postgres-runtime-database-url \\\n  key-encryption-secret:key-encryption-secret", "Evolution shared encryption Secret source"],
   [evolution, "what-the-repo-pi-sandbox:__WTR_IMAGE_TAG__", "release-pinned Evolution sandbox"],
   [evolution, "readOnlyRootFilesystem: true", "read-only Evolution root filesystem"],
   [backup, "kind: CronJob", "daily PostgreSQL backup CronJob"],
@@ -102,6 +106,7 @@ const required = [
   [bootstrap, "what-the-repo-evolution-worker:$tag", "pre-imported Evolution Worker image gate"],
   [bootstrap, "what-the-repo-pi-sandbox:$tag", "host Docker Evolution sandbox gate"],
   [buildImages, "infra/docker/evolution-worker.Dockerfile", "Evolution Worker image build"],
+  [dockerignore, "!evolution/pi/scripts/build-platform-budget.mjs", "Evolution budget build script in Docker context"],
   [buildImages, "evolution/pi/sandbox", "Evolution sandbox image build"],
   [applyApplication, "for deployment in api analysis-worker web evolution-worker", "Evolution Worker rollout gate"],
   [converge, "k3s-bootstrap-services.sh", "shared converge image and service gate"],

@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
-    "build:runtime": "tsc -p tsconfig.runtime.json",
+    "build:runtime": "node scripts/build-platform-budget.mjs && tsc -p tsconfig.runtime.json",
     "start:feedback-worker": "npm run build:runtime && node .dist/src/worker-main.js",
     "feedback:once": "npm run build:runtime && node .dist/src/worker-main.js once",
     "feedback:review": "npm run build:runtime && node .dist/src/worker-main.js review",

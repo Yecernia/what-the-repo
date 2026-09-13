@@ -2,6 +2,14 @@
 import { detailedAnalysisStages } from './analysis-stage-catalog';
 
 export const englishMessages: Record<string, string> = {
+  '平台模型缺少可靠的费用估计，暂时无法在有限预算下调用，请联系管理员。': 'This platform model has no reliable cost estimate and cannot run under a finite budget. Please contact the administrator.',
+  '今日全站分析额度已用完，请明天再试。已有分析结果仍可查看。': 'Today’s site-wide analysis budget is exhausted. Please try again tomorrow. Existing results remain available.',
+  '今日全站免费聊天额度已用完，请明天再试，也可以使用自己的 API Key 继续聊天。': 'Today’s site-wide free chat budget is exhausted. Please try again tomorrow, or continue chatting with your own API key.',
+  '这项平台服务当前未开放付费用量，请联系管理员。': 'Paid usage for this platform service is currently disabled. Please contact the administrator.',
+  '今日自进化额度已用完，请明天再试。': 'Today’s self-evolution budget is exhausted. Please try again tomorrow.',
+  '这个自进化任务的金额预算已用完。': 'This self-evolution task has exhausted its budget.',
+  '全站存储容量不足，暂不接收新处理。已有结果仍可查看。': 'Site storage is low, so new processing is temporarily unavailable. Existing results remain available.',
+  '平台模型服务的上游账户余额不足，请联系管理员。': 'The platform’s upstream model account has insufficient balance. Please contact the administrator.',
   '在GitHub查看源码，或点个Star :D': 'View the source on GitHub, or leave a Star :D',
   '发送编辑后的消息': 'Send edited message',
   '发送': 'Send',

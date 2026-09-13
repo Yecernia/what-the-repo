@@ -1,6 +1,10 @@
 /** Public categories only. Never forward an upstream response body to the UI. */
 export function providerErrorCode(error: unknown, fallback = "provider_request_failed"): string {
+  const explicit = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+  if (explicit.startsWith("site_") && FAILURE_MESSAGES[explicit]) return explicit;
   const value = error instanceof Error ? `${error.name} ${error.message} ${error.cause instanceof Error ? error.cause.message : ""}` : String(error ?? "");
+  const businessCode = Object.keys(FAILURE_MESSAGES).find(code => code.startsWith("site_") && value.includes(code));
+  if (businessCode) return businessCode;
   if (/provider_budget_exceeded|budget.{0,20}exceed/iu.test(value)) return "provider_budget_exceeded";
   if (/insufficient[_\s-](?:balance|quota|credit)|balance.{0,20}insufficient|credit.{0,20}exhaust|余额不足|欠费/iu.test(value)) return "provider_balance_insufficient";
   if (/\b401\b|invalid[_\s-](?:api[_\s-]?)?key|authentication[_\s-](?:error|failed)/iu.test(value)) return "provider_authentication_failed";
@@ -13,6 +17,15 @@ export function providerErrorCode(error: unknown, fallback = "provider_request_f
 }
 
 export const FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  site_model_pricing_unknown: "平台模型缺少可靠的费用估计，暂时无法在有限预算下调用，请联系管理员。",
+  site_analysis_budget_exhausted: "今日全站分析额度已用完，请明天再试。已有分析结果仍可查看。",
+  site_chat_budget_exhausted: "今日全站免费聊天额度已用完，请明天再试，也可以使用自己的 API Key 继续聊天。",
+  site_budget_disabled: "这项平台服务当前未开放付费用量，请联系管理员。",
+  site_evolution_budget_exhausted: "今日自进化额度已用完，请明天再试。",
+  site_evolution_task_budget_exhausted: "这个自进化任务的金额预算已用完。",
+  site_rate_limited: "请求过于频繁，请稍后重试。",
+  site_storage_low: "全站存储容量不足，暂不接收新处理。已有结果仍可查看。",
+  platform_provider_balance_insufficient: "平台模型服务的上游账户余额不足，请联系管理员。",
   provider_balance_insufficient: "余额不足，请检查 API 配置。",
   provider_authentication_failed: "API Key 无效，请检查 API 配置。",
   provider_permission_denied: "上游拒绝访问，请检查 API 配置。",

@@ -20,6 +20,9 @@ evolution/pi/*
 !evolution/pi/tsconfig.runtime.json
 !evolution/pi/src/
 !evolution/pi/src/**
+!evolution/pi/scripts/
+evolution/pi/scripts/*
+!evolution/pi/scripts/build-platform-budget.mjs
 server/node_modules
 server/dist
 server/dist-test

@@ -1,3 +1,5 @@
+import { createDecipheriv, scryptSync } from 'node:crypto';
+import { createPlatformBudget, consumeAdminEvolutionCommand } from './platform-budget.js';
 import { constants } from "node:fs";
 import { access, lstat, mkdir, readFile, readdir, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -260,7 +262,8 @@ function policies(
       maxSteps: positiveInt("WHAT_THE_REPO_EVOLUTION_MAX_STEPS", 40),
       maxTimeMs: positiveInt("WHAT_THE_REPO_EVOLUTION_MAX_TIME_MS", 15 * 60_000),
       maxTokens: positiveInt("WHAT_THE_REPO_EVOLUTION_MAX_TOKENS", 120_000),
-      maxCostUsd: positiveCost("WHAT_THE_REPO_EVOLUTION_MAX_COST_USD", 10),
+      // Monetary admission is authoritative in the shared platform ledger.
+      maxCostUsd: null,
       maxCandidateBytes: positiveInt("WHAT_THE_REPO_EVOLUTION_MAX_CANDIDATE_BYTES", 512 * 1024),
     }];
   }));
@@ -269,19 +272,42 @@ function policies(
 async function modelSessionFactory(
   root: string,
   dataRoot: string,
+  global?: Awaited<ReturnType<typeof createPlatformBudget>>,
+  taskId?: string,
 ): Promise<ReturnType<typeof createPiSdkSessionFactory>> {
-  const provider = textEnv("WHAT_THE_REPO_EVOLUTION_PROVIDER_ID", "deepseek") as string;
+  let provider = textEnv("WHAT_THE_REPO_EVOLUTION_PROVIDER_ID", "deepseek") as string;
   if (!PROVIDER_ID.test(provider)) throw new Error("invalid evolution Provider ID");
-  const baseUrl = httpsUrl("WHAT_THE_REPO_EVOLUTION_PROVIDER_BASE_URL", "https://api.deepseek.com");
-  const modelId = textEnv("WHAT_THE_REPO_EVOLUTION_PROVIDER_MODEL", "deepseek-v4-flash") as string;
-  const apiKey = await readEvolutionProviderKey(root);
+  let baseUrl = httpsUrl("WHAT_THE_REPO_EVOLUTION_PROVIDER_BASE_URL", "https://api.deepseek.com");
+  let modelId = textEnv("WHAT_THE_REPO_EVOLUTION_PROVIDER_MODEL", "deepseek-v4-flash") as string;
+  let apiKey: string | undefined;
+  let evolutionModel: {model: NonNullable<ReturnType<ModelRuntime['getModel']>>;authHeader?:string}|undefined;
+  let configVersion=0, connectionId="platform-evolution";
+  if(global && taskId) {
+    const history=(await global.pool.query("SELECT value FROM admin_documents WHERE key=$1",["platform"])).rows[0]?.value;
+    const taskRow=(await global.pool.query("SELECT created_at,config_version FROM evolution_tasks WHERE task_id=$1",[taskId])).rows[0];
+    const created=taskRow?.created_at;
+    const version=history?.versions.filter((v:{createdAt:string;version:number})=>taskRow?.config_version!==null&&taskRow?.config_version!==undefined?v.version===taskRow.config_version:!created||Date.parse(v.createdAt)<=new Date(created).getTime()).at(-1);
+    if(taskRow?.config_version&&!version)throw new Error('platform_config_version_missing');
+    configVersion=version?.version??0;const selection=version?.agents.evolution;
+    if(selection) {
+      const c=version.connections.find((c:{id:string})=>c.id===selection.connectionId);
+      const secret=await readSecretValue(root,process.env,"WHAT_THE_REPO_KEY_ENCRYPTION_SECRET","WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE","key encryption",MAX_PROVIDER_KEY_BYTES,true);
+      const [ciphertext,iv,tag]=c.secret.split(".").map((x:string)=>Buffer.from(x,"base64"));
+      const decipher=createDecipheriv("aes-256-gcm",scryptSync(secret!,"repo-onboarding-provider-keys:v1",32),iv);
+      decipher.setAAD(Buffer.from("admin\0connection:"+c.id));decipher.setAuthTag(tag);
+      apiKey=Buffer.concat([decipher.update(ciphertext),decipher.final()]).toString("utf8");
+      evolutionModel=version.evolutionModel;
+      provider=evolutionModel?.model.provider??c.provider;baseUrl=c.baseUrl;modelId=selection.model;connectionId=c.id;
+    }
+  }
+  apiKey ??= await readEvolutionProviderKey(root);
   const runtime = await ModelRuntime.create({
     modelsPath: null,
     authPath: join(dataRoot, "evolution-provider-auth.json"),
     refreshOnCreate: false,
     allowModelNetwork: false,
   });
-  runtime.registerProvider(provider, { baseUrl, apiKey });
+  runtime.registerProvider(provider, { baseUrl, apiKey,...(evolutionModel?{api:evolutionModel.model.api,models:[evolutionModel.model],headers:evolutionModel.authHeader==='api-key'?{'api-key':apiKey}:undefined}:{}) });
   const model = runtime.getModel(provider, modelId);
   if (!model) throw new Error(`evolution model is unavailable: ${provider}:${modelId}`);
 
@@ -290,6 +316,7 @@ async function modelSessionFactory(
     throw new Error("invalid WHAT_THE_REPO_EVOLUTION_THINKING_LEVEL");
   }
   return createPiSdkSessionFactory({
+    globalReservation: global && taskId ? global.forTask(taskId,configVersion,connectionId) : undefined,
     modelRuntime: runtime,
     model,
     thinkingLevel: thinkingLevel as "off" | "minimal" | "low" | "medium" | "high" | "xhigh",
@@ -317,8 +344,12 @@ export async function createEvolutionRuntime(): Promise<ProductionEvolutionRunti
   ) as string;
   const imageDigest = await resolveImageDigest(dockerExecutable, dockerConfigDirectory, imageReference);
   const definitions = productionCheckDefinitions(process.execPath);
-  const sessionFactory = await modelSessionFactory(paths.root, paths.dataRoot);
   const databaseUrl = await readEvolutionDatabaseUrl(paths.root);
+  const global = await createPlatformBudget(paths.root, databaseUrl ?? null);
+  const sessionFactory: import("./contracts.js").PiSessionFactory = async input => {
+    const factory = await modelSessionFactory(paths.root, paths.dataRoot, global, input.taskId);
+    return factory({ ...input, budget: { ...input.budget, maxCostUsd: global ? null : input.budget.maxCostUsd } });
+  };
   const postgres = databaseUrl
     ? PostgresEvolutionPersistence.connect(
         databaseUrl,
@@ -326,7 +357,7 @@ export async function createEvolutionRuntime(): Promise<ProductionEvolutionRunti
       )
     : undefined;
 
-  return createProductionEvolutionRuntime({
+  const result = createProductionEvolutionRuntime({
     sandbox: {
       dockerExecutable,
       dockerConfigDirectory,
@@ -356,6 +387,11 @@ export async function createEvolutionRuntime(): Promise<ProductionEvolutionRunti
       redisPrefix: textEnv("WHAT_THE_REPO_REDIS_PREFIX", "what-the-repo"),
     },
   });
+  let processing:Promise<unknown>|undefined;
+  const timer=global?setInterval(()=>{if(processing)return;processing=consumeAdminEvolutionCommand(global.pool,result).catch(()=>undefined).finally(()=>{processing=undefined;});},2000):undefined;
+  timer?.unref();
+  const close=result.close;result.close=async()=>{if(timer)clearInterval(timer);await processing;await close?.();await global?.close();};
+  return result;
 }
 
 export default createEvolutionRuntime;

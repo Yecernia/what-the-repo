@@ -51,6 +51,7 @@ function safeDetail(detail: unknown): string | null {
   if (/(?:https?:\/\/|[A-Za-z]:[\\/]|(?:^|\s)\/[^\s]+|bearer\s+|(?:api[_ -]?key|secret|password|token)\s*[:=]|sk-[A-Za-z0-9_-]{8,}|(?:stack|traceback|postgres|sql|exception| at ))/iu.test(value)) return null;
   if (!SAFE_DETAIL_PATTERNS.some(pattern => pattern.test(value))) return null;
   const labels: Record<string, string> = {
+    site_model_pricing_unknown: "平台模型缺少可靠的费用估计，暂时无法在有限预算下调用，请联系管理员。",
     '自定义 Provider 的 Base URL 必须是 HTTPS 公网地址': t('接口地址必须使用 HTTPS，且能从公网访问。'),
     '这个模型连接已经存在': t('这份 API 配置已经存在。'),
     '模型连接不存在': t('这份 API 配置不存在。'),
@@ -99,7 +100,8 @@ function publicErrorMessage(status: number, code: string | undefined, detail: un
 /** Bounded public codes; never render raw provider response text. */
 export function conversationErrorMessage(code: string): string | null {
   const labels: Record<string, string> = {
-    provider_balance_insufficient: '余额不足，请检查 API 配置。',
+    platform_provider_balance_insufficient: "平台模型服务的上游账户余额不足，请联系管理员。",
+  provider_balance_insufficient: '余额不足，请检查 API 配置。',
     provider_authentication_failed: 'API Key 无效，请检查 API 配置。',
     provider_permission_denied: '上游拒绝访问，请检查 API 配置。',
     provider_rate_limited: '上游请求过多，请稍后重试。',
@@ -109,6 +111,13 @@ export function conversationErrorMessage(code: string): string | null {
     provider_request_failed: '上游错误，请稍后重试。',
     provider_invalid_response: '上游返回了空回答，请重试。',
     provider_transient_error: '上游连接失败，请稍后重试。',
+    site_analysis_budget_exhausted: "今日全站分析额度已用完，请明天再试。已有分析结果仍可查看。",
+    site_chat_budget_exhausted: "今日全站免费聊天额度已用完，请明天再试，也可以使用自己的 API Key 继续聊天。",
+    site_budget_disabled: "这项平台服务当前未开放付费用量，请联系管理员。",
+    site_evolution_budget_exhausted: "今日自进化额度已用完，请明天再试。",
+    site_evolution_task_budget_exhausted: "这个自进化任务的金额预算已用完。",
+    site_rate_limited: "请求过于频繁，请稍后重试。",
+    site_storage_low: "全站存储容量不足，暂不接收新处理。已有结果仍可查看。",
     provider_budget_exceeded: '已达到本站用量上限，请稍后再试。',
     provider_unavailable: '上游暂不可用，请稍后重试。',
     provider_key_required: '请先在设置中添加 API Key。',

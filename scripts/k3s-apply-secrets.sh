@@ -59,5 +59,6 @@ apply_secret wtr-worker-secrets \
   cos-secret-key:cos-secret-key
 apply_secret wtr-evolution-secrets \
   database-runtime-url:postgres-runtime-database-url \
+  key-encryption-secret:key-encryption-secret \
   evolution-provider-api-key:evolution-provider-api-key
 echo "applied k3s Secret objects from root-only files without printing their contents"

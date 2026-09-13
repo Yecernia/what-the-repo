@@ -45,6 +45,8 @@ spec:
           env:
             - name: DATABASE_URL_FILE
               value: /run/secrets/database-runtime-url
+            - name: WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE
+              value: /run/secrets/key-encryption-secret
             - name: WHAT_THE_REPO_EVOLUTION_PROVIDER_API_KEY_FILE
               value: /run/secrets/evolution-provider-api-key
             - name: WHAT_THE_REPO_DOCKER

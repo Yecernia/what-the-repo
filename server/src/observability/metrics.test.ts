@@ -18,7 +18,9 @@ test("runtime metrics aggregate labels and keep histogram buckets cumulative", (
     labels: { method: "GET", route: "/x" },
     value: 5,
   }]);
-  assert.deepEqual(snapshot.gauges, [{
+  assert.ok(snapshot.gauges[0]?.observed_at);
+  assert.equal(snapshot.gauges.find(row => row.name === METRIC_NAMES.providerActive)?.value, 0);
+  assert.deepEqual(snapshot.gauges.filter(row => row.name === 'demo_active').map(({ observed_at, ...row }) => { void observed_at; return row; }), [{
     name: "demo_active",
     labels: { worker: "analysis" },
     value: 1,

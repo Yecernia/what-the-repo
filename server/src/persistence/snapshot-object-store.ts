@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import COS from "cos-nodejs-sdk-v5";
 
@@ -14,6 +14,9 @@ export interface SnapshotObjectStore {
   put(key: string, body: Uint8Array, contentType?: string): Promise<StoredObject>;
   get(key: string): Promise<Uint8Array | null>;
   delete(key: string): Promise<void>;
+  /** Irreversible reclamation of an already-unreferenced object, including retained versions. */
+  purge?(key: string): Promise<void>;
+  inventory?(): Promise<Array<{ key: string; bytes: number }>>;
 }
 
 export function snapshotObjectDigest(body: Uint8Array): string {
@@ -32,6 +35,17 @@ export class LocalSnapshotObjectStore implements SnapshotObjectStore {
   readonly kind = "local" as const;
 
   constructor(private readonly root: string) {}
+
+  async inventory(): Promise<Array<{key:string;bytes:number}>> {
+    const result:Array<{key:string;bytes:number}>=[];
+    const walk=async(directory:string):Promise<void>=>{
+      for(const entry of await readdir(directory,{withFileTypes:true}).catch(error=>{if(error.code==='ENOENT')return [];throw error;})) {
+        const path=join(directory,entry.name);if(entry.isSymbolicLink())continue;
+        if(entry.isDirectory())await walk(path);else if(entry.isFile())result.push({key:relative(this.root,path).replaceAll('\\','/'),bytes:(await stat(path)).size});
+      }
+    };
+    await walk(join(this.root,'public-repository-snapshots'));return result;
+  }
 
   private path(key: string): string {
     const normalizedRoot = resolve(this.root);
@@ -90,6 +104,7 @@ export class TencentCosObjectStore implements SnapshotObjectStore {
   readonly kind = "cos" as const;
   private readonly client: COS;
   private readonly prefix: string;
+  private versioning?:{at:number;enabled:boolean};
 
   constructor(private readonly options: TencentCosObjectStoreOptions) {
     this.client = new COS(tencentCosClientOptions(options));
@@ -99,6 +114,61 @@ export class TencentCosObjectStore implements SnapshotObjectStore {
   private key(value: string): string {
     const clean = safeKey(value);
     return this.prefix ? `${this.prefix}/${clean}` : clean;
+  }
+
+  async inventory(): Promise<Array<{key:string;bytes:number}>> {
+    const rows=new Map<string,number>();let marker='';
+    if(await this.hasVersions()){
+      for(const object of await this.objectVersions(this.prefix?this.prefix+'/':'')){
+        const key=this.prefix?object.key.slice(this.prefix.length+1):object.key;
+        rows.set(key,(rows.get(key)??0)+object.bytes);
+      }
+      return [...rows].map(([key,bytes])=>({key,bytes}));
+    }
+    for(let page=0;page<10_000;page++) {
+      const response=await this.client.getBucket({Bucket:this.options.bucket,Region:this.options.region,Prefix:this.prefix?this.prefix+'/':'',Marker:marker,MaxKeys:1000});
+      for(const object of response.Contents??[]){
+        const bytes=Number(object.Size);
+        if(!Number.isFinite(bytes)||bytes<0||this.prefix&&!object.Key.startsWith(this.prefix+'/'))throw new Error('object_inventory_invalid');
+        rows.set(this.prefix?object.Key.slice(this.prefix.length+1):object.Key,bytes);
+      }
+      if(String(response.IsTruncated)!=='true')return [...rows].map(([key,bytes])=>({key,bytes}));
+      const next=response.NextMarker;if(!next||next===marker)throw new Error('object_inventory_incomplete');marker=next;
+    }
+    throw new Error('object_inventory_too_large');
+  }
+
+  private async hasVersions():Promise<boolean>{
+    if(this.versioning&&Date.now()-this.versioning.at<60_000)return this.versioning.enabled;
+    const result=await this.client.getBucketVersioning({Bucket:this.options.bucket,Region:this.options.region});
+    const status=result.VersioningConfiguration?.Status;
+    const enabled=status==='Enabled'||status==='Suspended';this.versioning={at:Date.now(),enabled};return enabled;
+  }
+  private async objectVersions(prefix:string):Promise<Array<{key:string;version:string;bytes:number}>>{
+    const rows=new Map<string,{key:string;version:string;bytes:number}>();let marker='',versionMarker='';
+    for(let page=0;page<10_000;page++){
+      const response=await this.client.listObjectVersions({Bucket:this.options.bucket,Region:this.options.region,Prefix:prefix,Marker:marker,VersionIdMarker:versionMarker,MaxKeys:'1000'});
+      for(const item of [...(response.Versions??[]),...(response.DeleteMarkers??[])]){
+        if(!item.Key.startsWith(prefix))throw new Error('object_inventory_out_of_scope');
+        const version=String(item.VersionId??'null'),bytes='Size' in item?Number(item.Size):0;
+        if(!Number.isFinite(bytes)||bytes<0)throw new Error('object_inventory_invalid_size');
+        rows.set(item.Key+'\0'+version,{key:item.Key,version,bytes});
+      }
+      if(String(response.IsTruncated)!=='true')return [...rows.values()];
+      const next=response.NextMarker??'',nextVersion=response.NextVersionIdMarker??'';
+      if(!next||(next===marker&&nextVersion===versionMarker))throw new Error('object_inventory_incomplete');
+      marker=next;versionMarker=nextVersion;
+    }
+    throw new Error('object_inventory_too_large');
+  }
+  async purge(key:string):Promise<void>{
+    if(!await this.hasVersions())return this.delete(key);
+    const target=this.key(key);
+    const objects=(await this.objectVersions(target)).filter(object=>object.key===target).map(object=>({Key:target,VersionId:object.version}));
+    for(let offset=0;offset<objects.length;offset+=1000){
+      const result=await this.client.deleteMultipleObject({Bucket:this.options.bucket,Region:this.options.region,Objects:objects.slice(offset,offset+1000),Quiet:false});
+      if(result.Error?.length)throw new Error('storage_delete_incomplete');
+    }
   }
 
   async put(key: string, body: Uint8Array, contentType = "application/octet-stream"): Promise<StoredObject> {

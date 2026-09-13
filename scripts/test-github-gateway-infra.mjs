@@ -8,6 +8,12 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 const envExample = read(".env.github-gateway.example");
 const dockerfile = read("infra/docker/github-gateway.Dockerfile");
 const runtimePackage = read("infra/docker/github-gateway/package.json");
+const runtimeDependencies = JSON.parse(runtimePackage).dependencies;
+const serverDependencies = JSON.parse(read("server/package.json")).dependencies;
+if (runtimeDependencies.fastify !== serverDependencies.fastify
+  || Object.keys(runtimeDependencies).sort().join(",") !== "@fastify/cookie,fastify") {
+  throw new Error("GitHub gateway must keep a minimal runtime matching the server Fastify version");
+}
 const nginx = read("infra/nginx/github-gateway.nginx.conf.template");
 const deploy = read("scripts/deploy-github-gateway.sh");
 const edge = read("scripts/install-github-gateway-edge.sh");
@@ -17,7 +23,7 @@ const secrets = read("scripts/k3s-apply-secrets.sh");
 const required = [
   [envExample, "GITHUB_GATEWAY_PUBLIC_URL=https://github.example.com", "gateway public URL"],
   [envExample, "GITHUB_GATEWAY_APPLICATION_CALLBACK_URL=https://example.com/api/auth/github/callback", "application callback"],
-  [runtimePackage, '"fastify": "5.12.0"', "minimal Fastify runtime"],
+  [envExample, "GITHUB_GATEWAY_ADMIN_CALLBACK_URL=", "optional administrator callback"],
   [dockerfile, "COPY --from=build /source/server/dist/github-gateway ./dist/github-gateway", "gateway-only compiled source"],
   [dockerfile, "USER 10002:10002", "non-root gateway user"],
   [nginx, "location = /oauth/github/start", "public OAuth start route"],
@@ -58,3 +64,5 @@ if (!nginx.includes("proxy_buffering off;") || nginx.includes("proxy_pass http:/
 }
 
 process.stdout.write(`GitHub gateway infrastructure checks passed (${required.length} assertions)\n`);
+
+await import("./test-github-gateway-edge.mjs");

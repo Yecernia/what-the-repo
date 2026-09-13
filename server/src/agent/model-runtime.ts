@@ -34,6 +34,7 @@ import { createPublicFetch } from "../security/outbound-url.js";
 import type { ProviderRequestDiagnostic } from "./worker-diagnostics.js";
 
 export interface ModelRuntimeOptions {
+  attribution?: import('./provider-budget.js').UsageAttribution;
   providerGate?: ProviderCallGate;
   providerBudget?: ProviderUsageBudget;
   ownerId?: string;
@@ -261,11 +262,13 @@ export function createModelRuntime(config: ProviderConfig, options: ModelRuntime
     models,
     model: model as Model<Api>,
     apiKey: config.apiKey,
+    providerConnectionId: config.connectionId,
     fetch: publicFetch,
     networkTimeoutMs: config.networkTimeoutMs,
     providerGate: options.providerGate,
     providerBudget: options.providerBudget,
     ownerId: options.ownerId,
+    attribution: options.attribution ? { ...options.attribution, connectionId: config.connectionId } : undefined,
     metrics: options.metrics ?? defaultRuntimeMetrics,
   };
 }
@@ -333,19 +336,19 @@ function recordGateWait(runtime: PiModelRuntime, elapsedMs: number): void {
 
 function estimatedProviderReservation(runtime: PiModelRuntime): number {
   const cost = runtime.model.cost;
-  const input = Math.max(0, Math.min(runtime.model.contextWindow, 128_000)) * Math.max(0, cost.input);
+  const input = Math.max(0, runtime.model.contextWindow) * Math.max(0, cost.input, cost.cacheRead, cost.cacheWrite);
   const output = Math.max(0, runtime.model.maxTokens) * Math.max(0, cost.output);
-  const cacheRead = Math.max(0, Math.min(runtime.model.contextWindow, 128_000)) * Math.max(0, cost.cacheRead);
-  return (input + output + cacheRead) / 1_000_000;
+  return (input + output) / 1_000_000;
 }
 
 function usageReport(
   usage: ProviderUsage | null,
   status: ProviderUsageReport["status"],
   operationStarted: boolean,
+  pricingKnown=true,
 ): ProviderUsageReport {
   return {
-    usageKnown: usage !== null || !operationStarted,
+    usageKnown: usage !== null && (pricingKnown || usage.cost > 0) || !operationStarted,
     inputTokens: usage?.input ?? 0,
     outputTokens: usage?.output ?? 0,
     cachedTokens: usage?.cacheRead ?? 0,
@@ -380,9 +383,11 @@ async function acquireBudget(
   if (!runtime.providerBudget || !runtime.ownerId) return undefined;
   return runtime.providerBudget.acquire({
     ownerId: runtime.ownerId,
+    attribution: runtime.attribution,
     provider: runtime.model.provider,
     model: runtime.model.id,
     estimatedCostUsd: estimatedProviderReservation(runtime),
+    pricingKnown: Object.values(runtime.model.cost).some(value=>typeof value==='number'&&value>0),
     signal,
   });
 }
@@ -437,7 +442,7 @@ export async function withProviderPermit<T>(
   } finally {
     if (active) runtime.metrics?.addGauge(METRIC_NAMES.providerActive, -1, providerLabels(runtime));
     try {
-      await budgetPermit?.release(usageReport(finalUsage, !active && signal?.aborted ? "cancelled" : status, active));
+      await budgetPermit?.release(usageReport(finalUsage, !active && signal?.aborted ? "cancelled" : status, active, estimatedProviderReservation(runtime)>0));
     } catch {
       runtime.metrics?.increment(METRIC_NAMES.providerBudgetRecordErrors, 1, providerLabels(runtime));
     }
@@ -586,14 +591,14 @@ export function streamWithProviderPermit(
       if (diagnostic) {
         diagnostic.durationMs = performance.now() - callStarted;
         diagnostic.status = budgetRejected ? "budget_rejected" : outcome;
-        diagnostic.usage = usageReport(finalUsage, usageStatus, active);
+        diagnostic.usage = usageReport(finalUsage, usageStatus, active, estimatedProviderReservation(runtime)>0);
       }
       if (!budgetRejected) {
         recordProviderCall(runtime, outcome, performance.now() - callStarted, finalUsage);
       }
       if (active) runtime.metrics?.addGauge(METRIC_NAMES.providerActive, -1, providerLabels(runtime));
       try {
-        await budgetPermit?.release(usageReport(finalUsage, usageStatus, active));
+        await budgetPermit?.release(usageReport(finalUsage, usageStatus, active, estimatedProviderReservation(runtime)>0));
       } catch {
         runtime.metrics?.increment(METRIC_NAMES.providerBudgetRecordErrors, 1, providerLabels(runtime));
       }

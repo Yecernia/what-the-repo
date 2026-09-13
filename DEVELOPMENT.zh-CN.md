@@ -1,5 +1,7 @@
 # 开发说明
 
+[管理台说明](ADMIN_CONSOLE.zh-CN.md)包含固定 GitHub ID 与 TOTP 登录、业务预算、全站存储准入、监控和隔离本机预览。
+
 **简体中文** · [English](DEVELOPMENT.md)
 
 [产品介绍](README.md) · [贡献指南](CONTRIBUTING.zh-CN.md)

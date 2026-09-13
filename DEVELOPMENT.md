@@ -1,5 +1,7 @@
 # Development guide
 
+The [admin console guide](ADMIN_CONSOLE.md) covers GitHub + TOTP access, business budgets, global storage admission, monitoring and isolated local preview.
+
 [简体中文](DEVELOPMENT.zh-CN.md) · **English**
 
 [Product overview](README.en.md) · [Contributing](CONTRIBUTING.md)

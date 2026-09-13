@@ -1,3 +1,4 @@
+import { runtimeConfig } from '../admin/runtime-config.js';
 import { randomUUID, createHash } from "node:crypto";
 import { analysisFailureCode } from "../agent/provider-error.js";
 import { access, rm } from "node:fs/promises";
@@ -128,6 +129,8 @@ interface AnalysisCheckpoint {
 function semanticFailureCode(error: unknown): string {
   const local = workerFailureCode(error);
   if (local) return local;
+  const category = analysisFailureCode(error instanceof Error ? error.message : "");
+  if (category.startsWith("site_")) return category;
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("unsupported_model") || message.includes("unsupported_provider") || message.startsWith("skill_")) {
     return "provider_configuration";
@@ -144,7 +147,8 @@ function semanticFailureCode(error: unknown): string {
 export function semanticTerminalFailureCode(stopReason: string): string | null {
   const normalized = stopReason.trim().toLowerCase();
   const providerCode = analysisFailureCode(normalized);
-  if (providerCode.startsWith("provider_") && providerCode !== "provider_request_failed") return providerCode;
+  if(providerCode==='provider_balance_insufficient')return 'platform_provider_balance_insufficient';
+  if ((providerCode.startsWith("provider_") || providerCode.startsWith("site_")) && providerCode !== "provider_request_failed") return providerCode;
   if (normalized.includes("value_reference_validation_failed") || normalized.includes("value_candidate_validation_failed")
     || normalized.includes("component_semantics_incomplete")) return "structured_worker_failed";
   for (const code of WORKER_FAILURE_CODES) if (normalized.includes(code)) return code;
@@ -466,6 +470,7 @@ export class AnalysisCoordinator {
   }
 
   private async processClaimedJob(job: AnalysisJob, signal: AbortSignal): Promise<void> {
+    const config = await runtimeConfig(this.config, this.store, job.created_at, job.config_version);
     const worker = job.lease_owner;
     if (!worker || job.status !== "running") return;
     const project = await this.store.loadProject(job.project_id);
@@ -562,7 +567,7 @@ export class AnalysisCoordinator {
     }
     let checkpoint: { checkpoint: AnalysisCheckpoint; snapshot: unknown | null } | null = null;
     let checkpointPersisted = false;
-    let temporary = join(this.config.dataDir, "source-snapshots", project.project_id, `.tmp-${randomUUID()}`);
+    let temporary = join(config.dataDir, "source-snapshots", project.project_id, `.tmp-${randomUUID()}`);
     const backgroundController = new AbortController();
     let initialWebResearch: Promise<InitialWebResearch> | undefined;
     let sourcePreparation: Promise<StoredSourceSnapshot | null> | undefined;
@@ -586,9 +591,9 @@ export class AnalysisCoordinator {
         });
         return;
       }
-      const execution = await resolveAnalysisExecution(this.config, { providerGateFactory: this.providerGateFactory });
+      const execution = await resolveAnalysisExecution(config, { providerGateFactory: this.providerGateFactory });
       const analysisConfigDigest = execution.digest;
-      const webResearch = createWebResearchClient(this.config.webSearchApiKey);
+      const webResearch = createWebResearchClient(config.webSearchApiKey);
       const startResearch = async ({ owner, repo, commitSha }: { owner: string; repo: string; commitSha: string }) => {
         if (!execution.runtime || initialWebResearch) return;
         const repository = `${owner}/${repo}`;
@@ -625,10 +630,10 @@ export class AnalysisCoordinator {
         : await fetchPublicGithubSource(
           project.source.value,
           temporary,
-          this.config.githubClientId,
-          this.config.githubClientSecret,
-          this.config.githubGatewayUrl && this.config.githubGatewaySharedSecret
-            ? { baseUrl: this.config.githubGatewayUrl, sharedSecret: this.config.githubGatewaySharedSecret }
+          config.githubClientId,
+          config.githubClientSecret,
+          config.githubGatewayUrl && config.githubGatewaySharedSecret
+            ? { baseUrl: config.githubGatewayUrl, sharedSecret: config.githubGatewaySharedSecret }
             : null,
           signal,
           targetCommitSha,
@@ -818,6 +823,7 @@ export class AnalysisCoordinator {
               providerGate: this.providerGateFactory?.(semanticProvider),
               providerBudget: this.providerBudget,
               ownerId: REPOSITORY_ANALYSIS_OWNER_ID,
+              attribution: { business: "analysis", payer: "platform", agentRole: "repository-analysis", connectionId: semanticProvider.connectionId, configVersion: config.adminConfigVersion, taskId: job.job_id },
               beforeWorkerRequest: executionBudget.beforeRequest,
             },
             executionBudget.signal,
@@ -1347,7 +1353,8 @@ export class AnalysisCoordinator {
       .map((row) => asSnapshotLanguageOverlayPayload(row.payload))
       .find((row): row is NonNullable<typeof row> => Boolean(row));
     if (!source) throw new Error("language_overlay_source_missing");
-    const provider = resolveAgentProvider(this.config, "snapshot-language-overlay", resolveAnalysisProvider(this.config));
+    const config = await runtimeConfig(this.config, this.store, job.created_at, job.config_version);
+    const provider = resolveAgentProvider(config, "snapshot-language-overlay", resolveAnalysisProvider(config));
     signal?.throwIfAborted();
     if (!provider) throw new Error("language_overlay_provider_unavailable");
     await this.store.updateProject(project.project_id, project.owner_id, (row) => {

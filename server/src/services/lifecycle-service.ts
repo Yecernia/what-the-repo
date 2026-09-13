@@ -45,10 +45,7 @@ export async function runRetentionSweep(input: {
   }
 
   const purgedSnapshots: string[] = [];
-  for (const snapshot of await input.store.listPurgeablePublicSnapshots(checkedAt)) {
-    if (await input.store.purgePublicSnapshotPayload(snapshot.public_snapshot_key, checkedAt)) {
-      purgedSnapshots.push(snapshot.public_snapshot_key);
-    }
-  }
+  // Capacity reclamation is a separate, administrator-confirmed operation.
+  // Guest lifecycle and recovery windows continue regardless of disk pressure.
   return { checkedAt, softDeletedOwners, deletedOwners, purgedSnapshots };
 }

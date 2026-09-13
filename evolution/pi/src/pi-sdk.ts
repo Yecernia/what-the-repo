@@ -1,3 +1,4 @@
+import { globalBudgetRuntime, type GlobalReservation } from './platform-budget.js';
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import type {
@@ -205,7 +206,7 @@ function usageFromAssistantMessage(value: unknown): PiUsage {
 }
 
 function createBudgetTracker(
-  budget: { maxTokens: number; maxCostUsd: number },
+  budget: { maxTokens: number; maxCostUsd: number | null },
   report: () => PiSessionReport,
 ): BudgetTracker {
   let spentTokens = 0;
@@ -216,17 +217,17 @@ function createBudgetTracker(
     request(model, context, options) {
       const maximum = maximumReservation(model, context, options);
       const remainingTokens = budget.maxTokens - spentTokens - reservedTokens;
-      const remainingCost = budget.maxCostUsd - spentCost - reservedCost;
+      const remainingCost = budget.maxCostUsd === null ? null : budget.maxCostUsd - spentCost - reservedCost;
       if (maximum.inputTokens + 1 > remainingTokens) {
         throw new PiBudgetPreflightError("Pi token budget preflight rejected the model request", report());
       }
       const rates = modelRates(model);
       const inputRate = Math.max(rates.input, rates.cacheRead, rates.cacheWrite, rates.input * 2);
       const inputCost = maximum.inputTokens * inputRate / 1_000_000;
-      if (inputCost > remainingCost || rates.output <= 0) {
+      if (remainingCost !== null && (budget.maxCostUsd === 0 || inputCost > remainingCost)) {
         throw new PiBudgetPreflightError("Pi cost budget preflight rejected the model request", report());
       }
-      const affordableOutputTokens = Math.floor((remainingCost - inputCost) * 1_000_000 / rates.output);
+      const affordableOutputTokens = remainingCost === null || rates.output === 0 ? maximum.outputTokens : Math.floor((remainingCost - inputCost) * 1_000_000 / rates.output);
       const outputTokens = Math.min(maximum.outputTokens, remainingTokens - maximum.inputTokens, affordableOutputTokens);
       if (!Number.isSafeInteger(outputTokens) || outputTokens < 1) {
         throw new PiBudgetPreflightError("Pi cost budget preflight rejected the model request", report());
@@ -248,7 +249,7 @@ function createBudgetTracker(
         const usage = usageFromAssistantMessage(result);
         spentTokens += usageTokens(usage);
         spentCost += usage.costUsd;
-        if (spentTokens > budget.maxTokens || spentCost > budget.maxCostUsd) {
+        if (spentTokens > budget.maxTokens || (budget.maxCostUsd !== null && spentCost > budget.maxCostUsd)) {
           throw new PiBudgetExceededError(
             spentTokens > budget.maxTokens ? "Pi token budget exceeded" : "Pi cost budget exceeded",
             report(),
@@ -373,6 +374,7 @@ function budgetedModelRuntime(
 }
 
 export interface PiSdkFactoryOptions {
+  globalReservation?: GlobalReservation;
   modelRuntime: unknown;
   model: unknown;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -562,7 +564,7 @@ export function createPiSdkSessionFactory(options: PiSdkFactoryOptions): PiSessi
     budget,
   }) => {
     if (!Number.isSafeInteger(budget?.maxTokens) || budget.maxTokens < 1 ||
-      typeof budget.maxCostUsd !== "number" || !Number.isFinite(budget.maxCostUsd) || budget.maxCostUsd <= 0) {
+      (budget.maxCostUsd !== null && (typeof budget.maxCostUsd !== "number" || !Number.isFinite(budget.maxCostUsd) || budget.maxCostUsd < 0))) {
       throw new Error("Pi session requires finite positive token and cost budgets");
     }
     await mkdir(agentDir, { recursive: true });
@@ -620,7 +622,7 @@ export function createPiSdkSessionFactory(options: PiSdkFactoryOptions): PiSessi
     const { session } = await sdk.createAgentSession({
       cwd,
       agentDir,
-      modelRuntime: budgetedModelRuntime(options.modelRuntime, tracker, (error) => { preflightFailure ??= error; }),
+      modelRuntime: budgetedModelRuntime(options.globalReservation ? globalBudgetRuntime(options.modelRuntime, options.globalReservation, (m,c,o) => maximumReservation(m as BudgetModel,c as BudgetContext,o as BudgetRequestOptions).costUsd) : options.modelRuntime, tracker, (error) => { preflightFailure ??= error; }),
       model: options.model,
       thinkingLevel: options.thinkingLevel ?? "medium",
       settingsManager,
@@ -657,7 +659,7 @@ export function createPiSdkSessionFactory(options: PiSdkFactoryOptions): PiSessi
           addUsage(observedUsage, usage);
           if (usageTokens(observedUsage) > budget.maxTokens) {
             abortForBudget("Pi token budget exceeded");
-          } else if (observedUsage.costUsd > budget.maxCostUsd) {
+          } else if ((budget.maxCostUsd !== null && observedUsage.costUsd > budget.maxCostUsd)) {
             abortForBudget("Pi cost budget exceeded");
           }
         }
@@ -744,7 +746,7 @@ export function createPiSdkSessionFactory(options: PiSdkFactoryOptions): PiSessi
         };
         const finalBudgetMessage = budgetMessage ??
           (usageTokens(report.usage) > budget.maxTokens ? "Pi token budget exceeded" : undefined) ??
-          (report.usage.costUsd > budget.maxCostUsd ? "Pi cost budget exceeded" : undefined);
+          ((budget.maxCostUsd !== null && report.usage.costUsd > budget.maxCostUsd) ? "Pi cost budget exceeded" : undefined);
         if (finalBudgetMessage) {
           await abortPromise;
           throw new PiBudgetExceededError(finalBudgetMessage, report);

@@ -76,13 +76,13 @@ test("a known builtin model applies explicit token limits to requests and budget
   const body = await captureOpenAiRequest(config, "low");
   assert.equal(body.max_tokens ?? body.max_completion_tokens, 2048);
   let reservation = 0;
-  const runtime = createModelRuntime(config, { ownerId: "owner", providerBudget: { async acquire(input) {
+  const runtime = createModelRuntime(config, { attribution: { business: "analysis", payer: "platform" }, ownerId: "owner", providerBudget: { async acquire(input) {
     reservation = input.estimatedCostUsd ?? 0;
     return { async release() {} };
   } } });
   await withProviderPermit(runtime, undefined, async () => ({ usage: { input: 1 } }));
   const cost = runtime.model.cost;
-  assert.equal(reservation, (16000 * (cost.input + cost.cacheRead) + 2048 * cost.output) / 1_000_000);
+  assert.equal(reservation, (16000 * Math.max(cost.input, cost.cacheRead, cost.cacheWrite) + 2048 * cost.output) / 1_000_000);
 });
 
 test("DeepSeek free access preserves the same endpoint compatibility and thinking mapping", async () => {
@@ -125,7 +125,7 @@ test("official DeepSeek estimates use current peak rates for reservations withou
   assert.equal(runtime.model.maxTokens, 384_000);
   assert.equal(runtime.model.contextWindow, 1_000_000);
   await withProviderPermit(runtime, undefined, async () => ({ usage: { input: 1 } }));
-  assert.ok(Math.abs(reservation - 0.499968) < 1e-9);
+  assert.ok(Math.abs(reservation - 0.7608) < 1e-9);
   const relay = resolveDeploymentProvider({ providerId: "deepseek", baseUrl: "https://relay.example/v1", model: "deepseek-v4-flash", apiKey: "test-key", connectionId: "relay" });
   assert.ok(relay);
   assert.deepEqual(relay.cost, getBuiltinModels("deepseek").find((model) => model.id === "deepseek-v4-flash")!.cost,
@@ -626,11 +626,11 @@ test("cancelled HTTP streaming without final usage retains the reservation and r
       init?.signal?.addEventListener("abort", () => controller.error(new Error("request aborted")), { once: true });
     },
   }), { headers: { "content-type": "text/event-stream" } }));
-  const budget = new LocalProviderUsageBudget({ maxCallsPerMinute: 10, maxCostUsdPerDay: 0.015, minimumReservationUsd: 0.01 });
+  const budget = new LocalProviderUsageBudget({ maxCallsPerMinute: 10, minimumReservationUsd: 0.01, policies: { analysis_daily: 0.015, chat_daily: null, evolution_task: null, evolution_daily: null } });
   const reports: ProviderUsageReport[] = [];
   const runtime = createModelRuntime({ provider: "custom", connectionId: "cancel-test", baseUrl: "https://provider.example/v1",
-    apiKey: "test-key", model: "test", modelId: "test", modelSelector: "test", api: "openai-completions", builtin: false, thinkingLevel: "off" },
-  { ownerId: "owner", providerBudget: { async acquire(input) {
+    apiKey: "test-key", model: "test", modelId: "test", modelSelector: "test", api: "openai-completions", builtin: false, thinkingLevel: "off", cost:{input:0.001,output:0.001,cacheRead:0,cacheWrite:0} },
+  { attribution: { business: "analysis", payer: "platform" }, ownerId: "owner", providerBudget: { async acquire(input) {
     const permit = await budget.acquire(input);
     return { eventId: permit.eventId, async release(report) { if (report) reports.push(report); await permit.release(report); } };
   } } });
@@ -646,7 +646,7 @@ test("cancelled HTTP streaming without final usage retains the reservation and r
     assert.equal(row.usage?.usageKnown, false);
     assert.equal(reports[0]?.status, "cancelled");
     assert.equal(reports[0]?.usageKnown, false);
-    await assert.rejects(() => budget.acquire({ ownerId: "owner", provider: "custom", model: "test" }), ProviderBudgetExceededError);
+    await assert.rejects(() => budget.acquire({ ownerId: "owner", provider: "custom", model: "test", attribution: { business: "analysis", payer: "platform" } }), ProviderBudgetExceededError);
   } finally { diagnostics.finish(); }
 });
 

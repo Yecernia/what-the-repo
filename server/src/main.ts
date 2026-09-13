@@ -1,3 +1,8 @@
+import { collectRuntimeObservations } from './admin/observations.js';
+import { collectStorageInventory } from './admin/storage.js';
+import { collectAudience } from './admin/audience.js';
+import { adminDocuments } from './admin/runtime-config.js';
+import { DEFAULT_BUDGET_POLICIES } from './agent/provider-budget.js';
 import { assertApiSessionSecret, loadConfig } from "./config.js";
 import { PiMemoryStore } from "./agent/memory-store.js";
 import { PiSessionStore } from "./agent/session-store.js";
@@ -21,6 +26,9 @@ assertApiSessionSecret(config);
 configureProductSkillRegistry(config.skillVersionsRoot);
 const store = createProductStore(config, "api");
 await store.init();
+const stopObservations = collectRuntimeObservations(store, 'api', defaultRuntimeMetrics);
+const stopStorageInventory = collectStorageInventory(store, config);
+const stopAudience = collectAudience(adminDocuments(store).pool);
 const databaseMetrics = store instanceof PostgresStore
   ? new DatabaseMetricsCollector({
       pool: store.pool,
@@ -44,12 +52,11 @@ const providerGateFactory = createProviderGateFactory({
   pollMs: config.providerGatePollMs ?? 100,
 });
 const providerBudget = createProviderUsageBudget({
+  loadPolicies: () => adminDocuments(store).read("budgets", DEFAULT_BUDGET_POLICIES),
   pool: store instanceof PostgresStore ? store.pool : null,
   maxCallsPerMinute: config.quotaProviderCallsPerMinute ?? 60,
-  maxCostUsdPerDay: config.quotaProviderCostUsdPerDay ?? 10,
   minimumReservationUsd: config.quotaProviderReservationUsd ?? 0.01,
   deploymentMaxCallsPerMinute: config.quotaProviderDeploymentCallsPerMinute ?? 240,
-  deploymentMaxCostUsdPerDay: config.quotaProviderDeploymentCostUsdPerDay ?? 20,
 });
 const taskQueue = createTaskQueue({
   redisUrl: config.redisUrl,
@@ -91,6 +98,9 @@ await app.listen({ host: config.host, port: config.port });
 process.stdout.write(`what-the-repo server listening on http://${config.host}:${config.port}\n`);
 
 const shutdown = async (): Promise<void> => {
+  stopObservations();
+  await stopAudience();
+  await stopStorageInventory();
   clearInterval(queueMetricsTimer);
   await retentionScheduler?.stop();
   await analysis.stop();

@@ -37,6 +37,8 @@ Direct dependencies for each module, with versions taken from the lockfiles.
 | server | @types/pg | 8.21.0 | development | MIT |
 | server | tsx | 4.20.6 | development | MIT |
 | web | @dagrejs/dagre | 3.1.1 | runtime | MIT |
+| web | @types/qrcode | 1.5.6 | development | MIT |
+| web | qrcode | 1.5.4 | runtime | MIT |
 | web | @sketchyicons/react | 0.5.0 | runtime | MIT |
 | web | @xyflow/react | 12.11.2 | runtime | MIT |
 | web | highlight.js | 11.12.0 | runtime | BSD-3-Clause |

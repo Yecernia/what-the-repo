@@ -1,32 +1,43 @@
-import { randomUUID } from "node:crypto";
-import { KeyedMutex } from "./mutex.js";
-
+import { randomUUID } from 'node:crypto';
+import { KeyedMutex } from './mutex.js';
+export type UsageBusiness =
+  | 'analysis'
+  | 'chat'
+  | 'evolution'
+  | 'historical_unclassified';
+export interface UsageAttribution {
+  business: UsageBusiness;
+  payer: 'platform' | 'user' | 'historical_unclassified';
+  agentRole?: string;
+  connectionId?: string;
+  configVersion?: number;
+  taskId?: string;
+}
 export interface ProviderUsageReport {
-  /** False means the numeric fields are placeholders, not a zero-cost bill. */
   usageKnown: boolean;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
   cacheWriteTokens: number;
   costUsd: number;
-  status: "completed" | "failed" | "cancelled";
+  status: 'completed' | 'failed' | 'cancelled';
 }
-
 export interface ProviderBudgetPermit {
   eventId?: string;
   release(report?: ProviderUsageReport): Promise<void>;
 }
-
-export interface ProviderUsageBudget {
-  acquire(input: {
-    ownerId: string;
-    provider: string;
-    model: string;
-    estimatedCostUsd?: number;
-    signal?: AbortSignal;
-  }): Promise<ProviderBudgetPermit>;
+export interface ProviderBudgetInput {
+  ownerId: string;
+  provider: string;
+  model: string;
+  estimatedCostUsd?: number;
+  pricingKnown?: boolean;
+  signal?: AbortSignal;
+  attribution?: UsageAttribution;
 }
-
+export interface ProviderUsageBudget {
+  acquire(input: ProviderBudgetInput): Promise<ProviderBudgetPermit>;
+}
 export interface ProviderBudgetDbClient {
   query<T extends Record<string, unknown> = Record<string, unknown>>(
     sql: string,
@@ -34,294 +45,334 @@ export interface ProviderBudgetDbClient {
   ): Promise<{ rows: T[]; rowCount?: number | null }>;
   release(): void;
 }
-
 export interface ProviderBudgetDbPool {
   connect(): Promise<ProviderBudgetDbClient>;
 }
-
-export type ProviderBudgetScope = "owner" | "deployment";
-export type ProviderBudgetKind = "calls_per_minute" | "cost_per_day";
-
+export type BudgetKey =
+  | 'analysis_daily'
+  | 'chat_daily'
+  | 'evolution_task'
+  | 'evolution_daily';
+export type BudgetPolicies = Record<BudgetKey, number | null>;
+export const DEFAULT_BUDGET_POLICIES: BudgetPolicies = {
+  analysis_daily: 5,
+  chat_daily: 5,
+  evolution_task: 1,
+  evolution_daily: 5,
+};
+export const BUDGET_KEYS = Object.keys(DEFAULT_BUDGET_POLICIES) as BudgetKey[];
+export function validateBudgetPolicies(value: unknown): BudgetPolicies {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('invalid_budget_policy');
+  const row = value as Record<string, unknown>;
+  if (Object.keys(row).length !== BUDGET_KEYS.length)
+    throw new Error('invalid_budget_policy');
+  for (const key of BUDGET_KEYS)
+    if (
+      row[key] !== null &&
+      (typeof row[key] !== 'number' ||
+        !Number.isFinite(row[key]) ||
+        row[key] < 0 ||
+        row[key] > 1_000_000)
+    )
+      throw new Error('invalid_budget_policy');
+  return row as BudgetPolicies;
+}
+export function beijingBudgetDay(now = Date.now()) {
+  const start =
+    Math.floor((now + 8 * 3600_000) / 86400_000) * 86400_000 - 8 * 3600_000;
+  return {
+    start,
+    resetAt: new Date(start + 86400_000).toISOString(),
+    timezone: 'Asia/Shanghai',
+  };
+}
+export type ProviderBudgetScope = 'owner' | 'deployment' | BudgetKey;
+export type ProviderBudgetKind =
+  | 'calls_per_minute'
+  | 'cost_per_day'
+  | 'cost_per_task';
 export class ProviderBudgetExceededError extends Error {
-  readonly code = "provider_budget_exceeded";
+  readonly code: string;
   readonly statusCode = 429;
-
+  readonly resetAt?: string;
   constructor(
     readonly kind: ProviderBudgetKind,
     readonly limit: number,
-    readonly scope: ProviderBudgetScope = "owner",
+    readonly scope: ProviderBudgetScope = 'owner',
   ) {
-    super(`provider budget exceeded: ${scope}:${kind}`);
+    const code =
+      kind === 'calls_per_minute'
+        ? 'site_rate_limited'
+        : limit === 0
+          ? 'site_budget_disabled'
+          : scope === 'analysis_daily'
+            ? 'site_analysis_budget_exhausted'
+            : scope === 'chat_daily'
+              ? 'site_chat_budget_exhausted'
+              : scope === 'evolution_task'
+                ? 'site_evolution_task_budget_exhausted'
+                : scope === 'evolution_daily'
+                  ? 'site_evolution_budget_exhausted'
+                  : 'provider_budget_exceeded';
+    super(code);
+    this.code = code;
+    if (kind === 'cost_per_day' && limit > 0)
+      this.resetAt = beijingBudgetDay().resetAt;
   }
 }
-
 export interface ProviderBudgetLimits {
   maxCallsPerMinute: number;
-  maxCostUsdPerDay: number;
   minimumReservationUsd: number;
   deploymentMaxCallsPerMinute?: number;
-  deploymentMaxCostUsdPerDay?: number;
+  /** Deprecated money limits are intentionally ignored. There is no implicit personal or mixed global money limit. */
+  maxCostUsdPerDay?: number | null;
+  deploymentMaxCostUsdPerDay?: number | null;
+  policies?: BudgetPolicies;
+  loadPolicies?: () => Promise<BudgetPolicies>;
 }
-
-function limits(input: ProviderBudgetLimits): Required<ProviderBudgetLimits> {
-  return {
-    maxCallsPerMinute: Math.max(1, Math.min(100_000, Math.floor(input.maxCallsPerMinute))),
-    maxCostUsdPerDay: Math.max(0.000001, Math.min(1_000_000, input.maxCostUsdPerDay)),
-    minimumReservationUsd: Math.max(0, Math.min(1_000, input.minimumReservationUsd)),
-    deploymentMaxCallsPerMinute: Math.max(
-      1,
-      Math.min(100_000, Math.floor(input.deploymentMaxCallsPerMinute ?? 100_000)),
-    ),
-    deploymentMaxCostUsdPerDay: Math.max(
-      0.000001,
-      Math.min(1_000_000, input.deploymentMaxCostUsdPerDay ?? 1_000_000),
-    ),
+const amount = (value: number | undefined) =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+const attribution = (input: ProviderBudgetInput): UsageAttribution =>
+  input.attribution ?? {
+    business: 'historical_unclassified',
+    payer: 'historical_unclassified',
   };
+export function applicableBudgets(a: UsageAttribution): BudgetKey[] {
+  if (a.payer !== 'platform') return [];
+  if (a.business === 'analysis') return ['analysis_daily'];
+  if (a.business === 'chat') return ['chat_daily'];
+  if (a.business === 'evolution') return ['evolution_task', 'evolution_daily'];
+  throw new Error('model_usage_attribution_required');
 }
-
-function finiteNonNegative(value: number | undefined): number {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+function assertBudget(
+  key: BudgetKey,
+  limit: number | null,
+  total: number,
+  reservation: number,
+) {
+  if (limit !== null && (limit === 0 || total + reservation > limit + 1e-10))
+    throw new ProviderBudgetExceededError(
+      key === 'evolution_task' ? 'cost_per_task' : 'cost_per_day',
+      limit,
+      key,
+    );
 }
-
-function normalizedReservation(input: number | undefined, minimum: number): number {
-  return Math.max(minimum, finiteNonNegative(input));
+function assertPricing(
+  input: ProviderBudgetInput,
+  policies: BudgetPolicies,
+  a: UsageAttribution,
+) {
+  for(const key of applicableBudgets(a))if(policies[key]===0)assertBudget(key,0,0,0);
+  if (
+    input.pricingKnown === false &&
+    applicableBudgets(a).some((key) => policies[key] !== null)
+  )
+    throw Object.assign(new Error('site_model_pricing_unknown'), {
+      code: 'site_model_pricing_unknown',
+      statusCode: 503,
+    });
 }
-
-function abortError(signal?: AbortSignal): Error {
-  const reason = signal?.reason;
-  return reason instanceof Error ? reason : new Error("provider_budget_aborted");
-}
-
-function assertNotAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw abortError(signal);
-}
-
-interface LocalEvent {
+export interface LocalUsageEvent {
   eventId: string;
   ownerId: string;
   provider: string;
   model: string;
   startedAt: number;
   reservedCostUsd: number;
+  attribution: UsageAttribution;
   report?: ProviderUsageReport;
+  settled: boolean;
 }
-
-/** File Store/test implementation. It has the same admission semantics, but is not multi-process. */
+/** Single-process development implementation. Production reserves in PostgreSQL. */
 export class LocalProviderUsageBudget implements ProviderUsageBudget {
   private readonly mutex = new KeyedMutex();
-  private readonly events = new Map<string, LocalEvent[]>();
-  private readonly configured: Required<ProviderBudgetLimits>;
-
-  constructor(configured: ProviderBudgetLimits) {
-    this.configured = limits(configured);
-  }
-
-  async acquire(input: {
-    ownerId: string;
-    provider: string;
-    model: string;
-    estimatedCostUsd?: number;
-    signal?: AbortSignal;
-  }): Promise<ProviderBudgetPermit> {
-    assertNotAborted(input.signal);
-    const ownerId = input.ownerId.trim();
-    if (!ownerId) return new NoopProviderUsageBudget().acquire(input);
-    const reservation = normalizedReservation(input.estimatedCostUsd, this.configured.minimumReservationUsd);
-    const event = await this.mutex.runExclusive("provider-budget:deployment", async () =>
-      this.mutex.runExclusive(`provider-budget:owner:${ownerId}`, async () => {
-        assertNotAborted(input.signal);
-        const now = Date.now();
-        const dayStart = new Date(now);
-        dayStart.setHours(0, 0, 0, 0);
-        const deploymentRows: LocalEvent[] = [];
-        for (const [eventOwnerId, ownerEvents] of this.events) {
-          const retained = ownerEvents.filter((row) => row.startedAt >= dayStart.getTime());
-          if (retained.length) this.events.set(eventOwnerId, retained);
-          else this.events.delete(eventOwnerId);
-          deploymentRows.push(...retained);
-        }
-        const rows = this.events.get(ownerId) ?? [];
-        const recentCalls = rows.filter((row) => row.startedAt >= now - 60_000).length;
-        if (recentCalls >= this.configured.maxCallsPerMinute) {
-          throw new ProviderBudgetExceededError("calls_per_minute", this.configured.maxCallsPerMinute);
-        }
-        const reservedToday = rows.reduce((total, row) => total + row.reservedCostUsd, 0);
-        if (reservedToday + reservation > this.configured.maxCostUsdPerDay) {
-          throw new ProviderBudgetExceededError("cost_per_day", this.configured.maxCostUsdPerDay);
-        }
-        const deploymentRecentCalls = deploymentRows.filter((row) => row.startedAt >= now - 60_000).length;
-        if (deploymentRecentCalls >= this.configured.deploymentMaxCallsPerMinute) {
-          throw new ProviderBudgetExceededError(
-            "calls_per_minute",
-            this.configured.deploymentMaxCallsPerMinute,
-            "deployment",
-          );
-        }
-        const deploymentReservedToday = deploymentRows.reduce(
-          (total, row) => total + row.reservedCostUsd,
-          0,
+  readonly events: LocalUsageEvent[] = [];
+  constructor(
+    private readonly configured: ProviderBudgetLimits,
+    private readonly now = Date.now,
+  ) {}
+  async acquire(input: ProviderBudgetInput): Promise<ProviderBudgetPermit> {
+    input.signal?.throwIfAborted();
+    const event = await this.mutex.runExclusive('budget', async () => {
+      input.signal?.throwIfAborted();
+      const now = this.now(),
+        day = beijingBudgetDay(now),
+        a = attribution(input);
+      const recent = this.events.filter((e) => e.startedAt > now - 60_000);
+      if (
+        recent.filter((e) => e.ownerId === input.ownerId).length >=
+        this.configured.maxCallsPerMinute
+      )
+        throw new ProviderBudgetExceededError(
+          'calls_per_minute',
+          this.configured.maxCallsPerMinute,
         );
-        if (deploymentReservedToday + reservation > this.configured.deploymentMaxCostUsdPerDay) {
-          throw new ProviderBudgetExceededError(
-            "cost_per_day",
-            this.configured.deploymentMaxCostUsdPerDay,
-            "deployment",
-          );
-        }
-        const created: LocalEvent = {
-          eventId: randomUUID(),
-          ownerId,
-          provider: input.provider.slice(0, 120),
-          model: input.model.slice(0, 240),
-          startedAt: now,
-          reservedCostUsd: reservation,
-        };
-        rows.push(created);
-        this.events.set(ownerId, rows);
-        return created;
-      }),
-    );
-    let released = false;
+      if (recent.length >= (this.configured.deploymentMaxCallsPerMinute ?? 240))
+        throw new ProviderBudgetExceededError(
+          'calls_per_minute',
+          this.configured.deploymentMaxCallsPerMinute ?? 240,
+          'deployment',
+        );
+      const reservation = Math.max(
+        amount(input.estimatedCostUsd),
+        this.configured.minimumReservationUsd,
+      );
+      const policies =
+        (await this.configured.loadPolicies?.()) ??
+        this.configured.policies ??
+        DEFAULT_BUDGET_POLICIES;
+      assertPricing(input, policies, a);
+      for (const key of applicableBudgets(a)) {
+        if (key === 'evolution_task' && !a.taskId)
+          throw new Error('model_usage_task_required');
+        const rows = this.events.filter(
+          (e) =>
+            e.attribution.payer === 'platform' &&
+            e.attribution.business === a.business &&
+            (key === 'evolution_task'
+              ? e.attribution.taskId === a.taskId
+              : e.startedAt >= day.start),
+        );
+        assertBudget(
+          key,
+          policies[key],
+          rows.reduce((sum, e) => sum + e.reservedCostUsd, 0),
+          reservation,
+        );
+      }
+      const created: LocalUsageEvent = {
+        eventId: randomUUID(),
+        ownerId: input.ownerId,
+        provider: input.provider,
+        model: input.model,
+        startedAt: now,
+        reservedCostUsd: reservation,
+        attribution: a,
+        settled: false,
+      };
+      this.events.push(created);
+      return created;
+    });
     return {
       eventId: event.eventId,
-      release: async (report) => {
-        if (released) return;
-        released = true;
-        await this.mutex.runExclusive(`provider-budget:owner:${event.ownerId}`, async () => {
-          if (!event.report) {
-            event.report = report;
-            if (report?.usageKnown) event.reservedCostUsd = finiteNonNegative(report.costUsd);
-          }
-        });
-      },
+      release: async (report) =>
+        this.mutex.runExclusive('budget', async () => {
+          if (event.settled) return;
+          event.settled = true;
+          event.report = report;
+          if (report?.usageKnown)
+            event.reservedCostUsd = amount(report.costUsd);
+        }),
     };
   }
 }
-
-/** PostgreSQL implementation. A short transaction reserves a call; the provider stream never holds a DB connection. */
 export class PostgresProviderUsageBudget implements ProviderUsageBudget {
-  private readonly configured: Required<ProviderBudgetLimits>;
-
   constructor(
     private readonly pool: ProviderBudgetDbPool,
-    configured: ProviderBudgetLimits,
-  ) {
-    this.configured = limits(configured);
-  }
-
-  async acquire(input: {
-    ownerId: string;
-    provider: string;
-    model: string;
-    estimatedCostUsd?: number;
-    signal?: AbortSignal;
-  }): Promise<ProviderBudgetPermit> {
-    assertNotAborted(input.signal);
-    const ownerId = input.ownerId.trim();
-    if (!ownerId) return new NoopProviderUsageBudget().acquire(input);
-    const reservation = normalizedReservation(input.estimatedCostUsd, this.configured.minimumReservationUsd);
-    const client = await this.pool.connect();
-    const eventId = randomUUID();
-    let committed = false;
+    private readonly configured: ProviderBudgetLimits,
+  ) {}
+  async acquire(input: ProviderBudgetInput): Promise<ProviderBudgetPermit> {
+    input.signal?.throwIfAborted();
+    const client = await this.pool.connect(),
+      eventId = randomUUID(),
+      a = attribution(input);
     try {
-      assertNotAborted(input.signal);
-      await client.query("BEGIN");
+      await client.query('BEGIN');
       await client.query(
-        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        ["provider-budget-global"],
+        'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+        ['provider-budget-global'],
       );
-      await client.query(
-        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        [`provider-budget:${ownerId}`],
+      input.signal?.throwIfAborted();
+      const calls = await client.query<{ owner: string; deployment: string }>(
+        `SELECT COUNT(*) FILTER(WHERE owner_id=$1)::text AS owner,COUNT(*)::text AS deployment FROM provider_usage_events WHERE started_at>=clock_timestamp()-interval '1 minute'`,
+        [input.ownerId],
       );
-      const calls = await client.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
-         FROM provider_usage_events
-         WHERE owner_id = $1 AND started_at >= clock_timestamp() - interval '1 minute'`,
-        [ownerId],
-      );
-      if (Number(calls.rows[0]?.count ?? 0) >= this.configured.maxCallsPerMinute) {
-        await client.query("ROLLBACK");
-        throw new ProviderBudgetExceededError("calls_per_minute", this.configured.maxCallsPerMinute);
-      }
-      const cost = await client.query<{ total: string }>(
-        `SELECT COALESCE(SUM(GREATEST(reserved_cost_usd, cost_usd)), 0)::text AS total
-         FROM provider_usage_events
-         WHERE owner_id = $1 AND started_at >= date_trunc('day', clock_timestamp())`,
-        [ownerId],
-      );
-      if (Number(cost.rows[0]?.total ?? 0) + reservation > this.configured.maxCostUsdPerDay) {
-        await client.query("ROLLBACK");
-        throw new ProviderBudgetExceededError("cost_per_day", this.configured.maxCostUsdPerDay);
-      }
-      const deploymentCalls = await client.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
-         FROM provider_usage_events
-         WHERE started_at >= clock_timestamp() - interval '1 minute'`,
-      );
-      if (Number(deploymentCalls.rows[0]?.count ?? 0) >= this.configured.deploymentMaxCallsPerMinute) {
-        await client.query("ROLLBACK");
+      if (
+        Number(calls.rows[0]?.owner ?? 0) >= this.configured.maxCallsPerMinute
+      )
         throw new ProviderBudgetExceededError(
-          "calls_per_minute",
-          this.configured.deploymentMaxCallsPerMinute,
-          "deployment",
+          'calls_per_minute',
+          this.configured.maxCallsPerMinute,
+        );
+      if (
+        Number(calls.rows[0]?.deployment ?? 0) >=
+        (this.configured.deploymentMaxCallsPerMinute ?? 240)
+      )
+        throw new ProviderBudgetExceededError(
+          'calls_per_minute',
+          this.configured.deploymentMaxCallsPerMinute ?? 240,
+          'deployment',
+        );
+      const configured = await client.query<{ value: BudgetPolicies }>(
+        'SELECT value FROM admin_documents WHERE key=$1',
+        ['budgets'],
+      );
+      const policies =
+        configured.rows[0]?.value ??
+        this.configured.policies ??
+        DEFAULT_BUDGET_POLICIES;
+      assertPricing(input, policies, a);
+      const reservation = Math.max(
+        amount(input.estimatedCostUsd),
+        this.configured.minimumReservationUsd,
+      );
+      for (const key of applicableBudgets(a)) {
+        if (key === 'evolution_task' && !a.taskId)
+          throw new Error('model_usage_task_required');
+        if (policies[key] === null) continue;
+        const cost = await client.query<{ total: string }>(
+          `SELECT COALESCE(SUM(GREATEST(reserved_cost_usd,cost_usd)),0)::text AS total FROM provider_usage_events WHERE payer='platform' AND business=$1 AND ${key === 'evolution_task' ? 'task_id=$2' : "started_at >= (date_trunc('day',clock_timestamp() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')"}`,
+          key === 'evolution_task' ? [a.business, a.taskId] : [a.business],
+        );
+        assertBudget(
+          key,
+          policies[key],
+          Number(cost.rows[0]?.total ?? 0),
+          reservation,
         );
       }
-      const deploymentCost = await client.query<{ total: string }>(
-        `SELECT COALESCE(SUM(GREATEST(reserved_cost_usd, cost_usd)), 0)::text AS total
-         FROM provider_usage_events
-         WHERE started_at >= date_trunc('day', clock_timestamp())`,
-      );
-      if (Number(deploymentCost.rows[0]?.total ?? 0) + reservation > this.configured.deploymentMaxCostUsdPerDay) {
-        await client.query("ROLLBACK");
-        throw new ProviderBudgetExceededError(
-          "cost_per_day",
-          this.configured.deploymentMaxCostUsdPerDay,
-          "deployment",
-        );
-      }
       await client.query(
-        `INSERT INTO provider_usage_events(
-           event_id, owner_id, provider, model, started_at, status,
-           reserved_cost_usd, cost_usd, input_tokens, output_tokens,
-           cached_tokens, cache_write_tokens
-         ) VALUES ($1, $2, $3, $4, clock_timestamp(), 'reserved', $5, 0, 0, 0, 0, 0)`,
-        [eventId, ownerId, input.provider.slice(0, 120), input.model.slice(0, 240), reservation],
+        `INSERT INTO provider_usage_events(event_id,owner_id,provider,model,started_at,status,reserved_cost_usd,cost_usd,input_tokens,output_tokens,cached_tokens,cache_write_tokens,business,payer,agent_role,connection_id,config_version,task_id) VALUES($1,$2,$3,$4,clock_timestamp(),'reserved',$5,0,0,0,0,0,$6,$7,$8,$9,$10,$11)`,
+        [
+          eventId,
+          input.ownerId,
+          input.provider,
+          input.model,
+          reservation,
+          a.business,
+          a.payer,
+          a.agentRole ?? null,
+          a.connectionId ?? null,
+          a.configVersion ?? null,
+          a.taskId ?? null,
+        ],
       );
-      await client.query("COMMIT");
-      committed = true;
+      await client.query('COMMIT');
     } catch (error) {
-      if (!committed) await client.query("ROLLBACK").catch(() => undefined);
+      await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
       client.release();
     }
-    let released = false;
     return {
       eventId,
       release: async (report) => {
-        if (released) return;
-        released = true;
         const update = await this.pool.connect();
         try {
-          const row = report ?? {
-            usageKnown: false,
-            inputTokens: 0,
-            outputTokens: 0,
-            cachedTokens: 0,
-            cacheWriteTokens: 0,
-            costUsd: 0,
-            status: "failed" as const,
-          };
+          // Persisted predicate permits settlement retry after a connection failure and prevents duplicate callbacks.
           await update.query(
-            `UPDATE provider_usage_events SET
-               completed_at = clock_timestamp(), status = $2,
-               reserved_cost_usd = CASE WHEN $8 THEN $3 ELSE reserved_cost_usd END,
-               cost_usd = $3, usage_known = $8,
-               input_tokens = $4, output_tokens = $5,
-               cached_tokens = $6, cache_write_tokens = $7
-             WHERE event_id = $1`,
-            [eventId, row.status, finiteNonNegative(row.costUsd), Math.floor(finiteNonNegative(row.inputTokens)), Math.floor(finiteNonNegative(row.outputTokens)), Math.floor(finiteNonNegative(row.cachedTokens)), Math.floor(finiteNonNegative(row.cacheWriteTokens)), row.usageKnown],
+            `UPDATE provider_usage_events SET completed_at=clock_timestamp(),status=$2,reserved_cost_usd=CASE WHEN $8 THEN $3 ELSE reserved_cost_usd END,cost_usd=$3,usage_known=$8,input_tokens=$4,output_tokens=$5,cached_tokens=$6,cache_write_tokens=$7 WHERE event_id=$1 AND status='reserved'`,
+            [
+              eventId,
+              report?.status ?? 'failed',
+              amount(report?.costUsd),
+              Math.floor(amount(report?.inputTokens)),
+              Math.floor(amount(report?.outputTokens)),
+              Math.floor(amount(report?.cachedTokens)),
+              Math.floor(amount(report?.cacheWriteTokens)),
+              report?.usageKnown ?? false,
+            ],
           );
         } finally {
           update.release();
@@ -330,30 +381,18 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
     };
   }
 }
-
 export class NoopProviderUsageBudget implements ProviderUsageBudget {
-  async acquire(input: { signal?: AbortSignal }): Promise<ProviderBudgetPermit> {
-    assertNotAborted(input.signal);
+  async acquire(input: {
+    signal?: AbortSignal;
+  }): Promise<ProviderBudgetPermit> {
+    input.signal?.throwIfAborted();
     return { release: async () => undefined };
   }
 }
-
-export function createProviderUsageBudget(input: {
-  pool?: ProviderBudgetDbPool | null;
-  maxCallsPerMinute: number;
-  maxCostUsdPerDay: number;
-  minimumReservationUsd: number;
-  deploymentMaxCallsPerMinute?: number;
-  deploymentMaxCostUsdPerDay?: number;
-}): ProviderUsageBudget {
-  const configured = {
-    maxCallsPerMinute: input.maxCallsPerMinute,
-    maxCostUsdPerDay: input.maxCostUsdPerDay,
-    minimumReservationUsd: input.minimumReservationUsd,
-    deploymentMaxCallsPerMinute: input.deploymentMaxCallsPerMinute,
-    deploymentMaxCostUsdPerDay: input.deploymentMaxCostUsdPerDay,
-  };
+export function createProviderUsageBudget(
+  input: ProviderBudgetLimits & { pool?: ProviderBudgetDbPool | null },
+): ProviderUsageBudget {
   return input.pool
-    ? new PostgresProviderUsageBudget(input.pool, configured)
-    : new LocalProviderUsageBudget(configured);
+    ? new PostgresProviderUsageBudget(input.pool, input)
+    : new LocalProviderUsageBudget(input);
 }

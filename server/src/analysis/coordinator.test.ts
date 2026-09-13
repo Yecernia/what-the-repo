@@ -93,6 +93,7 @@ test("Worker starts research before source download, skips reusable snapshots, a
       let searchStarted!: () => void;
       const ready = new Promise<void>(resolve => { searchStarted = resolve; });
       const store = {
+        root,
         loadProject: async () => project, loadAnalysisCheckpoint: async () => null,
         loadPublicSnapshotMetadata: async () => cached ? { analysis_snapshot_id: "existing" } : null,
         updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },
@@ -302,7 +303,10 @@ test("repository analysis resolves deployment credentials instead of project set
 
 test("semantic terminal failures are recognized before static snapshot publication", () => {
   assert.equal(semanticTerminalFailureCode("architecture:provider_transient_error:provider_connection_failed;values:skipped"), "provider_connection_failed");
-  assert.equal(semanticTerminalFailureCode("architecture:provider_transient_error:provider_balance_insufficient;values:skipped"), "provider_balance_insufficient");
+  assert.equal(semanticTerminalFailureCode("architecture:provider_transient_error:provider_balance_insufficient;values:skipped"), "platform_provider_balance_insufficient");
+  assert.equal(semanticTerminalFailureCode("semantic_site_analysis_budget_exhausted"), "site_analysis_budget_exhausted");
+  assert.equal(isRetryableAnalysisError("site_analysis_budget_exhausted"), false);
+  assert.equal(isRetryableAnalysisError("site_budget_disabled"), false);
   assert.equal(semanticTerminalFailureCode("architecture:provider_transient_error;values:skipped"), "provider_transient_error");
   assert.equal(semanticTerminalFailureCode("architecture:component_semantics_incomplete;values:skipped"), "structured_worker_failed");
   assert.equal(semanticTerminalFailureCode("value_candidate_validation_failed"), "structured_worker_failed");
@@ -322,6 +326,7 @@ test("unreadable analysis checkpoint fails recovery before source or model work"
   const project = createProject("guest:checkpoint", "https://github.com/example/repo", "Recovery", null);
   let status: string | undefined;
   const store = {
+    root,
     loadProject: async () => project,
     loadAnalysisCheckpoint: async () => { throw new Error("analysis_checkpoint_payload_digest_mismatch"); },
     updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },
@@ -347,6 +352,7 @@ test("early source storage failure stops the semantic stage and preserves the st
   const batches = new Map<string, SemanticBatch>();
   let prepared = 0;
   const store = {
+    root,
     kind: "postgres", loadProject: async () => project,
     loadAnalysisCheckpoint: async () => ({ checkpoint: { stage: "semantic", source_root: root, snapshot_id: "saved-static", parsed: [], lsp_results: [],
       fetched: { owner: "example", repo: "repo", commitSha: snapshot.commit_sha, files: [], manifest: [], research: snapshot.research } }, snapshot }),

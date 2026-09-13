@@ -5,6 +5,7 @@ export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancell
 
 export interface AnalysisJob {
   job_id: string;
+  config_version?: number;
   project_id: string;
   idempotency_key: string;
   status: JobStatus;

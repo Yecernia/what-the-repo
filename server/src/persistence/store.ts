@@ -39,7 +39,7 @@ export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
   maxProjects: 20,
   maxCreationsPerHour: 30,
   maxActiveAnalysisJobs: 2,
-  maxStorageBytes: 4 * 1024 * 1024 * 1024,
+  maxStorageBytes: 0,
 };
 
 export class QuotaExceededError extends Error {

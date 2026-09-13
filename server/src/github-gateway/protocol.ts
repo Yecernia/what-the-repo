@@ -6,6 +6,7 @@ const MAX_TOKEN_BYTES = 8 * 1024;
 export interface GithubGatewayStartGrant {
   version: 1;
   kind: "github_oauth_start";
+  audience?: "admin";
   nonce: string;
   issued_at: number;
   expires_at: number;
@@ -22,6 +23,7 @@ export type GithubGatewayIdentityTicket = {
   version: 1;
   kind: "github_oauth_result";
   outcome: "success";
+  audience?: "admin";
   nonce: string;
   ticket_id: string;
   issued_at: number;
@@ -31,6 +33,7 @@ export type GithubGatewayIdentityTicket = {
   version: 1;
   kind: "github_oauth_result";
   outcome: "error";
+  audience?: "admin";
   nonce: string;
   ticket_id: string;
   issued_at: number;
@@ -97,7 +100,7 @@ export function parseGithubGatewayStartGrant(
   const decoded = verifyGithubGatewayPayload(value, secret);
   if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return null;
   const record = decoded as Record<string, unknown>;
-  if (!validEnvelope(record, "github_oauth_start", now)) return null;
+  if (!validEnvelope(record, "github_oauth_start", now) || (record.audience !== undefined && record.audience !== "admin")) return null;
   return record as unknown as GithubGatewayStartGrant;
 }
 

@@ -120,6 +120,8 @@ export interface PiModelRuntime {
   networkTimeoutMs?: number;
   providerGate?: ProviderCallGate;
   providerBudget?: ProviderUsageBudget;
+  providerConnectionId?: string;
+  attribution?: import('./provider-budget.js').UsageAttribution;
   ownerId?: string;
   metrics?: RuntimeMetrics;
 }

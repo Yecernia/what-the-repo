@@ -62,6 +62,7 @@ interface CounterSeries extends LabelSet {
 }
 
 interface GaugeSeries extends LabelSet {
+  observedAt: string;
   name: string;
   value: number;
 }
@@ -76,7 +77,7 @@ interface HistogramSeries extends LabelSet {
 export interface RuntimeMetricsSnapshot {
   generated_at: string;
   counters: Array<{ name: string; labels: Record<string, string>; value: number }>;
-  gauges: Array<{ name: string; labels: Record<string, string>; value: number }>;
+  gauges: Array<{ name: string; labels: Record<string, string>; value: number; observed_at: string }>;
   histograms: Array<{
     name: string;
     labels: Record<string, string>;
@@ -125,6 +126,8 @@ export class RuntimeMetrics {
   private readonly histogramBuckets: readonly number[];
 
   constructor(histogramBuckets: readonly number[] = DEFAULT_HISTOGRAM_BUCKETS) {
+    // This process owns the counter: before its first model call it is known idle.
+    this.setGauge(METRIC_NAMES.providerActive, 0);
     this.histogramBuckets = [...histogramBuckets]
       .filter((value) => Number.isFinite(value) && value > 0)
       .sort((left, right) => left - right);
@@ -146,6 +149,7 @@ export class RuntimeMetrics {
     this.assertKind(name, "gauge");
     const key = name + normalized.key;
     this.gauges.set(key, {
+      observedAt: new Date().toISOString(),
       name,
       key: normalized.key,
       values: normalized.values,
@@ -202,7 +206,7 @@ export class RuntimeMetrics {
         .map(({ name, values, value }) => ({ name, labels: { ...values }, value })),
       gauges: [...this.gauges.values()]
         .sort(seriesSort)
-        .map(({ name, values, value }) => ({ name, labels: { ...values }, value })),
+        .map(({ name, values, value, observedAt }) => ({ name, labels: { ...values }, value, observed_at: observedAt })),
       histograms: [...this.histograms.values()]
         .sort(seriesSort)
         .map(({ name, values, count, sum, buckets }) => ({

@@ -23,6 +23,7 @@ interface GithubGatewayDependencies {
 interface OAuthSession {
   version: 1;
   kind: "github_oauth_session";
+  audience?: "admin";
   nonce: string;
   state: string;
   verifier: string;
@@ -200,7 +201,8 @@ function redirectTicket(
   config: GithubGatewayConfig,
   ticket: GithubGatewayIdentityTicket,
 ): FastifyReply {
-  const target = new URL(config.applicationCallbackUrl);
+  if (ticket.audience === "admin" && !config.adminCallbackUrl) throw httpError(503, "Admin callback unavailable", "admin_callback_unavailable");
+  const target = new URL(ticket.audience === "admin" ? config.adminCallbackUrl! : config.applicationCallbackUrl);
   target.searchParams.set("ticket", signGithubGatewayPayload(ticket, config.sharedSecret));
   clearOAuthCookie(reply);
   return reply
@@ -220,6 +222,7 @@ function errorTicket(
     version: 1,
     kind: "github_oauth_result",
     outcome: "error",
+    audience: session.audience,
     nonce: session.nonce,
     ticket_id: randomUUID(),
     issued_at: now,
@@ -261,12 +264,14 @@ export function buildGithubGateway(dependencies: GithubGatewayDependencies): Fas
   app.get("/oauth/github/start", async (request, reply) => {
     const query = request.query as { request?: string };
     const grant = parseGithubGatewayStartGrant(query.request ?? "", config.sharedSecret, now());
+    if (grant?.audience === "admin" && !config.adminCallbackUrl) throw httpError(503, "Admin callback unavailable", "admin_callback_unavailable");
     if (!grant) throw httpError(400, "登录请求已失效", "invalid_oauth_start");
     const verifier = randomBytes(32).toString("base64url");
     const state = randomBytes(32).toString("base64url");
     const session: OAuthSession = {
       version: 1,
       kind: "github_oauth_session",
+      audience: grant.audience,
       nonce: grant.nonce,
       state,
       verifier,
@@ -351,6 +356,7 @@ export function buildGithubGateway(dependencies: GithubGatewayDependencies): Fas
         version: 1,
         kind: "github_oauth_result",
         outcome: "success",
+        audience: session.audience,
         nonce: session.nonce,
         ticket_id: randomUUID(),
         issued_at: currentTime,

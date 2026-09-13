@@ -1,0 +1,13 @@
+import {createRequire} from 'node:module';
+import {readFile} from 'node:fs/promises';
+import {resolve,join} from 'node:path';
+import assert from 'node:assert/strict';
+const root=process.cwd(),fixture=resolve(process.argv[2]??'');
+assert.ok(fixture.startsWith(join(root,'.local','admin-preview-')),'Only isolated fixture sessions are accepted');
+const require=createRequire(join(root,'web/package.json'));
+const {chromium}=require('@playwright/test');
+const browser=await chromium.launch({headless:false,channel:'chrome'});
+const context=await browser.newContext({storageState:JSON.parse(await readFile(join(fixture,'browser-state.json'),'utf8')),viewport:{width:1440,height:960}});
+const page=await context.newPage();await page.goto('http://127.0.0.1:5390/admin');
+console.log('Authenticated isolated admin preview opened in Chrome.');
+await new Promise(resolve=>browser.once('disconnected',resolve));

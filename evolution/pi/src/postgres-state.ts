@@ -80,8 +80,9 @@ implements EvolutionStateJournal, FeedbackEvolutionRequestStore {
     const result = await this.db.query(
       `INSERT INTO evolution_tasks(
          task_id, skill_id, trigger, status, task_payload, ledger_payload,
-         created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::timestamptz, $8::timestamptz)
+         created_at, updated_at, config_version
+       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::timestamptz, $8::timestamptz,
+         COALESCE((SELECT ((value->'versions'->-1)->>'version')::int FROM admin_documents WHERE key='platform'),0))
        ON CONFLICT(task_id) DO NOTHING`,
       [
         checkedTask.taskId,

@@ -39,6 +39,8 @@
 | server | @types/pg | 8.21.0 | 开发 | MIT |
 | server | tsx | 4.20.6 | 开发 | MIT |
 | web | @dagrejs/dagre | 3.1.1 | 运行时 | MIT |
+| web | @types/qrcode | 1.5.6 | 开发 | MIT |
+| web | qrcode | 1.5.4 | 运行时 | MIT |
 | web | @sketchyicons/react | 0.5.0 | 运行时 | MIT |
 | web | @xyflow/react | 12.11.2 | 运行时 | MIT |
 | web | highlight.js | 11.12.0 | 运行时 | BSD-3-Clause |

@@ -1,3 +1,4 @@
+import { acquireRepositoryReadLease } from '../persistence/repository-read-lease.js';
 import { createHash, randomUUID } from "node:crypto";
 import {
   createProject,
@@ -58,6 +59,8 @@ export interface RepositoryServiceOptions {
   githubGateway?: GithubGatewayTransport | null;
   headFreshnessMs?: number;
   analysisConfigDigest?: () => Promise<string>;
+  analysisExecution?: () => Promise<{digest:string;configVersion:number}>;
+  admitWork?: <T>(job: AnalysisJob, operation: () => Promise<T>) => Promise<T>;
   resolveGithubHead?: GithubHeadResolver;
   taskQueue?: TaskQueue;
 }
@@ -99,6 +102,8 @@ export class RepositoryService {
     this.resolveGithubHead = options.resolveGithubHead ?? fetchPublicGithubHead;
   }
 
+  private admit<T>(job: AnalysisJob, operation: () => Promise<T>): Promise<T> { return this.options.admitWork ? this.options.admitWork(job, operation) : operation(); }
+
   async startAnalysis(input: {
     owner: ConversationOwner;
     projectId?: string | null;
@@ -107,6 +112,8 @@ export class RepositoryService {
     title?: string;
     displayLanguage?: string | null;
   }): Promise<StartAnalysisResult> {
+    const releaseRepository=await acquireRepositoryReadLease(this.store);
+    try {
     let project: Project;
     let created: boolean;
     if (input.projectId) {
@@ -114,6 +121,7 @@ export class RepositoryService {
         throw serviceError("invalid_request", "重分析只接受 project_id", 400);
       }
       project = await this.requireProject(input.owner.owner_id, input.projectId);
+      delete project.analysis.removed_by_admin;
       const activeJob = await this.store.latestJob(input.projectId);
       if (activeJob && (activeJob.status === "queued" || activeJob.status === "running")) {
         await this.enqueueIfRunnable(activeJob);
@@ -140,7 +148,8 @@ export class RepositoryService {
 
     const parsed = parseGithubRepository(project.source.value);
     const repository = `${parsed.owner}/${parsed.repo}`.toLowerCase();
-    const analysisConfigDigest = await this.options.analysisConfigDigest?.() ?? ANALYSIS_CONFIG_DIGEST;
+    const execution = await this.options.analysisExecution?.();
+    const analysisConfigDigest = execution?.digest ?? await this.options.analysisConfigDigest?.() ?? ANALYSIS_CONFIG_DIGEST;
     const identity = {
       repository,
       analyzerBundleVersion: ANALYZER_BUNDLE_VERSION,
@@ -158,6 +167,7 @@ export class RepositoryService {
     const job = newAnalysisJob(project.project_id, created
       ? `analysis:${project.project_id}:${sourceDigest}`
       : `analysis:${project.project_id}:${Date.now()}`);
+    job.config_version = execution?.configVersion;
     const head = await this.store.loadRepositoryHead(identity);
     const fresh = head?.last_checked_at
       ? Date.now() - Date.parse(head.last_checked_at) <= this.headFreshnessMs
@@ -220,13 +230,13 @@ export class RepositoryService {
     }
 
     project.updated_at = startedAt;
-    const queued = await this.store.createOrJoinRepositoryUpdate({
+    const queued = await this.admit(job, () => this.store.createOrJoinRepositoryUpdate({
       project,
       job,
       identity,
       targetCommitSha: upstream?.commitSha ?? null,
       newProject: created,
-    });
+    }));
     if (!queued.leader) {
       const members = await this.store.listRepositoryUpdateProjects(queued.update.update_id);
       const leader = members.find((member) => member.project_id === queued.update.leader_project_id);
@@ -243,6 +253,7 @@ export class RepositoryService {
     }
     await this.enqueueIfRunnable(queued.job);
     return { project, job: queued.job, created };
+    } finally { await releaseRepository?.(); }
   }
 
   private async bindExistingSnapshot(input: {
@@ -298,13 +309,13 @@ export class RepositoryService {
       error_code: null,
     };
     if (!overlayReady) {
-      const queued = await this.store.createOrJoinSnapshotLanguageOverlay({
+      const queued = await this.admit(completedJob, () => this.store.createOrJoinSnapshotLanguageOverlay({
         project: input.project,
         job: completedJob,
         publicKey: input.publicKey,
         language,
         newProject: input.created,
-      });
+      }));
       await this.enqueueIfRunnable(queued.job);
       return { project: input.project, job: queued.job, created: input.created };
     }
@@ -404,14 +415,15 @@ export class RepositoryService {
         projectId,
         `migration-overlay:${projectId}:${head.current_public_snapshot_key}:${randomUUID()}`,
       );
-      const queued = await this.store.createOrJoinSnapshotLanguageOverlay({
+      overlayJob.config_version = (await this.options.analysisExecution?.())?.configVersion;
+      const queued = await this.admit(overlayJob, () => this.store.createOrJoinSnapshotLanguageOverlay({
         project: migrated,
         job: overlayJob,
-        publicKey: head.current_public_snapshot_key,
+        publicKey: head.current_public_snapshot_key!,
         language,
         newProject: false,
         systemManaged: true,
-      });
+      }));
       await this.enqueueIfRunnable(queued.job);
       return (await this.store.loadProject(projectId, ownerId)) ?? migrated;
     }

@@ -12,10 +12,30 @@ import {
   putSourceSnapshot,
   snapshotObjectDigest,
   tencentCosClientOptions,
+  TencentCosObjectStore,
   verifySourceSnapshotObject,
   verifySnapshotObject,
   type SnapshotManifest,
 } from "./snapshot-object-store.js";
+
+test('COS inventory includes retained versions and reclamation deletes only the exact unreferenced key',async()=>{
+  const store=new TencentCosObjectStore({bucket:'isolated',region:'ap-test',secretId:'test',secretKey:'test',prefix:'product'});
+  const deleted:Array<{Key:string;VersionId:string}>=[];
+  (store as unknown as {client:unknown}).client={
+    async getBucketVersioning(){return {VersioningConfiguration:{Status:'Enabled'}};},
+    async listObjectVersions(input:{Prefix:string}){return {IsTruncated:'false',Versions:[{Key:'product/file',VersionId:'v1',Size:10},{Key:'product/file',VersionId:'v2',Size:20},{Key:'product/file-other',VersionId:'protected',Size:7}].filter(v=>v.Key.startsWith(input.Prefix)),DeleteMarkers:[{Key:'product/file',VersionId:'marker'}]};},
+    async deleteMultipleObject(input:{Objects:Array<{Key:string;VersionId:string}>}){deleted.push(...input.Objects);return {Error:[]};},
+  };
+  assert.deepEqual(await store.inventory(),[{key:'file',bytes:30},{key:'file-other',bytes:7}]);
+  await store.purge('file');
+  assert.deepEqual(deleted.map(v=>[v.Key,v.VersionId]),[['product/file','v1'],['product/file','v2'],['product/file','marker']]);
+});
+
+test('COS inventory permission failure remains unknown rather than falling back to zero',async()=>{
+  const store=new TencentCosObjectStore({bucket:'isolated',region:'ap-test',secretId:'test',secretKey:'test'});
+  (store as unknown as {client:unknown}).client={async getBucketVersioning(){throw new Error('AccessDenied');}};
+  await assert.rejects(()=>store.inventory(),/AccessDenied/);
+});
 
 test("source preparation stops queued uploads and settles active uploads before returning cancellation", async () => {
   const root = await mkdtemp(join(tmpdir(), "snapshot-preparation-cancel-"));

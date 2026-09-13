@@ -1,3 +1,6 @@
+import { createAdminSecurity, registerAdminRoutes, recordPresence, adminCookie, ADMIN_CHALLENGE, ADMIN_SESSION } from '../admin/routes.js';
+import { runtimeConfig } from '../admin/runtime-config.js';
+import { StorageManager } from '../admin/storage.js';
 import { resolveAnalysisExecution } from "../analysis/execution-identity.js";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -396,7 +399,8 @@ async function discardUnverifiedConnections(
   await store.saveSettings(owner.owner_id, settings);
 }
 
-function settingsResponse(config: ServerConfig, store: ProductStore, owner: Owner, settings: ProviderSettings): Record<string, unknown> {
+async function settingsResponse(config: ServerConfig, store: ProductStore, owner: Owner, settings: ProviderSettings): Promise<Record<string, unknown>> {
+  config = await runtimeConfig(config, store);
   const options = availableModels(config, store, owner, settings);
   const selected = effectiveModelSelector(config, store, owner, settings);
   const personalConnections = settings.connections.map((connection) => ({
@@ -881,6 +885,8 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
   const { config, store, sessions, memories } = dependencies;
   assertApiSessionSecret(config);
   const metrics = dependencies.metrics ?? defaultRuntimeMetrics;
+  const adminSecurity = createAdminSecurity(dependencies);
+  const storageManager = new StorageManager(store, config);
   const conversationStreams = new ConversationStreamHub();
   configureProductSkillRegistry(config.skillVersionsRoot);
   const conversation = new ConversationService(
@@ -918,7 +924,9 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     return true;
   };
   const repository = new RepositoryService(store, {
-    analysisConfigDigest: async () => (await resolveAnalysisExecution(config)).digest,
+    analysisExecution: async () => { const current = await runtimeConfig(config, store); return { digest: (await resolveAnalysisExecution(current)).digest, configVersion: current.adminConfigVersion ?? 0 }; },
+    analysisConfigDigest: async () => (await resolveAnalysisExecution(await runtimeConfig(config, store))).digest,
+    admitWork: (job, operation) => storageManager.admit(job, operation),
     githubClientId: config.githubClientId,
     githubClientSecret: config.githubClientSecret,
     githubGateway: config.githubGatewayUrl && config.githubGatewaySharedSecret
@@ -948,6 +956,8 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
   });
   void app.register(cookie, config.sessionSecret ? { secret: config.sessionSecret } : {});
   registerMcpRoutes(app, { config, store, repository, conversation });
+  registerAdminRoutes(app, dependencies, adminSecurity);
+  app.post("/api/presence", async request => recordPresence(dependencies, await requiredOwner(request, store, config)));
 
   app.setErrorHandler((error, request, reply) => {
     const status = typeof (error as { statusCode?: unknown }).statusCode === "number" ? Number((error as { statusCode: number }).statusCode) : 500;
@@ -967,7 +977,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       });
     }
     const safeDetail = safePublicErrorMessage(status, rawCode, rawMessage);
-    void reply.code(status).send({ detail: safeDetail, code });
+    void reply.code(status).send({ detail: safeDetail, code, ...((error as { resetAt?: string }).resetAt ? { reset_at: (error as { resetAt: string }).resetAt } : {}) });
   });
   app.get("/health", async (_request, reply) => {
     try {
@@ -1025,7 +1035,10 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     setIdentity(reply, config, owner.owner_id);
     return owner;
   });
-  app.post("/api/auth/logout", async (_request, reply) => reply.clearCookie(IDENTITY_COOKIE, { path: "/" }).code(204).send());
+  app.post("/api/auth/logout", async (request, reply) => {
+    if (adminSecurity.enabled && request.cookies[ADMIN_SESSION]) await adminSecurity.logout(request.cookies[ADMIN_SESSION]!);
+    return reply.clearCookie(IDENTITY_COOKIE, { path: "/" }).clearCookie(ADMIN_SESSION, { path: "/api/admin" }).code(204).send();
+  });
   app.get("/api/auth/github/start", async (request, reply) => {
     const gatewayUrl = config.githubGatewayUrl;
     const gatewaySecret = config.githubGatewaySharedSecret;
@@ -1046,6 +1059,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       const grant = signGithubGatewayPayload({
         version: 1,
         kind: "github_oauth_start",
+        ...(payload.return_to.startsWith("/admin") && config.adminWebUrl ? { audience: "admin" } : {}),
         nonce: payload.nonce,
         issued_at: payload.issued_at,
         expires_at: payload.issued_at + 60_000,
@@ -1187,11 +1201,15 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
         ? await ownerMergeMutex.runExclusive(mergeKey, merge)
         : await merge();
       oauthStage = "redirect_to_web";
+      if (state.return_to === "/admin" || state.return_to.startsWith("/admin?")) {
+        const challenge = await adminSecurity.beginGithub(owner.owner_id);
+        adminCookie(reply, ADMIN_CHALLENGE, challenge, config.nodeEnv === "production", 300);
+      }
       setIdentity(reply, config, owner.owner_id);
       reply.clearCookie(OAUTH_STATE_COOKIE, { path: "/" });
       // The receipt is persisted as well; the query makes the first redirect
       // self-describing while /api/auth/me consumes the durable copy once.
-      const returnUrl = new URL(`${config.webUrl}${safeReturnTo(state.return_to)}`);
+      const returnUrl = new URL(`${state.return_to.startsWith("/admin") ? config.adminWebUrl ?? config.webUrl : config.webUrl}${safeReturnTo(state.return_to)}`);
       if (mergeSummary) returnUrl.searchParams.set("merged", String(mergeSummary.projects));
       return reply.redirect(returnUrl.toString());
     } catch (error) {
@@ -1344,6 +1362,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     if (modelId && selected.length >= 100 && !selected.includes(modelId)) throw httpError(400, "模型列表最多保留 100 个模型，请先删除一个");
     const previousManual = [...(existing?.manually_verified_models ?? []), ...(previous?.manual_models ?? [])].filter(id => selected.includes(id));
     const manualResult = modelId ? await verifyManualModel(connection, apiKey, modelId, {
+      attribution: { business: "chat", payer: "user", agentRole: "connection-verification", configVersion: 0 },
       ownerId: owner.owner_id, providerGateFactory: dependencies.providerGateFactory, providerBudget: dependencies.providerBudget, metrics,
     }) : null;
     const verification: ProviderVerificationResult = manualResult
@@ -1449,7 +1468,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     if (decodeModelSelector(settings.model)?.connectionId === connectionId) settings.model = "";
     settings.model = effectiveModelSelector(config, store, owner, settings, settings.model);
     await store.saveSettings(owner.owner_id, settings);
-    return reply.send(settingsResponse(config, store, owner, settings));
+    return reply.send(await settingsResponse(config, store, owner, settings));
   });
   app.put("/api/settings/selection", async (request: RequestWithBody) => {
     const owner = await requiredOwner(request, store, config);
@@ -1541,7 +1560,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     );
     applyVerificationResult(config, store, owner, settings, connection, result);
     await store.saveSettings(owner.owner_id, settings);
-    return { ...result, models_endpoint_supported: result.supported, settings: settingsResponse(config, store, owner, settings) };
+    return { ...result, models_endpoint_supported: result.supported, settings: await settingsResponse(config, store, owner, settings) };
   });
 
   app.get("/api/profile", async (request) => {
