@@ -49,6 +49,12 @@ Configuration names use `WHAT_THE_REPO_*`; GitHub OAuth variables remain `GITHUB
 Docker supplies PostgreSQL and Redis for host development. The full Compose files support integration testing; `infra/k8s/` and the k3s scripts describe the hosted single-node deployment. CI validates code and recipes; it does not publish or deploy them.
 
 
+## Dependency security updates
+
+Run `npm audit --registry=https://registry.npmjs.org` in `server/`, `web/`, `evolution/pi/` and `infra/docker/github-gateway/` to check runtime and development dependencies. Use `--omit=dev` for a separate production dependency check; npm audits do not cover operating-system packages.
+
+Prefer compatible patched releases and update `package.json`, lockfiles and license records together. Verify installed versions, build and test the affected modules, then audit again. After updating Web development tools, also verify local startup, the API proxy and file-access restrictions. Record the date and scope of each audit; local fixes take effect in production only after rebuilding and deploying the images.
+
 ## License checks
 
 Run `node scripts/check-license-inventory.mjs` from the repository root after dependency or asset changes. See [license records](licenses/README.md), [third-party notices](THIRD_PARTY_NOTICES.md) and [distribution boundaries](licenses/DISTRIBUTION.md).

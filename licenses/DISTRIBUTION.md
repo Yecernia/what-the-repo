@@ -4,8 +4,8 @@
 
 ## Scope of this inventory
 
-The checked-in inventory covers 846 unique npm name/version pairs from four
-lockfiles (1,028 lockfile locations, including optional and development packages).
+The checked-in inventory covers 765 unique npm name/version pairs from four
+lockfiles (973 lockfile locations, including optional and development packages).
 The source snapshot does not vendor `node_modules`, research clones, language
 server installations, container images or native binaries.
 
@@ -13,8 +13,8 @@ When distributing third-party code or assets, preserve their copyright notices a
 
 ## Missing license materials
 
-All 846 packages have a verified license declaration from a lockfile, installed
-package manifest or exact-version npm metadata. 833 have a collected upstream
+All 765 packages have a verified license declaration from a lockfile, installed
+package manifest or exact-version npm metadata. 752 have a collected upstream
 license/notice. The following 13 records are marked
 `metadata-only-or-partial`:
 
@@ -31,12 +31,6 @@ and inventory the **actual artifact**, including embedded native dependencies.
 
 ## Licenses requiring particular attention
 
-- `lightningcss@1.33.0` and its eleven platform packages declare MPL-2.0.
-  They are Web development/build dependencies. Covered files retain MPL-2.0. If distributing covered executables or modified covered files, satisfy
-  the MPL's source-availability obligations for those files. Building Web assets
-  with a tool does not, by itself, place all generated application code under the
-  tool's license. See [Mozilla's MPL FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/)
-  and the package's collected license.
 - `caniuse-lite@1.0.30001809` contains browser-support data under CC-BY-4.0.
   Credit the caniuse/caniuse-lite contributors, link to
   [caniuse-lite](https://github.com/browserslist/caniuse-lite) and retain its

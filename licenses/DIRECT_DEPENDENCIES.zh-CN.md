@@ -14,8 +14,8 @@
 | server | @modelcontextprotocol/sdk | 1.26.0 | 运行时 | MIT |
 | server | bullmq | 6.2.0 | 运行时 | MIT |
 | server | cos-nodejs-sdk-v5 | 3.0.0 | 运行时 | ISC |
-| server | fastify | 5.12.0 | 运行时 | MIT |
-| server | fflate | 0.8.2 | 运行时 | MIT |
+| server | fastify | 5.12.4 | 运行时 | MIT |
+| server | fflate | 0.8.3 | 运行时 | MIT |
 | server | html-to-text | 10.0.1 | 运行时 | MIT |
 | server | ioredis | 5.11.1 | 运行时 | MIT |
 | server | pg | 8.23.0 | 运行时 | MIT |
@@ -59,8 +59,8 @@
 | web | jsdom | 26.1.0 | 开发 | MIT |
 | web | oxlint | 1.78.0 | 开发 | MIT |
 | web | typescript | 6.0.3 | 开发 | Apache-2.0 |
-| web | vite | 5.4.19 | 开发 | MIT |
-| web | vitest | 4.1.10 | 开发 | MIT |
+| web | vite | 6.4.3 | 开发 | MIT |
+| web | vitest | 4.1.11 | 开发 | MIT |
 | evolution/pi | @earendil-works/pi-coding-agent | 0.84.1 | 运行时 | MIT |
 | evolution/pi | bullmq | 6.2.0 | 运行时 | MIT |
 | evolution/pi | ioredis | 5.11.1 | 运行时 | MIT |
@@ -70,4 +70,4 @@
 | evolution/pi | @types/pg | 8.21.0 | 开发 | MIT |
 | evolution/pi | typescript | 6.0.2 | 开发 | Apache-2.0 |
 | infra/docker/github-gateway | @fastify/cookie | 11.1.2 | 运行时 | MIT |
-| infra/docker/github-gateway | fastify | 5.12.0 | 运行时 | MIT |
+| infra/docker/github-gateway | fastify | 5.12.4 | 运行时 | MIT |

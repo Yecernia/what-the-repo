@@ -89,81 +89,32 @@ Generated from four lockfiles, including runtime, development and optional platf
 | @earendil-works/pi-telemetry@0.84.1 | MIT | evolution/pi | [1](npm/0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48.txt) |
 | @earendil-works/pi-telemetry@0.84.2 | MIT | server | [1](npm/0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48.txt) |
 | @earendil-works/pi-tui@0.84.1 | MIT | evolution/pi | [1](npm/0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48.txt) |
-| @esbuild/aix-ppc64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/aix-ppc64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/aix-ppc64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/android-arm@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/android-arm@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/android-arm@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/android-arm64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/android-arm64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/android-arm64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/android-x64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/android-x64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/android-x64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/darwin-arm64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/darwin-arm64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/darwin-arm64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/darwin-x64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/darwin-x64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/darwin-x64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/freebsd-arm64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/freebsd-arm64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/freebsd-arm64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/freebsd-x64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/freebsd-x64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/freebsd-x64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-arm@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-arm@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-arm@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-arm64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-arm64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-arm64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-ia32@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-ia32@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-ia32@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-loong64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-loong64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-loong64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-mips64el@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-mips64el@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-mips64el@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-ppc64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-ppc64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-ppc64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-riscv64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-riscv64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-riscv64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-s390x@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-s390x@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-s390x@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-x64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-x64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/linux-x64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/netbsd-arm64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/netbsd-arm64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/netbsd-x64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/netbsd-x64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/netbsd-x64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/openbsd-arm64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/openbsd-arm64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/openbsd-x64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/openbsd-x64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/openbsd-x64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/openharmony-arm64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/openharmony-arm64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/sunos-x64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/sunos-x64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/sunos-x64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/win32-arm64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/win32-arm64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/win32-arm64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/win32-ia32@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/win32-ia32@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/win32-ia32@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/win32-x64@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/win32-x64@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| @esbuild/win32-x64@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/aix-ppc64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/android-arm@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/android-arm64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/android-x64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/darwin-arm64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/darwin-x64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/freebsd-arm64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/freebsd-x64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/linux-arm@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/linux-arm64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/linux-ia32@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/linux-loong64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/linux-mips64el@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/linux-ppc64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/linux-riscv64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/linux-s390x@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/linux-x64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/netbsd-arm64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/netbsd-x64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/openbsd-arm64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/openbsd-x64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/openharmony-arm64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/sunos-x64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/win32-arm64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/win32-ia32@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| @esbuild/win32-x64@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
 | @fastify/ajv-compiler@4.0.6 | MIT | server, infra/docker/github-gateway | [1](npm/e2d09f74a77005e85e9f9bd501e3b7599ccae19d918538461196dde42f7f1b97.txt) |
 | @fastify/cookie@11.1.2 | MIT | server, infra/docker/github-gateway | [1](npm/ba9677e5a34c2738c26b36bb478f95e0369cac48fbe68a01a91fd5c7972f2043.txt) |
 | @fastify/error@4.2.0 | MIT | server, infra/docker/github-gateway | [1](npm/ec99456b6f97f7e559790df166a17a2418dbdbf595d63502792a5ce661f1346c.txt) |
@@ -203,7 +154,6 @@ Generated from four lockfiles, including runtime, development and optional platf
 | @opentelemetry/api@1.9.0 | Apache-2.0 | server, evolution/pi | [1](npm/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt) |
 | @opentelemetry/semantic-conventions@1.41.1 | Apache-2.0 | evolution/pi | [1](npm/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt) |
 | @opentelemetry/semantic-conventions@1.43.0 | Apache-2.0 | server | [1](npm/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt) |
-| @oxc-project/types@0.143.0 | MIT | web (dev) | [1](npm/95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3.txt) |
 | @oxlint/binding-android-arm-eabi@1.78.0 | MIT | web (dev) | [1](npm/95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3.txt) |
 | @oxlint/binding-android-arm64@1.78.0 | MIT | web (dev) | [1](npm/95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3.txt) |
 | @oxlint/binding-darwin-arm64@1.78.0 | MIT | web (dev) | [1](npm/95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3.txt) |
@@ -235,21 +185,6 @@ Generated from four lockfiles, including runtime, development and optional platf
 | @protobufjs/pool@1.1.0 | BSD-3-Clause | server, evolution/pi | [1](npm/a67b34a24a5daddcce46aea68c5004e4442bbfb63690329fa607bf4de4269794.txt) |
 | @protobufjs/utf8@1.1.1 | BSD-3-Clause | evolution/pi | [1](npm/a67b34a24a5daddcce46aea68c5004e4442bbfb63690329fa607bf4de4269794.txt) |
 | @protobufjs/utf8@1.1.2 | BSD-3-Clause | server | [1](npm/a67b34a24a5daddcce46aea68c5004e4442bbfb63690329fa607bf4de4269794.txt) |
-| @rolldown/binding-android-arm64@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-darwin-arm64@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-darwin-x64@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-freebsd-x64@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-linux-arm-gnueabihf@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-linux-arm64-gnu@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-linux-arm64-musl@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-linux-ppc64-gnu@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-linux-s390x-gnu@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-linux-x64-gnu@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-linux-x64-musl@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-openharmony-arm64@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-win32-arm64-msvc@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/binding-win32-x64-msvc@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
-| @rolldown/pluginutils@1.0.1 | MIT | web (dev) | [1](npm/e1919b3b98b8bf6c1b99fcc60a0ed46027c97ac947432e1278446c9606f50161.txt) |
 | @rollup/rollup-android-arm-eabi@4.62.4 | MIT | web (dev) | [1](npm/fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8.txt) |
 | @rollup/rollup-android-arm64@4.62.4 | MIT | web (dev) | [1](npm/fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8.txt) |
 | @rollup/rollup-darwin-arm64@4.62.4 | MIT | web (dev) | [1](npm/fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8.txt) |
@@ -329,13 +264,13 @@ Generated from four lockfiles, including runtime, development and optional platf
 | @types/unist@3.0.3 | MIT | web | [1](npm/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt) |
 | @ungap/structured-clone@1.3.3 | ISC | web | [1](npm/dc6d4961d8b6ee747231582ae9c53ce1d66bf76bc9f5a28f554c0e97210953bf.txt) |
 | @vitejs/plugin-react@4.3.4 | MIT | web (dev) | [1](npm/29b68325fe026047d13e187b44c33b2acacf7dc647dec4583702e59f235e13b5.txt) |
-| @vitest/expect@4.1.10 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
-| @vitest/mocker@4.1.10 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
-| @vitest/pretty-format@4.1.10 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
-| @vitest/runner@4.1.10 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
-| @vitest/snapshot@4.1.10 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
-| @vitest/spy@4.1.10 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
-| @vitest/utils@4.1.10 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
+| @vitest/expect@4.1.11 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
+| @vitest/mocker@4.1.11 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
+| @vitest/pretty-format@4.1.11 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
+| @vitest/runner@4.1.11 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
+| @vitest/snapshot@4.1.11 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
+| @vitest/spy@4.1.11 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
+| @vitest/utils@4.1.11 | MIT | web (dev) | [1](npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt) |
 | @xyflow/react@12.11.2 | MIT | web | [1](npm/023119ac20fb1c8c9930abe0bcd196989a1960388529a96fc43cebf96f07c9ff.txt) |
 | @xyflow/system@0.0.79 | MIT | web | [1](npm/023119ac20fb1c8c9930abe0bcd196989a1960388529a96fc43cebf96f07c9ff.txt) |
 | abstract-logging@2.0.1 | MIT | server, infra/docker/github-gateway | [1](npm/e96801bf397479a8026deee593dad88bfdc1f88670cdd77cd260d478847afa16.txt) |
@@ -420,7 +355,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | denque@2.1.0 | Apache-2.0 | server, evolution/pi | [1](npm/cd9809cec53323a3e4977bb8f3c7fd4009e32c10966f92165528a457ecedba8e.txt) |
 | depd@2.0.0 | MIT | server | [1](npm/bd134b41da59e452fb5a1d366b660886f741c87c2bf9428e93764c419fbc40f5.txt) |
 | dequal@2.0.3 | MIT | server, web, infra/docker/github-gateway | [1](npm/306fa513e39b23a6e8747520de761809d206b99800ef41907b530226574c59ae.txt) |
-| detect-libc@2.1.2 | Apache-2.0 | server, web (dev), evolution/pi | [1](npm/b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1.txt) |
+| detect-libc@2.1.2 | Apache-2.0 | server, evolution/pi | [1](npm/b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1.txt) |
 | devlop@1.1.0 | MIT | web | [1](npm/6f296a5eccc1dc96714bb94ebaa9cac25b0a1467d74cc5263ac4d0646ab01f62.txt) |
 | diff@8.0.4 | BSD-3-Clause | server, evolution/pi | [1](npm/eda81a415869e67809f6a9f3fd6056062cb83a462118e07eec5e92b2e0c40ce9.txt) |
 | dom-accessibility-api@0.5.16 | MIT | web (dev) | [1](npm/0ffe67fe630169de46df2d29dc18f5857b4c98f0f95b0cd9e3c21fef51f9a9b8.txt) |
@@ -443,9 +378,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | es-module-lexer@2.3.1 | MIT | web (dev) | [1](npm/8a4b6c44eebfb026d23719a348145a661a555568dbfdc11618ff2d0dd9306b00.txt) |
 | es-object-atoms@1.1.2 | MIT | server | [1](npm/5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292.txt) |
 | es-set-tostringtag@2.1.0 | MIT | server | [1](npm/1a3aeb1f1398bd697d57c3c585faadf59d825aca6e3162cd7eeb72ff76eb2466.txt) |
-| esbuild@0.21.5 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| esbuild@0.25.12 | MIT | server (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
-| esbuild@0.28.2 | MIT | web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
+| esbuild@0.25.12 | MIT | server (dev), web (dev) | [1](npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt) |
 | escalade@3.2.0 | MIT | web (dev) | [1](npm/9a9edad7baae52622bddf3c15b2ef8a33d2c89f2d25408ad13e8a7481c6b0c97.txt) |
 | escape-html@1.0.3 | MIT | server | [1](npm/255aa557a1f55224ce522f311629c0bf20854740a67955cefd798fbd1d3d1ded.txt) |
 | escape-string-regexp@5.0.0 | MIT | web | [1](npm/5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3.txt) |
@@ -463,19 +396,19 @@ Generated from four lockfiles, including runtime, development and optional platf
 | fast-deep-equal@3.1.3 | MIT | server, infra/docker/github-gateway | [1](npm/7bf9b2de73a6b356761c948d0e9eeb4be6c1270bd04c79cd489c1e400ffdfc1a.txt) |
 | fast-json-stringify@7.0.1 | MIT | server, infra/docker/github-gateway | [1](npm/b08de5bb7b21f44a8358edf74febe50c75ef2a1e5470e06c8919eb934cba067c.txt) |
 | fast-querystring@1.1.2 | MIT | server, infra/docker/github-gateway | [1](npm/4f8cf48502224399442f7eadd8620d96ef18125f9beb4949c53084ab3b05a4d4.txt) |
-| fast-uri@3.1.5 | BSD-3-Clause | server | [1](npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt) |
 | fast-uri@3.1.6 | BSD-3-Clause | infra/docker/github-gateway | [1](npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt) |
-| fast-uri@4.1.2 | BSD-3-Clause | server | [1](npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt) |
+| fast-uri@3.1.7 | BSD-3-Clause | server | [1](npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt) |
 | fast-uri@4.1.3 | BSD-3-Clause | infra/docker/github-gateway | [1](npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt) |
+| fast-uri@4.1.4 | BSD-3-Clause | server | [1](npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt) |
 | fast-xml-builder@1.2.0 | MIT | evolution/pi | [1](npm/8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07.txt) |
 | fast-xml-parser@5.7.3 | MIT | evolution/pi | [1](npm/7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745.txt) |
 | fastify-plugin@6.0.0 | MIT | server, infra/docker/github-gateway | [1](npm/ba9677e5a34c2738c26b36bb478f95e0369cac48fbe68a01a91fd5c7972f2043.txt) |
-| fastify@5.12.0 | MIT | server, infra/docker/github-gateway | [1](npm/23c91863859171455a536380991b4160fee4e19e2d8dc353ecf7143cc4e53ca2.txt) |
+| fastify@5.12.4 | MIT | server, infra/docker/github-gateway | [1](npm/23c91863859171455a536380991b4160fee4e19e2d8dc353ecf7143cc4e53ca2.txt) |
 | fastq@1.20.1 | ISC | server | [1](npm/c3367f6d01a79d368fc4fbb41b3615fcd92f243d6597ab96742f6f976f9325af.txt) |
 | fastq@1.20.2 | ISC | infra/docker/github-gateway | [1](npm/c3367f6d01a79d368fc4fbb41b3615fcd92f243d6597ab96742f6f976f9325af.txt) |
 | fdir@6.5.0 | MIT | web (dev) | [1](npm/9a39f2aadab11a3697edd668ff2d8ad885b649737b7ab4d3bf12b34e5ada0c86.txt) |
 | fetch-blob@3.2.0 | MIT | server, evolution/pi | [1](npm/a5edccac92c3aa845694dcfaa72a0c098c1ae40d5ca6a37e4e59d778cf8e29bd.txt) |
-| fflate@0.8.2 | MIT | server | [1](npm/805f6cb28bb8b6d3a0badd83c93bccd9671fa01a3b4b92b7042b0743325ac243.txt) |
+| fflate@0.8.3 | MIT | server | [1](npm/0a1df3a083d0c010560aa342e87959c8c1070e6fd54545741f083f22d0c8b551.txt) |
 | finalhandler@2.1.1 | MIT | server | [1](npm/47dcccf62bf40469d23849b0b1dc8df9fc91bce219b880c638d4dc4596e6b5cf.txt) |
 | find-my-way@9.8.0 | MIT | server | [1](npm/693f9539655acc1847add1ccd364312ba570bf8ce84706b6059e7e0b5ceb90e6.txt) |
 | find-my-way@9.9.0 | MIT | infra/docker/github-gateway | [1](npm/693f9539655acc1847add1ccd364312ba570bf8ce84706b6059e7e0b5ceb90e6.txt) |
@@ -511,7 +444,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | hast-util-whitespace@3.0.0 | MIT | web | [1](npm/ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d.txt) |
 | highlight.js@10.7.3 | BSD-3-Clause | evolution/pi | [1](npm/6c081431591d9df696c82dc598fe1423765b8a299b200ed00b281afd0f64c490.txt) |
 | highlight.js@11.12.0 | BSD-3-Clause | web | [1](npm/6c081431591d9df696c82dc598fe1423765b8a299b200ed00b281afd0f64c490.txt) |
-| hono@4.13.2 | MIT | server | [1](npm/a6ab98e5c77b9070c443eaff2ff81034a6f8cc05a7524d5098eb0f24defa0115.txt) |
+| hono@4.13.7 | MIT | server | [1](npm/a6ab98e5c77b9070c443eaff2ff81034a6f8cc05a7524d5098eb0f24defa0115.txt) |
 | hosted-git-info@9.0.3 | ISC | evolution/pi | [1](npm/c1476ec53119cd4c8370f91f5152ac76312a29b4fae2d49b5e0e0970fe0fa5ee.txt) |
 | html-encoding-sniffer@4.0.0 | MIT | web (dev) | [1](npm/528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa.txt) |
 | html-to-text@10.0.1 | MIT | server | [1](npm/43659035063c7ae7e47d4ba4bb41b6acbde34d2fb7d21205e92909ea4ddb843b.txt) |
@@ -560,18 +493,6 @@ Generated from four lockfiles, including runtime, development and optional platf
 | jws@4.0.1 | MIT | server, evolution/pi | [1](npm/3320319f8a5f42bc4254e65471eca7a5ea4dc8c883c4c24b4868e36b14890bcf.txt) |
 | leac@0.7.0 | MIT | server | [1](npm/ddd4eaafae6009e31c12abb70cf4369034db2fe17de7074ea89aecd3e95d7ffc.txt) |
 | light-my-request@6.6.0 | BSD-3-Clause | server, infra/docker/github-gateway | [1](npm/c59ffead4ccbc72ddc3258c23d608bc6f10cea5241038ca8d39cdd7d7e7667c9.txt) |
-| lightningcss-android-arm64@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-darwin-arm64@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-darwin-x64@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-freebsd-x64@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-linux-arm-gnueabihf@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-linux-arm64-gnu@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-linux-arm64-musl@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-linux-x64-gnu@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-linux-x64-musl@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-win32-arm64-msvc@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss-win32-x64-msvc@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
-| lightningcss@1.33.0 | MPL-2.0 | web (dev) | [1](npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt) |
 | long@5.3.2 | Apache-2.0 | server, evolution/pi | [1](npm/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt) |
 | longest-streak@3.1.0 | MIT | web | [1](npm/9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10.txt) |
 | lru-cache@10.4.3 | ISC | web (dev) | [1](npm/451ec07eeb9c4e1b86de9abdaa426462a8be48f887ec7421cf0bbb9c769555ab.txt) |
@@ -703,7 +624,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | proxy-addr@2.0.7 | MIT | server | [1](npm/a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813.txt) |
 | psl@1.15.0 | MIT | server | [1](npm/ae8c4a3b09681bc30ecbc984d58c4dc2c21b56d320fc02f558d12e86995c26c8.txt) |
 | punycode@2.3.1 | MIT | server, web (dev) | [1](npm/483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a.txt) |
-| qs@6.15.3 | BSD-3-Clause | server | [1](npm/e7dc37bf662d7f786efcb46c545615e70c1daf458a38385521c63cf6607cdfe1.txt) |
+| qs@6.16.0 | BSD-3-Clause | server | [1](npm/e7dc37bf662d7f786efcb46c545615e70c1daf458a38385521c63cf6607cdfe1.txt) |
 | querystringify@2.2.0 | MIT | server | [1](npm/3b2a6a268aa815dec121d614245e03b5c68db1f044d5b525e36db7d5dc7fb9c3.txt) |
 | quick-format-unescaped@4.0.4 | MIT | server, infra/docker/github-gateway | [1](npm/5ac141bfc70bec8f40838502436bfcb85e3f4c24377e41b9ddef07bdd6aa51bc.txt) |
 | range-parser@1.3.0 | MIT | server | [1](npm/f655e6291356ec0de7a8f0e69f294961a2cea86678ec94588be1e6a492e278ab.txt) |
@@ -730,7 +651,6 @@ Generated from four lockfiles, including runtime, development and optional platf
 | retry@0.13.1 | MIT | server, evolution/pi | [1](npm/01ad164273e8e095abc9dbd1c21e194594a671af7d528cb43ee7b4c903ba7da3.txt) |
 | reusify@1.1.0 | MIT | server, infra/docker/github-gateway | [1](npm/93a1506953b08ad4874e1cc0971a1d2ac387ca510da91e4d05e460a6c4966fa3.txt) |
 | rfdc@1.4.1 | MIT | server, infra/docker/github-gateway | [1](npm/1ce941682a96c7b898ecd125d0f2e22319758ea6f3adbf498a65d649b0f3f7dd.txt) |
-| rolldown@1.2.3 | MIT | web (dev) | [1](npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt) |
 | rollup@4.62.4 | MIT | web (dev) | [1](npm/fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8.txt) |
 | roughjs@4.6.6 | MIT | web | [1](npm/dca9a392272606ac748ac0976a2a1133f14eef841c27beaa51a844d53c56a09d.txt) |
 | router@2.2.0 | MIT | server | [1](npm/d0bca4e517157b7a6120c085f5fe43a35b90c095e3bbeb9e67f220c608506a16.txt) |
@@ -826,9 +746,8 @@ Generated from four lockfiles, including runtime, development and optional platf
 | verror@1.10.0 | MIT | server | [1](npm/29274a5fab2ae4b9bf07160f6706e81c2ace643c847957080bed37349f62dd85.txt) |
 | vfile-message@4.0.3 | MIT | web | [1](npm/dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb.txt) |
 | vfile@6.0.3 | MIT | web | [1](npm/05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d.txt) |
-| vite@5.4.19 | MIT | web (dev) | [1](npm/04d9940b3b8b372bff74437c3b153eda8a89642669c4209a4f67135eb3132bc9.txt) |
-| vite@8.2.1 | MIT | web (dev) | [1](npm/387dd7baa307083401a27c58c362c30832f5ba1dba84f10cc22c33401523f45c.txt) |
-| vitest@4.1.10 | MIT | web (dev) | [1](npm/881d660c26831481b697e39724d4a35c9f86e07b67156d4aeb693a0b39910435.txt) |
+| vite@6.4.3 | MIT | web (dev) | [1](npm/008938a3441801ca3960f8e3ccb4c0738e7996442a53063141d57d3769a7344d.txt) |
+| vitest@4.1.11 | MIT | web (dev) | [1](npm/881d660c26831481b697e39724d4a35c9f86e07b67156d4aeb693a0b39910435.txt) |
 | w3c-xmlserializer@5.0.0 | MIT | web (dev) | [1](npm/ab654de803cdaa9e2819ab2e934bdf7f757e308649ec231d78e80e92425cdc34.txt) |
 | web-streams-polyfill@3.3.3 | MIT | server, evolution/pi | [1](npm/81008a3fb78f69f3c4a72a9e005c8582342ab62864371b3ab8e1b6af9041e080.txt) |
 | web-tree-sitter@0.26.8 | MIT | server | [1](npm/c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78.txt) |

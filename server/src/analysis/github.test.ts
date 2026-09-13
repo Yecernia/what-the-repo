@@ -5,6 +5,55 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { zipSync, strToU8 } from "fflate";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+test("source fetch rejects malformed ZIP64 archives without hanging the worker", async () => {
+  const ordinary = Buffer.from(zipSync({ "repo/README.md": strToU8("source") }));
+  const end = ordinary.length - 22;
+  const zip64 = Buffer.alloc(56), locator = Buffer.alloc(20);
+  zip64.writeUInt32LE(0x06064b50, 0);
+  zip64.writeBigUInt64LE(44n, 4);
+  zip64.writeUInt16LE(45, 12);
+  zip64.writeUInt16LE(45, 14);
+  zip64.writeBigUInt64LE(1n, 24);
+  zip64.writeBigUInt64LE(1n, 32);
+  zip64.writeBigUInt64LE(BigInt(ordinary.readUInt32LE(end + 12)), 40);
+  zip64.writeBigUInt64LE(BigInt(ordinary.readUInt32LE(end + 16)), 48);
+  locator.writeUInt32LE(0x07064b50, 0);
+  locator.writeBigUInt64LE(BigInt(end), 8);
+  locator.writeUInt32LE(1, 16);
+  const archive = Buffer.concat([ordinary.subarray(0, end), zip64, locator, ordinary.subarray(end)]);
+  const directory = archive.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  assert.ok(directory >= 0);
+  assert.equal(archive.readUInt16LE(directory + 30), 0, "fixture has no ZIP64 extra field");
+  archive.writeUInt32LE(0xffffffff, directory + 20);
+  const root = await mkdtemp(join(tmpdir(), "malformed-github-archive-"));
+  try {
+    // A process timeout contains an unzipSync regression that blocks the event loop.
+    const { stdout } = await promisify(execFile)(process.execPath, ["--input-type=module", "--eval", `
+      import assert from 'node:assert/strict';
+      import { fetchPublicGithubSource } from ${JSON.stringify(new URL("./github.js", import.meta.url).href)};
+      const commit = 'a'.repeat(40);
+      globalThis.fetch = async (_url, init) => {
+        const request = JSON.parse(init.body);
+        if (request.kind === 'metadata') return Response.json({ default_branch: 'main' });
+        if (request.kind === 'commit') return Response.json({ sha: commit });
+        if (request.kind === 'tree') return Response.json({ tree: [{ path: 'README.md', type: 'blob', size: 6 }] });
+        if (request.kind === 'archive') return new Response(Buffer.from(${JSON.stringify(archive.toString("base64"))}, 'base64'));
+        throw new Error('unexpected_request');
+      };
+      await assert.rejects(fetchPublicGithubSource('https://github.com/example/repo', ${JSON.stringify(root)},
+        null, null, { baseUrl: 'https://gateway.example', sharedSecret: 'test-secret' }),
+        error => error.code === 13 && /invalid zip data/.test(error.message));
+      console.log('malformed archive rejected');
+    `], { timeout: 10_000, windowsHide: true });
+    assert.match(stdout, /malformed archive rejected/);
+  } finally {
+    assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("archive download enforces size before buffering and stops an in-flight body on cancellation", async () => {
   let cancelled = 0;
@@ -122,7 +171,7 @@ test("untrusted research pages reject reserved DNS addresses before fetching", a
   assert.equal(fetched, false);
 });
 
-test("research URLs reject internal aliases and never follow redirects", async () => {
+test("research URLs reject internal aliases and block redirects to private addresses", async () => {
   assert.equal(safeResearchUrl("https://[::1]/docs"), null);
   assert.equal(safeResearchUrl("https://127.0.0.1.nip.io/docs"), null);
   assert.equal(safeResearchUrl("http://public.example/docs"), null);
@@ -133,7 +182,7 @@ test("research URLs reject internal aliases and never follow redirects", async (
     "official",
     undefined,
     {
-      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+      lookup: async (hostname) => [{ address: hostname === "internal.example" ? "127.0.0.1" : "8.8.8.8", family: 4 }],
       fetchImpl: async (_input, init) => {
         calls.push({ init });
         return new Response("", { status: 302, headers: { location: "https://internal.example/" } });

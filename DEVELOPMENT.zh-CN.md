@@ -46,6 +46,12 @@ Web 默认地址为 `http://127.0.0.1:5307`，API 默认地址为 `http://127.0.
 
 Docker 为主机开发提供 PostgreSQL 和 Redis。完整 Compose 配置用于整套集成测试；`infra/k8s/` 和 k3s 脚本描述在线产品的单节点部署。CI 检查代码和配置，不发布或部署应用。
 
+## 依赖安全更新
+
+分别在 `server/`、`web/`、`evolution/pi/` 和 `infra/docker/github-gateway/` 运行 `npm audit --registry=https://registry.npmjs.org`，检查运行时与开发依赖。镜像中的生产依赖可另用 `--omit=dev` 检查；npm 审计不覆盖操作系统包。
+
+优先升级到兼容的修复版本，同步 `package.json`、锁文件和许可记录。核对实际安装版本，运行受影响模块的构建与测试，再重新审计。Web 开发工具升级后还需验证本机启动、API 代理和文件访问限制。审计结果应记录日期和检查范围；本机修复需要重新构建并部署镜像才会在线上生效。
+
 ## 许可检查
 
 修改依赖或素材后，在仓库根目录运行 `node scripts/check-license-inventory.mjs`。详见[许可记录维护](licenses/README.zh-CN.md)、[第三方声明](THIRD_PARTY_NOTICES.zh-CN.md)和[分发说明](licenses/DISTRIBUTION.zh-CN.md)。

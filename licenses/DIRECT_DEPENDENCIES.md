@@ -12,8 +12,8 @@ Direct dependencies for each module, with versions taken from the lockfiles.
 | server | @modelcontextprotocol/sdk | 1.26.0 | runtime | MIT |
 | server | bullmq | 6.2.0 | runtime | MIT |
 | server | cos-nodejs-sdk-v5 | 3.0.0 | runtime | ISC |
-| server | fastify | 5.12.0 | runtime | MIT |
-| server | fflate | 0.8.2 | runtime | MIT |
+| server | fastify | 5.12.4 | runtime | MIT |
+| server | fflate | 0.8.3 | runtime | MIT |
 | server | html-to-text | 10.0.1 | runtime | MIT |
 | server | ioredis | 5.11.1 | runtime | MIT |
 | server | pg | 8.23.0 | runtime | MIT |
@@ -57,8 +57,8 @@ Direct dependencies for each module, with versions taken from the lockfiles.
 | web | jsdom | 26.1.0 | development | MIT |
 | web | oxlint | 1.78.0 | development | MIT |
 | web | typescript | 6.0.3 | development | Apache-2.0 |
-| web | vite | 5.4.19 | development | MIT |
-| web | vitest | 4.1.10 | development | MIT |
+| web | vite | 6.4.3 | development | MIT |
+| web | vitest | 4.1.11 | development | MIT |
 | evolution/pi | @earendil-works/pi-coding-agent | 0.84.1 | runtime | MIT |
 | evolution/pi | bullmq | 6.2.0 | runtime | MIT |
 | evolution/pi | ioredis | 5.11.1 | runtime | MIT |
@@ -68,4 +68,4 @@ Direct dependencies for each module, with versions taken from the lockfiles.
 | evolution/pi | @types/pg | 8.21.0 | development | MIT |
 | evolution/pi | typescript | 6.0.2 | development | Apache-2.0 |
 | infra/docker/github-gateway | @fastify/cookie | 11.1.2 | runtime | MIT |
-| infra/docker/github-gateway | fastify | 5.12.0 | runtime | MIT |
+| infra/docker/github-gateway | fastify | 5.12.4 | runtime | MIT |

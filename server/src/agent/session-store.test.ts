@@ -85,7 +85,7 @@ test("Pi session wait timeout stops when the backend reports the lock before ini
     async withSession(_identity, task, options) {
       options?.onAcquired?.();
       await new Promise((resolve) => setTimeout(resolve, 30));
-      return task({ findEntries: async () => [] } as never);
+      return task({ findEntriesOnBranch: async () => [] } as never);
     },
     async delete() {},
     async listOwnerSessions() { return []; },
