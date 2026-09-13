@@ -4,44 +4,37 @@
 
 [返回产品介绍](README.md)
 
-根目录的 [LICENSE](LICENSE) 适用于 what-the-repo 自有代码。第三方代码、字体、标志、依赖包和其他材料保留各自的版权与许可，不会因为被纳入本仓库就自动改用本项目的许可。
+what-the-repo 自有代码采用 [MIT 许可证](LICENSE)。使用的第三方代码、字体、图标和依赖包保留各自的许可；原文见下方链接。
 
-本页是项目第三方声明的中文版，便于阅读；各项上游 LICENSE/NOTICE 保留原文，本页不替代或修改其中的条款。
-
-本仓库包含在线 Web 产品的源码。本机启动脚本用于开发和测试；本次源码发布不包含单独的免登录桌面版或本地产品。
-
-## 代码与设计来源
+## 代码与素材来源
 
 | 项目 | 在 what-the-repo 中的用途 | 许可与声明 |
 | --- | --- | --- |
-| [Pi](https://github.com/earendil-works/pi/tree/v0.84.1) | 直接使用其 Agent/AI SDK，并用于独立的 Evolution Coding Agent。`server/src/agent/source-read.ts` 改编了 Pi 的有界读取与截断行为，增加本项目的安全路径、UTF-8 整行分页和结构化续读机制。 | [MIT，Mario Zechner](licenses/upstream/pi.txt)。npm 清单也记录了间接依赖的 Pi 包及其准确版本。 |
-| [CodeBoarding](https://github.com/CodeBoarding/CodeBoarding/tree/164d75247ab933978790a9b4a42f4192ca54f484) | `server/src/analysis/` 下确定性分析的代码与参考来源，尤其包括语言适配器、LSP/Tree-sitter 事实和图构建。原 Python 实现已替换成本项目的 TypeScript 运行时；快照契约、安全获取、存储与编排由本项目实现。上游生成的对比结果仅作为范围受限的测试样本保留。 | [MIT，CodeBoarding](licenses/upstream/codeboarding.txt)。基于已记录的代码来源关系，审慎保留其声明，并非仅作致谢。 |
-| [Understand Anything](https://github.com/Egonex-AI/Understand-Anything/tree/fe8c5bc591716aafd79b4765549328f08ef5a52e) | 用于参考分批语义分析、Worker 职责、架构视图和学习导览。产品 Skill、契约及运行时由本仓库维护。历史 UA 对比结果保留在测试样本中；本项目不打包上游插件，也不依赖其运行。 | [MIT，Yuxiang Lin 与 Infinite Universe, Inc.](licenses/upstream/understand-anything.txt)。 |
-| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 作为具名研究、评测对象，以及 `server/skills/*/examples.md` 和 `server/src/evals/architecture-quality-cases.ts` 中引用的教学示例；不是产品的运行时依赖。示例分别注明其提交与源码路径。 | [上游 MIT 声明](licenses/upstream/deepseek-harness.txt)。引用的第三方文章在使用处注明来源。 |
+| [Pi](https://github.com/earendil-works/pi/tree/v0.84.1) | 使用 Agent/AI SDK 运行对话 Agent 和 Evolution Coding Agent。源码读取工具改编自 Pi 的读取与截断实现，增加路径校验、UTF-8 整行分页和续读信息。 | [MIT，Mario Zechner](licenses/upstream/pi.txt)。各 Pi 包的版本见 npm 清单。 |
+| [CodeBoarding](https://github.com/CodeBoarding/CodeBoarding/tree/164d75247ab933978790a9b4a42f4192ca54f484) | 部分仓库分析实现参考并改编自 CodeBoarding，包括语言适配、LSP/Tree-sitter 分析和图构建，使用 TypeScript 实现。评测中也保留了上游生成的对比样本。 | [MIT，CodeBoarding](licenses/upstream/codeboarding.txt)。 |
+| [Understand Anything](https://github.com/Egonex-AI/Understand-Anything/tree/fe8c5bc591716aafd79b4765549328f08ef5a52e) | 分批语义分析、Worker 分工、架构视图和学习导览参考了 UA 的设计，并结合本项目的在线工作流做了调整。评测中保留了部分对比样本。 | [MIT，Yuxiang Lin 与 Infinite Universe, Inc.](licenses/upstream/understand-anything.txt)。 |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 用于教学示例、分析评测和 README 产品截图。源码示例注明了提交与文件位置。 | [MIT](licenses/upstream/deepseek-harness.txt)。 |
 
 ## 依赖与视觉素材
 
-- [直接依赖](licenses/DIRECT_DEPENDENCIES.zh-CN.md)：包的用途、所属模块、锁定的准确版本和声明的许可。
-- [完整 npm 清单](licenses/NPM_DEPENDENCIES.zh-CN.md)及[机器可读清单](licenses/npm-inventory.json)：运行时、开发、可选及间接依赖，附收集到的 LICENSE/NOTICE 原文。
-- [视觉素材](licenses/ASSETS.zh-CN.md)及[逐文件证据](licenses/assets.json)：Devicon、IconPark、LobeHub Icons、SVGL、Simple Icons、Jason Handwriting，以及 Sketchy Icons 继承的 Lucide/Feather 来源。
-- [分发说明](licenses/DISTRIBUTION.zh-CN.md)：仅有许可声明的包例外、构建工具许可、容器与运行时边界，以及再分发要求。
+- [直接依赖](licenses/DIRECT_DEPENDENCIES.zh-CN.md)：所属模块、用途、版本和许可。
+- [完整 npm 清单](licenses/NPM_DEPENDENCIES.zh-CN.md)与[机器可读清单](licenses/npm-inventory.json)：全部依赖及其 LICENSE/NOTICE。
+- [视觉素材](licenses/ASSETS.zh-CN.md)与[素材清单](licenses/assets.json)：图标、字体和插画的来源、修改记录及文件摘要。
+- [分发说明](licenses/DISTRIBUTION.zh-CN.md)：许可材料缺口，以及打包镜像或安装包时需要处理的事项。
 
-## 研究致谢（不属于打包依赖）
+## 研究致谢
 
-下列项目帮助我们评估设计。列出它们不表示存在关联、背书、共同署名，也不表示其代码获得了本项目 MIT 许可的授权。
+以下项目的思路用在了当前实现中，感谢它们公开分享设计与经验。
 
-| 参考项目 | 研究内容与当前边界 |
+| 参考项目 | 采用的思路 |
 | --- | --- |
-| [Aider](https://github.com/Aider-AI/aider/tree/5dc9490bb35f9729ef2c95d00a19ccd30c26339c) | 仓库地图、有界上下文、相关性、缓存和有限重试。未打包 Aider 的包或源码。如果未来引入其代码，需要遵守 Apache-2.0。 |
-| [GitNexus](https://github.com/abhigyanpatwari/GitNexus/tree/dea396a13ca78e3301d6b95b1ab50374a6a34758) | 派生的社区与流程、确定性遍历和有界查询工具。未引入其采用 PolyForm Noncommercial 许可的实现或图数据库技术栈。 |
-| [React Flow Smart Edge](https://github.com/tisoap/react-flow-smart-edge/tree/0b73a4056e0da894513a7bc29e89ac85f40f0f99) | 曾评估连线路由，之后已移除。当前图连线使用 React Flow 的贝塞尔路径；不再保留 Smart Edge 依赖或其路由实现。 |
-| [GraphRAG](https://github.com/microsoft/graphrag/tree/f40e9a26ce62ba0b3fef8837d24aafdcc6e6c704) 与 [Guardrails](https://github.com/guardrails-ai/guardrails/tree/06d0ff2c5f9bcb493d976b76f885e37e41ce845d) | 只读研究紧凑标识符、上下文表示和结构校验。两者都不是运行时依赖。 |
-| [React Bits](https://github.com/DavidHDev/react-bits) | 用于早期视觉效果实验。曾引入的动画组件已移除；当前文字样式由本项目的小段 CSS 实现维护。React Bits 的 MIT + Commons Clause 条款不等同于单纯的 MIT 授权，也不适用于本项目整体。不要将其组件当作仅受 MIT 约束的代码重新引入。 |
-| [Tavily Skills](https://github.com/tavily-ai/skills)、[Slonik](https://github.com/gajus/slonik)、[DDGS](https://github.com/deedy5/ddgs)、[Promptfoo](https://www.promptfoo.dev/)、LangGraph 与 Pydantic AI 文档 | 用于参考搜索、SQL 批处理、搜索服务行为、评测、依赖顺序和重试。本项目不打包这些库或 Skill。 |
-| 模型厂商文档与 SDK 示例，包括 [Xiaomi MiMo](https://github.com/XiaomiMiMo/awesome-mimo-agent)、[Z.ai](https://github.com/zai-org/z-ai-sdk-python) 和 [Qwen Code](https://github.com/QwenLM/qwen-code) | 用于 API 兼容性与故障排查参考，没有额外复制这些运行时。 |
-
-研究用克隆、分析下载、内部协作笔记和开发历史不包含在本次源码快照中。一个被产品分析的仓库，不会因此自动成为产品依赖。
+| [Aider](https://github.com/Aider-AI/aider/tree/5dc9490bb35f9729ef2c95d00a19ccd30c26339c) | 按相关性和上下文预算组织仓库信息，复用分析缓存，并按错误类型限制重试。 |
+| [GitNexus](https://github.com/abhigyanpatwari/GitNexus/tree/dea396a13ca78e3301d6b95b1ab50374a6a34758) | 从事实图派生分组与流程，按稳定顺序遍历，并为查询工具设置输出上限和分页。 |
+| [React Bits](https://github.com/DavidHDev/react-bits) | 思考摘要的流光文字效果参考其 Shiny Text，调整了配色和动画参数。 |
+| [Tavily Skills](https://github.com/tavily-ai/skills) | 使用短查询、围绕具体问题补充搜索，按需获取正文，并核实来源与项目身份。 |
+| [Slonik](https://github.com/gajus/slonik) | 参考批量写入的设计，在 PostgreSQL 中通过 JSON 记录集分批写入分析数据。 |
+| [Promptfoo](https://www.promptfoo.dev/) | 用固定案例和分类断言组织评测，分别检查结构、内容质量与耗时。 |
 
 ## 维护
 
-修改依赖描述文件、锁文件或随产品分发的视觉素材后，运行 `node scripts/check-license-inventory.mjs`。引入或修改第三方材料时，更新清单并保留对应的准确上游声明。检查覆盖已记录的清单完整性与文件一致性，不构成法律判定，也不会扫描未记录的源码衍生关系。
+修改依赖或素材时，同步更新清单与对应的许可原文，再运行 `node scripts/check-license-inventory.mjs`。操作步骤见[许可记录维护](licenses/README.zh-CN.md)。

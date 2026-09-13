@@ -41,16 +41,12 @@ powershell -ExecutionPolicy Bypass -File scripts/start-local-dev-deps.ps1
 ```
 
 Web defaults to `http://127.0.0.1:5307` and API to `http://127.0.0.1:8307`.
-Development launch is not an end-user standalone edition or proof of production
-deployment readiness.
 
 ## Configuration and deployment
 
 Configuration names use `WHAT_THE_REPO_*`; GitHub OAuth variables remain `GITHUB_OAUTH_*`. Filled environment files and credential files stay local and are ignored by Git. Example domains, buckets and account IDs must be replaced with your own values. Set optional `VITE_ICP_RECORD` to your own public filing label before building the Web image; the footer is hidden when it is empty.
 
-Docker supplies PostgreSQL and Redis for host development. The full Compose files support integration testing; `infra/k8s/` and the k3s scripts describe the hosted single-node deployment. Deployment requires separate configuration and access to your own infrastructure. CI validates code and recipes; it does not publish or deploy them.
-
-Existing installations must migrate environment names and explicitly preserve their database names, object prefixes and storage mounts before deploying renamed code. Version 1 provider-key encryption retains its original KDF identifier so stored keys remain readable. Browser cookies and cache keys use the new name; existing browser sessions require signing in again.
+Docker supplies PostgreSQL and Redis for host development. The full Compose files support integration testing; `infra/k8s/` and the k3s scripts describe the hosted single-node deployment. CI validates code and recipes; it does not publish or deploy them.
 
 
 ## License checks

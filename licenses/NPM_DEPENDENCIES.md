@@ -2,7 +2,7 @@
 
 [简体中文](NPM_DEPENDENCIES.zh-CN.md) · **English**
 
-Generated from the four checked-in lockfiles. Includes runtime, development and optional platform packages. A package may occur in multiple scopes. `metadata-only-or-partial` means that an SPDX declaration was verified but a complete upstream notice was not available; see [distribution notes](DISTRIBUTION.md). No dependency package binaries are vendored in this source repository.
+Generated from four lockfiles, including runtime, development and optional platform packages. `metadata-only-or-partial` means a license declaration is available but the full text is missing or incomplete; see [distribution notes](DISTRIBUTION.md).
 
 | Package | License declaration | Used by | Notice evidence |
 | --- | --- | --- | --- |

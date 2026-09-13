@@ -3,7 +3,7 @@
 <h1>what-the-repo</h1>
 
 <p><strong>Find what is worth learning in a repository. Understand it through code.</strong></p>
-<p>An AI learning companion for exploring public GitHub repositories.</p>
+<p>Understand and learn from public GitHub repositories.</p>
 
 <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
@@ -44,7 +44,7 @@ Open cited files to see the implementation behind an explanation. Use the archit
 
 ## What you can do
 
-| What you want to understand | How what-the-repo helps |
+| What you want to understand | What what-the-repo can help with |
 | --- | --- |
 | **What is worth learning here?** | Discover topics in architecture, implementation and engineering tradeoffs, with reasons grounded in the repository. |
 | **Does this explanation match the code?** | Follow files, symbols and line references to inspect the source, distinguishing facts, inferences and open questions. |
@@ -86,4 +86,4 @@ Please follow our [code of conduct](CODE_OF_CONDUCT.md) in community spaces. To 
 
 Original project code is licensed under [MIT](LICENSE). Third-party code, icons and fonts retain their respective terms.
 
-The project uses the **Pi SDK** and has drawn on **CodeBoarding, Understand Anything** and other projects during research and implementation. See [third-party notices](THIRD_PARTY_NOTICES.md) for the specific scope of adoption, other references and copyright notices.
+The project uses the **Pi SDK** and has drawn on **CodeBoarding, Understand Anything** and other projects during research and implementation. See [third-party notices](THIRD_PARTY_NOTICES.md) for the ideas adopted and copyright notices.

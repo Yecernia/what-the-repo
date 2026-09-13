@@ -31,8 +31,9 @@ eval/runs
 *.pyc
 __pycache__
 
-# Private collaboration, host environment and generated files
+# Development guidance, private collaboration, host environment and generated files
 AGENTS.md
+AGENTS.override.md
 CONTEXT.md
 .codex
 .worktrees
