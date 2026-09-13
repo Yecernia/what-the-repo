@@ -213,7 +213,8 @@ test("Pi SDK adapter fails closed before dispatch when pricing is missing", asyn
   }
 });
 
-test("Pi SDK adapter rejects an unaffordable request before provider dispatch", async () => {
+for (const sdkSwallowsError of [false, true]) {
+test(`Pi SDK adapter preserves preflight rejection when the SDK ${sdkSwallowsError ? "swallows" : "throws"} the error`, async () => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-pi-afford-"));
   let dispatches = 0;
   const model = {
@@ -247,7 +248,11 @@ test("Pi SDK adapter rejects an unaffordable request before provider dispatch", 
           session: {
             sessionId: "unaffordable",
             async prompt() {
-              capturedRuntime?.streamSimple(model, { messages: [{ role: "user", content: "hello" }] });
+              try {
+                capturedRuntime?.streamSimple(model, { messages: [{ role: "user", content: "hello" }] });
+              } catch (error) {
+                if (!sdkSwallowsError) throw error;
+              }
             },
             getSessionStats() {
               return { sessionId: "unaffordable", tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost: 0 };
@@ -275,6 +280,7 @@ test("Pi SDK adapter rejects an unaffordable request before provider dispatch", 
     await rm(root, { recursive: true, force: true });
   }
 });
+}
 
 async function budgetProbe(
   budget: { maxTokens: number; maxCostUsd: number },

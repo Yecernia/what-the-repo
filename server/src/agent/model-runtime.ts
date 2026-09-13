@@ -109,6 +109,8 @@ function configuredBuiltinProvider(config: ProviderConfig): Provider {
       && config.thinkingLevelMap === undefined
       && config.compat === undefined
       && config.cost === undefined
+      && config.contextWindow === undefined
+      && config.maxOutputTokens === undefined
     )
   ) return source;
   const streams: ProviderStreams = {
@@ -125,6 +127,8 @@ function configuredBuiltinProvider(config: ProviderConfig): Provider {
         thinkingLevelMap: config.thinkingLevelMap ?? model.thinkingLevelMap,
         compat: config.compat ?? model.compat,
         cost: config.cost ?? model.cost,
+        contextWindow: config.contextWindow ?? model.contextWindow,
+        maxTokens: config.maxOutputTokens ?? model.maxTokens,
       }
       : {}),
   }));
