@@ -353,6 +353,7 @@ test("early source storage failure stops the semantic stage and preserves the st
     loadPublicSnapshotMetadata: async () => null, loadPublicSnapshot: async () => null, loadLatestPublicSnapshot: async () => null,
     heartbeatAnalysisJob: async () => true, saveAnalysisCheckpoint: async () => {},
     loadSemanticBatch: async (_job: string, id: string) => batches.get(id) ?? null,
+    listSemanticBatches: async () => [...batches.values()],
     saveSemanticBatch: async (batch: SemanticBatch) => { batches.set(batch.batch_id, batch); },
     preparePublicSnapshotSource: async () => { prepared++; throw new Error("source_preparation_disk_full"); },
     updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },

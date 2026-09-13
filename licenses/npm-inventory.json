@@ -1,23 +1,23 @@
 {
   "schemaVersion": 1,
-  "auditedAt": "2026-09-12",
+  "auditedAt": "2026-09-13",
   "scope": "Source repository dependency declarations; not an image or native-binary SBOM",
   "manifests": [
     {
       "path": "server/package.json",
-      "sha256": "c505e7a19aae39498998a5ecfe03dfaddd5de8f33f51765d594e20529d4d1db8"
+      "sha256": "09853c76987b84a9d91494e34afc6fdd7761a77950d730d022079a48904938c5"
     },
     {
       "path": "server/package-lock.json",
-      "sha256": "c78b0dc3c47afecedba0dadb0f59168c6ef32a3f33543955e901f1989d5f1c07"
+      "sha256": "2c3768434e15de2c7a42fc88758a491aa8237b72f0994cf86df82456038c6494"
     },
     {
       "path": "web/package.json",
-      "sha256": "6c7992141e0ef33003f7177f139561bc0bbbe3edc94216768a12991e9e88d741"
+      "sha256": "87a4d9a04f0e7419a0a6ad241fbc30b2aafa8542fabe8679e403a6281b6ba658"
     },
     {
       "path": "web/package-lock.json",
-      "sha256": "6e2cd48768b0e73708cb0e803cf8815c0a4ab78255cb7f2794783a13805dc271"
+      "sha256": "23cfd6843a224e1d0447f0889ccf0ce9bc9abec94827bb09e23cf5b24c1fc1c4"
     },
     {
       "path": "evolution/pi/package.json",
@@ -29,11 +29,11 @@
     },
     {
       "path": "infra/docker/github-gateway/package.json",
-      "sha256": "c60548c67cac3840b312e98b2cd548cb012ce9fc9230609d225881618265ce12"
+      "sha256": "746786211cdb7d0a68d94bb08335e4dd45598c681be07b676caa0855ed3609ef"
     },
     {
       "path": "infra/docker/github-gateway/package-lock.json",
-      "sha256": "79cd5f9f6d69a4be4ed5033d371fc11f4bd101dfc73583966a63fcb4655f23f1"
+      "sha256": "62f1b4106a14f52dcc4e8c138f0490bfecc4aeac8d04014d31c77504308c735b"
     }
   ],
   "packages": [
@@ -2497,35 +2497,6 @@
     },
     {
       "name": "@esbuild/aix-ppc64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Faix-ppc64/0.21.5",
-      "integrity": "sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/aix-ppc64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/aix-ppc64",
       "version": "0.25.12",
       "license": "MIT",
       "additionalLicenses": [],
@@ -2541,6 +2512,12 @@
           "location": "node_modules/@esbuild/aix-ppc64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/aix-ppc64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -2550,64 +2527,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/aix-ppc64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Faix-ppc64/0.28.2",
-      "integrity": "sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/aix-ppc64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/android-arm",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fandroid-arm/0.21.5",
-      "integrity": "sha512-vCPvzSjpPHEi1siZdlvAlsPxXl7WbOVUBBAowWug4rJHb68Ox8KualB+1ocNvT5fjv6wpkX6o/iEpbDrf68zcg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/android-arm",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -2628,6 +2547,12 @@
           "location": "node_modules/@esbuild/android-arm",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/android-arm",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -2637,64 +2562,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/android-arm",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fandroid-arm/0.28.2",
-      "integrity": "sha512-kXXoiPVVGQcnIYGOeaovwOURpniDBpSq4A03qkQ+BMQqtGG6HYap3xne9C1O1yo4TR3qxlCX5IqqmX6fFo2Lqg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/android-arm",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/android-arm64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fandroid-arm64/0.21.5",
-      "integrity": "sha512-c0uX9VAUBQ7dTDCjq+wdyGLowMdtR/GoC2U5IYk/7D1H1JYC0qseD7+11iMP2mRLN9RcCMRcjC4YMclCzGwS/A==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/android-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -2715,6 +2582,12 @@
           "location": "node_modules/@esbuild/android-arm64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/android-arm64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -2724,64 +2597,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/android-arm64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fandroid-arm64/0.28.2",
-      "integrity": "sha512-5YfKeeI8qWfBZIX+u2xZC3Zlb3Os/gLS2sbEKM+I4ZOcsWmHS2WLysCcQZDAFRslDUU5Oiq44gf6PYN1vGwG5A==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/android-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/android-x64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fandroid-x64/0.21.5",
-      "integrity": "sha512-D7aPRUUNHRBwHxzxRvp856rjUHRFW1SdQATKXH2hqA0kAZb1hKmi02OpYRacl0TxIGz/ZmXWlbZgjwWYaCakTA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/android-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -2802,6 +2617,12 @@
           "location": "node_modules/@esbuild/android-x64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/android-x64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -2811,64 +2632,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/android-x64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fandroid-x64/0.28.2",
-      "integrity": "sha512-O387ite7SzUyCcy3JQX4P4bLtEA7bLLkx+esve5JHnyYfNTxcVpXZo9jhdB0lTKN44gztELTdU7nS8Nr16Fs1Q==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/android-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/darwin-arm64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fdarwin-arm64/0.21.5",
-      "integrity": "sha512-DwqXqZyuk5AiWWf3UfLiRDJ5EDd49zg6O9wclZ7kUMv2WRFr4HKjXp/5t8JZ11QbQfUS6/cRCKGwYhtNAY88kQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/darwin-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -2889,6 +2652,12 @@
           "location": "node_modules/@esbuild/darwin-arm64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/darwin-arm64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -2898,64 +2667,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/darwin-arm64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fdarwin-arm64/0.28.2",
-      "integrity": "sha512-n4KqkOQrraxHJcgjM1RvwbigfQKIKJVpM7xp+KsxiyUSrRdIXnt73VhrPAx0fV44hgfmIVKjxMN9J1t5jySVkw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/darwin-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/darwin-x64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fdarwin-x64/0.21.5",
-      "integrity": "sha512-se/JjF8NlmKVG4kNIuyWMV/22ZaerB+qaSi5MdrXtd6R08kvs2qCN4C09miupktDitvh8jRFflwGFBQcxZRjbw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/darwin-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -2976,6 +2687,12 @@
           "location": "node_modules/@esbuild/darwin-x64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/darwin-x64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -2985,64 +2702,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/darwin-x64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fdarwin-x64/0.28.2",
-      "integrity": "sha512-uq6suIWYP37qzGddBKPw5QEQPi6HiLGsO7UmkpfyaYNQ3D+rN6w6WfwH+nuqcGXWvawGwxOEroO4YGnFh95azw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/darwin-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/freebsd-arm64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Ffreebsd-arm64/0.21.5",
-      "integrity": "sha512-5JcRxxRDUJLX8JXp/wcBCy3pENnCgBR9bN6JsY4OmhfUtIHe3ZW0mawA7+RDAcMLrMIZaf03NlQiX9DGyB8h4g==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/freebsd-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3063,6 +2722,12 @@
           "location": "node_modules/@esbuild/freebsd-arm64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/freebsd-arm64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3072,64 +2737,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/freebsd-arm64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Ffreebsd-arm64/0.28.2",
-      "integrity": "sha512-n+I0BTSRIoy+d6RPKnEVwql5UwBJolytvY4mAOIEJorKlqgPII8ix6slVVrfZ5Tnj7glIZvloylbB/EJPMWEXw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/freebsd-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/freebsd-x64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Ffreebsd-x64/0.21.5",
-      "integrity": "sha512-J95kNBj1zkbMXtHVH29bBriQygMXqoVQOQYA+ISs0/2l3T9/kj42ow2mpqerRBxDJnmkUDCaQT/dfNXWX/ZZCQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/freebsd-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3150,6 +2757,12 @@
           "location": "node_modules/@esbuild/freebsd-x64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/freebsd-x64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3159,64 +2772,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/freebsd-x64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Ffreebsd-x64/0.28.2",
-      "integrity": "sha512-78XJTJkvPs0kz2w61301PJjXl4g7q3JqiYMZ/M/yVI73EHBrCRTgkhu9oqG7vPqq+a/yadEW8aD+agKlk5xrmg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/freebsd-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-arm",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-arm/0.21.5",
-      "integrity": "sha512-bPb5AHZtbeNGjCKVZ9UGqGwo8EUu4cLq68E95A53KlxAPRmUyYv2D6F0uUI65XisGOL1hBP5mTronbgo+0bFcA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/linux-arm",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3237,6 +2792,12 @@
           "location": "node_modules/@esbuild/linux-arm",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/linux-arm",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3246,64 +2807,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-arm",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-arm/0.28.2",
-      "integrity": "sha512-XlDnu2q5yoqems+xay6wSAcg9DDD7K9RLKZEBOMZm3ckNpJBvOX20tSfby8KfrrhINDyv9V2YVZKY/SpoGJI8w==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/linux-arm",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-arm64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-arm64/0.21.5",
-      "integrity": "sha512-ibKvmyYzKsBeX8d8I7MH/TMfWDXBF3db4qM6sy+7re0YXya+K1cem3on9XgdT2EQGMu4hQyZhan7TeQ8XkGp4Q==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/linux-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3324,6 +2827,12 @@
           "location": "node_modules/@esbuild/linux-arm64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/linux-arm64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3333,64 +2842,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-arm64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-arm64/0.28.2",
-      "integrity": "sha512-pW4AC0P3it8c7do9MVM4p51FzHzdM/TZrerurgRcHJ2WTa1VQ1CIq18xncfpBJw4ojkiZZrKW2yIBWBP92j6Ug==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/linux-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-ia32",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-ia32/0.21.5",
-      "integrity": "sha512-YvjXDqLRqPDl2dvRODYmmhz4rPeVKYvppfGYKSNGdyZkA01046pLWyRKKI3ax8fbJoK5QbxblURkwK/MWY18Tg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/linux-ia32",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3411,6 +2862,12 @@
           "location": "node_modules/@esbuild/linux-ia32",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/linux-ia32",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3420,64 +2877,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-ia32",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-ia32/0.28.2",
-      "integrity": "sha512-CYbnj78HsIeA+DhgUKgFCfvNsTHFhMMrinUrMZpDXJXKN8T3XViTZ/+wtHeVxEWY8ewSzTFN+nRmSwO2tZaLUQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/linux-ia32",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-loong64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-loong64/0.21.5",
-      "integrity": "sha512-uHf1BmMG8qEvzdrzAqg2SIG/02+4/DHB6a9Kbya0XDvwDEKCoC8ZRWI5JJvNdUjtciBGFQ5PuBlpEOXQj+JQSg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/linux-loong64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3498,6 +2897,12 @@
           "location": "node_modules/@esbuild/linux-loong64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/linux-loong64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3507,64 +2912,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-loong64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-loong64/0.28.2",
-      "integrity": "sha512-buwkd8nsph4R+ajRvw0qM5Hja/TXQow3ptzWO2EbG/cqcIkHloRrdlBtQlshyYGTNFvfkfJ5tpPLVkY4DtsPfQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/linux-loong64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-mips64el",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-mips64el/0.21.5",
-      "integrity": "sha512-IajOmO+KJK23bj52dFSNCMsz1QP1DqM6cwLUv3W1QwyxkyIWecfafnI555fvSGqEKwjMXVLokcV5ygHW5b3Jbg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/linux-mips64el",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3585,6 +2932,12 @@
           "location": "node_modules/@esbuild/linux-mips64el",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/linux-mips64el",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3594,64 +2947,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-mips64el",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-mips64el/0.28.2",
-      "integrity": "sha512-ZVykbDyk7519VwiNb9Lcj9m8XM6v5V9uKPvrEMkkEedVewf+0itkhahp4HDpgERXhwLRpWFypsGbG/J8s0QjJA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/linux-mips64el",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-ppc64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-ppc64/0.21.5",
-      "integrity": "sha512-1hHV/Z4OEfMwpLO8rp7CvlhBDnjsC3CttJXIhBi+5Aj5r+MBvy4egg7wCbe//hSsT+RvDAG7s81tAvpL2XAE4w==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/linux-ppc64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3672,6 +2967,12 @@
           "location": "node_modules/@esbuild/linux-ppc64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/linux-ppc64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3681,64 +2982,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-ppc64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-ppc64/0.28.2",
-      "integrity": "sha512-CAXl+Dtd9UUuJd8pKKdwh6MLm3MUMiqMPmhZ3tTSXPqfyQ3vDl6R5hZdZ/kYojK4ofXtdfSv1tFq8XzWx3heNQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/linux-ppc64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-riscv64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-riscv64/0.21.5",
-      "integrity": "sha512-2HdXDMd9GMgTGrPWnJzP2ALSokE/0O5HhTUvWIbD3YdjME8JwvSCnNGBnTThKGEB91OZhzrJ4qIIxk/SBmyDDA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/linux-riscv64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3759,6 +3002,12 @@
           "location": "node_modules/@esbuild/linux-riscv64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/linux-riscv64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3768,64 +3017,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-riscv64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-riscv64/0.28.2",
-      "integrity": "sha512-GeXCej4IQtU1B+QlDV8W/RRvbzI3O/Stss+/bCXv4lZls5WGRtu2a+3JkA3i4qIUlMXpcHebWpF8AkJhATowuA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/linux-riscv64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-s390x",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-s390x/0.21.5",
-      "integrity": "sha512-zus5sxzqBJD3eXxwvjN1yQkRepANgxE9lgOW2qLnmr8ikMTphkjgXu1HR01K4FJg8h1kEEDAqDcZQtbrRnB41A==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/linux-s390x",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3846,6 +3037,12 @@
           "location": "node_modules/@esbuild/linux-s390x",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/linux-s390x",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -3855,64 +3052,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-s390x",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-s390x/0.28.2",
-      "integrity": "sha512-3H1weTYZPxt/WOhByszQZybS9w5lKzUn1FDMsgEChbHWQwHYQQRfBxgCcZvPhjHfKyJjIievvMmEUawJrdY9Dg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/linux-s390x",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-x64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-x64/0.21.5",
-      "integrity": "sha512-1rYdTpyv03iycF1+BhzrzQJCdOuAOtaqHTWJZCWvijKD2N5Xu0TtVC8/+1faWqcP9iBCWOmjmhoH94dH82BxPQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/linux-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -3933,33 +3072,10 @@
           "location": "node_modules/@esbuild/linux-x64",
           "dev": true,
           "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.25.12/LICENSE.md",
-          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/linux-x64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Flinux-x64/0.28.2",
-      "integrity": "sha512-4xTZr1FUmSoQW4XIWmit3tzQrUTZM+N3P0XV8xROKYF50XfI7xeO90+1bZvNwxIufQ9hDQVRJH5YhgPVF8A/HQ==",
-      "uses": [
+        },
         {
           "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/linux-x64",
+          "location": "node_modules/@esbuild/linux-x64",
           "dev": true,
           "optional": true
         }
@@ -3969,8 +3085,8 @@
         {
           "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
+          "source": "npm:esbuild@0.25.12/LICENSE.md",
+          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
         }
       ]
     },
@@ -3991,30 +3107,7 @@
           "location": "node_modules/@esbuild/netbsd-arm64",
           "dev": true,
           "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.25.12/LICENSE.md",
-          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/netbsd-arm64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fnetbsd-arm64/0.28.2",
-      "integrity": "sha512-sSATRjPeDBg3pdgHoQfoYBob11Kk1FGa9lui5RIHZCoCkJa9QKlvl3/vKz2usCmYYjs7ymJR/2Nnsqe+Hjt5nw==",
-      "uses": [
+        },
         {
           "scope": "web",
           "location": "node_modules/@esbuild/netbsd-arm64",
@@ -4027,37 +3120,8 @@
         {
           "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/netbsd-x64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fnetbsd-x64/0.21.5",
-      "integrity": "sha512-Woi2MXzXjMULccIwMnLciyZH4nCIMpWQAs049KEeMvOcNADVxo0UBIQPfSmxB3CWKedngg7sWZdLvLczpe0tLg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/netbsd-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
+          "source": "npm:esbuild@0.25.12/LICENSE.md",
+          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
         }
       ]
     },
@@ -4078,33 +3142,10 @@
           "location": "node_modules/@esbuild/netbsd-x64",
           "dev": true,
           "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.25.12/LICENSE.md",
-          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/netbsd-x64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fnetbsd-x64/0.28.2",
-      "integrity": "sha512-lqnzCV+mM0gIADaKihiCg6ifgfU2L3h5E33rNQBN1Y4MaVGnzryzmvvf7UHxprpQdE8hpqLolJ9Rl+SkIRDpyw==",
-      "uses": [
+        },
         {
           "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/netbsd-x64",
+          "location": "node_modules/@esbuild/netbsd-x64",
           "dev": true,
           "optional": true
         }
@@ -4114,8 +3155,8 @@
         {
           "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
+          "source": "npm:esbuild@0.25.12/LICENSE.md",
+          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
         }
       ]
     },
@@ -4136,30 +3177,7 @@
           "location": "node_modules/@esbuild/openbsd-arm64",
           "dev": true,
           "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.25.12/LICENSE.md",
-          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/openbsd-arm64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fopenbsd-arm64/0.28.2",
-      "integrity": "sha512-AL2qJILH7lNjrDmCQDvdxMfAUIv8KMNZOvrwAQ8i8//ntL9FflhOyMJ8OZSMBb8/AWXe3/5v5S20y3zCoZWKoQ==",
-      "uses": [
+        },
         {
           "scope": "web",
           "location": "node_modules/@esbuild/openbsd-arm64",
@@ -4172,37 +3190,8 @@
         {
           "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/openbsd-x64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fopenbsd-x64/0.21.5",
-      "integrity": "sha512-HLNNw99xsvx12lFBUwoT8EVCsSvRNDVxNpjZ7bPn947b8gJPzeHWyNVhFsaerc0n3TsbOINvRP2byTZ5LKezow==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/openbsd-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
+          "source": "npm:esbuild@0.25.12/LICENSE.md",
+          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
         }
       ]
     },
@@ -4223,33 +3212,10 @@
           "location": "node_modules/@esbuild/openbsd-x64",
           "dev": true,
           "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.25.12/LICENSE.md",
-          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/openbsd-x64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fopenbsd-x64/0.28.2",
-      "integrity": "sha512-QtiuPytchRyC4rwUKhexJdQKvDuZ6hWloi3igqPQNUJCS1/v9EiO3UTOXR6A3FoMo4fnAKbWJdqaIwhOzh8qEw==",
-      "uses": [
+        },
         {
           "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/openbsd-x64",
+          "location": "node_modules/@esbuild/openbsd-x64",
           "dev": true,
           "optional": true
         }
@@ -4259,8 +3225,8 @@
         {
           "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
+          "source": "npm:esbuild@0.25.12/LICENSE.md",
+          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
         }
       ]
     },
@@ -4281,30 +3247,7 @@
           "location": "node_modules/@esbuild/openharmony-arm64",
           "dev": true,
           "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.25.12/LICENSE.md",
-          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/openharmony-arm64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fopenharmony-arm64/0.28.2",
-      "integrity": "sha512-WkhYDmpTjLvGlScA1rwjRUmhl4k8oXR3cIbtqWmELgU/dFeHHlEllxDvdWcNJV9rbzCexB5vz8gtNewWLgCT7Q==",
-      "uses": [
+        },
         {
           "scope": "web",
           "location": "node_modules/@esbuild/openharmony-arm64",
@@ -4317,37 +3260,8 @@
         {
           "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/sunos-x64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fsunos-x64/0.21.5",
-      "integrity": "sha512-6+gjmFpfy0BHU5Tpptkuh8+uw3mnrvgs+dSPQXQOv3ekbordwnzTVEb4qnIvQcYXq6gzkyTnoZ9dZG+D4garKg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/sunos-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
+          "source": "npm:esbuild@0.25.12/LICENSE.md",
+          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
         }
       ]
     },
@@ -4368,6 +3282,12 @@
           "location": "node_modules/@esbuild/sunos-x64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/sunos-x64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -4377,64 +3297,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/sunos-x64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fsunos-x64/0.28.2",
-      "integrity": "sha512-GPMSkTOtMnv2U2F8gxe4Io6qmVs+YKyp832Etqqxr0hFngmXQ3rzwytelm3GIn7T4VviRUlf3sOgBOiTdvaf7g==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/sunos-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/win32-arm64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fwin32-arm64/0.21.5",
-      "integrity": "sha512-Z0gOTd75VvXqyq7nsl93zwahcTROgqvuAcYDUr+vOv8uHhNSKROyU961kgtCD1e95IqPKSQKH7tBTslnS3tA8A==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/win32-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -4455,6 +3317,12 @@
           "location": "node_modules/@esbuild/win32-arm64",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/win32-arm64",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -4464,64 +3332,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/win32-arm64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fwin32-arm64/0.28.2",
-      "integrity": "sha512-PIhhEkE9uPBleRBrQEJpUn7MBnibZzbGzYWPmY3x+YoVg/95zbjB4CxPPOQ8l5tYYM4mMaCthF8/1DIfBQQyWQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/win32-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/win32-ia32",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fwin32-ia32/0.21.5",
-      "integrity": "sha512-SWXFF1CL2RVNMaVs+BBClwtfZSvDgtL//G/smwAc5oVK/UPu2Gu9tIaRgFmYFFKrmg3SyAjSrElf0TiJ1v8fYA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/win32-ia32",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -4542,6 +3352,12 @@
           "location": "node_modules/@esbuild/win32-ia32",
           "dev": true,
           "optional": true
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/@esbuild/win32-ia32",
+          "dev": true,
+          "optional": true
         }
       ],
       "noticeStatus": "notice-collected",
@@ -4551,64 +3367,6 @@
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md",
           "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/win32-ia32",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/evanw/esbuild.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fwin32-ia32/0.28.2",
-      "integrity": "sha512-YmJbfTlvU7Sdn9BB+4PRES4oB6pxgS37MAONj+hBr/cpXS1aBPKXxNnDbu+QCWPj0o9dgyxeq79g6c5P8KeuYA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/win32-ia32",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/win32-x64",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/evanw/esbuild.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fwin32-x64/0.21.5",
-      "integrity": "sha512-tQd/1efJuzPC6rCFwEvLtci/xNFcTZknmXs98FYDfGE4wP9ClFV98nyKrzJKVPMhdDnjzLhdUyMX4PsQAPjwIw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@esbuild/win32-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md",
-          "appliesVia": "esbuild@0.21.5: platform package from the same upstream release"
         }
       ]
     },
@@ -4629,33 +3387,10 @@
           "location": "node_modules/@esbuild/win32-x64",
           "dev": true,
           "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.25.12/LICENSE.md",
-          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@esbuild/win32-x64",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/evanw/esbuild.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40esbuild%2Fwin32-x64/0.28.2",
-      "integrity": "sha512-5ebpxr3nWMzrL/rnUI755Jkuee0bHL/Gq0WTF9lvcpv73wAp5eu8MfBUgWK9bhWvZjj7yX8etf/8tI8Ney695g==",
-      "uses": [
+        },
         {
           "scope": "web",
-          "location": "node_modules/vitest/node_modules/@esbuild/win32-x64",
+          "location": "node_modules/@esbuild/win32-x64",
           "dev": true,
           "optional": true
         }
@@ -4665,8 +3400,8 @@
         {
           "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md",
-          "appliesVia": "esbuild@0.28.2: platform package from the same upstream release"
+          "source": "npm:esbuild@0.25.12/LICENSE.md",
+          "appliesVia": "esbuild@0.25.12: platform package from the same upstream release"
         }
       ]
     },
@@ -5791,35 +4526,6 @@
       ]
     },
     {
-      "name": "@oxc-project/types",
-      "version": "0.143.0",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/oxc-project/oxc.git",
-        "directory": "npm/oxc-types"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40oxc-project%2Ftypes/0.143.0",
-      "integrity": "sha512-u6JZdLBTLotrNC9Vd6vPssINdzcCzleKAH6EJKImQb7GtYvX5keN2dxkoK44stCc4tffE6QQRtZTXVSzsLUlWA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@oxc-project/types",
-          "dev": true,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3.txt",
-          "sha256": "95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3",
-          "source": "npm:@oxc-project/types@0.143.0/LICENSE"
-        }
-      ]
-    },
-    {
       "name": "@oxlint/binding-android-arm-eabi",
       "version": "1.78.0",
       "license": "MIT",
@@ -6781,455 +5487,6 @@
           "path": "licenses/npm/a67b34a24a5daddcce46aea68c5004e4442bbfb63690329fa607bf4de4269794.txt",
           "sha256": "a67b34a24a5daddcce46aea68c5004e4442bbfb63690329fa607bf4de4269794",
           "source": "npm:@protobufjs/utf8@1.1.2/LICENSE"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-android-arm64",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-android-arm64/1.2.3",
-      "integrity": "sha512-zrJtHDcaZJ1Fp7xf4hNl+7seH9Cn/N5TwLYkhgXREtBwAd/jaqW3uqeHxpDugJLVICWg4eW44kOQEGJ1r6jCGw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-android-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-darwin-arm64",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-darwin-arm64/1.2.3",
-      "integrity": "sha512-ieIiibVCp0tX7TLu2cafoNPv8wJyYi01ekXpbf8q2j7F4rGAhhXb/eQh7ge9DRBY78GwmRQtvjZDux7EDbA8kA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-darwin-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-darwin-x64",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-darwin-x64/1.2.3",
-      "integrity": "sha512-Zh9tCon19eDXJoihx0rqKhMUlMYqzwj3aPsSuHmI4RWZh62dWUL+DJN4C5YQya5TcQBJU/Fe8+rY0jhXTQITqA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-darwin-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-freebsd-x64",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-freebsd-x64/1.2.3",
-      "integrity": "sha512-nGbJWewA1wrXXZiQhjAT5rhibGfns5ZNkDVqxsO6zJ3f3YvpoDNNmGMSbbhLuXKjNScaBJVOAboztAWVespQMg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-freebsd-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-linux-arm-gnueabihf",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm-gnueabihf/1.2.3",
-      "integrity": "sha512-QNniJr5Kml0kDEB98jiDOJjXNroxIIi0IXIbdYzY26Xt1pVbeP62+KnoIZLwirOymX/0jDk/2gI/bNUv7A7OIw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-linux-arm-gnueabihf",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-linux-arm64-gnu",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm64-gnu/1.2.3",
-      "integrity": "sha512-TkqEAcmmvH3I/q4114NB4RVt6241Dao48pF45uLcFGrwAaIn0iITgTAKP/dLjbN0R4buJjGb91+UHSoFmpgIWw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-linux-arm64-gnu",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-linux-arm64-musl",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm64-musl/1.2.3",
-      "integrity": "sha512-NHqjnxpsndf4MPymxteFAWHHfkTL8HjWh1KB7z23ofZ6QO2euONuxDXjat69dKZRALnGypg8k8SsK8vZJoXv1Q==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-linux-arm64-musl",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-linux-ppc64-gnu",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-linux-ppc64-gnu/1.2.3",
-      "integrity": "sha512-6tbrbwfz5GB9DQ4Jwo6hy9v+vR31xZlvzZ6n5Xut6Hhx5PvrA9q/HsK8KMaYQp063iqZGXwNvZtYNLD7EM/x0w==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-linux-ppc64-gnu",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-linux-s390x-gnu",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-linux-s390x-gnu/1.2.3",
-      "integrity": "sha512-oyuXxXmoZHjXC917IAPFAAv4wWAa0cM9afk8nx1+9/jNNOX1uPf8yDA6p7G0RypOfw/X0PQt5IfoquY1um+zSg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-linux-s390x-gnu",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-linux-x64-gnu",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-linux-x64-gnu/1.2.3",
-      "integrity": "sha512-TytMwF2KVGqP2tgd0I1OY0PAv78dZRAYcF5ssDzjM34SUXCED3uXvSd5+lHoC0bTD6eEdFz7LdQNCO1y0oVk9w==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-linux-x64-gnu",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-linux-x64-musl",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-linux-x64-musl/1.2.3",
-      "integrity": "sha512-/E9m3qstrJFVPoULV25mVQblSNExY2+kBsYe4sy0Tn0yOOgJ8wZbZt3KnRbF/XeU2Gl1STKUQnDNTqhIE5MD4A==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-linux-x64-musl",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-openharmony-arm64",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-openharmony-arm64/1.2.3",
-      "integrity": "sha512-Kr0OcsoQI816i6HOl3vFHpd1K0eZyh76zgfj4c1nTyaTsd5r2Mj1lwM4R90y/qaCfmTn9eHy0SKwi98eitRxug==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-openharmony-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-win32-arm64-msvc",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "type": "git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-win32-arm64-msvc/1.2.3",
-      "integrity": "sha512-hOtMwTqnME+/gJcH/PCZ0wn0zPUjiWOgkHpxbSJpfGKMezHltx1S7/k1SitzVa7Ww2cqrDDaFbZEhcJZO8o+Jw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-win32-arm64-msvc",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/binding-win32-x64-msvc",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fbinding-win32-x64-msvc/1.2.3",
-      "integrity": "sha512-ekcqMMkI2PlhYnfzQnB/cEdYUVVJViWvoUyLrbzgDoi3Snfc1mVBwdnc306ufA5ejy8JSPjT2RlW1nQSjW7efg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/binding-win32-x64-msvc",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE",
-          "appliesVia": "rolldown@1.2.3: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "@rolldown/pluginutils",
-      "version": "1.0.1",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/rolldown/plugins.git",
-        "directory": "packages/pluginutils"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40rolldown%2Fpluginutils/1.0.1",
-      "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@rolldown/pluginutils",
-          "dev": true,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/e1919b3b98b8bf6c1b99fcc60a0ed46027c97ac947432e1278446c9606f50161.txt",
-          "sha256": "e1919b3b98b8bf6c1b99fcc60a0ed46027c97ac947432e1278446c9606f50161",
-          "source": "npm:@rolldown/pluginutils@1.0.1/LICENSE"
         }
       ]
     },
@@ -9576,16 +7833,7 @@
     },
     {
       "name": "@vitest/expect",
-      "version": "4.1.10",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitest-dev/vitest.git",
-        "directory": "packages/expect"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fexpect/4.1.10",
-      "integrity": "sha512-YsCn+qAk1GWjQOWFEsEcL2gNQ0zmVmQu3T03qP6UyjhtmdtwtbuI+DASn/7iQB3HGTXkdBwGddzxPlmiql5vlA==",
+      "version": "4.1.11",
       "uses": [
         {
           "scope": "web",
@@ -9594,56 +7842,56 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/expect"
+      },
+      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fexpect/4.1.11",
+      "integrity": "sha512-VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt",
           "sha256": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551",
-          "source": "npm:@vitest/expect@4.1.10/LICENSE"
+          "source": "npm:@vitest/expect@4.1.11/LICENSE"
         }
       ]
     },
     {
       "name": "@vitest/mocker",
-      "version": "4.1.10",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitest-dev/vitest.git",
-        "directory": "packages/mocker"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fmocker/4.1.10",
-      "integrity": "sha512-v0xaezt+DKEmKfaxg133ldzADrwLGd7Ze1MfQQTYfvs8OqZIwbxyxaYURivwV7sWy5fqn3rH5uOrSp07bp44Ow==",
+      "version": "4.1.11",
       "uses": [
         {
           "scope": "web",
-          "location": "node_modules/vitest/node_modules/@vitest/mocker",
+          "location": "node_modules/@vitest/mocker",
           "dev": true,
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/mocker"
+      },
+      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fmocker/4.1.11",
+      "integrity": "sha512-2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt",
           "sha256": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551",
-          "source": "npm:@vitest/mocker@4.1.10/LICENSE"
+          "source": "npm:@vitest/mocker@4.1.11/LICENSE"
         }
       ]
     },
     {
       "name": "@vitest/pretty-format",
-      "version": "4.1.10",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitest-dev/vitest.git",
-        "directory": "packages/pretty-format"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fpretty-format/4.1.10",
-      "integrity": "sha512-W1HsjSH4MXQ9YfmmhLAoIYf1HRfekQCGngeIgcei6MP5QQGWUe0gkopdZQaVCFO+JDJMrAJGwa5pRpNpvy4P8Q==",
+      "version": "4.1.11",
       "uses": [
         {
           "scope": "web",
@@ -9652,27 +7900,27 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/pretty-format"
+      },
+      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fpretty-format/4.1.11",
+      "integrity": "sha512-yiZzPbGTS9Sr/JpFl8zHrcIkAofNbFV6k21vIgQN/cY/oxZeXhJv5sc/MBJ5jFKWmWs+oJHw0UXLZjmf931+Vw==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt",
           "sha256": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551",
-          "source": "npm:@vitest/pretty-format@4.1.10/LICENSE"
+          "source": "npm:@vitest/pretty-format@4.1.11/LICENSE"
         }
       ]
     },
     {
       "name": "@vitest/runner",
-      "version": "4.1.10",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitest-dev/vitest.git",
-        "directory": "packages/runner"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40vitest%2Frunner/4.1.10",
-      "integrity": "sha512-IKI6kpIH+LmpROplyLwBBaCfMgOZOMsygVa6BARD6ahA04VRuJSa6OaVG7kRvSEMD870Vd91rSSw0eegtWyLGg==",
+      "version": "4.1.11",
       "uses": [
         {
           "scope": "web",
@@ -9681,27 +7929,27 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/runner"
+      },
+      "metadataSource": "https://registry.npmjs.org/%40vitest%2Frunner/4.1.11",
+      "integrity": "sha512-LztvUgdwMNJMIkj3hQnnxiC2Xy1zNxq928W/xhjCLaNCzqTZOudjwbQf6v9IntZGPw132i2Lq2rgTRZHD3JHNw==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt",
           "sha256": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551",
-          "source": "npm:@vitest/runner@4.1.10/LICENSE"
+          "source": "npm:@vitest/runner@4.1.11/LICENSE"
         }
       ]
     },
     {
       "name": "@vitest/snapshot",
-      "version": "4.1.10",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitest-dev/vitest.git",
-        "directory": "packages/snapshot"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fsnapshot/4.1.10",
-      "integrity": "sha512-xRkfOT1qpTAi/Ti4Y1LtfRc3kEuqxGw59eN2jN9pRWMtS/XDevekhcFSqvQqjUNGksfjMJu3Y+oJ+4Ypn2OaJw==",
+      "version": "4.1.11",
       "uses": [
         {
           "scope": "web",
@@ -9710,27 +7958,27 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/snapshot"
+      },
+      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fsnapshot/4.1.11",
+      "integrity": "sha512-pN7ikn1ON7h8ee4gIAp4AzyK+zBtJPzVbqOgu5LCEh4VaJVbPQcgYQYJIMGQPXVeJJq1fnfazis7a5pFNPahog==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt",
           "sha256": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551",
-          "source": "npm:@vitest/snapshot@4.1.10/LICENSE"
+          "source": "npm:@vitest/snapshot@4.1.11/LICENSE"
         }
       ]
     },
     {
       "name": "@vitest/spy",
-      "version": "4.1.10",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitest-dev/vitest.git",
-        "directory": "packages/spy"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fspy/4.1.10",
-      "integrity": "sha512-PLf/Ugvoq5wO/b4rwYCR1h2PSIdXz7wnkQFMiUpLdtM7l6pqVFcQIBEHyT1+l+cj7mNwAfZHzqXqDyjvOuwbDw==",
+      "version": "4.1.11",
       "uses": [
         {
           "scope": "web",
@@ -9739,27 +7987,27 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/spy"
+      },
+      "metadataSource": "https://registry.npmjs.org/%40vitest%2Fspy/4.1.11",
+      "integrity": "sha512-apNa/prQy2qCeywhnixOHPRCgGNhvg7T4Dapfl1GahLp/R+uhBm5cPyFoNVyqsNd2h1nJxL6BqqdIjiABL60YA==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt",
           "sha256": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551",
-          "source": "npm:@vitest/spy@4.1.10/LICENSE"
+          "source": "npm:@vitest/spy@4.1.11/LICENSE"
         }
       ]
     },
     {
       "name": "@vitest/utils",
-      "version": "4.1.10",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitest-dev/vitest.git",
-        "directory": "packages/utils"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40vitest%2Futils/4.1.10",
-      "integrity": "sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA==",
+      "version": "4.1.11",
       "uses": [
         {
           "scope": "web",
@@ -9768,12 +8016,21 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/utils"
+      },
+      "metadataSource": "https://registry.npmjs.org/%40vitest%2Futils/4.1.11",
+      "integrity": "sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551.txt",
           "sha256": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551",
-          "source": "npm:@vitest/utils@4.1.10/LICENSE"
+          "source": "npm:@vitest/utils@4.1.11/LICENSE"
         }
       ]
     },
@@ -12204,12 +10461,6 @@
           "optional": true
         },
         {
-          "scope": "web",
-          "location": "node_modules/detect-libc",
-          "dev": true,
-          "optional": false
-        },
-        {
           "scope": "evolution/pi",
           "location": "node_modules/detect-libc",
           "dev": false,
@@ -12846,34 +11097,6 @@
     },
     {
       "name": "esbuild",
-      "version": "0.21.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/evanw/esbuild.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/esbuild/0.21.5",
-      "integrity": "sha512-mg3OPMV4hXywwpoDxu3Qda5xCKQi+vCTZq8S9J/EpkhB2HzKXq4SNFZE3+NK93JYxc8VMSep+lOUSC/RVKaBqw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/esbuild",
-          "dev": true,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.21.5/LICENSE.md"
-        }
-      ]
-    },
-    {
-      "name": "esbuild",
       "version": "0.25.12",
       "license": "MIT",
       "additionalLicenses": [],
@@ -12889,6 +11112,12 @@
           "location": "node_modules/esbuild",
           "dev": true,
           "optional": false
+        },
+        {
+          "scope": "web",
+          "location": "node_modules/esbuild",
+          "dev": true,
+          "optional": false
         }
       ],
       "noticeStatus": "notice-collected",
@@ -12897,34 +11126,6 @@
           "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
           "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
           "source": "npm:esbuild@0.25.12/LICENSE.md"
-        }
-      ]
-    },
-    {
-      "name": "esbuild",
-      "version": "0.28.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/evanw/esbuild.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/esbuild/0.28.2",
-      "integrity": "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/esbuild",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681.txt",
-          "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
-          "source": "npm:esbuild@0.28.2/LICENSE.md"
         }
       ]
     },
@@ -13424,34 +11625,6 @@
     },
     {
       "name": "fast-uri",
-      "version": "3.1.5",
-      "license": "BSD-3-Clause",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/fastify/fast-uri.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/fast-uri/3.1.5",
-      "integrity": "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==",
-      "uses": [
-        {
-          "scope": "server",
-          "location": "node_modules/ajv/node_modules/fast-uri",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt",
-          "sha256": "b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786",
-          "source": "npm:fast-uri@3.1.5/LICENSE"
-        }
-      ]
-    },
-    {
-      "name": "fast-uri",
       "version": "3.1.6",
       "license": "BSD-3-Clause",
       "additionalLicenses": [],
@@ -13480,29 +11653,29 @@
     },
     {
       "name": "fast-uri",
-      "version": "4.1.2",
-      "license": "BSD-3-Clause",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/fastify/fast-uri.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/fast-uri/4.1.2",
-      "integrity": "sha512-TyGmBcbDTZXcb2cj5MV89DrF42DKvb3y5DDUNh95iO+IMeAzMkVSxK1PZRrRIpc9yg8U2GhGdbofNa0LS/a4Bw==",
+      "version": "3.1.7",
       "uses": [
         {
           "scope": "server",
-          "location": "node_modules/fast-uri",
+          "location": "node_modules/ajv/node_modules/fast-uri",
           "dev": false,
           "optional": false
         }
       ],
+      "license": "BSD-3-Clause",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/fastify/fast-uri.git",
+        "type": "git"
+      },
+      "metadataSource": "https://registry.npmjs.org/fast-uri/3.1.7",
+      "integrity": "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt",
           "sha256": "b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786",
-          "source": "npm:fast-uri@4.1.2/LICENSE"
+          "source": "npm:fast-uri@3.1.7/LICENSE"
         }
       ]
     },
@@ -13531,6 +11704,34 @@
           "path": "licenses/npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt",
           "sha256": "b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786",
           "source": "https://raw.githubusercontent.com/fastify/fast-uri/4e99790cadffc4b4fdaef9912cb503b328505be0/LICENSE"
+        }
+      ]
+    },
+    {
+      "name": "fast-uri",
+      "version": "4.1.4",
+      "uses": [
+        {
+          "scope": "server",
+          "location": "node_modules/fast-uri",
+          "dev": false,
+          "optional": false
+        }
+      ],
+      "license": "BSD-3-Clause",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/fastify/fast-uri.git",
+        "type": "git"
+      },
+      "metadataSource": "https://registry.npmjs.org/fast-uri/4.1.4",
+      "integrity": "sha512-dODXrIxlS9JSdgAnhIUKOosKV1oMtU2VtVw87QRaHzyl5jxO290Ii5tEZfCfzfWNHi3jKWwBSdQj0qIyshdZdQ==",
+      "noticeStatus": "notice-collected",
+      "notices": [
+        {
+          "path": "licenses/npm/b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786.txt",
+          "sha256": "b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786",
+          "source": "npm:fast-uri@4.1.4/LICENSE"
         }
       ]
     },
@@ -13626,15 +11827,7 @@
     },
     {
       "name": "fastify",
-      "version": "5.12.0",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/fastify/fastify.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/fastify/5.12.0",
-      "integrity": "sha512-A3RNEaDIHWaxFW8n8rNJaW1wQ+XAXuoU71llfUQJjuh5WaYLmKfRhhanaJBOx8m2EBPQkR6sDBovYdHNe9F6rA==",
+      "version": "5.12.4",
       "uses": [
         {
           "scope": "server",
@@ -13649,12 +11842,20 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/fastify/fastify.git",
+        "type": "git"
+      },
+      "metadataSource": "https://registry.npmjs.org/fastify/5.12.4",
+      "integrity": "sha512-zATD676fP6tBMsn+jQ7Q5/cO/Qo+149TXH0dUqUKel+1/hcZxwIbnflqtPa9EjlrvpY8eCZcL3M1UYrMc31Y7g==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/23c91863859171455a536380991b4160fee4e19e2d8dc353ecf7143cc4e53ca2.txt",
           "sha256": "23c91863859171455a536380991b4160fee4e19e2d8dc353ecf7143cc4e53ca2",
-          "source": "npm:fastify@5.12.0/LICENSE"
+          "source": "npm:fastify@5.12.4/LICENSE"
         }
       ]
     },
@@ -13775,12 +11976,7 @@
     },
     {
       "name": "fflate",
-      "version": "0.8.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": "https://github.com/101arrowz/fflate",
-      "metadataSource": "https://registry.npmjs.org/fflate/0.8.2",
-      "integrity": "sha512-cPJU47OaAoCbg0pBvzsgpTPhmhqI5eJjh/JIu8tPj5q+T7iLvW/JAYUqmE7KOB4R1ZyEhzBaIQpQpardBF5z8A==",
+      "version": "0.8.3",
       "uses": [
         {
           "scope": "server",
@@ -13789,12 +11985,20 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/101arrowz/fflate.git",
+        "type": "git"
+      },
+      "metadataSource": "https://registry.npmjs.org/fflate/0.8.3",
+      "integrity": "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
-          "path": "licenses/npm/805f6cb28bb8b6d3a0badd83c93bccd9671fa01a3b4b92b7042b0743325ac243.txt",
-          "sha256": "805f6cb28bb8b6d3a0badd83c93bccd9671fa01a3b4b92b7042b0743325ac243",
-          "source": "npm:fflate@0.8.2/LICENSE"
+          "path": "licenses/npm/0a1df3a083d0c010560aa342e87959c8c1070e6fd54545741f083f22d0c8b551.txt",
+          "sha256": "0a1df3a083d0c010560aa342e87959c8c1070e6fd54545741f083f22d0c8b551",
+          "source": "npm:fflate@0.8.3/LICENSE"
         }
       ]
     },
@@ -14785,15 +12989,7 @@
     },
     {
       "name": "hono",
-      "version": "4.13.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/honojs/hono.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/hono/4.13.2",
-      "integrity": "sha512-JydRilDRkYBQMt9qR9U92mXxmbGqsqSn/IKOrh4e7/gEbn+0zSr8igTu0obwJoNGN4sez28DIql7FBHWydoJpA==",
+      "version": "4.13.7",
       "uses": [
         {
           "scope": "server",
@@ -14802,12 +12998,20 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/honojs/hono.git",
+        "type": "git"
+      },
+      "metadataSource": "https://registry.npmjs.org/hono/4.13.7",
+      "integrity": "sha512-c8/gF9ac8Y78/agExVocyLevgR+JlpNB444Py0FSX8pJoPdYUfUzRcXtYEYGwt6l19qIlVZPN5Mfsw9jFShmQQ==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/a6ab98e5c77b9070c443eaff2ff81034a6f8cc05a7524d5098eb0f24defa0115.txt",
           "sha256": "a6ab98e5c77b9070c443eaff2ff81034a6f8cc05a7524d5098eb0f24defa0115",
-          "source": "npm:hono@4.13.2/LICENSE"
+          "source": "npm:hono@4.13.7/LICENSE"
         }
       ]
     },
@@ -16202,352 +14406,6 @@
           "path": "licenses/npm/c59ffead4ccbc72ddc3258c23d608bc6f10cea5241038ca8d39cdd7d7e7667c9.txt",
           "sha256": "c59ffead4ccbc72ddc3258c23d608bc6f10cea5241038ca8d39cdd7d7e7667c9",
           "source": "npm:light-my-request@6.6.0/LICENSE"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-android-arm64",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-android-arm64/1.33.0",
-      "integrity": "sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-android-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-darwin-arm64",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-darwin-arm64/1.33.0",
-      "integrity": "sha512-Sciaz8eenNTKn9b3t7+xr0ipTp9YxKQY4npwQ3mrRuL0BAVHBLyZxofhaKBAVtzmtRZ/zTyo0/to4B1uWG/Djg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-darwin-arm64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-darwin-x64",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-darwin-x64/1.33.0",
-      "integrity": "sha512-Z5UPAxzrjlWNNyGy6i65cJzzvgJ5D3T6wMvs+gWpY9d7qRhANrxqAp6LhxIgZhWEw18RfJTGcRxjuLIBr+m8XQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-darwin-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-freebsd-x64",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-freebsd-x64/1.33.0",
-      "integrity": "sha512-QQM/Ti/hQajJwCY+RiWuCZ9sdtI/XQk7nDK5vC8kkdwixezOlDgvDx7+RT+QjK6FcFT4MpsuoBnHIo/O3StRRg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-freebsd-x64",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-linux-arm-gnueabihf",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-linux-arm-gnueabihf/1.33.0",
-      "integrity": "sha512-N7FVBe6iS24MlM6R/4RBTxGhQheZGs7tiQ9U32UtF75NzP5Q7xWPRqLBCKxlRQRk3rY1jCIPLzx7WzOhuUIRLQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-linux-arm-gnueabihf",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-linux-arm64-gnu",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-linux-arm64-gnu/1.33.0",
-      "integrity": "sha512-j2v/itmy4HlNxlc6voKXYgBqNi0Ng2LShg4z7GufpEgs05P+2suBVyi9I6YHq5uoVFx9ETin3eCEhLVyXGQnKg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-linux-arm64-gnu",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-linux-arm64-musl",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-linux-arm64-musl/1.33.0",
-      "integrity": "sha512-yiO5ROMuYQgXbC60yjZU5CYSFZGKXL0HFATXt9mHJn1+zW55oCtMI9NfcVhYLMFDL7gV7oBPon/EmMMGg2OvtQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-linux-arm64-musl",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-linux-x64-gnu",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-linux-x64-gnu/1.33.0",
-      "integrity": "sha512-ar+Ju7LmcN0Jo4FpL4hpFybwNG9/3A/Br5KW2n2jyODg3MEZXaDYADdemoNS+BDNfMgKvylJLj4S5tyRActuAg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-linux-x64-gnu",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-linux-x64-musl",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-linux-x64-musl/1.33.0",
-      "integrity": "sha512-RYiYbkokw0trfKqqzfF55lginwEPrD3OJDfTuJzFs1MK6iFnDenaz1fqLLtX4ITG3OktJQXOeTaw1awrBAlZPw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-linux-x64-musl",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-win32-arm64-msvc",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "url": "git+https://github.com/parcel-bundler/lightningcss.git",
-        "type": "git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-win32-arm64-msvc/1.33.0",
-      "integrity": "sha512-1K+MPfLSFVpphzpdbfkhlWk6wBrTObBzS2T6db10PNOZgR9GoVsAWzwNyuhUYYbTp23j+4RrncfujZ4uAzXvwA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-win32-arm64-msvc",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE",
-          "appliesVia": "lightningcss@1.33.0: platform package from the same upstream release"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss-win32-x64-msvc",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "https://github.com/parcel-bundler/lightningcss.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss-win32-x64-msvc/1.33.0",
-      "integrity": "sha512-OlEICDx/Xl0FqSp4bry8zFnCvGpig3Gl4gCquvYwHuqJKEC1+n9NgDniFvqHGmMv1ZkqDJrDqKKSykTDX+ehuA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss-win32-x64-msvc",
-          "dev": true,
-          "optional": true
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss-win32-x64-msvc@1.33.0/LICENSE"
-        }
-      ]
-    },
-    {
-      "name": "lightningcss",
-      "version": "1.33.0",
-      "license": "MPL-2.0",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "https://github.com/parcel-bundler/lightningcss.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/lightningcss/1.33.0",
-      "integrity": "sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/lightningcss",
-          "dev": true,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e.txt",
-          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
-          "source": "npm:lightningcss@1.33.0/LICENSE"
         }
       ]
     },
@@ -20240,15 +18098,7 @@
     },
     {
       "name": "qs",
-      "version": "6.15.3",
-      "license": "BSD-3-Clause",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "https://github.com/ljharb/qs.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/qs/6.15.3",
-      "integrity": "sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==",
+      "version": "6.16.0",
       "uses": [
         {
           "scope": "server",
@@ -20257,12 +18107,20 @@
           "optional": false
         }
       ],
+      "license": "BSD-3-Clause",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/ljharb/qs.git",
+        "type": "git"
+      },
+      "metadataSource": "https://registry.npmjs.org/qs/6.16.0",
+      "integrity": "sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/e7dc37bf662d7f786efcb46c545615e70c1daf458a38385521c63cf6607cdfe1.txt",
           "sha256": "e7dc37bf662d7f786efcb46c545615e70c1daf458a38385521c63cf6607cdfe1",
-          "source": "npm:qs@6.15.3/LICENSE.md"
+          "source": "npm:qs@6.16.0/LICENSE.md"
         }
       ]
     },
@@ -21025,35 +18883,6 @@
           "path": "licenses/npm/1ce941682a96c7b898ecd125d0f2e22319758ea6f3adbf498a65d649b0f3f7dd.txt",
           "sha256": "1ce941682a96c7b898ecd125d0f2e22319758ea6f3adbf498a65d649b0f3f7dd",
           "source": "npm:rfdc@1.4.1/LICENSE"
-        }
-      ]
-    },
-    {
-      "name": "rolldown",
-      "version": "1.2.3",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/rolldown/rolldown.git",
-        "directory": "packages/rolldown"
-      },
-      "metadataSource": "https://registry.npmjs.org/rolldown/1.2.3",
-      "integrity": "sha512-rn9wpmxplLf7NLNyCk9FyWh3FM43DbY8jOzCdEPzH7uflhTftRbCEpqi6Ly2osgoU8OwObtmavMbWLaWy4LX7A==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/rolldown",
-          "dev": true,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734.txt",
-          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
-          "source": "npm:rolldown@1.2.3/LICENSE"
         }
       ]
     },
@@ -23742,16 +21571,7 @@
     },
     {
       "name": "vite",
-      "version": "5.4.19",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitejs/vite.git",
-        "directory": "packages/vite"
-      },
-      "metadataSource": "https://registry.npmjs.org/vite/5.4.19",
-      "integrity": "sha512-qO3aKv3HoQC8QKiNSTuUM1l9o/XX3+c+VTgLHbJWHZGeTPVAg2XwazI9UWzoxjIJCGCV2zU60uqMzjeLZuULqA==",
+      "version": "6.4.3",
       "uses": [
         {
           "scope": "web",
@@ -23760,56 +21580,27 @@
           "optional": false
         }
       ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/04d9940b3b8b372bff74437c3b153eda8a89642669c4209a4f67135eb3132bc9.txt",
-          "sha256": "04d9940b3b8b372bff74437c3b153eda8a89642669c4209a4f67135eb3132bc9",
-          "source": "npm:vite@5.4.19/LICENSE.md"
-        }
-      ]
-    },
-    {
-      "name": "vite",
-      "version": "8.2.1",
       "license": "MIT",
       "additionalLicenses": [],
       "repository": {
-        "type": "git",
         "url": "git+https://github.com/vitejs/vite.git",
+        "type": "git",
         "directory": "packages/vite"
       },
-      "metadataSource": "https://registry.npmjs.org/vite/8.2.1",
-      "integrity": "sha512-EU/eS7BH3XROHh2YnBefjM6DBKA6ZeMZEYQbj7NLWg5wHYlhB8B/Mayd5XsgWq+NFYccDOTemRpdETWR6Ka/lw==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/vitest/node_modules/vite",
-          "dev": true,
-          "optional": false
-        }
-      ],
+      "metadataSource": "https://registry.npmjs.org/vite/6.4.3",
+      "integrity": "sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
-          "path": "licenses/npm/387dd7baa307083401a27c58c362c30832f5ba1dba84f10cc22c33401523f45c.txt",
-          "sha256": "387dd7baa307083401a27c58c362c30832f5ba1dba84f10cc22c33401523f45c",
-          "source": "npm:vite@8.2.1/LICENSE.md"
+          "path": "licenses/npm/008938a3441801ca3960f8e3ccb4c0738e7996442a53063141d57d3769a7344d.txt",
+          "sha256": "008938a3441801ca3960f8e3ccb4c0738e7996442a53063141d57d3769a7344d",
+          "source": "npm:vite@6.4.3/LICENSE.md"
         }
       ]
     },
     {
       "name": "vitest",
-      "version": "4.1.10",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitest-dev/vitest.git",
-        "directory": "packages/vitest"
-      },
-      "metadataSource": "https://registry.npmjs.org/vitest/4.1.10",
-      "integrity": "sha512-R9jUTe5S4Qb0HCd4TNqpC7oGcrMssMRGXLW80ubjWsW9VH5GF8y1Y0SFLY9AbqSk6nt0PnOx4H4WNJYZ13GUPw==",
+      "version": "4.1.11",
       "uses": [
         {
           "scope": "web",
@@ -23818,12 +21609,21 @@
           "optional": false
         }
       ],
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "type": "git",
+        "directory": "packages/vitest"
+      },
+      "metadataSource": "https://registry.npmjs.org/vitest/4.1.11",
+      "integrity": "sha512-fhACrNXUidIbGSBr5FlbuBkO7VWC1ZyLl0DO4CU2DrQoAPxX84Ysxs+HeGQpii5lZWV1Q4gBZTTu49mF+A6Edw==",
       "noticeStatus": "notice-collected",
       "notices": [
         {
           "path": "licenses/npm/881d660c26831481b697e39724d4a35c9f86e07b67156d4aeb693a0b39910435.txt",
           "sha256": "881d660c26831481b697e39724d4a35c9f86e07b67156d4aeb693a0b39910435",
-          "source": "npm:vitest@4.1.10/LICENSE.md"
+          "source": "npm:vitest@4.1.11/LICENSE.md"
         }
       ]
     },
