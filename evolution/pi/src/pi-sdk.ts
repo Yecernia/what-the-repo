@@ -278,6 +278,7 @@ export class PiBudgetPreflightError extends Error {
 function budgetedModelRuntime(
   source: unknown,
   tracker: BudgetTracker,
+  onPreflightFailure: (error: PiBudgetPreflightError) => void,
 ): unknown {
   if (source === null || (typeof source !== "object" && typeof source !== "function")) return source;
   const target = source as Record<string, unknown>;
@@ -287,7 +288,15 @@ function budgetedModelRuntime(
     if (typeof method !== "function") throw new Error(`Pi model runtime does not expose ${name}`);
     const model = args[0] as BudgetModel;
     const context = args[1] as BudgetContext;
-    const request = tracker.request(model, context, args[2] as BudgetRequestOptions | undefined);
+    let request: ReturnType<BudgetTracker["request"]>;
+    try {
+      request = tracker.request(model, context, args[2] as BudgetRequestOptions | undefined);
+    } catch (error) {
+      // Pi can turn a thrown preflight error into an assistant error message
+      // and resolve prompt(). Preserve the cause for the task ledger.
+      if (error instanceof PiBudgetPreflightError) onPreflightFailure(error);
+      throw error;
+    }
     const invokeArgs = [model, context, request.options, ...args.slice(3)];
     try {
       const result = Reflect.apply(method as (...values: unknown[]) => unknown, source, invokeArgs);
@@ -607,10 +616,11 @@ export function createPiSdkSessionFactory(options: PiSdkFactoryOptions): PiSessi
       usage: { ...observedUsage },
     });
     const tracker = createBudgetTracker(budget, currentReport);
+    let preflightFailure: PiBudgetPreflightError | undefined;
     const { session } = await sdk.createAgentSession({
       cwd,
       agentDir,
-      modelRuntime: budgetedModelRuntime(options.modelRuntime, tracker),
+      modelRuntime: budgetedModelRuntime(options.modelRuntime, tracker, (error) => { preflightFailure ??= error; }),
       model: options.model,
       thinkingLevel: options.thinkingLevel ?? "medium",
       settingsManager,
@@ -693,8 +703,10 @@ export function createPiSdkSessionFactory(options: PiSdkFactoryOptions): PiSessi
         } catch (error) {
           await abortPromise;
           if (runtimeFailure) throw runtimeFailure;
+          if (preflightFailure) throw preflightFailure;
           if (!budgetMessage) throw error;
         }
+        if (preflightFailure) throw preflightFailure;
         if (runtimeFailure) {
           await abortPromise;
           throw runtimeFailure;

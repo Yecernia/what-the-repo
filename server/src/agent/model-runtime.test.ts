@@ -69,6 +69,22 @@ test("DeepSeek deployment sends the documented output-limit field without weaken
   assert.equal(body.reasoning_effort, "high");
 });
 
+test("a known builtin model applies explicit token limits to requests and budget reservations", async () => {
+  const config = { provider: "deepseek", connectionId: "bounded-feedback", baseUrl: "https://api.deepseek.com",
+    apiKey: "test-key", model: "deepseek-v4-flash", modelId: "deepseek-v4-flash", modelSelector: "test",
+    api: "openai-completions", builtin: true, maxOutputTokens: 2048, contextWindow: 16000 };
+  const body = await captureOpenAiRequest(config, "low");
+  assert.equal(body.max_tokens ?? body.max_completion_tokens, 2048);
+  let reservation = 0;
+  const runtime = createModelRuntime(config, { ownerId: "owner", providerBudget: { async acquire(input) {
+    reservation = input.estimatedCostUsd ?? 0;
+    return { async release() {} };
+  } } });
+  await withProviderPermit(runtime, undefined, async () => ({ usage: { input: 1 } }));
+  const cost = runtime.model.cost;
+  assert.equal(reservation, (16000 * (cost.input + cost.cacheRead) + 2048 * cost.output) / 1_000_000);
+});
+
 test("DeepSeek free access preserves the same endpoint compatibility and thinking mapping", async () => {
   type Input = Parameters<typeof resolveProvider>[0];
   const config = resolveProvider({
