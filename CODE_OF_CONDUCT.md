@@ -25,7 +25,7 @@ For security vulnerabilities, follow the [security policy](SECURITY.md).
 
 ## How I will respond
 
-I will review the circumstances, hear from those involved when needed, and share report details only with people needed to address the concern. Depending on severity and repetition, I may ask for a change in behavior, remove inappropriate content, or restrict participation temporarily or permanently. Serious threats or privacy violations may require immediate action.
+I will review the circumstances, hear from those involved when needed, and protect the reporter’s privacy by sharing only necessary details with those handling the report. Depending on severity and repetition, I may ask for a change in behavior, remove inappropriate content, or restrict participation temporarily or permanently. Serious threats or privacy violations may require immediate action.
 
 If you believe a decision was mistaken, you can explain why and request reconsideration through the same private channel.
 

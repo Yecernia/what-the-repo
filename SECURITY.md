@@ -25,7 +25,7 @@ A complete exploit program is not required. Do not send working keys, tokens, pa
 
 ## How I will respond
 
-I will acknowledge your report, investigate its impact, and keep you informed privately about a fix or mitigation. Timing depends on the issue's complexity and the time I can devote to it; I will explain when coordination with an upstream project is needed. After a fix, I will acknowledge your contribution in the relevant notes if you would like credit.
+I will acknowledge your report, investigate its impact, and keep you informed privately. If a fix needs more time or help from an upstream project, I will explain why. With your permission, I will credit you in the fix notes.
 
 Please coordinate public disclosure of vulnerability details with me so affected users have time to apply a fix.
 

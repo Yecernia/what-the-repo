@@ -113,7 +113,7 @@ id_ed25519
 Thumbs.db
 
 # Private collaboration materials and local development artifacts
-/AGENTS.md
+/AGENTS.override.md
 /CONTEXT.md
 /docs/
 /.agents/
