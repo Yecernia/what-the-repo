@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiClient } from './api';
+import { apiClient, conversationErrorMessage } from './api';
 import { setUiLanguage } from './ui-language';
 
 afterEach(() => {
@@ -9,6 +9,20 @@ afterEach(() => {
 });
 
 describe('streamed messages', () => {
+  it('daily business budgets say tomorrow; disabled services and upstream balances do not', () => {
+    expect(conversationErrorMessage('site_analysis_budget_exhausted')).toBe('今日全站分析额度已用完，请明天再试。已有分析结果仍可查看。');
+    expect(conversationErrorMessage('site_chat_budget_exhausted')).toContain('自己的 API Key');
+    expect(conversationErrorMessage('site_budget_disabled')).not.toContain('明天');
+    expect(conversationErrorMessage('platform_provider_balance_insufficient')).toContain('上游账户余额不足');
+    setUiLanguage('en');
+    expect(conversationErrorMessage('site_chat_budget_exhausted')).toContain('tomorrow');
+  });
+  it('a streamed business budget error is not retried as a disconnect', async () => {
+    const fetchMock=vi.fn().mockResolvedValue(new Response('event: error\ndata: {"code":"site_chat_budget_exhausted","detail":"budget"}\n\n',{headers:{'content-type':'text/event-stream'}}));
+    vi.stubGlobal('fetch',fetchMock);
+    await expect(apiClient.sendMessageStream('project-1','hello',null,()=>undefined)).rejects.toMatchObject({code:'site_chat_budget_exhausted'});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it('also includes the selected language in non-streaming requests', async () => {
     setUiLanguage('en');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));

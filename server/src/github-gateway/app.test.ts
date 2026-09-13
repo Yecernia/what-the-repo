@@ -32,7 +32,7 @@ function cookieValue(headers: string | string[] | undefined, name: string): stri
   return row.split(";", 1)[0].slice(name.length + 1);
 }
 
-async function startOAuth(app: ReturnType<typeof buildGithubGateway>): Promise<{
+async function startOAuth(app: ReturnType<typeof buildGithubGateway>, audience?: "admin"): Promise<{
   cookie: string;
   state: string;
   verifier: string;
@@ -40,6 +40,7 @@ async function startOAuth(app: ReturnType<typeof buildGithubGateway>): Promise<{
   const grant = signGithubGatewayPayload({
     version: 1,
     kind: "github_oauth_start",
+    audience,
     nonce: "12345678-1234-1234-1234-123456789012",
     issued_at: now,
     expires_at: now + 60_000,
@@ -96,6 +97,52 @@ test("GitHub gateway completes OAuth, revokes the transient token and signs iden
     assert.equal(exchange.code_verifier, started.verifier);
     assert.equal(requests[2]?.init?.method, "DELETE");
     assert.doesNotMatch(JSON.stringify(response.payload), /temporary-token/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("GitHub admin OAuth keeps its audience and uses only the configured admin callback", async () => {
+  const app = buildGithubGateway({
+    config: { ...config(), adminCallbackUrl: "https://admin.example.com/api/auth/github/callback" },
+    now: () => now,
+    fetchImpl: (async () => { throw new Error("OAuth denial must not call upstream"); }) as typeof fetch,
+  });
+  await app.ready();
+  try {
+    const started = await startOAuth(app, "admin");
+    const response = await app.inject({
+      method: "GET",
+      url: `/oauth/github/callback?error=access_denied&state=${encodeURIComponent(started.state)}&redirect_uri=https://untrusted.example/callback`,
+      headers: { cookie: `wtr_github_gateway_state=${started.cookie}` },
+    });
+    assert.equal(response.statusCode, 303);
+    const location = new URL(String(response.headers.location));
+    assert.equal(location.origin + location.pathname, "https://admin.example.com/api/auth/github/callback");
+    const ticket = parseGithubGatewayIdentityTicket(location.searchParams.get("ticket") ?? "", sharedSecret, now);
+    assert.equal(ticket?.audience, "admin");
+    assert.equal(ticket?.outcome, "error");
+  } finally {
+    await app.close();
+  }
+});
+
+test("GitHub admin OAuth is unavailable until its callback is configured", async () => {
+  const app = buildGithubGateway({ config: config(), now: () => now });
+  await app.ready();
+  try {
+    const grant = signGithubGatewayPayload({
+      version: 1,
+      kind: "github_oauth_start",
+      audience: "admin",
+      nonce: "12345678-1234-1234-1234-123456789012",
+      issued_at: now,
+      expires_at: now + 60_000,
+    }, sharedSecret);
+    const response = await app.inject({ method: "GET", url: `/oauth/github/start?request=${encodeURIComponent(grant)}` });
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.headers.location, undefined);
+    assert.equal(response.json().code, "admin_callback_unavailable");
   } finally {
     await app.close();
   }

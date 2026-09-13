@@ -144,7 +144,7 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
       source_file_count: insertValues[21],
       language_overlay_version: null,
       retired_at: null,
-      purge_after: null,
+      purge_after: null as string | null,
       payload_purged_at: null,
     };
     await rm(sourceRoot, { recursive: true, force: true });
@@ -195,6 +195,7 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
       (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
     );
 
+    snapshotRow.purge_after = "2026-08-23T00:00:00.000Z";
     const purgeClient = {
       async query(sql: string) {
         const normalized = sql.replace(/\s+/gu, " ").trim();

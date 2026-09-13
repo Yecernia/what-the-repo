@@ -29,7 +29,7 @@ export function resolveAnalysisProvider(config: ServerConfig) {
   return resolveDeploymentProvider({ providerId: config.analysisProviderId,
     baseUrl: config.analysisProviderBaseUrl ?? config.freeProviderBaseUrl,
     model: config.analysisProviderModel ?? config.freeProviderModel,
-    apiKey: config.analysisProviderApiKey ?? config.freeProviderApiKey, connectionId: "platform-analysis" });
+    apiKey: config.analysisProviderApiKey ?? config.freeProviderApiKey, connectionId: config.analysisConnectionId ?? "platform-analysis" });
 }
 
 export async function selectAnalysisExecution(runtime: PiModelRuntime | null, searchConfigured: boolean) {

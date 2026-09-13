@@ -1,3 +1,6 @@
+import { collectRuntimeObservations } from '../admin/observations.js';
+import { adminDocuments } from '../admin/runtime-config.js';
+import { DEFAULT_BUDGET_POLICIES } from '../agent/provider-budget.js';
 import { loadConfig } from "../config.js";
 import { createProductStore } from "../persistence/factory.js";
 import { AnalysisCoordinator } from "./coordinator.js";
@@ -14,6 +17,7 @@ const config = loadConfig();
 configureProductSkillRegistry(config.skillVersionsRoot ?? `${config.dataDir}/skill-versions`);
 const store = createProductStore(config, "analysis-worker");
 await store.init();
+const stopObservations = collectRuntimeObservations(store, 'analysis-worker', defaultRuntimeMetrics);
 const databaseMetrics = store instanceof PostgresStore
   ? new DatabaseMetricsCollector({
       pool: store.pool,
@@ -29,12 +33,11 @@ const providerGateFactory = createProviderGateFactory({
   pollMs: config.providerGatePollMs ?? 100,
 });
 const providerBudget = createProviderUsageBudget({
+  loadPolicies: () => adminDocuments(store).read("budgets", DEFAULT_BUDGET_POLICIES),
   pool: store instanceof PostgresStore ? store.pool : null,
   maxCallsPerMinute: config.quotaProviderCallsPerMinute ?? 60,
-  maxCostUsdPerDay: config.quotaProviderCostUsdPerDay ?? 10,
   minimumReservationUsd: config.quotaProviderReservationUsd ?? 0.01,
   deploymentMaxCallsPerMinute: config.quotaProviderDeploymentCallsPerMinute ?? 240,
-  deploymentMaxCostUsdPerDay: config.quotaProviderDeploymentCostUsdPerDay ?? 20,
 });
 const queue = createTaskQueue({
   redisUrl: config.redisUrl,
@@ -67,6 +70,7 @@ if (metricsServer) {
 }
 
 const shutdown = async (): Promise<void> => {
+  stopObservations();
   clearInterval(queueMetricsTimer);
   clearInterval(recoveryTimer);
   await coordinator.stop();

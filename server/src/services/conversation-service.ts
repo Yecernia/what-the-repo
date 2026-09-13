@@ -1,3 +1,6 @@
+import { acquireRepositoryReadLease, type RepositoryReadLease } from '../persistence/repository-read-lease.js';
+import { runtimeConfig } from '../admin/runtime-config.js';
+import type { UsageAttribution } from '../agent/provider-budget.js';
 import { randomUUID } from "node:crypto";
 import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
 import type { ServerConfig } from "../config.js";
@@ -13,7 +16,7 @@ import {
 } from "../domain/conversation.js";
 import { asEvidenceSnapshot } from "../domain/snapshot.js";
 import { createModelRuntime } from "../agent/model-runtime.js";
-import { resolveAgentProvider, withAgentModels, runtimeForSkill } from "../agent/role-models.js";
+import { runtimeForSkill } from "../agent/role-models.js";
 import type { ProviderGateFactory } from "../agent/provider-gate.js";
 import type { ProviderUsageBudget } from "../agent/provider-budget.js";
 import { PiConversationRuntime } from "../agent/runtime.js";
@@ -105,13 +108,7 @@ export class ConversationService {
   private readonly runtime: PiConversationRuntime;
   private readonly memoryMaintenance: MemoryMaintenance;
   private readonly feedbackWorker: FeedbackAnalysisWorker;
-  private readonly feedbackModelRuntime: ReturnType<typeof createModelRuntime> | undefined;
   private readonly runOwners = new Map<string, { ownerId: string; projectId: string }>();
-
-  private learningDefaultProvider() {
-    return resolveDeploymentProvider({ providerId: "deepseek", baseUrl: this.config.freeProviderBaseUrl,
-      model: this.config.freeProviderModel, apiKey: this.config.freeProviderApiKey, connectionId: "platform-learning" });
-  }
 
   constructor(
     private readonly config: ServerConfig,
@@ -129,18 +126,23 @@ export class ConversationService {
       store,
       taskQueue ? (requestId) => taskQueue.enqueueEvolution(requestId) : undefined,
     );
+  }
+
+  private async feedbackRuntime(taskId: string) {
+    const config = await runtimeConfig(this.config, this.store);
     const feedbackProvider = resolveDeploymentProvider({
       providerId: config.feedbackProviderId,
       baseUrl: config.feedbackProviderBaseUrl,
       model: config.feedbackProviderModel,
       apiKey: config.feedbackProviderApiKey,
-      connectionId: "platform-feedback",
+      connectionId: config.feedbackConnectionId ?? "platform-feedback",
     });
-    this.feedbackModelRuntime = feedbackProvider
+    return feedbackProvider
       ? createModelRuntime(feedbackProvider, {
         providerGate: this.providerGateFactory?.(feedbackProvider),
         providerBudget: this.providerBudget,
         ownerId: "system:runtime",
+        attribution: { business: "evolution", payer: "platform", agentRole: "feedback-analysis", configVersion: config.adminConfigVersion, taskId },
         metrics: this.metrics,
       })
       : undefined;
@@ -189,7 +191,7 @@ export class ConversationService {
       projectId: input.projectId,
       targetAssistantMessageId: input.messageId,
       vote: input.vote,
-      modelRuntime: this.feedbackModelRuntime,
+      modelRuntime: await this.feedbackRuntime(`feedback:${input.projectId}:${input.messageId}`),
     });
     return { message_id: input.messageId, feedback: message.feedback };
   }
@@ -280,17 +282,18 @@ export class ConversationService {
       return { project: failed, action, state_changed: false };
     };
 
+    const config = await runtimeConfig(this.config, this.store);
     const settings = await this.store.loadSettings(input.owner.owner_id);
-    const selectedModel = reserved.model_override || effectiveModelSelector(this.config, this.store, input.owner, settings);
+    const selectedModel = reserved.model_override || effectiveModelSelector(config, this.store, input.owner, settings);
     const selectedProvider = resolveProvider({
-      config: this.config,
+      config: config,
       store: this.store,
       owner: input.owner,
       settings,
       selectedModel,
     });
-    const provider = resolveAgentProvider(this.config, "learning-route",
-      this.config.agentModels?.["learning-route"] ? this.learningDefaultProvider() : selectedProvider);
+    const userPaid = selectedModel !== FREE_SELECTOR && input.owner.kind !== "guest";
+    const provider = selectedProvider;
     if (!provider) return fail("当前没有可用模型，路线尚未生成。");
     const profile = await this.store.loadProfile(input.owner.owner_id);
     const route = await generateLearningRoute({
@@ -304,6 +307,7 @@ export class ConversationService {
         providerGate: this.providerGateFactory?.(provider),
         providerBudget: this.providerBudget,
         ownerId: input.owner.owner_id,
+        attribution: { business: "chat", payer: userPaid ? "user" : "platform", agentRole: "learning-route", configVersion: config.adminConfigVersion, taskId: input.actionId },
         metrics: this.metrics,
       }),
       signal: input.signal,
@@ -354,9 +358,13 @@ export class ConversationService {
     const runId = input.runId ?? randomUUID();
     this.runOwners.set(runId, { ownerId: input.owner.owner_id, projectId: input.projectId });
     this.runtime.prepareRun(runId);
+    let releaseRepository: RepositoryReadLease | null = null;
     try {
+    releaseRepository = await acquireRepositoryReadLease(this.store);
+    if(releaseRepository) input={...input,signal:input.signal ? AbortSignal.any([input.signal,releaseRepository.signal]) : releaseRepository.signal};
     const project = await this.store.loadProject(input.projectId, input.owner.owner_id);
     if (!project) throw serviceError("not_found", "项目不存在", 404);
+    if(project.analysis.removed_by_admin) throw serviceError('snapshot_unavailable','此仓库的分析资料已由管理员清理，请重新分析后继续对话。',409);
     if (!input.replaceMessageId && input.retryRunId) {
       const prior = project.messages.find(message => message.role === "user" && message.trace_id === input.retryRunId);
       if (prior) input = { ...input, replaceMessageId: prior.message_id };
@@ -368,10 +376,11 @@ export class ConversationService {
     const beforeTurn = input.replaceMessageId
       ? project.messages.slice(0, project.messages.findIndex(message => message.message_id === input.replaceMessageId))
       : project.messages;
+    const config = await runtimeConfig(this.config, this.store);
     const settings = await this.store.loadSettings(input.owner.owner_id);
-    const selectedModel = project.model_override || effectiveModelSelector(this.config, this.store, input.owner, settings);
+    const selectedModel = project.model_override || effectiveModelSelector(config, this.store, input.owner, settings);
     const provider = resolveProvider({
-      config: this.config,
+      config: config,
       store: this.store,
       owner: input.owner,
       settings,
@@ -382,15 +391,17 @@ export class ConversationService {
         ? serviceError("provider_unavailable", "免费体验模型尚未配置", 503)
         : serviceError("provider_key_required", "请先在设置中填写 API Key", 409);
     }
+    const userPaid = selectedModel !== FREE_SELECTOR && input.owner.kind !== "guest";
+    const attribution: UsageAttribution = { business: "chat", payer: userPaid ? "user" : "platform", agentRole: "primary-chat", configVersion: config.adminConfigVersion, taskId: runId };
     const runtimeOptions = {
+      attribution,
       providerGate: this.providerGateFactory?.(provider),
       providerBudget: this.providerBudget,
       ownerId: input.owner.owner_id,
       metrics: this.metrics,
     };
-    const modelRuntime = withAgentModels(this.config, createModelRuntime(provider, runtimeOptions), this.learningDefaultProvider(),
-      ["understanding-assessment", "citation-review", "memory-maintenance"],
-      { ...runtimeOptions, providerGateFactory: this.providerGateFactory });
+    // Chat helpers always follow this conversation's selected model and payer.
+    const modelRuntime = createModelRuntime(provider, runtimeOptions);
     const primarySkill = await loadProductSkill(PRIMARY_SKILL_ID);
     const snapshot = asEvidenceSnapshot(await this.store.loadSnapshot(input.projectId));
     const analysisResult = await this.store.loadAnalysisResult<{
@@ -654,10 +665,10 @@ export class ConversationService {
         projectId: input.projectId,
         userMessageId: userMessage.message_id,
         hint: feedbackHint.value ?? undefined,
-        modelRuntime: this.feedbackModelRuntime,
+        modelRuntime: await this.feedbackRuntime(`feedback:${input.projectId}:${"messageId" in input ? input.messageId : runId}`),
       });
-      const publicErrorCode = selectedModel === FREE_SELECTOR && ["provider_balance_insufficient", "provider_authentication_failed", "provider_permission_denied"].includes(result.stopReason)
-        ? "provider_unavailable" : result.stopReason;
+      const publicErrorCode = selectedModel === FREE_SELECTOR && result.stopReason === "provider_balance_insufficient" ? "platform_provider_balance_insufficient"
+        : selectedModel === FREE_SELECTOR && ["provider_authentication_failed", "provider_permission_denied"].includes(result.stopReason) ? "provider_unavailable" : result.stopReason;
       return {
         assistantText: assistantMessage.content,
         value: {
@@ -737,6 +748,7 @@ export class ConversationService {
     } finally {
       this.runOwners.delete(runId);
       this.runtime.releaseRun(runId);
+      await releaseRepository?.();
     }
   }
 }

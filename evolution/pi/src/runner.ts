@@ -206,6 +206,7 @@ export class PiEvolutionRunner {
         ledger.piSession = persistedSession;
         await this.options.store.saveLedger(ledger);
         session = await this.options.sessionFactory({
+          taskId: task.taskId,
           cwd: workspace.root,
           agentDir: persistedSession.agentDir,
           sessionDir: persistedSession.sessionDir,
@@ -709,7 +710,7 @@ export class PiEvolutionRunner {
     if (!Number.isInteger(task.maxTokens) || task.maxTokens < 1 || task.maxTokens > 10_000_000) {
       throw new Error("invalid maxTokens");
     }
-    if (!Number.isFinite(task.maxCostUsd) || task.maxCostUsd <= 0 || task.maxCostUsd > 10_000) {
+    if (task.maxCostUsd !== null && (!Number.isFinite(task.maxCostUsd) || task.maxCostUsd < 0 || task.maxCostUsd > 1_000_000)) {
       throw new Error("invalid maxCostUsd");
     }
     if (task.maxCandidateBytes !== undefined &&
@@ -1192,7 +1193,7 @@ export class PiEvolutionRunner {
     if (totalTokens(report.usage) > task.maxTokens) {
       throw new Error("Pi token budget exceeded");
     }
-    if (report.usage.costUsd > task.maxCostUsd) {
+    if (task.maxCostUsd !== null && report.usage.costUsd > task.maxCostUsd) {
       throw new Error("Pi cost budget exceeded");
     }
   }

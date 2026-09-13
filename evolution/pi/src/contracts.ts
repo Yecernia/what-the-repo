@@ -35,7 +35,7 @@ export interface EvolutionTask {
   maxSteps: number;
   maxTimeMs: number;
   maxTokens: number;
-  maxCostUsd: number;
+  maxCostUsd: number | null;
   maxCandidateBytes?: number;
 }
 
@@ -415,6 +415,7 @@ export interface PiSessionLike {
 }
 
 export type PiSessionFactory = (options: {
+  taskId?: string;
   cwd: string;
   agentDir: string;
   sessionDir: string;
@@ -425,6 +426,6 @@ export type PiSessionFactory = (options: {
   tools: RestrictedToolDescriptor[];
   budget: {
     maxTokens: number;
-    maxCostUsd: number;
+    maxCostUsd: number | null;
   };
 }) => Promise<PiSessionLike>;

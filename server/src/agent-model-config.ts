@@ -8,6 +8,7 @@ export const AGENT_MODEL_ROLES = [
 ] as const;
 export type AgentModelRole = typeof AGENT_MODEL_ROLES[number];
 export interface AgentModelOverride {
+  connectionId?: string;
   model: string;
   provider?: string;
   baseUrl?: string;

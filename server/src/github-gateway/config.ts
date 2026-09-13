@@ -7,6 +7,7 @@ export interface GithubGatewayConfig {
   nodeEnv: string;
   publicUrl: string;
   applicationCallbackUrl: string;
+  adminCallbackUrl?: string;
   sharedSecret: string;
   githubClientId: string;
   githubClientSecret: string;
@@ -50,12 +51,19 @@ export function loadGithubGatewayConfig(env: NodeJS.ProcessEnv = process.env): G
   if (new URL(applicationCallbackUrl).pathname !== "/api/auth/github/callback") {
     throw new Error("invalid_github_gateway_application_callback_path");
   }
+  const adminCallbackUrl = env.GITHUB_GATEWAY_ADMIN_CALLBACK_URL
+    ? exactHttpsUrl(env.GITHUB_GATEWAY_ADMIN_CALLBACK_URL, "GITHUB_GATEWAY_ADMIN_CALLBACK_URL")
+    : undefined;
+  if (adminCallbackUrl && new URL(adminCallbackUrl).pathname !== "/api/auth/github/callback") {
+    throw new Error("invalid_github_gateway_admin_callback_path");
+  }
   return {
     host: env.GITHUB_GATEWAY_HOST?.trim() || "127.0.0.1",
     port,
     nodeEnv: env.NODE_ENV?.trim() || "production",
     publicUrl,
     applicationCallbackUrl,
+    adminCallbackUrl,
     sharedSecret,
     githubClientId: required(env.GITHUB_OAUTH_CLIENT_ID, "GITHUB_OAUTH_CLIENT_ID"),
     githubClientSecret: secretValue(env, "GITHUB_OAUTH_CLIENT_SECRET", "GITHUB_OAUTH_CLIENT_SECRET_FILE"),

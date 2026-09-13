@@ -486,9 +486,9 @@ export function validateTask(value: unknown): EvolutionTask {
   const maxSteps = integer(row.maxSteps, "task.maxSteps");
   const maxTimeMs = integer(row.maxTimeMs, "task.maxTimeMs");
   const maxTokens = integer(row.maxTokens, "task.maxTokens");
-  const maxCostUsd = finiteNumber(row.maxCostUsd, "task.maxCostUsd");
+  const maxCostUsd = row.maxCostUsd === null ? null : finiteNumber(row.maxCostUsd, "task.maxCostUsd");
   if (maxSteps < 1 || maxSteps > 100 || maxTimeMs < 10 || maxTimeMs > 30 * 60_000 ||
-    maxTokens < 1 || maxTokens > 10_000_000 || maxCostUsd <= 0 || maxCostUsd > 10_000) {
+    maxTokens < 1 || maxTokens > 10_000_000 || (maxCostUsd !== null && (maxCostUsd < 0 || maxCostUsd > 1_000_000))) {
     throw new Error("invalid task execution budget");
   }
   if (row.maxCandidateBytes !== undefined) {

@@ -255,6 +255,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | @types/node@22.19.19 | MIT | evolution/pi | [1](npm/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt) |
 | @types/node@24.13.3 | MIT | server, web (dev), evolution/pi (dev) | [1](npm/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt) |
 | @types/pg@8.21.0 | MIT | server (dev), evolution/pi (dev) | [1](npm/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt) |
+| @types/qrcode@1.5.6 | MIT | web (dev) | [1](npm/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt) |
 | @types/react-dom@19.2.4 | MIT | web | [1](npm/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt) |
 | @types/react@19.2.18 | MIT | web | [1](npm/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt) |
 | @types/retry@0.12.0 | MIT | server, evolution/pi | [1](npm/dea9265341829002e2c23a7372393eb2ed6e26085fb623f38a4ba0af833f30a6.txt) |
@@ -276,7 +277,8 @@ Generated from four lockfiles, including runtime, development and optional platf
 | agent-base@7.1.4 | MIT | server, web (dev), evolution/pi | [1](npm/8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a.txt) |
 | ajv-formats@3.0.1 | MIT | server, infra/docker/github-gateway | [1](npm/9df3bb69929a3b650ed73b3bfa1756725aaff0ac296461605753547004eafeaf.txt) |
 | ajv@8.20.0 | MIT | server, infra/docker/github-gateway | [1](npm/a05350a88e318e4f5f2c2a1ff1e2e88daa4dd38e6e78b71cccae422bdc762cc3.txt) |
-| ansi-regex@5.0.1 | MIT | web (dev) | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
+| ansi-regex@5.0.1 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
+| ansi-styles@4.3.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | ansi-styles@5.2.0 | MIT | web (dev) | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | aria-query@5.3.0 | Apache-2.0 | web (dev) | [1](npm/c8df456c7ccba74b959087dff494d4ac2a12dfb0400c08b46b2494a08a000567.txt) |
 | asn1@0.2.6 | MIT | server | [1](npm/f4b6bd1a9437d0f66ff46d8f4dca185c31a069ba11e437f3b8506ec4424be9cf.txt) |
@@ -302,6 +304,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | bytes@3.1.2 | MIT | server | [1](npm/e3b44af066615de2ea48d18d852d0762f18c0b2efcea714fa48a6f729d405b85.txt) |
 | call-bind-apply-helpers@1.0.2 | MIT | server | [1](npm/5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292.txt) |
 | call-bound@1.0.4 | MIT | server | [1](npm/5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292.txt) |
+| camelcase@5.3.1 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | caniuse-lite@1.0.30001809 | CC-BY-4.0 | web (dev) | [1](npm/fd3a263fe19ed8faa9068b43abaebafc02c77897b0c6fc09abc04bb592e5f16e.txt) |
 | caseless@0.12.0 | Apache-2.0 | server | [1](npm/0ccb0dc204a2d08f25ed7f984de0c73335eb2945b54bfcf57660034a27b5c0f5.txt) |
 | ccount@2.0.1 | MIT | web | [1](npm/63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf.txt) |
@@ -312,7 +315,10 @@ Generated from four lockfiles, including runtime, development and optional platf
 | character-entities@2.0.2 | MIT | web | [1](npm/63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf.txt) |
 | character-reference-invalid@2.0.1 | MIT | web | [1](npm/63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf.txt) |
 | classcat@5.0.5 | MIT | web | [1](npm/f101c761d255d0dddc77dd8a9327733b03d381798ec54a1bb718367207b48a8e.txt) |
+| cliui@6.0.0 | ISC | web | [1](npm/2dc0465729366c3a7890dfa9e972a1ba7048a26c02116fb8b419a6a1ac110149.txt) |
 | cluster-key-slot@1.1.1 | Apache-2.0 | server, evolution/pi | [1](npm/0ea1dc735df3fd3f0fc0dba5034b813589254667028874a1e7f4492fd27a3756.txt) |
+| color-convert@2.0.1 | MIT | web | [1](npm/693866fc419c6f61c8570438ec00659d156ec2b4d4a4d04091711f5f11a365d4.txt) |
+| color-name@1.1.4 | MIT | web | [1](npm/c064f7a3e353bc1bc977f3c897941c75ef763f44f41677e0a15370ca0853d6e2.txt) |
 | combined-stream@1.0.8 | MIT | server | [1](npm/47eb8ca82c798246774946d1be0f9aa08f025fa8325ced0947aeeb4c05fe5547.txt) |
 | comma-separated-tokens@2.0.3 | MIT | web | [1](npm/ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d.txt) |
 | content-disposition@1.1.0 | MIT | server | [1](npm/bd47ce7b88c7759630d1e2b9fcfa170a0f1fde522be09e13fb1581a79d090400.txt) |
@@ -346,6 +352,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | data-uri-to-buffer@4.0.1 | MIT | server, evolution/pi | [1](npm/08e7381c6d3773efc58586601e00803e066b23bde1b223e74c996c4e9062e255.txt) |
 | data-urls@5.0.0 | MIT | web (dev) | [1](npm/528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa.txt) |
 | debug@4.4.3 | MIT | server, web, evolution/pi | [1](npm/3a61c6c96caf5c1d9b623fb9b04c822b783dfcb78aa7e49c76a3f643e6ed7f95.txt) |
+| decamelize@1.2.0 | MIT | web | [1](npm/6fb9754611c20f6649f68805e8c990e83261f29316e29de9e6cedae607b8634c.txt) |
 | decimal.js@10.6.0 | MIT | web (dev) | [1](npm/3108b546bcff5d346923a82f48b2d252ca722f9088076db6d145f6b67757ad6c.txt) |
 | decode-named-character-reference@1.3.0 | MIT | web | [1](npm/dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb.txt) |
 | deepmerge-ts@8.0.2 | BSD-3-Clause | server | [1](npm/734d8fd2baff4a5b7450a5b8242d4a960bc4ade3b0ade5e6cad642965d1d496d.txt) |
@@ -356,6 +363,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | detect-libc@2.1.2 | Apache-2.0 | server, evolution/pi | [1](npm/b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1.txt) |
 | devlop@1.1.0 | MIT | web | [1](npm/6f296a5eccc1dc96714bb94ebaa9cac25b0a1467d74cc5263ac4d0646ab01f62.txt) |
 | diff@8.0.4 | BSD-3-Clause | server, evolution/pi | [1](npm/eda81a415869e67809f6a9f3fd6056062cb83a462118e07eec5e92b2e0c40ce9.txt) |
+| dijkstrajs@1.0.3 | MIT | web | [1](npm/c46324e45a005413535a6fb7a97e9eacd3cc6bf30335b7d5c10b8ee3af9e60c2.txt) |
 | dom-accessibility-api@0.5.16 | MIT | web (dev) | [1](npm/0ffe67fe630169de46df2d29dc18f5857b4c98f0f95b0cd9e3c21fef51f9a9b8.txt) |
 | dom-accessibility-api@0.6.3 | MIT | web (dev) | [1](npm/0ffe67fe630169de46df2d29dc18f5857b4c98f0f95b0cd9e3c21fef51f9a9b8.txt) |
 | dom-serializer@2.0.0 | MIT | server | [1](npm/94cfe87de9b178e8fee313a19178e625129e2ce559db32e772e7bd95114ee6ff.txt) |
@@ -367,6 +375,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | ecdsa-sig-formatter@1.0.11 | Apache-2.0 | server, evolution/pi | [1](npm/50a6b24f8defc31a078aa9799a91d776f83948071574854f12473362aee74d0d.txt) |
 | ee-first@1.1.1 | MIT | server | [1](npm/965ef284f7f4c176842ec2e87fa13e79feed777d56d7a21a5a3b38f1bb6dc288.txt) |
 | electron-to-chromium@1.5.404 | ISC | web (dev) | [1](npm/25ba5c59dad3e0dd8f9540beaa0f0a86a10e3aec35af5fdc8e88c5f6a5c0d8c6.txt) |
+| emoji-regex@8.0.0 | MIT | web | [1](npm/483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a.txt) |
 | encodeurl@2.0.0 | MIT | server | [1](npm/7585ea7bba616ccbbe43cb54ecb67956688c3c5641bb84f3099a652a73193afe.txt) |
 | entities@4.5.0 | BSD-2-Clause | server | [1](npm/cb992345949ccd6e8394b2cd6c465f7b897c864f845937dbf64e8997f389e164.txt) |
 | entities@6.0.1 | BSD-2-Clause | web (dev) | [1](npm/cb992345949ccd6e8394b2cd6c465f7b897c864f845937dbf64e8997f389e164.txt) |
@@ -410,6 +419,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | finalhandler@2.1.1 | MIT | server | [1](npm/47dcccf62bf40469d23849b0b1dc8df9fc91bce219b880c638d4dc4596e6b5cf.txt) |
 | find-my-way@9.8.0 | MIT | server | [1](npm/693f9539655acc1847add1ccd364312ba570bf8ce84706b6059e7e0b5ceb90e6.txt) |
 | find-my-way@9.9.0 | MIT | infra/docker/github-gateway | [1](npm/693f9539655acc1847add1ccd364312ba570bf8ce84706b6059e7e0b5ceb90e6.txt) |
+| find-up@4.1.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | forever-agent@0.6.1 | Apache-2.0 | server | [1](npm/d446a8c73d7bbe4872d6524b15ae206f9a2d7eb53f8c9cb6e6c893a43acc5276.txt) |
 | form-data@2.5.6 | MIT | server | [1](npm/e5b780d4f38d1d3328e3e53186c4e62d3fa149ea6f2bacd5de5ad0c30ac85343.txt) |
 | formdata-polyfill@4.0.10 | MIT | server, evolution/pi | [1](npm/435a6437e47e5e479942255680e7fbe5f333d55234ada1c35f6115ca641d5bb4.txt) |
@@ -422,6 +432,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | gaxios@7.3.1 | Apache-2.0 | server | [1](npm/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt) |
 | gcp-metadata@8.1.2 | Apache-2.0 | server, evolution/pi | [1](npm/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt) |
 | gensync@1.0.0-beta.2 | MIT | web (dev) | [1](npm/e3a956681ee067f971ac413994171b3d90ca801ec6324e76c9c55366cfe31cb0.txt) |
+| get-caller-file@2.0.5 | ISC | web | [1](npm/902dbb4154679fb2b8d7c33878183f45b268d01eae5e5033dddaa8852d45f213.txt) |
 | get-east-asian-width@1.6.0 | MIT | evolution/pi | [1](npm/5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3.txt) |
 | get-intrinsic@1.3.0 | MIT | server | [1](npm/39c5ec504cf6bd5cd782a7c695828e09189df79f5d94840e4f08feb97b9fd416.txt) |
 | get-proto@1.0.1 | MIT | server | [1](npm/be46ce1e3b0479af9ce82d22b465a6d7d2ff084fca0aaf3d54172da2b5eb5781.txt) |
@@ -465,6 +476,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | is-alphabetical@2.0.1 | MIT | web | [1](npm/ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d.txt) |
 | is-alphanumerical@2.0.1 | MIT | web | [1](npm/ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d.txt) |
 | is-decimal@2.0.1 | MIT | web | [1](npm/ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d.txt) |
+| is-fullwidth-code-point@3.0.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | is-hexadecimal@2.0.1 | MIT | web | [1](npm/ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d.txt) |
 | is-plain-obj@4.1.0 | MIT | web | [1](npm/5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3.txt) |
 | is-potential-custom-element-name@1.0.1 | MIT | web (dev) | [1](npm/483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a.txt) |
@@ -491,6 +503,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | jws@4.0.1 | MIT | server, evolution/pi | [1](npm/3320319f8a5f42bc4254e65471eca7a5ea4dc8c883c4c24b4868e36b14890bcf.txt) |
 | leac@0.7.0 | MIT | server | [1](npm/ddd4eaafae6009e31c12abb70cf4369034db2fe17de7074ea89aecd3e95d7ffc.txt) |
 | light-my-request@6.6.0 | BSD-3-Clause | server, infra/docker/github-gateway | [1](npm/c59ffead4ccbc72ddc3258c23d608bc6f10cea5241038ca8d39cdd7d7e7667c9.txt) |
+| locate-path@5.0.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | long@5.3.2 | Apache-2.0 | server, evolution/pi | [1](npm/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt) |
 | longest-streak@3.1.0 | MIT | web | [1](npm/9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10.txt) |
 | lru-cache@10.4.3 | ISC | web (dev) | [1](npm/451ec07eeb9c4e1b86de9abdaa426462a8be48f887ec7421cf0bbb9c769555ab.txt) |
@@ -576,13 +589,17 @@ Generated from four lockfiles, including runtime, development and optional platf
 | once@1.4.0 | ISC | server | [1](npm/4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b.txt) |
 | openai@6.26.0 | Apache-2.0 | server, evolution/pi | [1](npm/636eb7d79da9bb6d515a4b3fd417aa26679eb3cf16396ddab4bc55fa74e616e4.txt) |
 | oxlint@1.78.0 | MIT | web (dev) | [1](npm/95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3.txt) |
+| p-limit@2.3.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
+| p-locate@4.1.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | p-retry@4.6.2 | MIT | server, evolution/pi | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
+| p-try@2.2.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | parse-entities@4.0.2 | MIT | web | [1](npm/5d0698266086f217bb11ea0499d33453e401fe479fb9126ad04e625e63d3557b.txt) |
 | parse5@7.3.0 | MIT | web (dev) | [1](npm/8c535800331e1e4439835555b3f9edc7fe9dee2fab0d8bbbd5a982e8b8343d4d.txt) |
 | parseley@0.13.1 | MIT | server | [1](npm/ddd4eaafae6009e31c12abb70cf4369034db2fe17de7074ea89aecd3e95d7ffc.txt) |
 | parseurl@1.3.3 | MIT | server | [1](npm/11d017c3b9f1ee3f44caf7203035f0461d5b57e0db8ce1bc03a9af34fa7d3f6b.txt) |
 | partial-json@0.1.7 | MIT | server, evolution/pi | [1](npm/cd519ad3d7e012427f978dfb2e3b92ee403d189d7b859ba6bf68fd7e12ca456f.txt) |
 | path-data-parser@0.1.0 | MIT | web | [1](npm/e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71.txt) |
+| path-exists@4.0.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | path-expression-matcher@1.5.0 | MIT | evolution/pi | [1](npm/75486ea0af9309140ca6e2c401d7e67bea8f4892344e5707f6394dc5e83dfc44.txt) |
 | path-key@3.1.1 | MIT | server, evolution/pi | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | path-scurry@2.0.2 | BlueOak-1.0.0 | evolution/pi | [1](npm/8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004.txt) |
@@ -606,6 +623,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | pkce-challenge@5.0.1 | MIT | server | [1](npm/feb87a2e0c305de3464cc44077da5393c52d8ca6362d37427157d04ec6f4510d.txt) |
 | playwright-core@1.62.1 | Apache-2.0 | web (dev) | [1](npm/45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb.txt) [2](npm/6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d.txt) |
 | playwright@1.62.1 | Apache-2.0 | web (dev) | [1](npm/45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb.txt) [2](npm/6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d.txt) |
+| pngjs@5.0.0 | MIT | web | [1](npm/176b07a18c0bb3836aaeb61088fd0bf11a38f66e6f15e3fbda85faa225250d6e.txt) |
 | points-on-curve@0.2.0 | MIT | web | [1](npm/e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71.txt) |
 | points-on-path@0.2.1 | MIT | web | [1](npm/b6fc1f7f1d96a48bc97176f3dcef959e364c5c17ba44167511de421500a86c6c.txt) |
 | postcss@8.5.26 | MIT | web (dev) | [1](npm/5be1f3465bba68a626777f984878814aaf35e7ef8e9fd314d469bcf887050fb8.txt) |
@@ -622,6 +640,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | proxy-addr@2.0.7 | MIT | server | [1](npm/a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813.txt) |
 | psl@1.15.0 | MIT | server | [1](npm/ae8c4a3b09681bc30ecbc984d58c4dc2c21b56d320fc02f558d12e86995c26c8.txt) |
 | punycode@2.3.1 | MIT | server, web (dev) | [1](npm/483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a.txt) |
+| qrcode@1.5.4 | MIT | web | [1](npm/8df47c6ad9ac2c41eb9b2a72def9908959da0ede8dadd56c7b249c1bdb0c5ce6.txt) |
 | qs@6.16.0 | BSD-3-Clause | server | [1](npm/e7dc37bf662d7f786efcb46c545615e70c1daf458a38385521c63cf6607cdfe1.txt) |
 | querystringify@2.2.0 | MIT | server | [1](npm/3b2a6a268aa815dec121d614245e03b5c68db1f044d5b525e36db7d5dc7fb9c3.txt) |
 | quick-format-unescaped@4.0.4 | MIT | server, infra/docker/github-gateway | [1](npm/5ac141bfc70bec8f40838502436bfcb85e3f4c24377e41b9ddef07bdd6aa51bc.txt) |
@@ -641,7 +660,9 @@ Generated from four lockfiles, including runtime, development and optional platf
 | remark-parse@11.0.0 | MIT | web | [1](npm/413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4.txt) |
 | remark-rehype@11.1.2 | MIT | web | [1](npm/dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb.txt) |
 | remark-stringify@11.0.0 | MIT | web | [1](npm/413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4.txt) |
+| require-directory@2.1.1 | MIT | web | [1](npm/a92e52eb1fa7cd746e3827bf01d3a3589bbc8e1e51348b1da042aad165525ad1.txt) |
 | require-from-string@2.0.2 | MIT | server, infra/docker/github-gateway | [1](npm/6ee0feb1f6ef996ff5a68600f8cf98909cf412d39ef3cdceaefd87d636fa1b7f.txt) |
+| require-main-filename@2.0.0 | ISC | web | [1](npm/365496ca1f56da40b23c9815fc40fa9005847b2f8f8fd1c1a4929ef25ec8cd1d.txt) |
 | requires-port@1.0.0 | MIT | server | [1](npm/3b2a6a268aa815dec121d614245e03b5c68db1f044d5b525e36db7d5dc7fb9c3.txt) |
 | resolve-pkg-maps@1.0.0 | MIT | server (dev) | [1](npm/10c904a49af44409b073532e45a53fd4df19bdf26eaf9afc7917258c2b354382.txt) |
 | ret@0.5.0 | MIT | server, infra/docker/github-gateway | [1](npm/bfc2c678db20d806b3787956f607a1509da5fca45b4d40a97c671cbee737159d.txt) |
@@ -666,6 +687,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | semver@7.8.5 | ISC | server, evolution/pi, infra/docker/github-gateway | [1](npm/4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b.txt) |
 | send@1.2.1 | MIT | server | [1](npm/25a328069fe771f8ed5b6f983ed4b0e6c84b3312ac0f69b28c3d52dc277962c9.txt) |
 | serve-static@2.2.1 | MIT | server | [1](npm/63b9a188d7d43e64b0558b7115255045b9fe20a5fc3ff483421cb899e7f52bcb.txt) |
+| set-blocking@2.0.0 | ISC | web | [1](npm/365496ca1f56da40b23c9815fc40fa9005847b2f8f8fd1c1a4929ef25ec8cd1d.txt) |
 | set-cookie-parser@2.7.2 | MIT | server, infra/docker/github-gateway | [1](npm/c5c6c5183a789d122f267c405f685037efb87e27fcde28ab1dd7378a2d2f5962.txt) |
 | setprototypeof@1.2.0 | ISC | server | [1](npm/76d6d1ea0c268da37dd3c961b4fcfb23dee8417fff9e8786d4d44c585b781b69.txt) |
 | shebang-command@2.0.0 | MIT | server, evolution/pi | [1](npm/69dee148a2cc470554dfa7142e830662062394d0fe67cddd379aba90dc60d6b3.txt) |
@@ -685,7 +707,9 @@ Generated from four lockfiles, including runtime, development and optional platf
 | standard-as-callback@2.1.0 | MIT | server, evolution/pi | [1](npm/a1de72eb7bdf08c10c5804e04a6d99fa9530879844262db439429937de4a3a6d.txt) |
 | statuses@2.0.2 | MIT | server | [1](npm/512cfa4d5e7a7569c7ae4dd95241cb6ae2aaf648ef9ebd080c01bd24868d26e9.txt) |
 | std-env@4.2.0 | MIT | web (dev) | [1](npm/a6f36438e46fb911859f3b9c4cad045ba64e1af3d8f4512c60258fa2d7552d28.txt) |
+| string-width@4.2.3 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | stringify-entities@4.0.4 | MIT | web | [1](npm/9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10.txt) |
+| strip-ansi@6.0.1 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | strip-indent@3.0.0 | MIT | web (dev) | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | strnum@1.1.2 | MIT | server | [1](npm/2aa16be0f4fad003a352a955a43314e9d1d8deef7034060a82ac9c49f32b81e2.txt) |
 | strnum@2.3.0 | MIT | evolution/pi | [1](npm/2aa16be0f4fad003a352a955a43314e9d1d8deef7034060a82ac9c49f32b81e2.txt) |
@@ -753,8 +777,10 @@ Generated from four lockfiles, including runtime, development and optional platf
 | whatwg-encoding@3.1.1 | MIT | web (dev) | [1](npm/528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa.txt) |
 | whatwg-mimetype@4.0.0 | MIT | web (dev) | [1](npm/528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa.txt) |
 | whatwg-url@14.2.0 | MIT | web (dev) | [1](npm/db480f236292a093e77a83c35431a8496624e1e664a3547768a9ce2bdde39877.txt) |
+| which-module@2.0.1 | ISC | web | [1](npm/852bf81203aa93aa89afc9f881ebb035322dc7334aaceff435c557634c94a815.txt) |
 | which@2.0.2 | ISC | server, evolution/pi | [1](npm/4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b.txt) |
 | why-is-node-running@2.3.0 | MIT | web (dev) | [1](npm/6a134e51aa31496c15a741592fc5d782b2dbf8d8b6b8524e15c8520ae0cd6374.txt) |
+| wrap-ansi@6.2.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | wrappy@1.0.2 | ISC | server | [1](npm/4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b.txt) |
 | ws@8.21.0 | MIT | evolution/pi | [1](npm/2b29dcfe0d6471f7e8c92c5fb38c9f93edee10330937055440192f1832b1ecef.txt) |
 | ws@8.21.3 | MIT | server, web (dev) | [1](npm/2b29dcfe0d6471f7e8c92c5fb38c9f93edee10330937055440192f1832b1ecef.txt) |
@@ -762,8 +788,11 @@ Generated from four lockfiles, including runtime, development and optional platf
 | xml-naming@0.1.0 | MIT | evolution/pi | [1](npm/8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07.txt) |
 | xmlchars@2.2.0 | MIT | web (dev) | [1](npm/45d196313c2647d313cc65ca9b093d2d6974b64d35ee7346f2c60c9d518dff2c.txt) |
 | xtend@4.0.2 | MIT | server, evolution/pi | [1](npm/82e67379203d5794e7c44549847d8d64ae6904591381682360470898bd306821.txt) |
+| y18n@4.0.3 | ISC | web | [1](npm/2034cce3b6fafcddd642c4175e01d3ddfc332a53b9f20fdc46b1466dc89ac469.txt) |
 | yallist@3.1.1 | ISC | web (dev) | [1](npm/4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b.txt) |
 | yaml@2.9.0 | ISC | server, evolution/pi | [1](npm/5bba27375d93e9119f76c1015f7672cf9ad5f70952296e0842fb2243d6376869.txt) |
+| yargs-parser@18.1.3 | ISC | web | [1](npm/365496ca1f56da40b23c9815fc40fa9005847b2f8f8fd1c1a4929ef25ec8cd1d.txt) |
+| yargs@15.4.1 | MIT | web | [1](npm/2f1a503bfab84b3ba7393627308b3274501e459e3b5185bbb56bbf16cb1602d4.txt) |
 | zod-to-json-schema@3.25.2 | ISC | server, evolution/pi | [1](npm/80d3168ad2f70f6f5bb2ab22b23414707abf6f0a392034891481ae36a1a429d4.txt) |
 | zod@3.25.76 | MIT | evolution/pi | [1](npm/3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8.txt) |
 | zod@4.4.3 | MIT | server | [1](npm/3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8.txt) |

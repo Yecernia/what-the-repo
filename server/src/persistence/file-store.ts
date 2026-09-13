@@ -1465,7 +1465,7 @@ export class FileStore implements ProductStore {
   async purgePublicSnapshotPayload(publicKey: string, purgedAt: string): Promise<boolean> {
     return this.mutex.runExclusive(`snapshot-purge:${safePublicKey(publicKey)}`, async () => {
       const metadata = await this.loadPublicSnapshotMetadata(publicKey);
-      if (!metadata || metadata.payload_purged_at || await this.hasPublicSnapshotReference(publicKey)) return false;
+      if (!metadata || metadata.payload_purged_at || !metadata.purge_after || metadata.purge_after > purgedAt || await this.hasPublicSnapshotReference(publicKey) || (await this.listJobs()).some(j => j.status === "queued" || j.status === "running")) return false;
       const directory = join(this.dirs.publicSnapshots, safePublicKey(publicKey));
       await Promise.all([
         rm(join(directory, "view.json"), { force: true }),

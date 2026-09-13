@@ -35,7 +35,7 @@ export interface FeedbackEvolutionPolicy {
   maxSteps?: number;
   maxTimeMs?: number;
   maxTokens?: number;
-  maxCostUsd?: number;
+  maxCostUsd?: number | null;
   maxCandidateBytes?: number;
 }
 
@@ -169,7 +169,7 @@ function taskFor(
     maxSteps: policy.maxSteps ?? 40,
     maxTimeMs: policy.maxTimeMs ?? 15 * 60_000,
     maxTokens: policy.maxTokens ?? 120_000,
-    maxCostUsd: policy.maxCostUsd ?? 10,
+    maxCostUsd: policy.maxCostUsd === undefined ? 10 : policy.maxCostUsd,
     maxCandidateBytes: policy.maxCandidateBytes ?? 512 * 1024,
   };
 }

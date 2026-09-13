@@ -87,3 +87,7 @@
 项目自有代码采用 [MIT 许可证](LICENSE)。第三方代码、图标和字体保留各自的许可条款。
 
 项目使用 **Pi SDK**，并在研究与实现过程中参考了 **CodeBoarding、Understand Anything** 等项目。采用的思路与版权声明见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+
+---
+
+<p align="center">MIT License © 2026 Yecernia</p>

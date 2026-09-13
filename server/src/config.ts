@@ -3,6 +3,15 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { readAgentModelOverrides, type AgentModelOverrides } from "./agent-model-config.js";
 
 export interface ServerConfig {
+  adminGithubId?: string;
+  adminWebUrl?: string;
+  adminBootstrapHash?: string;
+  adminConfigVersion?: number;
+  storageVolumePaths?: string[];
+  freeProviderId?: string;
+  freeConnectionId?: string;
+  analysisConnectionId?: string;
+  feedbackConnectionId?: string;
   agentModels?: AgentModelOverrides;
   root: string;
   host: string;
@@ -59,10 +68,10 @@ export interface ServerConfig {
   quotaActiveAnalysisJobs: number;
   quotaStorageBytes: number;
   quotaProviderCallsPerMinute?: number;
-  quotaProviderCostUsdPerDay?: number;
+  quotaProviderCostUsdPerDay?: number | null;
   quotaProviderReservationUsd?: number;
   quotaProviderDeploymentCallsPerMinute?: number;
-  quotaProviderDeploymentCostUsdPerDay?: number;
+  quotaProviderDeploymentCostUsdPerDay?: number | null;
   mcpTokens: ReadonlyArray<{ token: string; ownerId: string }>;
   mcpRequestsPerMinute: number;
   /** Optional bearer token for the internal Prometheus-compatible endpoint. */
@@ -255,18 +264,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     quotaMaxProjects: positiveInt(env.WHAT_THE_REPO_QUOTA_MAX_PROJECTS, 20),
     quotaCreationsPerHour: positiveInt(env.WHAT_THE_REPO_QUOTA_CREATIONS_PER_HOUR, 30),
     quotaActiveAnalysisJobs: positiveInt(env.WHAT_THE_REPO_QUOTA_ACTIVE_ANALYSIS_JOBS, 2),
-    quotaStorageBytes: positiveInt(env.WHAT_THE_REPO_QUOTA_STORAGE_BYTES, 4 * 1024 * 1024 * 1024),
+    // Retained for configuration compatibility only. Storage admission is global.
+    quotaStorageBytes: 0,
+    adminGithubId: optionalSecret(env.WHAT_THE_REPO_ADMIN_GITHUB_ID) ?? undefined,
+    adminWebUrl: optionalSecret(env.WHAT_THE_REPO_ADMIN_WEB_URL) ?? undefined,
+    storageVolumePaths: (env.WHAT_THE_REPO_STORAGE_VOLUME_PATHS ?? '').split(';').map(p=>p.trim()).filter(Boolean),
+    adminBootstrapHash: optionalSecret(env.WHAT_THE_REPO_ADMIN_BOOTSTRAP_SHA256) ?? undefined,
     quotaProviderCallsPerMinute: positiveInt(env.WHAT_THE_REPO_QUOTA_PROVIDER_CALLS_PER_MINUTE, 60),
-    quotaProviderCostUsdPerDay: positiveNumber(env.WHAT_THE_REPO_QUOTA_PROVIDER_COST_USD_PER_DAY, 10),
+    quotaProviderCostUsdPerDay: null,
     quotaProviderReservationUsd: positiveNumber(env.WHAT_THE_REPO_QUOTA_PROVIDER_RESERVATION_USD, 0.01),
     quotaProviderDeploymentCallsPerMinute: positiveInt(
       env.WHAT_THE_REPO_QUOTA_PROVIDER_DEPLOYMENT_CALLS_PER_MINUTE,
       240,
     ),
-    quotaProviderDeploymentCostUsdPerDay: positiveNumber(
-      env.WHAT_THE_REPO_QUOTA_PROVIDER_DEPLOYMENT_COST_USD_PER_DAY,
-      20,
-    ),
+    quotaProviderDeploymentCostUsdPerDay: null,
     mcpTokens: parseMcpTokens(env, root),
     mcpRequestsPerMinute: positiveInt(env.WHAT_THE_REPO_MCP_REQUESTS_PER_MINUTE, 60),
     metricsToken: secretValue(

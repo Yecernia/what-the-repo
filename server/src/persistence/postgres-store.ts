@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool, type PoolClient } from "pg";
@@ -210,6 +210,7 @@ function mergeSettings(source: ProviderSettings, target: ProviderSettings): Prov
 
 function jobFromRow(row: Record<string, unknown>): AnalysisJob {
   return {
+    config_version: row.config_version == null ? undefined : Number(row.config_version),
     job_id: String(row.job_id),
     project_id: String(row.project_id),
     idempotency_key: String(row.idempotency_key),
@@ -2615,14 +2616,75 @@ export class PostgresStore extends FileStore {
     }));
   }
 
-  override async purgePublicSnapshotPayload(publicKey: string, purgedAt: string): Promise<boolean> {
-    const client = await this.pool.connect();
+  async adminDeleteRepository(repository: string, expectedToken: string, actor: string): Promise<void> {
+    if(!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error('admin_invalid_repository');
+    const client=await this.pool.connect();
+    const maintenanceKey='repository-cleanup:'+repository;
+    let acquired=false, staged=false;
+    let affectedProjectIds:string[]=[];
+    const fail=(code:string)=>Object.assign(new Error(code),{code,statusCode:409});
+    try {
+      acquired=Boolean((await client.query("SELECT pg_try_advisory_lock(hashtextextended('repository-payload-use',0)) AS acquired")).rows[0].acquired);
+      if(!acquired) throw fail('admin_repository_in_use');
+      await client.query('BEGIN');
+      await client.query("SET LOCAL lock_timeout='5s'");
+      await client.query('LOCK TABLE analysis_jobs,project_public_snapshot_bindings,canonical_public_repository_heads,canonical_public_repository_snapshots,projects IN SHARE ROW EXCLUSIVE MODE');
+      if(Number((await client.query("SELECT count(*) AS n FROM analysis_jobs WHERE status IN ('queued','running')")).rows[0].n)) throw fail('admin_snapshot_busy');
+      const snapshots=(await client.query('SELECT public_snapshot_key,payload_purged_at FROM canonical_public_repository_snapshots WHERE repository_identity=$1 ORDER BY public_snapshot_key',[repository])).rows;
+      const bindings=(await client.query(`SELECT b.project_id,b.public_snapshot_key FROM project_public_snapshot_bindings b
+        JOIN canonical_public_repository_snapshots s USING(public_snapshot_key) WHERE s.repository_identity=$1 ORDER BY b.project_id`,[repository])).rows;
+      const legacy=(await client.query(`SELECT s.project_id,s.analysis_snapshot_id FROM project_snapshots s JOIN projects p USING(project_id)
+        WHERE lower(regexp_replace(regexp_replace(p.payload->'source'->>'value','^https?://github.com/','','i'),'(\\.git)?/?$',''))=$1
+        AND p.payload->'source'->>'kind'='github'
+        AND NOT EXISTS(SELECT 1 FROM project_public_snapshot_bindings b WHERE b.project_id=p.project_id) ORDER BY s.project_id`,[repository])).rows;
+      const token=createHash('sha256').update(JSON.stringify({repository,snapshots,bindings,legacy})).digest('hex');
+      if(token!==expectedToken) throw fail('admin_repository_changed');
+      const keys=snapshots.map(s=>String(s.public_snapshot_key));
+      if(keys.some(key=>!/^([a-f0-9]{64})$/.test(key))) throw fail('admin_invalid_snapshot');
+      const prior=(await client.query('SELECT value FROM admin_documents WHERE key=$1',[maintenanceKey])).rows[0]?.value;
+      const currentProjects=[...bindings.map(b=>String(b.project_id)),...legacy.map(p=>String(p.project_id))];
+      affectedProjectIds=[...new Set<string>([...currentProjects,...(Array.isArray(prior?.projectIds)?prior.projectIds.filter((v:unknown)=>typeof v==='string'):[])])];
+      if(!keys.length&&!affectedProjectIds.length) throw fail('admin_repository_not_found');
+      // First commit a durable withdrawal. Partial object deletion must never restore a usable-looking snapshot.
+      await client.query(`UPDATE projects SET payload=jsonb_set(payload,'{analysis}',
+        (payload->'analysis')||jsonb_build_object('stage','failed','snapshot_id',NULL,'canonical_snapshot_key',NULL,'removed_by_admin',true,
+        'error','管理员已清理此仓库的分析资料；对话历史保留，请重新分析后继续。')),updated_at=clock_timestamp()
+        WHERE project_id=ANY($1::text[])`,[currentProjects]);
+      await client.query('DELETE FROM project_snapshots WHERE project_id=ANY($1::text[])',[currentProjects]);
+      await client.query('DELETE FROM semantic_batches WHERE job_id IN (SELECT job_id FROM analysis_jobs WHERE project_id=ANY($1::text[]))',[currentProjects]);
+      await client.query('DELETE FROM project_public_snapshot_bindings WHERE public_snapshot_key=ANY($1::text[])',[keys]);
+      await client.query('DELETE FROM canonical_public_repository_heads WHERE repository_identity=$1',[repository]);
+      await client.query(`UPDATE canonical_public_repository_snapshots SET retired_at=clock_timestamp(),purge_after=clock_timestamp(),
+        payload_purged_at=COALESCE(payload_purged_at,clock_timestamp()) WHERE public_snapshot_key=ANY($1::text[])`,[keys]);
+      await client.query(`INSERT INTO admin_documents(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=clock_timestamp()`,
+        [maintenanceKey,{status:'pending',actor,keys,projectIds:affectedProjectIds,updatedAt:new Date().toISOString()}]);
+      await client.query('COMMIT'); staged=true;
+      for(const key of keys) if(!await this.purgePublicSnapshotPayload(key,new Date().toISOString(),true,client)) throw fail('admin_snapshot_busy');
+      for(const id of affectedProjectIds) {
+        if(!/^[a-zA-Z0-9_-]+$/.test(id)) throw fail('admin_invalid_project');
+        await rm(join(this.root,'source-snapshots',id),{recursive:true,force:true});
+        for(const folder of ['snapshots','analysis-results','analysis-checkpoints']) await rm(join(this.root,folder,id+'.json'),{force:true});
+      }
+      await client.query(`UPDATE admin_documents SET value=value||jsonb_build_object('status','completed','updatedAt',clock_timestamp()),updated_at=clock_timestamp() WHERE key=$1`,[maintenanceKey]);
+    } catch(error) {
+      await client.query('ROLLBACK');
+      if(staged) await client.query(`UPDATE admin_documents SET value=value||jsonb_build_object('status','failed','updatedAt',clock_timestamp()),updated_at=clock_timestamp() WHERE key=$1`,[maintenanceKey]);
+      throw error;
+    } finally {
+      try { if(acquired) await client.query("SELECT pg_advisory_unlock(hashtextextended('repository-payload-use',0))"); }
+      finally { client.release(); }
+    }
+  }
+
+  override async purgePublicSnapshotPayload(publicKey: string, purgedAt: string, administrator = false, maintenanceClient?: PoolClient): Promise<boolean> {
+    const client = maintenanceClient ?? await this.pool.connect();
     let metadata: PublicSnapshotMetadata | null = null;
     let objectKeys: string[] = [];
     let sourceManifestObject: { key: string; bytes: number; sha256: string } | null = null;
     let analysisObject: { key: string; bytes: number; sha256: string } | null = null;
     try {
       await client.query("BEGIN");
+      await client.query("LOCK TABLE analysis_jobs, project_public_snapshot_bindings, canonical_public_repository_heads IN SHARE ROW EXCLUSIVE MODE");
       const locked = await client.query(
         `SELECT public_snapshot_key, repository_identity, commit_sha,
                 analyzer_bundle_version, analysis_config_digest, analysis_snapshot_id,
@@ -2635,13 +2697,14 @@ export class PostgresStore extends FileStore {
         [publicKey],
       );
       const row = locked.rows[0];
-      if (!row || row.payload_purged_at) {
+      if (!row || (!administrator && row.payload_purged_at) || !row.purge_after || new Date(row.purge_after).getTime() > Date.parse(purgedAt)) {
         await client.query("ROLLBACK");
         return false;
       }
       const referenced = await client.query(
         `SELECT 1
-         WHERE EXISTS (SELECT 1 FROM project_public_snapshot_bindings WHERE public_snapshot_key = $1)
+         WHERE EXISTS (SELECT 1 FROM analysis_jobs WHERE status IN ('queued','running'))
+            OR EXISTS (SELECT 1 FROM project_public_snapshot_bindings WHERE public_snapshot_key = $1)
             OR EXISTS (SELECT 1 FROM canonical_public_repository_heads WHERE current_public_snapshot_key = $1)`,
         [publicKey],
       );
@@ -2690,6 +2753,11 @@ export class PostgresStore extends FileStore {
         "DELETE FROM snapshot_query_directories WHERE public_snapshot_key = $1",
         [publicKey],
       );
+      await client.query('DELETE FROM public_snapshot_language_overlays WHERE public_snapshot_key=$1',[publicKey]);
+      if(administrator) await client.query(`DELETE FROM semantic_batches WHERE snapshot_id=$1 AND job_id IN (
+        SELECT j.job_id FROM analysis_jobs j JOIN projects p USING(project_id)
+        WHERE lower(regexp_replace(regexp_replace(p.payload->'source'->>'value','^https?://github.com/','','i'),'(\\.git)?/?$',''))=$2
+      )`,[row.analysis_snapshot_id,row.repository_identity]);
       await client.query(
         `UPDATE canonical_public_repository_snapshots SET
            view_payload = NULL, analysis_payload = NULL,
@@ -2702,50 +2770,56 @@ export class PostgresStore extends FileStore {
          WHERE public_snapshot_key = $1`,
         [publicKey, purgedAt],
       );
+      if (!metadata) throw new Error("snapshot_metadata_missing");
+      if (analysisObject) {
+        try {
+          const body = verifySnapshotObject<unknown>(
+            await this.snapshotObjects.get(analysisObject.key),
+            analysisObject,
+          );
+          objectKeys.push(...analysisPayloadChunkKeys(body));
+        } catch {
+          // The unreferenced row stays locked. Never trust a damaged analysis
+          // envelope for deletion; the scoped object inventory below covers remaining chunks.
+        }
+      }
+      if (sourceManifestObject) {
+        try {
+          const body = verifySourceSnapshotObject(
+            await this.snapshotObjects.get(sourceManifestObject.key),
+            sourceManifestObject,
+          );
+          const manifest = parseSourceSnapshotManifest(body, {
+            publicKey,
+            snapshotId: metadata.analysis_snapshot_id,
+          });
+          objectKeys.push(...manifest.files.map((file) => file.key));
+        } catch {
+          // The unreferenced row stays locked. Never trust a damaged manifest
+          // for deletion; the scoped object inventory below covers remaining objects.
+        }
+      }
+      if (this.snapshotObjects.inventory) {
+        const objects = await this.snapshotObjects.inventory();
+        objectKeys.push(...objects.filter(object => object.key.startsWith(`public-repository-snapshots/${publicKey}/`)).map(object => object.key));
+      }
+      this.forgetSourceManifest(publicKey);
+      const deletions = await Promise.allSettled([
+        ...[...new Set(objectKeys)].map((key) => this.snapshotObjects.purge?.(key) ?? this.snapshotObjects.delete(key)),
+        rm(join(this.root, "public-repository-snapshots", publicKey, "view.json"), { force: true }),
+        rm(join(this.root, "public-repository-snapshots", publicKey, "analysis.json"), { force: true }),
+        rm(join(this.root, "public-repository-snapshots", publicKey, "analysis-chunks"), { recursive: true, force: true }),
+        rm(join(this.root, "snapshot-language-overlays", publicKey), { recursive: true, force: true }),
+        rm(this.publicSourceSnapshotRoot(publicKey, metadata.analysis_snapshot_id), { recursive: true, force: true }),
+      ]);
+      if (deletions.some(result => result.status === "rejected")) throw new Error("storage_delete_incomplete");
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      if (!maintenanceClient) client.release();
     }
-    if (!metadata) return false;
-    if (analysisObject) {
-      try {
-        const body = verifySnapshotObject<unknown>(
-          await this.snapshotObjects.get(analysisObject.key),
-          analysisObject,
-        );
-        objectKeys.push(...analysisPayloadChunkKeys(body));
-      } catch {
-        // The published row is already retired. Never trust a damaged analysis
-        // envelope for deletion; a later orphan sweep can remove its chunks.
-      }
-    }
-    if (sourceManifestObject) {
-      try {
-        const body = verifySourceSnapshotObject(
-          await this.snapshotObjects.get(sourceManifestObject.key),
-          sourceManifestObject,
-        );
-        const manifest = parseSourceSnapshotManifest(body, {
-          publicKey,
-          snapshotId: metadata.analysis_snapshot_id,
-        });
-        objectKeys.push(...manifest.files.map((file) => file.key));
-      } catch {
-        // The published row is already retired. Never trust a damaged manifest
-        // for deletion; a later orphan sweep can remove unreferenced objects.
-      }
-    }
-    this.forgetSourceManifest(publicKey);
-    await Promise.all([
-      ...[...new Set(objectKeys)].map((key) => this.snapshotObjects.delete(key).catch(() => undefined)),
-      rm(join(this.root, "public-repository-snapshots", publicKey, "view.json"), { force: true }),
-      rm(join(this.root, "public-repository-snapshots", publicKey, "analysis.json"), { force: true }),
-      rm(join(this.root, "public-repository-snapshots", publicKey, "analysis-chunks"), { recursive: true, force: true }),
-      rm(this.publicSourceSnapshotRoot(publicKey, metadata.analysis_snapshot_id), { recursive: true, force: true }),
-    ]);
     return true;
   }
 
@@ -3872,7 +3946,8 @@ export class PostgresStore extends FileStore {
       return;
     }
     if (current.rows[0]?.public_snapshot_key !== publicKey) {
-      if (enforceStorageQuota) await this.checkStorageQuota(client, project.owner_id, publicKey);
+      // Shared snapshots have no per-owner byte quota; global capacity guards new work.
+      void enforceStorageQuota;
       await client.query(
         `INSERT INTO project_public_snapshot_bindings(project_id, public_snapshot_key, bound_at)
          VALUES ($1, $2, now())
@@ -3892,8 +3967,8 @@ export class PostgresStore extends FileStore {
          job_id, project_id, idempotency_key, status, attempt, max_attempts,
          lease_owner, lease_expires_at, heartbeat_at, created_at, updated_at,
          available_at, completed_at, error, error_code,
-         repository_update_id, execution_role, language_overlay_key
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+         repository_update_id, execution_role, language_overlay_key, config_version
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, COALESCE($19,(SELECT ((value->'versions'->-1)->>'version')::int FROM admin_documents WHERE key='platform'),0))
        ON CONFLICT(job_id) DO UPDATE SET
          status = EXCLUDED.status,
          attempt = EXCLUDED.attempt,
@@ -3928,6 +4003,7 @@ export class PostgresStore extends FileStore {
         job.repository_update_id ?? null,
         job.execution_role ?? "standalone",
         job.language_overlay_key ?? null,
+        job.config_version ?? null,
       ],
     );
   }
@@ -4142,31 +4218,6 @@ export class PostgresStore extends FileStore {
     );
     if (Number(active.rows[0]?.count ?? 0) >= this.limits.maxActiveAnalysisJobs) {
       throw new QuotaExceededError("active_analysis_jobs", this.limits.maxActiveAnalysisJobs);
-    }
-  }
-
-  private async checkStorageQuota(client: PoolClient, ownerId: string, publicKey: string): Promise<void> {
-    const usage = await client.query<{ current_bytes: string; candidate_bytes: string }>(
-      `SELECT
-         COALESCE((
-           SELECT SUM(public.logical_bytes)
-           FROM canonical_public_repository_snapshots AS public
-           WHERE public.public_snapshot_key IN (
-             SELECT DISTINCT binding.public_snapshot_key
-             FROM project_public_snapshot_bindings AS binding
-             JOIN projects AS project ON project.project_id = binding.project_id
-             WHERE project.owner_id = $1
-           )
-         ), 0)::text AS current_bytes,
-         COALESCE((
-           SELECT logical_bytes FROM canonical_public_repository_snapshots
-           WHERE public_snapshot_key = $2
-         ), 0)::text AS candidate_bytes`,
-      [ownerId, publicKey],
-    );
-    const total = Number(usage.rows[0]?.current_bytes ?? 0) + Number(usage.rows[0]?.candidate_bytes ?? 0);
-    if (total > this.limits.maxStorageBytes) {
-      throw new QuotaExceededError("storage_bytes", this.limits.maxStorageBytes);
     }
   }
 

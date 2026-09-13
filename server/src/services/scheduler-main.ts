@@ -1,4 +1,5 @@
 import { loadConfig } from "../config.js";
+import { collectRuntimeObservations } from '../admin/observations.js';
 import { PiMemoryStore } from "../agent/memory-store.js";
 import { PiSessionStore } from "../agent/session-store.js";
 import { PostgresMemoryStore } from "../persistence/postgres-memory-store.js";
@@ -19,6 +20,7 @@ import { RetentionScheduler } from "./retention-scheduler.js";
 const config = loadConfig();
 const store = createProductStore(config, "scheduler");
 await store.init();
+const stopObservations=collectRuntimeObservations(store,'scheduler',defaultRuntimeMetrics);
 const databaseMetrics = store instanceof PostgresStore
   ? new DatabaseMetricsCollector({
       pool: store.pool,
@@ -51,6 +53,7 @@ const metricsServer = await startMetricsServer({
 const shutdown = async (exitCode = 0): Promise<void> => {
   if (shuttingDown) return;
   shuttingDown = true;
+  stopObservations();
   leadershipAbort.abort();
   defaultRuntimeMetrics.setGauge(METRIC_NAMES.retentionLeader, 0);
   await scheduler?.stop();

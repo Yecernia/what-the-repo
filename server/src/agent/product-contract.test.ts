@@ -422,7 +422,7 @@ test("conversation service keeps the displayed unverified reply in the next Pi r
       assert.match(options.systemPrompt, /hello/);
       assert.equal(options.modelRuntime.model.id, "deepseek-chat", "role overrides must preserve the selected chat model");
       for (const role of ["understanding-assessment", "citation-review", "memory-maintenance"] as const) {
-        assert.equal(options.modelRuntime.roleRuntimes?.[role]?.model.id, `test-${role}`);
+        assert.equal(options.modelRuntime.roleRuntimes?.[role], undefined, 'chat helpers follow the selected chat model even when legacy deployment overrides exist');
       }
       return originalRun.call(this, { ...options, modelRuntime }, finalize);
     });

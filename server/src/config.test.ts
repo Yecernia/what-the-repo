@@ -21,9 +21,9 @@ test("production API configuration requires a sufficiently strong Session Secret
 test("provider deployment budget has independent defaults and overrides", () => {
   const defaults = loadConfig({ WHAT_THE_REPO_LOAD_LOCAL_ENV: "0" });
   assert.equal(defaults.quotaProviderCallsPerMinute, 60);
-  assert.equal(defaults.quotaProviderCostUsdPerDay, 10);
+  assert.equal(defaults.quotaProviderCostUsdPerDay, null);
   assert.equal(defaults.quotaProviderDeploymentCallsPerMinute, 240);
-  assert.equal(defaults.quotaProviderDeploymentCostUsdPerDay, 20);
+  assert.equal(defaults.quotaProviderDeploymentCostUsdPerDay, null);
   assert.equal(defaults.databaseConnectionReserve, 10);
   assert.equal(defaults.sessionLockWaitTimeoutMs, 600_000);
   assert.equal(defaults.metricsHost, "127.0.0.1");
@@ -45,9 +45,9 @@ test("provider deployment budget has independent defaults and overrides", () => 
     WHAT_THE_REPO_METRICS_PORT: "19464",
   });
   assert.equal(configured.quotaProviderCallsPerMinute, 12);
-  assert.equal(configured.quotaProviderCostUsdPerDay, 3.5);
+  assert.equal(configured.quotaProviderCostUsdPerDay, null);
   assert.equal(configured.quotaProviderDeploymentCallsPerMinute, 80);
-  assert.equal(configured.quotaProviderDeploymentCostUsdPerDay, 7.25);
+  assert.equal(configured.quotaProviderDeploymentCostUsdPerDay, null);
   assert.equal(configured.databaseConnectionReserve, 12);
   assert.equal(configured.sessionLockWaitTimeoutMs, 123456);
   assert.equal(configured.metricsHost, "0.0.0.0");

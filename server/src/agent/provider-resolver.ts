@@ -300,8 +300,8 @@ export function availableModels(
     const catalogModel = freeCatalogModel(config);
     rows.push({
       selector: FREE_SELECTOR,
-      connection_id: "deployment-free",
-      provider: "deepseek",
+      connection_id: config.freeConnectionId ?? "deployment-free",
+      provider: config.freeProviderId ?? "deepseek",
       model_id: config.freeProviderModel,
       label: `${config.freeProviderModel}（免费体验）`,
       thinking_levels: catalogModel ? thinkingLevelsForModel(catalogModel) : ["off"],
@@ -358,6 +358,11 @@ export function resolveProvider(input: {
 }): ProviderConfig | null {
   const { config, store, owner, settings, selectedModel } = input;
   if (selectedModel === FREE_SELECTOR || owner.kind === "guest") {
+    if (config.freeProviderId) {
+      const resolved = resolveDeploymentProvider({ providerId: config.freeProviderId, baseUrl: config.freeProviderBaseUrl,
+        model: config.freeProviderModel, apiKey: config.freeProviderApiKey, connectionId: config.freeConnectionId ?? 'deployment-free' });
+      return resolved ? { ...resolved, modelSelector: FREE_SELECTOR } : null;
+    }
     if (!config.freeProviderBaseUrl || !config.freeProviderModel || !config.freeProviderApiKey) return null;
     const catalogModel = freeCatalogModel(config);
     return {

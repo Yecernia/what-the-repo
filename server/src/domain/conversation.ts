@@ -143,6 +143,7 @@ export interface RepoSource {
 }
 
 export interface AnalysisState {
+  removed_by_admin?: boolean;
   stage: AnalysisStage;
   snapshot_id: string | null;
   file_count: number;

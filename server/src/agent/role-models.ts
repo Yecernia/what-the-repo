@@ -26,6 +26,7 @@ export function resolveAgentProvider(config: ServerConfig, role: AgentModelRole,
     ? fallback.connectionId
     : `platform-agent:${createHash("sha256").update(JSON.stringify([resolved.provider, resolved.baseUrl, resolved.apiKey])).digest("hex").slice(0, 24)}`;
   resolved.modelSelector = `deployment:${resolved.connectionId}:${resolved.model}`;
+  if (override.connectionId) resolved.connectionId = override.connectionId;
   return resolved;
 }
 
@@ -46,8 +47,9 @@ export function withAgentModels(config: ServerConfig, runtime: PiModelRuntime, f
 /** Keep job-wide request limits and accounting while selecting a role's own transport and gate. */
 export function runtimeForSkill(runtime: PiModelRuntime, role: ProductSkillId): PiModelRuntime {
   const selected = runtime.roleRuntimes?.[role];
-  if (!selected) return runtime;
+  if (!selected) return runtime.attribution ? { ...runtime, attribution: { ...runtime.attribution, agentRole: role } } : runtime;
   return { ...selected,
+    attribution: runtime.attribution ? { ...runtime.attribution, agentRole: role, connectionId: selected.providerConnectionId ?? selected.attribution?.connectionId ?? runtime.attribution.connectionId } : undefined,
     skills: runtime.skills ?? selected.skills,
     beforeWorkerRequest: runtime.beforeWorkerRequest ?? selected.beforeWorkerRequest,
     providerBudget: runtime.providerBudget ?? selected.providerBudget,

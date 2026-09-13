@@ -87,3 +87,7 @@ Please follow our [code of conduct](CODE_OF_CONDUCT.md) in community spaces. To 
 Original project code is licensed under [MIT](LICENSE). Third-party code, icons and fonts retain their respective terms.
 
 The project uses the **Pi SDK** and has drawn on **CodeBoarding, Understand Anything** and other projects during research and implementation. See [third-party notices](THIRD_PARTY_NOTICES.md) for the ideas adopted and copyright notices.
+
+---
+
+<p align="center">MIT License © 2026 Yecernia</p>

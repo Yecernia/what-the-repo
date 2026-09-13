@@ -239,7 +239,7 @@ export async function runStructuredWorker<T extends TSchema>(options: {
     ].filter(Boolean).join(" "));
     const providerFailure = providerFailureReason(lastRequest?.transport, finalAssistant?.errorMessage);
     const failure = localFailure ?? workerFailureCode(options.signal?.reason)
-      ?? (lastRequest?.status === "budget_rejected" ? "provider_budget_exceeded"
+      ?? (lastRequest?.status === "budget_rejected" ? providerCause
         : lastRequest?.status === "gate_error" ? "worker_internal_error" : null);
     return {
       value: failure ? null : submitted,
