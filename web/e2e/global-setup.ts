@@ -5,7 +5,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { get } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isolatedServiceEnv } from './service-env.js';
+import { e2eProviderEnv, isolatedServiceEnv } from './service-env.js';
 
 interface ManagedService {
   name: string;
@@ -203,14 +203,14 @@ export default async function globalSetup(_config: FullConfig): Promise<() => Pr
   mkdirSync(dataRoot, { recursive: true });
   mkdirSync(logRoot, { recursive: true });
   const services: ManagedService[] = [];
+  // Real-provider acceptance is opt-in; ordinary CI never loads local secrets.
+  const useProvider = process.env.WHAT_THE_REPO_E2E_USE_PROVIDER === '1';
   const configuredEnvironment = {
-    ...await loadLocalEnvironment(),
+    ...(useProvider ? await loadLocalEnvironment() : {}),
     ...process.env,
   };
-  process.env.WHAT_THE_REPO_E2E_PROVIDER_CONFIGURED = (
-    configuredEnvironment.WHAT_THE_REPO_FREE_PROVIDER_API_KEY
-    || configuredEnvironment.WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE
-  ) ? '1' : '0';
+  const providerEnvironment = e2eProviderEnv(configuredEnvironment);
+  process.env.WHAT_THE_REPO_E2E_PROVIDER_CONFIGURED = useProvider ? '1' : '0';
 
   try {
     await waitUntilHttpPortIsUnused('api', apiHealthUrl);
@@ -236,10 +236,7 @@ export default async function globalSetup(_config: FullConfig): Promise<() => Pr
         GITHUB_OAUTH_CLIENT_ID: configuredEnvironment.GITHUB_OAUTH_CLIENT_ID || 'e2e-client-id',
         GITHUB_OAUTH_CLIENT_SECRET: configuredEnvironment.GITHUB_OAUTH_CLIENT_SECRET || 'e2e-client-secret',
         WHAT_THE_REPO_DATA_DIR: dataRoot,
-        WHAT_THE_REPO_FREE_PROVIDER_API_KEY:
-          configuredEnvironment.WHAT_THE_REPO_FREE_PROVIDER_API_KEY || '',
-        WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE:
-          configuredEnvironment.WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE || '',
+        ...providerEnvironment,
         WHAT_THE_REPO_FREE_PROVIDER_BASE_URL:
           configuredEnvironment.WHAT_THE_REPO_FREE_PROVIDER_BASE_URL || 'https://api.deepseek.com',
         WHAT_THE_REPO_FREE_PROVIDER_MODEL:

@@ -22,8 +22,7 @@
   "include": [
     "vite.config.ts",
     "playwright.config.ts",
-    "e2e/global-setup.ts",
-    "e2e/service-env.ts",
+    "e2e/**/*.ts",
     "node-tests/**/*.ts"
   ]
 }
