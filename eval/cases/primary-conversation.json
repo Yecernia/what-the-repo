@@ -1,6 +1,6 @@
 {
   "schema_version": "2.0",
-  "eval_id": "typescript-primary-conversation-v2",
+  "eval_id": "typescript-primary-conversation-v3",
   "expected_case_count": 20,
   "description": "全 TypeScript + Pi 在线主对话的确定性行为契约；不声称替代真实 Provider 或人工质量判断。",
   "cases": [
@@ -16,8 +16,8 @@
     },
     {
       "case_id": "repository_evidence_and_bounded_source",
-      "requirement": "仓库事实来自绑定快照，源码读取必须先取得真实证据路径。",
-      "node_test": "conversation tools use a bound public snapshot and gate source reads"
+      "requirement": "仓库源码读取必须先取得真实证据路径，并绑定当前项目与快照，按限定行数分页。",
+      "node_test": "conversation source reads require exposed evidence and stay bound to the snapshot"
     },
     {
       "case_id": "selected_component_context",
@@ -25,9 +25,9 @@
       "node_test": "selected component context returns only real adjacent components"
     },
     {
-      "case_id": "validated_assessment_state_candidate",
-      "requirement": "理解评估绑定原始回答，只生成经过校验的状态候选。",
-      "node_test": "teaching tools bind the original answer and only create validated state candidates"
+      "case_id": "assessment_does_not_mutate_study",
+      "requirement": "理解评估返回判断，不直接生成学习状态变更或推进进度。",
+      "node_test": "understanding assessment returns a judgment without a study mutation candidate"
     },
     {
       "case_id": "structured_failure_is_sanitized",
@@ -50,9 +50,9 @@
       "node_test": "online tool catalog contains no shell database or arbitrary file capability"
     },
     {
-      "case_id": "untrusted_reply_not_replayed",
-      "requirement": "未通过引用校验的 Assistant 仓库正文不会进入下一轮可信上下文。",
-      "node_test": "Pi runtime only commits a rejected turn's user message"
+      "case_id": "unverified_reply_retains_notice",
+      "requirement": "未验证的回答连同引用提示保留在后续会话中，但不提升为可信长期记忆。",
+      "node_test": "conversation service keeps the displayed unverified reply in the next Pi requests"
     },
     {
       "case_id": "cancelled_run_skips_provider",
@@ -80,29 +80,29 @@
       "node_test": "MCP exposes the six shared TypeScript product tools behind Bearer auth"
     },
     {
-      "case_id": "evidence_explanation_filters_fabricated_ids",
-      "requirement": "证据讲解只接受输入中的 Evidence ID，伪造 ID 被过滤。",
-      "node_test": "evidence explanation accepts only bound Evidence IDs"
+      "case_id": "primary_owns_explanation",
+      "requirement": "代码讲解由 Primary 完成，在线工具只暴露一个学习动作提议入口。",
+      "node_test": "online conversation tools keep explanation in Primary and expose one action proposal tool"
     },
     {
-      "case_id": "evidence_explanation_fails_without_supported_fact",
-      "requirement": "没有可支持事实时，证据讲解返回局部失败而不编造故事。",
-      "node_test": "evidence explanation fails closed when every cited Evidence ID is fabricated"
+      "case_id": "learning_action_requires_confirmation",
+      "requirement": "学习动作只生成待确认卡片，确认前不修改学习状态。",
+      "node_test": "propose_learning_action creates a pending card without changing study state"
     },
     {
       "case_id": "assessment_requires_evidence",
-      "requirement": "理解评估的 mastered 结果必须有有效证据，伪造证据不能产生状态候选。",
-      "node_test": "understanding assessment requires valid evidence for a mastered verdict"
+      "requirement": "只有伪造证据支持的 mastered 评估不能完成，也不能修改学习状态。",
+      "node_test": "understanding assessment rejects mastered results supported only by fabricated evidence"
     },
     {
-      "case_id": "study_authorization_exact_target",
-      "requirement": "学习动作授权要求 action 和 target 与程序候选精确一致。",
-      "node_test": "study action authorization requires the exact proposed target"
+      "case_id": "learning_action_rejects_fabricated_target",
+      "requirement": "学习动作提议拒绝当前快照中不存在的目标。",
+      "node_test": "learning action proposal rejects fabricated targets"
     },
     {
       "case_id": "empty_route_preserves_state",
-      "requirement": "明确学习请求在证据不足时可以返回空路线，不修改学习状态。",
-      "node_test": "learning route can honestly return no steps without a state candidate"
+      "requirement": "证据不足时可以返回空路线，不产生学习状态候选。",
+      "node_test": "learning route may return an honest empty result"
     }
   ]
 }

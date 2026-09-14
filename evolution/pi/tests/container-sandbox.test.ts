@@ -17,9 +17,11 @@ import { TrustedIsolationPolicy } from "../src/isolation.js";
 
 const IMAGE_DIGEST = `sha256:${"a".repeat(64)}`;
 const IMAGE_REFERENCE = `registry.example.invalid/what-the-repo/pi-checks@${IMAGE_DIGEST}`;
-const DOCKER = "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe";
+const DOCKER = process.platform === "win32"
+  ? "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe"
+  : "/usr/bin/docker";
 const DOCKER_CONFIG = await mkdtemp(join(tmpdir(), "what-the-repo-empty-docker-config-"));
-const HOST_NODE = "C:\\trusted\\node.exe";
+const HOST_NODE = process.platform === "win32" ? "C:\\trusted\\node.exe" : "/trusted/node";
 
 function runtimeProbe(overrides: Record<string, unknown> = {}) {
   return {
@@ -193,7 +195,8 @@ test("container sandbox sends only an input envelope and enforces hardened Docke
   assert.deepEqual(payload.definition.env, { FIXTURE: "safe" });
   assert.equal(payload.workspaceFiles[0]?.path, "skill.test.mjs");
   assert.equal(Buffer.from(payload.workspaceFiles[0]?.contentBase64 ?? "", "base64").toString("utf8"), "safe\n");
-  assert.doesNotMatch(run?.stdin ?? "", /G:\\|C:\\trusted/);
+  assert.equal((run.stdin ?? "").includes(JSON.stringify(HOST_NODE)), false);
+  assert.equal((run.stdin ?? "").includes(JSON.stringify(DOCKER_CONFIG)), false);
   assert.deepEqual(
     runner.requests.slice(-2).map((request) => request.args[0]),
     ["rm", "ps"],
@@ -285,14 +288,14 @@ test("container sandbox refuses unmapped commands and fixed working directories"
     throw new Error("container run should not be reached");
   });
   const unmappedCommand = checkRequest();
-  unmappedCommand.definition.argv[0] = "C:\\untrusted\\python.exe";
+  unmappedCommand.definition.argv[0] = join(tmpdir(), "untrusted", "python");
   await assert.rejects(
     () => executor(runner).execute(unmappedCommand),
     /executable is not mapped/,
   );
 
   const unmappedCwd = checkRequest();
-  unmappedCwd.definition.cwd = { kind: "fixed", path: "C:\\trusted\\fixtures" };
+  unmappedCwd.definition.cwd = { kind: "fixed", path: join(tmpdir(), "trusted", "fixtures") };
   await assert.rejects(
     () => executor(runner).execute(unmappedCwd),
     /working directory is not mapped/,

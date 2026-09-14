@@ -818,7 +818,8 @@ test("run event replay paginates complete traces and ignores arbitrary persisted
   }
 });
 
-test("multiple domestic provider keys expose only their verified models and thinking-only updates keep the model", async () => {
+test("multiple domestic provider keys expose only their verified models and thinking-only updates keep the model", async (t) => {
+  t.mock.method(dns, "lookup", async () => [{ address: "93.184.216.34", family: 4 }]);
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-api-providers-"));
   const originalFetch = globalThis.fetch;
   try {
@@ -910,7 +911,8 @@ test("multiple domestic provider keys expose only their verified models and thin
   }
 });
 
-test("new connection verification does not save until the signed result is added", async () => {
+test("new connection verification does not save until the signed result is added", async (t) => {
+  t.mock.method(dns, "lookup", async () => [{ address: "93.184.216.34", family: 4 }]);
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-api-provider-verification-flow-"));
   const originalFetch = globalThis.fetch;
   try {
@@ -989,7 +991,8 @@ test("new connection verification does not save until the signed result is added
   }
 });
 
-test("provider model discovery filters task-specific models before saving a connection", async () => {
+test("provider model discovery filters task-specific models before saving a connection", async (t) => {
+  t.mock.method(dns, "lookup", async () => [{ address: "93.184.216.34", family: 4 }]);
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-api-provider-model-filter-"));
   const originalFetch = globalThis.fetch;
   try {
@@ -1304,7 +1307,8 @@ test("custom Provider settings reject private endpoints before storing the user 
   }
 });
 
-test("domestic Provider settings require an upstream model list and reject connection edits", async () => {
+test("domestic Provider settings require an upstream model list and reject connection edits", async (t) => {
+  t.mock.method(dns, "lookup", async () => [{ address: "93.184.216.34", family: 4 }]);
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-api-domestic-providers-"));
   const originalFetch = globalThis.fetch;
   try {

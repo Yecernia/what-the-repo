@@ -13,13 +13,16 @@ const SKIP_DIRECTORIES = new Set([
   "node_modules", "dist", "build", "coverage", "__pycache__", ".pytest_cache",
 ]);
 
-interface FixedCase {
+export interface FixedCase {
   id: string;
   expected_files: string[];
   symbol_anchors: Array<{ path: string; name: string; kind: string }>;
   inheritance_anchors: Array<[string, string]>;
   import_anchors: Array<[string, string]>;
-  relation_anchors?: { calls?: Array<[string, string]> };
+  relation_anchors?: {
+    calls?: Array<[string, string]>;
+    tree_sitter_local_calls?: Array<[string, string]>;
+  };
 }
 
 interface ProductEvalOptions {
@@ -54,20 +57,16 @@ export async function runProductEval(options: ProductEvalOptions): Promise<Recor
     sourceRoot: options.target,
   });
   const after = await sourceManifest(options.target);
-  const truth = evaluateTruth(snapshot, options.fixedCase ?? null);
+  const evaluated = evaluateStaticSnapshot(snapshot, before.files, options.fixedCase ?? null);
   const checks = {
     expected_commit: actualCommit === options.expectedCommit,
     source_unchanged: before.digest === after.digest,
     source_file_set_unchanged: JSON.stringify(before.files) === JSON.stringify(after.files),
-    fact_files_present: Number(snapshot.summary.file_count ?? 0) > 0,
-    fact_symbols_present: Number(snapshot.summary.symbol_count ?? 0) > 0,
-    semantic_components_present: snapshot.graph.nodes.length > 0,
-    component_evidence_valid: componentEvidenceValid(snapshot, new Set(before.files)),
-    learning_route_present: snapshot.learning_plan.steps.length > 0,
-    ...truth.checks,
+    ...evaluated.checks,
   };
   const report: Record<string, unknown> = {
     schema_version: "typescript-product-eval-v1",
+    evaluation_kind: "deterministic_static_facts",
     generated_at: new Date().toISOString(),
     passed: Object.values(checks).every(Boolean),
     checks,
@@ -85,7 +84,7 @@ export async function runProductEval(options: ProductEvalOptions): Promise<Recor
       value_points: snapshot.value_points.length,
       learning_steps: snapshot.learning_plan.steps.length,
     },
-    truth: truth.details,
+    truth: evaluated.truth,
     languages: snapshot.languages,
     configuration: {
       runtime: `node ${process.version}`,
@@ -93,6 +92,8 @@ export async function runProductEval(options: ProductEvalOptions): Promise<Recor
       semantic_mode: snapshot.graph.semantic_mode,
       provider_called: false,
       target_code_executed: false,
+      call_gate_scope: "tree_sitter_local_candidates",
+      full_call_recall_is_gate: false,
     },
     subjective_quality: {
       status: "not_scored",
@@ -101,6 +102,8 @@ export async function runProductEval(options: ProductEvalOptions): Promise<Recor
     limitations: [
       "本报告只验证确定性静态事实与证据完整性，不把规则输出当作 LLM 教学质量。",
       "未配置可信 LSP attestation 时，语言质量保持 Tree-sitter 降级级别。",
+      "完整调用真值的覆盖率仅作缺口报告；本门禁要求固定的本地调用候选完全匹配，不验证跨文件、接收者或回调绑定。",
+      "静态阶段不生成价值点或学习路线；用户确认后的教学行为由主对话 Eval 验证。",
       "真实 Provider 的回答质量、Token、成本和双人主观标注不在本次确定性运行内。",
     ],
   };
@@ -108,6 +111,27 @@ export async function runProductEval(options: ProductEvalOptions): Promise<Recor
   await writeJson(join(options.outputDir, "snapshot.json"), snapshot);
   await writeJson(join(options.outputDir, "report.json"), report);
   return report;
+}
+
+export function evaluateStaticSnapshot(
+  snapshot: EvidenceSnapshot,
+  sourceFiles: string[],
+  fixedCase: FixedCase | null,
+): { checks: Record<string, boolean>; truth: Record<string, unknown> } {
+  const truth = evaluateTruth(snapshot, fixedCase);
+  return {
+    checks: {
+      fact_files_present: Number(snapshot.summary.file_count ?? 0) > 0,
+      fact_symbols_present: Number(snapshot.summary.symbol_count ?? 0) > 0,
+      structural_components_present: snapshot.graph.nodes.length > 0,
+      component_evidence_valid: componentEvidenceValid(snapshot, new Set(sourceFiles)),
+      value_discovery_deferred: snapshot.value_points.length === 0,
+      learning_route_deferred: snapshot.learning_plan.steps.length === 0
+        && snapshot.learning_plan.selected_value_point === null,
+      ...truth.checks,
+    },
+    truth: truth.details,
+  };
 }
 
 function evaluateTruth(
@@ -131,7 +155,8 @@ function evaluateTruth(
   const expectedCalls = new Set((fixedCase.relation_anchors?.calls ?? []).map(pairKey));
   const callMatches = intersect(calls, expectedCalls).size;
   const callPrecision = calls.size ? callMatches / calls.size : 0;
-  const callRecall = expectedCalls.size ? callMatches / expectedCalls.size : 1;
+  const expectedLocalCalls = new Set((fixedCase.relation_anchors?.tree_sitter_local_calls ?? []).map(pairKey));
+  const localMatches = intersect(calls, expectedLocalCalls).size;
   const missingSymbols = fixedCase.symbol_anchors
     .map((item) => `${item.path}|${item.name}|${item.kind}`)
     .filter((item) => !symbols.has(item));
@@ -146,7 +171,9 @@ function evaluateTruth(
       fixed_inheritance_anchors: expectedInheritance.size === 0
         || intersect(inheritance, expectedInheritance).size === expectedInheritance.size,
       fixed_call_precision: callPrecision >= 0.6,
-      fixed_call_recall: callRecall >= 0.5,
+      fixed_local_call_anchors_present: expectedLocalCalls.size > 0,
+      fixed_local_call_precision: calls.size > 0 && localMatches === calls.size,
+      fixed_local_call_recall: expectedLocalCalls.size > 0 && localMatches === expectedLocalCalls.size,
     },
     details: {
       case_id: fixedCase.id,
@@ -154,6 +181,7 @@ function evaluateTruth(
       import_metrics: relationMetrics(imports, expectedImports),
       inheritance_metrics: relationMetrics(inheritance, expectedInheritance),
       call_metrics: relationMetrics(calls, expectedCalls),
+      tree_sitter_local_call_metrics: relationMetrics(calls, expectedLocalCalls),
     },
   };
 }
@@ -179,12 +207,18 @@ function relationPairs(
 }
 
 function componentEvidenceValid(snapshot: EvidenceSnapshot, files: Set<string>): boolean {
-  return snapshot.graph.nodes.every((component) =>
-    Boolean(component.name && component.responsibility && component.members.length)
-    && [...component.members, ...component.evidence].every((item) =>
+  return snapshot.graph.nodes.every((component) => {
+    const isScope = component.entity_kind === "repository" || component.entity_kind === "subsystem";
+    const children = snapshot.graph.nodes.filter((node) => node.parent_entity_id === component.id);
+    const hasMembers = isScope
+      ? children.length > 0 && component.member_count === children.length
+      : component.members.length > 0;
+    return Boolean(component.name && component.responsibility && hasMembers)
+      && [...component.members, ...component.evidence].every((item) =>
       files.has(item.path)
       && (item.start_line === null || item.start_line >= 1)
-      && (item.end_line === null || item.start_line === null || item.end_line >= item.start_line)));
+      && (item.end_line === null || item.start_line === null || item.end_line >= item.start_line));
+  });
 }
 
 async function sourceManifest(root: string): Promise<{ files: string[]; digest: string }> {
