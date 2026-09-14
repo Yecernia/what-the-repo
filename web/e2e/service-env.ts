@@ -30,3 +30,16 @@ export function isolatedServiceEnv(
   }
   return { ...isolated, ...overrides };
 }
+
+export function e2eProviderEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const enabled = source.WHAT_THE_REPO_E2E_USE_PROVIDER === '1';
+  const key = enabled ? source.WHAT_THE_REPO_FREE_PROVIDER_API_KEY ?? '' : '';
+  const keyFile = enabled ? source.WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE ?? '' : '';
+  if (enabled && !key && !keyFile) {
+    throw new Error('WHAT_THE_REPO_E2E_USE_PROVIDER=1 requires a provider key or key file');
+  }
+  return {
+    WHAT_THE_REPO_FREE_PROVIDER_API_KEY: key,
+    WHAT_THE_REPO_FREE_PROVIDER_API_KEY_FILE: keyFile,
+  };
+}
