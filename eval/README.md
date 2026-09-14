@@ -20,10 +20,17 @@ npm run eval:fixture -- --output-dir ../out/product-eval
 npm run eval:conversation -- --output-dir ../out/conversation-eval
 ```
 
-固定产品 Eval 检查：源码不变、文件集合、符号锚点、导入/继承召回、调用 precision/recall、组件
-证据和学习路线。它不会执行样例代码，也不会把确定性图结果冒充真实 Provider 或主观教学质量。
+固定产品 Eval 检查：源码不变、文件集合、符号锚点、导入/继承召回、组件证据与层级子节点，以及静态阶段
+不提前生成价值点或学习路线。`tree_sitter_local_calls` 固定了样例中 6 条可直接识别的本地调用候选，
+包含模块入口调用，要求 precision/recall 均为 100%。这些是降级候选，不代表编译器或 LSP 已验证的绑定。
 
-主对话 Eval 把 `eval/cases/primary-conversation.json` 的 15 项最终 Pi 行为契约绑定到实际 Node test。
+原有 58 条完整调用真值继续保留，完整调用 precision/recall 和缺失项仍输出到报告；完整 recall
+不作为这个纯 Tree-sitter 阶段的门禁。跨文件、对象方法和回调绑定需要相应语言分析能力，
+不能通过同名猜测来补齐。源码不会被执行，报告不代表完整调用分析或真实 Provider 的教学质量通过。
+
+主对话 Eval 把 `eval/cases/primary-conversation.json` 的 20 项最终 Pi 行为契约绑定到实际 Node test，
+包括学习确认、路线与进度的写入边界。未验证的回答连同引用提示保留在会话中，不提升为可信长期记忆；
+评测仍要求所有绑定测试存在并通过。
 
 完整质量门：
 

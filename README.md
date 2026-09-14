@@ -10,7 +10,7 @@
 <p>
   <a href="https://bottlecapduel.com"><img src="https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-7C5CBF?style=flat-square" alt="在线体验 what-the-repo"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/MIT%20%E8%AE%B8%E5%8F%AF%E8%AF%81-D4A72C?style=flat-square" alt="查看 MIT 许可证"></a>
-  <a href="https://github.com/Yecernia/what-the-repo"><img src="https://img.shields.io/badge/%E6%9F%A5%E7%9C%8B%E6%BA%90%E7%A0%81-39815A?style=flat-square" alt="查看源码"></a>
+  <a href="https://github.com/Yecernia/what-the-repo/releases/latest"><img src="https://img.shields.io/github/v/release/Yecernia/what-the-repo?style=flat-square&amp;color=39815A" alt="最新 Release"></a>
   <a href="CONTRIBUTING.zh-CN.md"><img src="https://img.shields.io/badge/%E5%8F%82%E4%B8%8E%E8%B4%A1%E7%8C%AE-536878?style=flat-square" alt="参与贡献"></a>
 </p>
 

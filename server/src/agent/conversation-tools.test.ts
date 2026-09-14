@@ -105,6 +105,31 @@ test("online conversation tools keep explanation in Primary and expose one actio
   ]);
 });
 
+test("conversation source reads require exposed evidence and stay bound to the snapshot", async () => {
+  const reads: unknown[][] = [];
+  const ctx = context({
+    store: { readSourceLines: async (...args: unknown[]) => {
+      reads.push(args);
+      return { lines: ["first", "second", "third"], truncated: false };
+    } } as unknown as ProductStore,
+  });
+  const tools = createConversationTools(ctx);
+  const source = tools.find((tool) => tool.name === "read_source_excerpt")!;
+  await assert.rejects(source.execute("unexposed", { path: evidence.path }), /请先通过证据/);
+  assert.equal(reads.length, 0);
+  await tools.find((tool) => tool.name === "get_component_context")!.execute("component", { component_id: "component:entry" });
+  for (const path of ["../entry.ts", "/src/entry.ts", "src/missing.ts"]) {
+    await assert.rejects(source.execute("unsafe", { path }), /请先通过证据/);
+  }
+  assert.equal(reads.length, 0);
+  const result = await source.execute("source", { path: evidence.path, offset: 1, limit: 2 });
+  const payload = JSON.parse(String((result.content[0] as { text: string }).text));
+  assert.deepEqual(reads, [[ctx.project.project_id, "snapshot:tools", evidence.path, 1, 3]]);
+  assert.equal(payload.content, "first\nsecond");
+  assert.equal(payload.truncated, true);
+  assert.equal(payload.next_offset, 3);
+});
+
 test("propose_learning_action creates a pending card without changing study state", async () => {
   const ctx = context();
   const before = structuredClone(ctx.project.study);

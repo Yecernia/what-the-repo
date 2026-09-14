@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,7 @@ test("LSP truth fixture digests match the versioned TypeScript Eval fixtures", a
 
 test("LSP attestation binds sandbox, server and the fixed truth suite", async () => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-lsp-attestation-"));
+  const stagedRoot = join(root, "staged");
   try {
     const wrapper = join(root, process.platform === "win32" ? "wrapper.exe" : "wrapper");
     const server = join(root, process.platform === "win32" ? "server.exe" : "server");
@@ -103,10 +104,21 @@ test("LSP attestation binds sandbox, server and the fixed truth suite", async ()
     );
     assert.deepEqual(verified.commandFor("typescript"), [serverPath]);
     assert.equal(verified.sandboxCapabilities.networkDisabled, true);
-    const staged = await verified.stageForExecution("typescript", join(root, "staged"));
+    const staged = await verified.stageForExecution("typescript", stagedRoot);
     assert.equal(sha(await readFile(staged.wrapperCommand[0] as string)), wrapperSha);
     assert.equal(sha(await readFile(staged.serverCommand[0] as string)), serverSha);
+    if (process.platform !== "win32") {
+      for (const path of [stagedRoot, staged.wrapperCommand[0] as string, staged.serverCommand[0] as string]) {
+        assert.equal((await stat(path)).mode & 0o777, 0o500);
+      }
+    }
   } finally {
+    // Staging deliberately removes write permission; restore it only for test cleanup.
+    if (process.platform !== "win32") {
+      await chmod(stagedRoot, 0o700).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+    }
     await rm(root, { recursive: true, force: true });
   }
 });

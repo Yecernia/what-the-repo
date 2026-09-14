@@ -8,6 +8,10 @@ import type { HostProcessRunner } from "../src/container-sandbox.js";
 
 const IMAGE_DIGEST = `sha256:${"a".repeat(64)}`;
 const IMAGE_REFERENCE = `registry.example.invalid/what-the-repo/pi-checks@${IMAGE_DIGEST}`;
+const DOCKER = process.platform === "win32"
+  ? "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe"
+  : "/usr/bin/docker";
+const HOST_NODE = process.platform === "win32" ? "C:\\trusted\\node.exe" : "/trusted/node";
 
 async function roots() {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-production-runtime-"));
@@ -21,19 +25,19 @@ test("production composition wires the built-in container executor into the evol
   const { root, dockerConfig } = await roots();
   const runtime = createProductionEvolutionRuntime({
     sandbox: {
-      dockerExecutable: "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe",
+      dockerExecutable: DOCKER,
       dockerConfigDirectory: dockerConfig,
       imageReference: IMAGE_REFERENCE,
       imageDigest: IMAGE_DIGEST,
       commands: [{
-        hostExecutable: "C:\\trusted\\node.exe",
+        hostExecutable: HOST_NODE,
         containerExecutable: "/usr/local/bin/node",
       }],
     },
     checks: [{
       id: "fixed-eval",
       cwd: { kind: "workspace" },
-      argv: ["C:\\trusted\\node.exe", "--test", "skill.test.mjs"],
+      argv: [HOST_NODE, "--test", "skill.test.mjs"],
       timeoutMs: 2_000,
       maxOutputBytes: 1_024,
     }],
@@ -57,12 +61,12 @@ test("production composition rejects a runtime-injected process runner", async (
   assert.throws(
     () => createProductionEvolutionRuntime({
       sandbox: {
-        dockerExecutable: "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe",
+        dockerExecutable: DOCKER,
         dockerConfigDirectory: dockerConfig,
         imageReference: IMAGE_REFERENCE,
         imageDigest: IMAGE_DIGEST,
         commands: [{
-          hostExecutable: "C:\\trusted\\node.exe",
+          hostExecutable: HOST_NODE,
           containerExecutable: "/usr/local/bin/node",
         }],
         processRunner: injected,

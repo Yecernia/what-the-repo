@@ -101,6 +101,29 @@ test("understanding assessment returns a judgment without a study mutation candi
   assert.equal(project.study.current_step, 0);
 });
 
+test("understanding assessment rejects mastered results supported only by fabricated evidence", async () => {
+  const project = createProject("owner:assessment-invalid", "https://github.com/example/repo", "repo", "free:test");
+  project.analysis.snapshot_id = "snapshot:teaching-worker";
+  project.study.phase = "assessing";
+  project.study.total_steps = 1;
+  project.study.dynamic_learning_plan = [{
+    step_id: "learning:entry", order: 1, title: "理解入口流程", objective: "说明入口调用。",
+    completion_check: "能说明证据。", component_ids: ["component:entry"], evidence_refs: [evidence.stable_id],
+  }];
+  const before = structuredClone(project.study);
+  const result = await runUnderstandingAssessment({
+    answer: "入口会调用核心逻辑。", evidence: [evidence], project, snapshot: snapshot(), store,
+    modelRuntime: selectedRuntime("understanding-assessment", runtime("assessment-fabricated", fauxAssistantMessage(fauxToolCall("submit_result", {
+      verdict: "mastered", feedback: "已掌握。", mastered_items: ["理解入口流程"], misconceptions: [], evidence_ids: ["fact:invented"],
+    })))),
+  });
+  assert.equal(result.completed, false);
+  assert.deepEqual(result.acceptedEvidenceIds, []);
+  assert.equal(result.trace.stop_reason, "assessment_validation_failed");
+  assert.equal(result.trace.state_candidate, false);
+  assert.deepEqual(project.study, before);
+});
+
 test("learning route may return an honest empty result", async () => {
   const project = createProject("owner:route", "https://github.com/example/repo", "repo", "free:test");
   project.analysis.snapshot_id = "snapshot:teaching-worker";

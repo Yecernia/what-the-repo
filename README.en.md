@@ -10,7 +10,7 @@
 <p>
   <a href="https://bottlecapduel.com"><img src="https://img.shields.io/badge/Try%20online-7C5CBF?style=flat-square" alt="Try what-the-repo online"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/MIT%20license-D4A72C?style=flat-square" alt="Read the MIT license"></a>
-  <a href="https://github.com/Yecernia/what-the-repo"><img src="https://img.shields.io/badge/Source%20code-39815A?style=flat-square" alt="View source code"></a>
+  <a href="https://github.com/Yecernia/what-the-repo/releases/latest"><img src="https://img.shields.io/github/v/release/Yecernia/what-the-repo?style=flat-square&amp;color=39815A" alt="Latest release"></a>
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contribute-536878?style=flat-square" alt="Contribute"></a>
 </p>
 
