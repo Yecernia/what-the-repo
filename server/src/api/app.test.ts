@@ -139,7 +139,7 @@ test("TypeScript API keeps guest project/profile contracts", async () => {
     const store = new FileStore(root);
     await store.init();
     const app = buildApp({
-      config: config(root),
+      config: { ...config(root), chatMaxRounds: 12, chatMaxContentBytes: 3456 },
       store,
       sessions: new PiSessionStore(join(root, "pi-sessions")),
       memories: new PiMemoryStore(join(root, "pi-memory")),
@@ -164,7 +164,12 @@ test("TypeScript API keeps guest project/profile contracts", async () => {
     assert.equal(project.statusCode, 201);
     const createdProject = project.json() as { project: { project_id: string; model_override: string | null } };
     assert.equal(createdProject.project.model_override, null);
+    assert.deepEqual(project.json().project.chat_limits, { max_rounds: 12, max_content_bytes: 3456 });
     const projectId = createdProject.project.project_id;
+    const refreshed = await app.inject({ method: 'GET', url: `/api/projects/${projectId}`, headers: { cookie: cookieHeader } });
+    assert.equal(refreshed.statusCode, 200);
+    assert.deepEqual(refreshed.json().project.chat_limits, { max_rounds: 12, max_content_bytes: 3456 });
+    assert.equal('chat_limits' in (await store.loadProject(projectId))!, false);
     const renamed = await app.inject({
       method: "PATCH",
       url: `/api/projects/${projectId}`,

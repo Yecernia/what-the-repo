@@ -50,7 +50,8 @@ for (const kind of ['file', 'postgres'] as const) {
     try {
       if (store instanceof PostgresStore) {
         Object.assign(store, { pool: { query: async () => ({ rows: [{ public_snapshot_key: key }] }) } });
-        store.loadPublicSnapshot = async <T>() => ({ metadata: { language_overlay_version: SNAPSHOT_LANGUAGE_OVERLAY_VERSION }, view: source as T, analysis: {} }) as Awaited<ReturnType<typeof store.loadPublicSnapshot<T>>>;
+        // This test isolates language selection; payload integrity is tested in snapshot-parts.test.ts.
+        Object.assign(store, { readPublicSnapshotParts: async () => ({ metadata: { language_overlay_version: SNAPSHOT_LANGUAGE_OVERLAY_VERSION }, view: source }) });
         store.loadProject = async () => structuredClone(project);
         store.loadSnapshotLanguageOverlay = async (_key, language) => {
           const overlay = overlays.get(language);

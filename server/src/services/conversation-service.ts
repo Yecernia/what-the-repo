@@ -1,5 +1,7 @@
 import { acquireRepositoryReadLease, type RepositoryReadLease } from '../persistence/repository-read-lease.js';
 import { runtimeConfig } from '../admin/runtime-config.js';
+import { assertChatHistoryCapacity } from './chat-history-limits.js';
+import { isDeepStrictEqual } from 'node:util';
 import type { UsageAttribution } from '../agent/provider-budget.js';
 import { randomUUID } from "node:crypto";
 import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
@@ -376,6 +378,8 @@ export class ConversationService {
     const beforeTurn = input.replaceMessageId
       ? project.messages.slice(0, project.messages.findIndex(message => message.message_id === input.replaceMessageId))
       : project.messages;
+    assertChatHistoryCapacity(project.messages, content, input.replaceMessageId, this.config);
+    const originalStudy = structuredClone(project.study);
     const config = await runtimeConfig(this.config, this.store);
     const settings = await this.store.loadSettings(input.owner.owner_id);
     const selectedModel = project.model_override || effectiveModelSelector(config, this.store, input.owner, settings);
@@ -607,8 +611,21 @@ export class ConversationService {
           ? result.events.find((event) => event.type === "tool_result_received")?.elapsedMs ?? null
           : null,
       });
-      project.messages.push(assistantMessage);
-      await this.store.saveProject(project);
+      // Merge into the current row: feedback, analysis and settings may have
+      // changed while the model was running. Never replay an old transcript.
+      const saved = await this.store.updateProject(input.projectId, input.owner.owner_id, row => {
+        const currentUser = [...row.messages].reverse().find(message => message.role === 'user');
+        if (currentUser?.message_id !== userMessage.message_id || currentUser.trace_id !== runId) {
+          throw serviceError('last_message_changed', '只能编辑最后一条消息，请刷新后重试。', 409);
+        }
+        row.messages.push(assistantMessage);
+        if (!isDeepStrictEqual(originalStudy, project.study) && isDeepStrictEqual(row.study, originalStudy)) {
+          row.study = project.study;
+        }
+      });
+      if (!saved) throw serviceError('not_found', '项目不存在', 404);
+      project.messages = saved.messages;
+      project.study = saved.study;
       await this.store.saveTrace(runId, {
         trace_id: runId,
         run_id: runId,
@@ -724,8 +741,10 @@ export class ConversationService {
             if (latest?.message_id !== input.replaceMessageId || latest.content !== previousUser?.content) {
               throw serviceError("last_message_changed", "只能编辑最后一条消息，请刷新后重试。", 409);
             }
-            row.messages = row.messages.slice(0, row.messages.findIndex(message => message.message_id === input.replaceMessageId));
           }
+          // Recheck under the store's project lock before changing any history.
+          assertChatHistoryCapacity(row.messages, content, input.replaceMessageId, this.config);
+          if (input.replaceMessageId) row.messages = row.messages.slice(0, row.messages.findIndex(message => message.message_id === input.replaceMessageId));
           row.messages.push(userMessage);
         });
         if (!saved) throw serviceError("not_found", "项目不存在", 404);

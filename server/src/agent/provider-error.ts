@@ -17,6 +17,8 @@ export function providerErrorCode(error: unknown, fallback = "provider_request_f
 }
 
 export const FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  site_project_chat_round_limit: '此项目已达到聊天上限',
+  site_project_chat_size_limit: '此项目已达到聊天上限',
   site_model_pricing_unknown: "平台模型缺少可靠的费用估计，暂时无法在有限预算下调用，请联系管理员。",
   site_analysis_budget_exhausted: "今日全站分析额度已用完，请明天再试。已有分析结果仍可查看。",
   site_chat_budget_exhausted: "今日全站免费聊天额度已用完，请明天再试，也可以使用自己的 API Key 继续聊天。",

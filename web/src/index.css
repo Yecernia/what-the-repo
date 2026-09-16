@@ -1049,19 +1049,21 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
   --scrollbar-vertical-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2012%20100%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20fill%3D%22%238cca98%22%2F%3E%3C%2Fsvg%3E");
   --scrollbar-horizontal-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%2012%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%238cca98%22%2F%3E%3C%2Fsvg%3E");
 }
-* { scrollbar-width: thin; scrollbar-color: var(--fg-muted) transparent; }
+/* Do not match scrollbar pseudo-elements in the admin document: resetting their
+   paint alone can leave an invisible custom scrollbar instead of the native one. */
+:where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *) { scrollbar-width: thin; scrollbar-color: var(--fg-muted) transparent; }
 @supports selector(::-webkit-scrollbar) {
-  * { scrollbar-width: auto; scrollbar-color: auto; }
-  ::-webkit-scrollbar { width: 12px; height: 12px; background: transparent; }
-  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
-  ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
-  ::-webkit-scrollbar-thumb {
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *) { scrollbar-width: auto; scrollbar-color: auto; }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar { width: 12px; height: 12px; background: transparent; }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-track, :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-corner { background: transparent; }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb {
     min-width: 36px; min-height: 36px; border: 0; border-radius: 0;
     background: var(--scrollbar-vertical) center / 100% 100% no-repeat;
   }
-  ::-webkit-scrollbar-thumb:horizontal { background-image: var(--scrollbar-horizontal); }
-  ::-webkit-scrollbar-thumb:is(:hover, :active) { background-image: var(--scrollbar-vertical-active); }
-  ::-webkit-scrollbar-thumb:horizontal:is(:hover, :active) { background-image: var(--scrollbar-horizontal-active); }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:horizontal { background-image: var(--scrollbar-horizontal); }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:is(:hover, :active) { background-image: var(--scrollbar-vertical-active); }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:horizontal:is(:hover, :active) { background-image: var(--scrollbar-horizontal-active); }
 }
 
 @keyframes settings-scrim-in { from { opacity: 0; } to { opacity: 1; } }
@@ -1100,7 +1102,7 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 }
 .chat-toolbar {
   position: absolute; z-index: 8; top: 12px; left: 14px; right: 14px;
-  display: flex; align-items: center; justify-content: space-between; gap: 12px; pointer-events: none;
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px; pointer-events: none;
 }
 .chat-toolbar > * { pointer-events: auto; }
 .project-github-link {
@@ -1115,10 +1117,8 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .project-github-link .github-login-icon { width: 20px; height: 20px; }
 .project-github-link.compact { width: 44px; padding: 0; }
 .project-github-link.compact .project-github-label { display: none; }
-@container chat (max-width: 680px) {
-  .project-github-link { width: 44px; padding: 0; }
-  .project-github-label { display: none; }
-}
+.sidebar > .project-github-link { justify-content: flex-start; gap: 10px; margin: 2px 10px 0; padding: 0 12px; font-size: 16px; }
+.sidebar.collapsed > .project-github-link { width: auto; margin: 0 6px; padding: 0; justify-content: center; }
 .repository-peek {
   width: 188px; height: 44px; flex: 0 0 188px; display: grid;
   grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 8px;
@@ -1504,6 +1504,7 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
   .mobile-sidebar-open .sidebar { transform: translateX(0); visibility: visible; transition-delay: 0s; }
   .mobile-topbar { flex: none; min-height: 56px; padding: env(safe-area-inset-top) 12px 0; display: flex; align-items: center; justify-content: space-between; background: var(--chat-bg); }
   .mobile-topbar-start { display: flex; align-items: center; gap: 8px; }
+  .mobile-topbar-start > .project-github-link { margin-right: 12px; }
   .mobile-project-toggle { gap: 8px; font-family: var(--font-display); }
   .mobile-sidebar-backdrop { position: fixed; inset: 0; z-index: 39; border: 0; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity .28s var(--ease-out); }
   .mobile-sidebar-open .mobile-sidebar-backdrop { opacity: 1; pointer-events: auto; }

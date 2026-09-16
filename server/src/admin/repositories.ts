@@ -9,10 +9,21 @@ import { adminError } from './security.js';
 import type { ObjectInventory } from './storage.js';
 
 const repoOfProject = "lower(regexp_replace(regexp_replace(p.payload->'source'->>'value', '^https?://github.com/', '', 'i'), '(\\.git)?/?$', ''))";
+// Resolve the current leader before sorting/pagination; waiters cannot override it.
+// Terminal batch state must not be overwritten by mutable project progress.
 const batches = `WITH batches AS (
- SELECT u.repository_identity,u.update_id AS batch_id,u.status,u.created_at,u.updated_at,
-   u.completed_at,p.payload->'analysis' AS analysis,true AS participants_known
+ SELECT u.repository_identity,u.update_id AS batch_id,
+   CASE WHEN u.status IN ('queued','running') THEN COALESCE(execution.status,u.status) ELSE u.status END AS status,
+   u.created_at,
+   CASE WHEN u.status IN ('queued','running') THEN GREATEST(u.updated_at,execution.updated_at) ELSE u.updated_at END AS updated_at,
+   CASE WHEN u.status IN ('queued','running') THEN COALESCE(execution.completed_at,u.completed_at) ELSE u.completed_at END AS completed_at,
+   p.payload->'analysis' AS analysis,true AS participants_known
  FROM repository_analysis_updates u LEFT JOIN projects p ON p.project_id=u.leader_project_id
+ LEFT JOIN LATERAL (
+   SELECT j.status,j.updated_at,j.completed_at FROM analysis_jobs j
+   WHERE j.repository_update_id=u.update_id AND j.project_id=u.leader_project_id AND j.execution_role='leader'
+   ORDER BY CASE WHEN j.status IN ('running','queued') THEN 0 ELSE 1 END,j.created_at DESC,j.job_id DESC LIMIT 1
+ ) execution ON true
  UNION ALL
  SELECT ${repoOfProject},'job:'||j.job_id,j.status,j.created_at,j.updated_at,j.completed_at,
    p.payload->'analysis',false FROM analysis_jobs j JOIN projects p USING(project_id)
@@ -21,6 +32,12 @@ const batches = `WITH batches AS (
    AND p.payload->'source'->>'kind'='github'
 ), latest AS (SELECT DISTINCT ON (repository_identity) * FROM batches WHERE repository_identity IS NOT NULL
  ORDER BY repository_identity,CASE WHEN status IN ('running','queued') THEN 0 ELSE 1 END,created_at DESC,batch_id DESC)`;
+
+export function executionStage(status: string, stage: unknown): string {
+  if (status !== 'running') return status;
+  return typeof stage === 'string' && ['fetching','scanning','extracting','clustering','interpreting'].includes(stage)
+    ? stage : 'running';
+}
 
 function pageInfo(total: number, input: unknown) {
   const n = Number(input), pageSize = 25, pages = Math.max(1, Math.ceil(total / pageSize));
@@ -87,7 +104,7 @@ export class AdminRepositories {
       LIMIT $1 OFFSET $2`,[pagination.pageSize,(pagination.page-1)*pagination.pageSize]);
     const repositories = [];
     for (const row of result.rows) repositories.push({ ...row,
-      stage: row.status==='running' ? row.analysis?.stage ?? 'running' : row.status,
+      stage: executionStage(row.status, row.analysis?.stage),
       ...await this.users(row.repository_identity,'analysis',row.batch_id,2) });
     return { repositories, repositoryPagination: pagination };
   }
@@ -143,19 +160,20 @@ export class AdminRepositories {
     const tables = (await this.pool.query(`SELECT c.relname,pg_table_size(c.oid)::float8 AS data_bytes,
       pg_indexes_size(c.oid)::float8 AS index_bytes,
       array(SELECT a.attname::text FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped
-        AND a.attname IN ('public_snapshot_key','snapshot_id','analysis_snapshot_id','project_id','current_public_snapshot_key')) AS columns
+        AND a.attname IN ('public_snapshot_key','snapshot_id','analysis_snapshot_id','project_id','current_public_snapshot_key','directory_id')) AS columns
       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname=current_schema() AND c.relkind='r'`)).rows;
     const projectIds=[...new Set([...additionalProjects,...(await this.pool.query('SELECT project_id FROM project_public_snapshot_bindings WHERE public_snapshot_key=ANY($1::text[])',[keys])).rows.map(r=>String(r.project_id))])];
     const snapshotIds=(await this.pool.query(`SELECT analysis_snapshot_id FROM canonical_public_repository_snapshots WHERE public_snapshot_key=ANY($1::text[])
       UNION SELECT analysis_snapshot_id FROM project_snapshots WHERE project_id=ANY($2::text[])`,[keys,projectIds])).rows.map(r=>String(r.analysis_snapshot_id));
+    const directoryIds=(await this.pool.query('SELECT directory_id::text FROM snapshot_query_directories WHERE public_snapshot_key=ANY($1::text[])',[keys])).rows.map(row=>String(row.directory_id));
     let dataBytes=0,indexBytes=0;
     for(const t of tables) {
       if(!/^[a-z_]+$/.test(t.relname) || !t.columns.length) continue;
       const clauses:string[]=[],params:string[][]=[];
       for(const column of t.columns as string[]) {
-        params.push(column==='project_id'?projectIds:column==='snapshot_id'||column==='analysis_snapshot_id'?snapshotIds:keys);
-        clauses.push(`"${column}"=ANY($${params.length}::text[])`);
+        params.push(column==='directory_id'?directoryIds:column==='project_id'?projectIds:column==='snapshot_id'||column==='analysis_snapshot_id'?snapshotIds:keys);
+        clauses.push(`"${column}"=ANY($${params.length}::${column==='directory_id'?'bigint':'text'}[])`);
       }
       const r=(await this.pool.query(`SELECT count(*)::float8 AS total,
         count(*) FILTER(WHERE ${clauses.join(' OR ')})::float8 AS selected FROM "${t.relname}"`,params)).rows[0];

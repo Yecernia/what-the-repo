@@ -76,8 +76,12 @@ export function RepositoryUsers({ row, kind }: { row: AdminRow; kind: 'analysis'
 }
 
 export function AnalysisStatus({ row }: { row: AdminRow }) {
-  const status = String(row.status ?? ''), stage = String(row.stage ?? status);
+  const status = String(row.status ?? '');
+  const requestedStage = String(row.stage ?? status);
+  const stage = status === 'running'
+    ? (['fetching','scanning','extracting','clustering','interpreting'].includes(requestedStage) ? requestedStage : 'running')
+    : status;
   const active = status === 'running', failed = status === 'failed' || stage === 'failed';
-  const labels: Record<string,string> = { done:'已完成', succeeded:'已完成', completed:'已完成', failed:'失败', queued:'排队中', cancelled:'已取消', idle:'待开始', running:'正在分析', fetching:'拉取仓库', scanning:'扫描代码', extracting:'提取结构', clustering:'组织结构', interpreting:'分析解读' };
+  const labels: Record<string,string> = { done:'已完成', succeeded:'已完成', completed:'已完成', failed:'失败', queued:'排队中', cancelled:'已取消', idle:'待开始', running:'正在分析', fetching:'拉取仓库', scanning:'扫描代码', extracting:'提取结构', clustering:'组织结构', interpreting:'分析中' };
   return <span className="admin-analysis-status"><span className={'admin-status-dot ' + (failed ? 'is-failed' : active ? 'is-active' : status === 'queued' ? 'is-queued' : 'is-idle')} />{labels[stage] ?? stage}</span>;
 }

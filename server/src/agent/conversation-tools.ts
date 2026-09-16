@@ -420,6 +420,7 @@ export function createConversationTools(
           publicKey: context.project.analysis.canonical_snapshot_key,
           snapshotId: snapshot.snapshot_id,
           query: {
+            include_metadata: false,
             text: input.text,
             paths: input.paths,
             languages: input.languages,

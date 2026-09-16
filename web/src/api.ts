@@ -100,6 +100,8 @@ function publicErrorMessage(status: number, code: string | undefined, detail: un
 /** Bounded public codes; never render raw provider response text. */
 export function conversationErrorMessage(code: string): string | null {
   const labels: Record<string, string> = {
+    site_project_chat_round_limit: '此项目已达到聊天上限',
+    site_project_chat_size_limit: '此项目已达到聊天上限',
     platform_provider_balance_insufficient: "平台模型服务的上游账户余额不足，请联系管理员。",
   provider_balance_insufficient: '余额不足，请检查 API 配置。',
     provider_authentication_failed: 'API Key 无效，请检查 API 配置。',

@@ -15,7 +15,7 @@ function Import-LocalEnvironment {
     }
 
     $lineNumber = 0
-    foreach ($rawLine in Get-Content -LiteralPath $Path) {
+    foreach ($rawLine in Get-Content -LiteralPath $Path -Encoding UTF8) {
         $lineNumber += 1
         $line = $rawLine.Trim()
         if (-not $line -or $line.StartsWith('#')) {

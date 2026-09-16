@@ -1,0 +1,33 @@
+/* Overlay the divider: the initial 3:2 split gains no extra row or lost canvas pixels. */
+.workspace-body { position: relative; --workspace-stacked: 0; }
+.workspace-divider { display: none; }
+.workspace-divider-grip { display: none; pointer-events: none; }
+/* A fixed 360px minimum pushed controls below short phone canvases. */
+.workspace-architecture-panel .component-flow { position: relative; min-height: 0; flex: 1 1 0%; }
+@container (max-width: 780px) {
+  .workspace-body { --workspace-stacked: 1; }
+  .workspace-body.has-workspace-split > .workspace-details { overflow: hidden; border-top-color: transparent; }
+  .workspace-body.details-collapsed > .workspace-details { visibility: hidden; border-top-width: 0; }
+  .workspace-divider:not([hidden]) {
+    display: flex; align-items: center; justify-content: center; position: absolute; z-index: 8;
+    left: 0; right: 0;
+    height: 5px; transform: translateY(-100%); cursor: row-resize; touch-action: none; user-select: none;
+  }
+  .workspace-divider::after {
+    content: ''; position: absolute; inset: 2px 0; background: var(--border);
+    clip-path: polygon(0 20%, 0 70%, 22% 55%, 48% 85%, 74% 48%, 100% 65%, 100% 15%, 70% 35%, 40% 10%);
+    transition: inset .12s var(--ease-out), background .12s var(--ease-out);
+  }
+  .workspace-divider:hover::after, .workspace-divider.is-dragging::after, .workspace-divider:focus-visible::after { inset: 1px 0; background: var(--accent); }
+  .workspace-divider:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+  /* Keep the whole target inside the graph, without a clamped position or dead upward travel. */
+  .workspace-body[data-split-touch] > .workspace-divider:not([hidden]) {
+    width: 56px; height: 44px; left: 50%; right: auto; transform: translate(-50%, -100%);
+    align-items: flex-end; padding-bottom: 2px; color: var(--border-strong);
+  }
+  .workspace-body[data-split-touch] > .workspace-divider::after { display: none; }
+  .workspace-body[data-split-touch] .workspace-divider-grip { display: block; }
+  .workspace-body[data-split-touch] > .workspace-details { border-top-color: var(--border); }
+  .workspace-body[data-split-touch] > .workspace-divider:is(:hover, :focus-visible, .is-dragging) { color: var(--accent); }
+}
+.workspace-row-resizing, .workspace-row-resizing * { cursor: row-resize !important; user-select: none !important; }

@@ -15,6 +15,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Reject tracked files covered by ignore rules
+        shell: bash
+        run: |
+          tracked_ignored="$(git ls-files --cached --ignored --exclude-standard)"
+          if [ -n "$tracked_ignored" ]; then
+            printf 'Ignored files must not be tracked:\n%s\n' "$tracked_ignored"
+            exit 1
+          fi
       - run: node scripts/check-license-inventory.mjs
 
   server:
@@ -154,14 +162,68 @@ jobs:
           name: pi-runtime-probe
           path: out/pi-runtime-probe/report.json
 
-  final-quality:
+  runtime-config:
     runs-on: ubuntu-latest
-    needs: [license-inventory, server, medium-eval, web, web-gateway, web-e2e, pi-evolution]
     steps:
       - uses: actions/checkout@v4
-      - name: Record completed quality gates
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/test-runtime-config.mjs
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16.15-bookworm
+        env:
+          POSTGRES_USER: wtr_test
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: wtr_test_bootstrap
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wtr_test -d wtr_test_bootstrap"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      WTR_TEST_POSTGRES_URL: postgresql://wtr_test:test-only-password@127.0.0.1:5432/wtr_test_bootstrap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: server
+      - run: node scripts/test-postgres.mjs
+
+  runtime-compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [server, web, web-gateway, runtime-config]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify two API replicas and two analysis workers with test-only configuration
+        shell: pwsh
+        run: ./scripts/test-runtime-compose.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-compose-smoke-report
+          path: |
+            out/runtime-compose-smoke/**/report.json
+            out/runtime-compose-smoke/**/compose.log
+
+  final-quality:
+    runs-on: ubuntu-latest
+    needs: [license-inventory, server, medium-eval, web, web-gateway, web-e2e, pi-evolution, runtime-config, postgres-integration, runtime-compose-smoke]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record completed public source gates
         run: >-
-          node -e "const fs=require('fs');fs.mkdirSync('out/final-quality',{recursive:true});fs.writeFileSync('out/final-quality/report.json',JSON.stringify({schema_version:'typescript-final-quality-v1',passed:true,complete:true,completed_at:new Date().toISOString(),gates:['license-inventory','server','fixture-eval','conversation-eval','medium-eval','web','web-gateway','chromium-e2e','pi-evolution']},null,2)+'\n')"
+          node -e "const fs=require('fs');fs.mkdirSync('out/final-quality',{recursive:true});fs.writeFileSync('out/final-quality/report.json',JSON.stringify({schema_version:'typescript-final-quality-v1',scope:'public-engineering',passed:true,complete:true,completed_at:new Date().toISOString(),gates:['license-inventory','server','fixture-eval','conversation-eval','medium-eval','web','web-gateway','chromium-e2e','pi-evolution','runtime-config','postgres-integration','runtime-compose-smoke']},null,2)+'\n')"
       - uses: actions/upload-artifact@v4
         with:
           name: final-quality-report

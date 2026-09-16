@@ -9,6 +9,18 @@ afterEach(() => {
 });
 
 describe('streamed messages', () => {
+  it('project history limits preserve readable history and do not retry the stream', async () => {
+    expect(conversationErrorMessage('site_project_chat_round_limit')).toBe('此项目已达到聊天上限');
+    expect(conversationErrorMessage('site_project_chat_size_limit')).toBe('此项目已达到聊天上限');
+    setUiLanguage('en');
+    expect(conversationErrorMessage('site_project_chat_size_limit')).toBe('This project has reached its chat limit');
+    const fetchMock = vi.fn().mockResolvedValue(new Response('event: error\ndata: {"code":"site_project_chat_size_limit"}\n\n', {
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(apiClient.sendMessageStream('project', 'hello', null, () => undefined)).rejects.toMatchObject({ code: 'site_project_chat_size_limit' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it('daily business budgets say tomorrow; disabled services and upstream balances do not', () => {
     expect(conversationErrorMessage('site_analysis_budget_exhausted')).toBe('今日全站分析额度已用完，请明天再试。已有分析结果仍可查看。');
     expect(conversationErrorMessage('site_chat_budget_exhausted')).toContain('自己的 API Key');

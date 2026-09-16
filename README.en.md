@@ -70,9 +70,25 @@ The interface and learning content support Chinese and English. Initial analysis
 
 ## About this repository
 
-This is the **source code of the hosted what-the-repo Web product**: frontend, backend, repository analysis, agents, tests and application services. You do not need to clone this repository or install Docker to try the product online.
+This is the **source code of the hosted what-the-repo Web product**: frontend, backend, repository analysis, agents, tests and portable runtime templates. You do not need to clone this repository or install Docker to try the product online.
 
-To explore the implementation, contribute, or study deployment, see the [contribution guide](CONTRIBUTING.md). A separate login-free local edition or desktop client has not been released.
+To explore the implementation or contribute, see the [contribution guide](CONTRIBUTING.md). Code entry points and common commands are in [AGENTS.md](AGENTS.md). A separate login-free local edition or desktop client has not been released.
+
+## Development and independent deployment
+
+This is the same Web product, not a separate desktop or personal edition. Local development uses the entry in [AGENTS.md](AGENTS.md). For Linux containers, use Docker with Compose 2.24.4 or newer.
+
+Copy `.env.example` to an ignored `.secrets/runtime.env` and replace the database passwords, session/encryption secrets, OAuth application and model configuration with your own. For containers set `WHAT_THE_REPO_REDIS_URL=redis://redis:6379` and the OAuth callback to `<WHAT_THE_REPO_WEB_URL>/api/auth/github/callback` (locally, `http://127.0.0.1:5307/api/auth/github/callback`, not the internal API port). For a public instance set `NODE_ENV=production`, `WHAT_THE_REPO_WEB_URL` to your HTTPS origin, and register that matching callback in your own OAuth application. Optional COS, MCP, admin and search features can remain unconfigured.
+
+```sh
+docker compose --env-file .secrets/runtime.env -f compose.runtime.yaml up --build -d --wait
+```
+
+The composition initializes the database and starts PostgreSQL, Redis, API, analysis worker, retention scheduler and Web. Access Web on `127.0.0.1:5307`; API and database remain internal. On a server, terminate HTTPS at your own reverse proxy; a [placeholder Nginx template](infra/docker/public-edge.nginx.conf.template) is provided. Named volumes persist data; arrange and test your own off-host backups. Instance-specific ports, resource limits and networking belong in an ignored `compose.instance.yaml` passed with an additional `-f`.
+
+`--scale api=2 --scale analysis-worker=2` exercises the same service code with replicas; keep the scheduler singleton. Optional `--profile monitoring` requires your metrics token and Grafana credentials. `--profile evolution` requires its own model configuration and grants the trusted worker Docker access; it is not started by default. For file-based credentials and read-only service filesystems, add [compose.runtime-secrets.yaml](compose.runtime-secrets.yaml), populate its declared secret files under `WTR_SECRET_ROOT`, and ensure container users can read only their mounted files. This optional overlay does not generate credentials.
+
+PR verification includes [runtime configuration checks](scripts/test-runtime-config.mjs), [replica/failover smoke tests](scripts/test-runtime-compose.ps1) and [isolated PostgreSQL tests](scripts/test-postgres.mjs). These do not require the maintainer’s accounts or deployment files.
 
 ## Feedback and contributions
 

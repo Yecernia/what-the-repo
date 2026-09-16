@@ -73,7 +73,8 @@ export function MobileScrollbars() {
         if (discover) {
           discover = false;
           document.querySelectorAll<HTMLElement>(hosts).forEach(element => {
-            if (entries.has(element)) return;
+            // Admin screens and their body-level dialogs use browser-native scrollbars.
+            if (element.closest('.admin-console, .admin-code-dialog') || entries.has(element)) return;
             const layer = layerFor(element);
             const bars = [false, true].map(horizontal => {
               const svg = document.createElementNS(ns, 'svg');
@@ -98,7 +99,8 @@ export function MobileScrollbars() {
         const screenRight = screenLeft + (viewport?.width ?? window.innerWidth);
         const screenBottom = screenTop + (viewport?.height ?? window.innerHeight);
         for (const [element, bars] of entries) {
-          if (!element.isConnected) {
+          if (!element.isConnected || element.closest('.admin-console, .admin-code-dialog')) {
+            element.classList.remove('hand-scroll-native');
             bars.forEach(bar => bar.remove()); resize.unobserve(element); element.removeEventListener('scroll', schedule); entries.delete(element); continue;
           }
           const layer = bars[0].parentElement!;

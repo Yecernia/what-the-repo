@@ -70,9 +70,25 @@
 
 ## 这个仓库包含什么
 
-这里开源的是 **what-the-repo 在线 Web 产品的源码**，包括前端、后端、仓库分析、Agent、测试与服务实现。直接体验产品不需要下载本仓库，也不需要安装 Docker。
+这里开源的是 **what-the-repo 在线 Web 产品的源码**，包括前端、后端、仓库分析、Agent、测试与通用运行配置。直接体验产品不需要下载本仓库，也不需要安装 Docker。
 
-如果你想阅读实现、参与开发或研究部署方式，请看 [贡献指南](CONTRIBUTING.zh-CN.md)。目前没有单独发布免登录的本地版或桌面客户端。
+如果你想阅读实现或参与开发，请看 [贡献指南](CONTRIBUTING.zh-CN.md)。代码入口和常用命令见 [AGENTS.md](AGENTS.md)。目前没有单独发布免登录的本地版或桌面客户端。
+
+## 开发与独立部署
+
+运行的是同一套 Web 产品，不是独立的桌面版或个人版。本机开发入口见 [AGENTS.md](AGENTS.md)。容器运行需要 Docker、Linux 容器和 Docker Compose 2.24.4 或更新版本。
+
+将 `.env.example` 复制为被忽略的 `.secrets/runtime.env`，填写自己的数据库密码、会话与加密密钥、GitHub OAuth 应用及模型配置。容器模式设置 `WHAT_THE_REPO_REDIS_URL=redis://redis:6379`，OAuth 回调使用 `<WHAT_THE_REPO_WEB_URL>/api/auth/github/callback`（本机为 `http://127.0.0.1:5307/api/auth/github/callback`，不是内部 API 端口）。对外部署时设置 `NODE_ENV=production`、自己的 HTTPS `WHAT_THE_REPO_WEB_URL`，并在自己的 OAuth 应用中登记对应回调。COS、MCP、管理台和搜索等可选功能可以不配置。
+
+```sh
+docker compose --env-file .secrets/runtime.env -f compose.runtime.yaml up --build -d --wait
+```
+
+编排会初始化数据库并启动 PostgreSQL、Redis、API、分析 Worker、清理调度器和前端。Web 默认从 `127.0.0.1:5307` 访问，API 和数据库不直接对外开放。服务器需自行配置 HTTPS 反向代理，可参考[占位符 Nginx 模板](infra/docker/public-edge.nginx.conf.template)。数据保存在命名卷中，需自行安排和验证异机备份。实例专用端口、资源上限和网络设置放在被忽略的 `compose.instance.yaml`，通过额外的 `-f` 加载。
+
+可用 `--scale api=2 --scale analysis-worker=2` 验证同一服务代码的多副本行为，清理调度器保持单实例。`--profile monitoring` 需配置自己的指标 Token 和 Grafana 凭据；`--profile evolution` 需配置独立模型，并会给予受信任 Worker Docker 访问权限，默认不启动。需要文件密钥和只读服务文件系统时，可增加 [compose.runtime-secrets.yaml](compose.runtime-secrets.yaml)，在 `WTR_SECRET_ROOT` 下提供其中声明的文件，并确保容器用户能够读取其挂载文件；此可选配置不会生成凭据。
+
+PR 验证提供[运行配置检查](scripts/test-runtime-config.mjs)、[多副本与故障切换测试](scripts/test-runtime-compose.ps1)和[隔离 PostgreSQL 测试](scripts/test-postgres.mjs)，不依赖维护者的账号或部署文件。
 
 ## 反馈与贡献
 

@@ -2,8 +2,8 @@
 
 ## Scope of this inventory
 
-The checked-in inventory covers 765 unique npm name/version pairs from four
-lockfiles (973 lockfile locations, including optional and development packages).
+The checked-in inventory covers 794 unique npm name/version pairs from four
+lockfiles (1002 lockfile locations, including optional and development packages).
 The source snapshot does not vendor `node_modules`, research clones, language
 server installations, container images or native binaries.
 
@@ -11,8 +11,8 @@ When distributing third-party code or assets, preserve their copyright notices a
 
 ## Missing license materials
 
-All 765 packages have a verified license declaration from a lockfile, installed
-package manifest or exact-version npm metadata. 752 have a collected upstream
+All 794 packages have a verified license declaration from a lockfile, installed
+package manifest or exact-version npm metadata. 781 have a collected upstream
 license/notice. The following 13 records are marked
 `metadata-only-or-partial`:
 
@@ -46,14 +46,14 @@ and inventory the **actual artifact**, including embedded native dependencies.
 
 ## Containers and external processes
 
-The deployment configuration references the following images, programs and services. Check the third-party materials included in a distribution package separately from the npm inventory:
+Local development, the portable runtime, container builds and optional integrations use external components. Review the actual materials in any distribution separately from the npm inventory:
 
 | Component | Usage and license |
 | --- | --- |
 | Node.js, Debian/Alpine, Nginx, PostgreSQL, tini and Docker CLI | External image/OS/tool dependencies. Preserve their distributed copyright files and license inventory in any published image; npm license output does not cover OS packages. |
 | Redis 7.4 (`redis:7.4-alpine`) | External service image. This series uses **RSALv2 or SSPLv1**, not the older BSD license. Its terms are not replaced by what-the-repo MIT. See [Redis's version-specific license table](https://redis.io/legal/licenses/). |
 | Grafana (`grafana/grafana:13.1.0`) | Optional external monitoring image. Grafana OSS uses AGPLv3; plugins and image contents can have additional terms. See [Grafana licensing](https://grafana.com/licensing/). |
-| Prometheus, Alertmanager and k3s/k3d | External monitoring/cluster tooling; upstream Apache-2.0 projects. Inspect exact image contents before redistribution. |
+| Prometheus and Alertmanager | External monitoring tooling; upstream Apache-2.0 projects. Inspect exact image contents before redistribution. |
 | WAL-G `v3.0.9` | The PostgreSQL Dockerfile downloads its binary. Preserve [WAL-G's copyright notice](upstream/wal-g.txt) and [Apache-2.0](upstream/Apache-2.0.txt). Its compiled Go dependencies and OS packages require an actual-image inventory before publishing that image. |
 | Language servers | Configured external executables, not bundled in this source repository. Each installed implementation/version has its own terms. |
 | OAuth, model providers, search APIs and object storage | External services governed by their service terms. Their credentials are not included in the source release. |

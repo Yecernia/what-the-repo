@@ -51,7 +51,7 @@ function Import-LocalEnvironment {
     }
 
     $lineNumber = 0
-    foreach ($rawLine in Get-Content -LiteralPath $Path) {
+    foreach ($rawLine in Get-Content -LiteralPath $Path -Encoding UTF8) {
         $lineNumber += 1
         $line = $rawLine.Trim()
         if (-not $line -or $line.StartsWith('#')) {
@@ -95,7 +95,7 @@ function Get-ConfiguredSecret {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "$fileName does not point to a readable file."
         }
-        return (Get-Content -LiteralPath $path -Raw).Trim()
+        return (Get-Content -LiteralPath $path -Raw -Encoding UTF8).Trim()
     }
     if ($null -eq $direct) {
         return ''

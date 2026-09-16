@@ -10,6 +10,9 @@ const publicEdge = readFileSync(resolve(root, "infra/docker/public-edge.nginx.co
 const gitAttributes = readFileSync(resolve(root, ".gitattributes"), "utf8");
 
 const required = [
+  [publicEdge, "server_name __DOMAIN__;", "generic TLS domain placeholder"],
+  [publicEdge, "proxy_pass http://__APP_UPSTREAM__;", "generic edge upstream"],
+  [publicEdge, "proxy_buffering off;", "edge SSE streaming"],
   [headers, "frame-ancestors 'none'", "CSP frame policy"],
   [headers, 'X-Content-Type-Options "nosniff"', "MIME sniffing protection"],
   [headers, 'Referrer-Policy "strict-origin-when-cross-origin"', "referrer policy"],
@@ -34,13 +37,6 @@ const required = [
   [nginx, 'Cache-Control "public, max-age=31536000, immutable"', "hashed asset cache"],
   [nginx, 'Cache-Control "no-cache"', "HTML shell cache"],
   [dockerfile, "COPY infra/docker/nginx-security-headers.conf /etc/nginx/nginx-security-headers.conf", "runtime header file"],
-  [publicEdge, "server_name __DOMAIN__;", "public domain template"],
-  [publicEdge, "server_name __DOMAIN__ www.__DOMAIN__;", "public domain and www HTTP names"],
-  [publicEdge, "server_name www.__DOMAIN__;", "www HTTPS redirect name"],
-  [publicEdge, "return 301 https://__DOMAIN__$request_uri;", "canonical HTTPS redirect"],
-  [publicEdge, "proxy_pass http://__APP_UPSTREAM__;", "edge upstream placeholder"],
-  [publicEdge, "Strict-Transport-Security", "HTTPS transport policy"],
-  [publicEdge, "/.well-known/acme-challenge/", "ACME challenge path"],
   [gitAttributes, "*.sh text eol=lf", "Shell archive line endings"],
   [gitAttributes, "infra/postgres/wtr-* text eol=lf", "PostgreSQL shell archive line endings"],
 ];

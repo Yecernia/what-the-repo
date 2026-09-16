@@ -16,8 +16,18 @@ test("PostgreSQL snapshot queries apply the shared expand_hops semantics", async
     encryptionSecret: "postgres-query-test-secret",
   });
   const originalPool = store.pool;
+  let released = false;
+  const commands: string[] = [];
   const pool = {
+    async connect() { return { query: pool.query, release() { released = true; } }; },
     async query(sql: string) {
+      commands.push(sql);
+      if (sql.startsWith("BEGIN") || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [], rowCount: 0 };
+      if (sql.startsWith("WITH RECURSIVE")) return { rows: [
+        { kind: "node", local_key: "component:a", item_key: "0:component:a", score: 11 },
+        { kind: "node", local_key: "component:b", item_key: "0:component:b", score: 1 },
+        { kind: "edge", local_key: "semantic:edge-a-b", item_key: "1:semantic:edge-a-b", score: 1 },
+      ], rowCount: 3 };
       if (sql.includes("FROM snapshot_query_directories")) {
         return { rows: [{ snapshot_id: snapshotId, directory_digest: "digest", ready_at: new Date() }], rowCount: 1 };
       }
@@ -104,6 +114,9 @@ test("PostgreSQL snapshot queries apply the shared expand_hops semantics", async
     assert.equal(result.edges.length, 1);
     assert.equal(result.edges[0]?.source_node_key, "component:a");
     assert.equal(result.edges[0]?.target_node_key, "component:b");
+    assert.equal(commands[0], "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    assert.equal(commands.at(-1), "COMMIT");
+    assert.equal(released, true);
   } finally {
     await originalPool.end();
     await rm(root, { recursive: true, force: true });

@@ -157,6 +157,8 @@ export interface SnapshotQueryDirectory {
 }
 
 export interface SnapshotQueryInput {
+  /** Internal callers can omit context metadata they never expose to the model/API. */
+  include_metadata?: boolean;
   text?: string;
   paths?: string[];
   languages?: string[];
@@ -197,36 +199,7 @@ export interface SnapshotQueryResult {
 
 type QueryNodeItem = { key: string; row: SnapshotQueryNodeRow; kind: "node"; relevance: number };
 type QueryEdgeItem = { key: string; row: SnapshotQueryEdgeRow; kind: "edge"; relevance: number };
-type QueryItem = QueryNodeItem | QueryEdgeItem;
-
-const RELEVANCE_CACHE_LIMIT = 32;
-const relevanceOrderCache = new Map<string, string[]>();
-
-function relevanceCacheKey(
-  directory: SnapshotQueryDirectory,
-  input: SnapshotQueryInput,
-  nodes: SnapshotQueryNodeRow[],
-  edges: SnapshotQueryEdgeRow[],
-): string {
-  return createHash("sha256").update(JSON.stringify({
-    directory: directory.digest,
-    text: input.text?.trim().toLowerCase() ?? "",
-    scope: input.scope ?? "",
-    personalized_entity_ids: [...(input.personalized_entity_ids ?? [])].sort(),
-    nodes: nodes.map((row) => row.node_key).sort(),
-    edges: edges.map((row) => row.edge_key).sort(),
-  })).digest("hex");
-}
-
-function rememberRelevanceOrder(key: string, items: QueryItem[]): void {
-  relevanceOrderCache.delete(key);
-  relevanceOrderCache.set(key, items.map((item) => item.key));
-  while (relevanceOrderCache.size > RELEVANCE_CACHE_LIMIT) {
-    const oldest = relevanceOrderCache.keys().next().value;
-    if (typeof oldest !== "string") break;
-    relevanceOrderCache.delete(oldest);
-  }
-}
+export type QueryItem = QueryNodeItem | QueryEdgeItem;
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -542,7 +515,7 @@ export function buildSnapshotQueryDirectory(
   };
 }
 
-function cursorKey(value: string | null | undefined): string | null {
+export function cursorKey(value: string | null | undefined): string | null {
   if (!value) return null;
   try {
     const decoded = Buffer.from(value, "base64url").toString("utf8");
@@ -556,7 +529,7 @@ export function encodeSnapshotQueryCursor(key: string): string {
   return Buffer.from(`k:${key}`, "utf8").toString("base64url");
 }
 
-function nodeMatches(row: SnapshotQueryNodeRow, input: SnapshotQueryInput): boolean {
+export function nodeMatches(row: SnapshotQueryNodeRow, input: SnapshotQueryInput): boolean {
   const textValue = input.text?.trim().toLowerCase() ?? "";
   const paths = input.paths ?? [];
   const languages = (input.languages ?? []).map((item) => item.toLowerCase());
@@ -609,7 +582,9 @@ function scopedNodeKeys(directory: SnapshotQueryDirectory, input: SnapshotQueryI
     result.clear();
     for (const id of ids) {
       let current = byId.get(id) ?? directory.nodes.find((row) => row.node_key === id);
-      while (current) {
+      const visited = new Set<string>();
+      while (current && !visited.has(current.node_key)) {
+        visited.add(current.node_key);
         result.add(current.node_key);
         current = current.parent_entity_id ? byId.get(current.parent_entity_id) : undefined;
       }
@@ -618,7 +593,7 @@ function scopedNodeKeys(directory: SnapshotQueryDirectory, input: SnapshotQueryI
   return result;
 }
 
-function edgeMatches(row: SnapshotQueryEdgeRow, input: SnapshotQueryInput): boolean {
+export function edgeMatches(row: SnapshotQueryEdgeRow, input: SnapshotQueryInput): boolean {
   const textValue = input.text?.trim().toLowerCase() ?? "";
   const kinds = new Set(input.relation_kinds ?? []);
   const searchable = [row.edge_key, row.edge_id, row.relation_kind, row.label, row.description, row.source_node_key, row.target_node_key]
@@ -627,12 +602,10 @@ function edgeMatches(row: SnapshotQueryEdgeRow, input: SnapshotQueryInput): bool
     && (!kinds.size || kinds.has(row.relation_kind));
 }
 
-export function querySnapshotQueryDirectory(
+export function selectSnapshotQueryCandidates(
   directory: SnapshotQueryDirectory,
   input: SnapshotQueryInput,
-): SnapshotQueryResult {
-  const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 20)));
-  const after = cursorKey(input.cursor);
+): { nodes: SnapshotQueryNodeRow[]; edges: SnapshotQueryEdgeRow[] } {
   let nodes = directory.nodes.filter((row) => nodeMatches(row, input));
   const scoped = scopedNodeKeys(directory, input);
   if (scoped) nodes = nodes.filter((row) => scoped.has(row.node_key));
@@ -658,38 +631,36 @@ export function querySnapshotQueryDirectory(
   }
   const expand = Math.max(0, Math.min(2, Math.floor(input.expand_hops ?? 0)));
   for (let hop = 0; hop < expand; hop += 1) {
+    const frontier = new Set(matchedNodeKeys);
     for (const edge of directory.edges) {
-      if (!matchedNodeKeys.has(edge.source_node_key) && !matchedNodeKeys.has(edge.target_node_key)) continue;
+      if (!frontier.has(edge.source_node_key) && !frontier.has(edge.target_node_key)) continue;
       matchedNodeKeys.add(edge.source_node_key);
       matchedNodeKeys.add(edge.target_node_key);
     }
     nodes = directory.nodes.filter((row) => matchedNodeKeys.has(row.node_key));
     edges = directory.edges.filter((row) => matchedNodeKeys.has(row.source_node_key) || matchedNodeKeys.has(row.target_node_key));
   }
-  const byKey = new Map<string, QueryItem>();
+  return { nodes, edges };
+}
+
+export function rankSnapshotQueryCandidates(nodes: SnapshotQueryNodeRow[], edges: SnapshotQueryEdgeRow[], input: SnapshotQueryInput): QueryItem[] {
   const candidates: QueryItem[] = [
     ...nodes.map((row) => ({ key: `0:${row.node_key}`, row, kind: "node" as const, relevance: scoreNode(row, input).score })),
     ...edges.map((row) => ({ key: `1:${row.edge_key}`, row, kind: "edge" as const, relevance: scoreEdge(row, input).score })),
   ];
-  for (const item of candidates) byKey.set(item.key, item);
-  const relevanceKey = relevanceCacheKey(directory, input, nodes, edges);
-  const cachedOrder = relevanceOrderCache.get(relevanceKey);
-  let combined: QueryItem[];
-  if (cachedOrder) {
-    relevanceOrderCache.delete(relevanceKey);
-    relevanceOrderCache.set(relevanceKey, cachedOrder);
-    combined = cachedOrder.map((key) => byKey.get(key)).filter((item): item is QueryItem => Boolean(item));
-  } else {
-    combined = candidates.sort((left, right) => {
+  return candidates.sort((left, right) => {
       if (input.scope === "subtree" || input.scope === "ancestors") {
         const leftDepth = left.kind === "node" ? left.row.depth : Number.MAX_SAFE_INTEGER;
         const rightDepth = right.kind === "node" ? right.row.depth : Number.MAX_SAFE_INTEGER;
         if (leftDepth !== rightDepth) return leftDepth - rightDepth;
       }
-      return right.relevance - left.relevance || left.key.localeCompare(right.key);
+      return right.relevance - left.relevance || Buffer.compare(Buffer.from(left.key), Buffer.from(right.key));
     });
-    rememberRelevanceOrder(relevanceKey, combined);
-  }
+}
+
+export function pageSnapshotQueryCandidates(directory: SnapshotQueryDirectory, input: SnapshotQueryInput, combined: QueryItem[]): SnapshotQueryResult {
+  const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 20)));
+  const after = cursorKey(input.cursor);
   const afterIndex = after ? combined.findIndex((item) => item.key === after) : -1;
   const filtered = afterIndex >= 0 ? combined.slice(afterIndex + 1) : combined;
   const budget = input.evidence_budget_tokens !== undefined
@@ -747,11 +718,11 @@ export function querySnapshotQueryDirectory(
     edges: pageEdges,
     evidence: returnedEvidence,
     evidence_links: directory.evidence_links.filter((row) => evidenceIds.has(row.evidence_id)),
-    layers: directory.layers,
-    value_points: directory.value_points,
-    memberships: directory.memberships ?? [],
-    projections: directory.projections ?? [],
-    aggregates: directory.aggregates ?? [],
+    layers: input.include_metadata === false ? [] : directory.layers,
+    value_points: input.include_metadata === false ? [] : directory.value_points,
+    memberships: input.include_metadata === false ? [] : directory.memberships ?? [],
+    projections: input.include_metadata === false ? [] : directory.projections ?? [],
+    aggregates: input.include_metadata === false ? [] : directory.aggregates ?? [],
     next_cursor: hasMore && page.length ? encodeSnapshotQueryCursor(page[page.length - 1]!.key) : null,
     truncated: hasMore,
     estimated_tokens: estimateQueryTokens({ nodes: pageNodes, edges: pageEdges, evidence: returnedEvidence }),
@@ -759,4 +730,9 @@ export function querySnapshotQueryDirectory(
     returned_evidence_count: returnedEvidence.length,
     truncation_reason: truncationReason,
   };
+}
+
+export function querySnapshotQueryDirectory(directory: SnapshotQueryDirectory, input: SnapshotQueryInput): SnapshotQueryResult {
+  const { nodes, edges } = selectSnapshotQueryCandidates(directory, input);
+  return pageSnapshotQueryCandidates(directory, input, rankSnapshotQueryCandidates(nodes, edges, input));
 }

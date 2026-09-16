@@ -178,6 +178,7 @@ export interface StudyState {
 }
 
 export interface Project {
+  chat_limits?: { max_rounds: number; max_content_bytes: number };
   display_language?: string;
   project_id: string;
   title: string;

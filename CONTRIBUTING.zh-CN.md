@@ -4,6 +4,7 @@
 
 [返回产品介绍](README.md)
 
+欢迎改进 what-the-repo 的代码和文档。代码入口、开发准备和常用命令见 [AGENTS.md](AGENTS.md)。
 
 ## 修改与提交 PR
 
@@ -15,6 +16,12 @@
 GitHub 会在 PR 创建后运行 CI（自动检查）。检查通过后，由维护者审核并合并。PR 检查使用测试配置，不连接正式服务或付费模型，也不部署应用。
 
 提交标题使用 Conventional Commits 格式，例如 `fix: restore cancelled analysis jobs`、`feat: add an evidence filter`、`docs: explain local setup` 或 `ci: update quality checks`。维护者可在压缩合并时统一最终标题。
+
+## 集成验证
+
+安装 server 依赖后，将 `WTR_TEST_POSTGRES_URL` 指向本机一次性 PostgreSQL 数据库 `wtr_test_bootstrap`，运行 `node scripts/test-postgres.mjs`。脚本编译测试，为每份 PostgreSQL 测试创建独立临时数据库，不读取你的本机凭据文件；覆盖持久化及已提交的并发、调度集成测试。
+
+`node scripts/test-runtime-config.mjs` 只检查完整通用编排，不启动服务。`pwsh -File scripts/test-runtime-compose.ps1` 启动独立的双 API、双 Worker 测试环境，检查故障切换后清理自身容器和数据卷；使用测试凭据和无效模型地址。需要 Docker，不需要维护者的生产环境。
 
 ## 依赖与来源声明
 

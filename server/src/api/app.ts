@@ -48,6 +48,7 @@ import type { ProviderUsageBudget } from "../agent/provider-budget.js";
 import type { ProductStore } from "../persistence/store.js";
 import type { AnalysisCoordinator } from "../analysis/coordinator.js";
 import { ConversationService } from "../services/conversation-service.js";
+import { DEFAULT_CHAT_MAX_ROUNDS, DEFAULT_CHAT_MAX_CONTENT_BYTES } from '../services/chat-history-limits.js';
 import { RepositoryService } from "../services/repository-service.js";
 import { ProductServiceError } from "../services/errors.js";
 import { registerMcpRoutes } from "../mcp/server.js";
@@ -334,8 +335,17 @@ function sanitizeProjectForResponse(project: Project): Project {
   return result;
 }
 
-function projectDetail(project: Project, job: AnalysisJob | null, snapshotAvailable: boolean): Record<string, unknown> {
-  return { project: sanitizeProjectForResponse(project), snapshot_available: snapshotAvailable, analysis_job: jobResponse(job), analysis_error_code: null };
+function projectDetail(project: Project, job: AnalysisJob | null, snapshotAvailable: boolean, config: ServerConfig): Record<string, unknown> {
+  return {
+    project: {
+      ...sanitizeProjectForResponse(project),
+      chat_limits: {
+        max_rounds: config.chatMaxRounds ?? DEFAULT_CHAT_MAX_ROUNDS,
+        max_content_bytes: config.chatMaxContentBytes ?? DEFAULT_CHAT_MAX_CONTENT_BYTES,
+      },
+    },
+    snapshot_available: snapshotAvailable, analysis_job: jobResponse(job), analysis_error_code: null,
+  };
 }
 
 async function profileWithSummary(
@@ -1251,14 +1261,14 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       title: textField(body, "title", 200),
       displayLanguage,
     });
-    return reply.code(201).send(projectDetail(project, job, false));
+    return reply.code(201).send(projectDetail(project, job, false, config));
   });
   app.get("/api/projects/:projectId", async (request) => {
     const owner = await requiredOwner(request, store, config);
     const { projectId } = request.params as { projectId: string };
     const project = await repository.refreshMigrationNotice(owner.owner_id, projectId);
     if (!project) throw httpError(404, "项目不存在");
-    return projectDetail(project, await store.latestJob(projectId), Boolean(await store.loadSnapshot(projectId)));
+    return projectDetail(project, await store.latestJob(projectId), Boolean(await store.loadSnapshot(projectId)), config);
   });
   app.patch("/api/projects/:projectId", async (request: RequestWithBody) => {
     const owner = await requiredOwner(request, store, config);

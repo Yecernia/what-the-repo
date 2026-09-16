@@ -1,4 +1,5 @@
 import { InlineMessageEditor } from './InlineMessageEditor';
+import { chatHistoryUsage, chatCapacityReached, isChatCapacityError } from './chat-capacity';
 import { useTextareaAutosize } from './useTextareaAutosize';
 import { usePhoneDevice } from './usePhoneDevice';
 import { detailedAnalysisStages } from './analysis-stage-catalog';
@@ -8,7 +9,7 @@ import { UserRound, Plus, Settings, Send, Sun, Moon, X, LogOut, ChevronRight, Ch
 import { t, getUiLanguage, setUiLanguage, useUiLanguage, translateFor, type UiLanguage } from './ui-language';
 import { LanguagePicker } from './LanguagePicker';
 import { providerVariantLabel } from './provider-variant-label';
-import { Fragment, memo, useCallback, useMemo, useState, useEffect, useLayoutEffect, useId, useRef } from 'react';
+import { lazy, Suspense, Fragment, memo, useCallback, useMemo, useState, useEffect, useLayoutEffect, useId, useRef } from 'react';
 import { useSmoothChatScroll } from './useSmoothChatScroll';
 import { useMediaQuery } from './useMediaQuery';
 import { LastMessageActions, ConversationErrorNotice } from './ConversationFeedback';
@@ -30,11 +31,10 @@ import ThumbsUp from '@sketchyicons/react/icons/thumbs-up';
 import Trash2 from '@sketchyicons/react/icons/trash-2';
 import { apiClient, userFacingError, conversationErrorMessage } from './api';
 import { hasLanguageGlyph, LanguageGlyph, languageFromPath } from './language-glyph';
-import {
-  RepositoryThumbnail,
-  RepositoryWorkspace,
-  type TopicRequest,
-} from './RepositoryWorkspace';
+import { RepositoryThumbnail } from './RepositoryThumbnail';
+import { LazyLoadBoundary } from './LazyLoadBoundary';
+import type { TopicRequest } from './RepositoryWorkspace';
+const RepositoryWorkspace = lazy(() => import('./RepositoryWorkspace').then(module => ({ default: module.RepositoryWorkspace })));
 import type {
   ConversationSelection,
   AnalysisState,
@@ -1686,10 +1686,10 @@ function MsgBubble({
   messageRef?: (node: HTMLDivElement | null) => void;
   onEdit?: () => void;
   onResend?: () => void;
-  edit?: { onCancel: () => void; onSubmit: (content: string) => void };
+  edit?: { content?: string; onCancel: () => void; onSubmit: (content: string) => void };
 }) {
   if (edit) return <div className="msg user editing" ref={messageRef}><div className="msg-content">
-    <InlineMessageEditor content={msg.content} onCancel={edit.onCancel} onSubmit={edit.onSubmit} />
+    <InlineMessageEditor content={edit.content ?? msg.content} onCancel={edit.onCancel} onSubmit={edit.onSubmit} />
   </div></div>;
   const action = msg.learning_action;
   const evidenceFiles = msg.evidence.filter((item, index, all) => all.findIndex(candidate => (
@@ -2042,8 +2042,11 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [input, setInput] = useState('');
+  const historyUsage = useMemo(() => chatHistoryUsage(project?.messages ?? []), [project?.messages]);
+  const newMessageBlocked = chatCapacityReached(historyUsage, project?.chat_limits, input);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [conversationError, setConversationError] = useState<{ projectId: string; text: string } | null>(null);
+  const [rejectedEdit, setRejectedEdit] = useState<{ projectId: string; messageId: string; content: string } | null>(null);
+  const [conversationError, setConversationError] = useState<{ projectId: string; text: string; capacity?: boolean } | null>(null);
   const [sending, setSending] = useState(false);
   const [conversationActivity, setConversationActivity] = useState<RuntimeProgressEvent[]>([]);
   const [conversationStartedAt, setConversationStartedAt] = useState<number | null>(null);
@@ -2597,7 +2600,7 @@ export default function App() {
     setShowNew(false);
   }
 
-  useEffect(() => { setEditingMessageId(null); }, [activeId]);
+  useEffect(() => { setEditingMessageId(null); setRejectedEdit(null); }, [activeId]);
 
   async function sendMessage(replacement?: { messageId: string; content: string }) {
     const text = (replacement?.content ?? input).trim();
@@ -2615,6 +2618,11 @@ export default function App() {
     const retryRunId = targetId?.startsWith('client:') ? project.messages.find(message => message.message_id === targetId)?.trace_id ?? undefined : undefined;
     const targetIndex = targetId ? project.messages.findIndex(message => message.message_id === targetId) : -1;
     const originalMessages = project.messages;
+    const retainedUsage = targetIndex >= 0 ? chatHistoryUsage(originalMessages.slice(0, targetIndex)) : historyUsage;
+    if (chatCapacityReached(retainedUsage, project.chat_limits, text)) {
+      setConversationError({ projectId, text: t('此项目已达到聊天上限'), capacity: true });
+      return;
+    }
     const optimisticId = `client:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     const pendingToken = `conversation:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     const startedAt = Date.now();
@@ -2632,6 +2640,7 @@ export default function App() {
     };
     if (!replacement) setInput('');
     setEditingMessageId(null);
+    setRejectedEdit(null);
     setConversationError(null);
     setSending(true);
     setConversationRunId(null);
@@ -2754,8 +2763,18 @@ export default function App() {
       }
     } catch (e: unknown) {
       const failedPending = pendingConversationsRef.current.get(projectId);
+      const streamErrorCode = typeof e === 'object'
+        && e !== null
+        && 'code' in e
+        && typeof e.code === 'string'
+        ? e.code
+        : null;
       if (pendingConversationsRef.current.get(projectId)?.token === pendingToken) {
         pendingConversationsRef.current.delete(projectId);
+      }
+      if (isChatCapacityError(streamErrorCode)) {
+        const cached = projectCacheRef.current.get(projectId);
+        if (cached) projectCacheRef.current.set(projectId, { ...cached, messages: originalMessages });
       }
       if (
         activeIdRef.current !== projectId
@@ -2774,12 +2793,18 @@ export default function App() {
         }
         return;
       }
-      const streamErrorCode = typeof e === 'object'
-        && e !== null
-        && 'code' in e
-        && typeof e.code === 'string'
-        ? e.code
-        : null;
+      if (isChatCapacityError(streamErrorCode)) {
+        setConversationError({ projectId, text: t('此项目已达到聊天上限'), capacity: true });
+        setProject(current => current?.project_id === projectId ? { ...current, messages: originalMessages } : current);
+        if (replacement) {
+          setRejectedEdit({ projectId, messageId: replacement.messageId, content: replacement.content });
+          setEditingMessageId(replacement.messageId);
+        } else {
+          setInput(current => current || text);
+        }
+        void loadProject(projectId);
+        return;
+      }
       const cancelled = streamErrorCode === 'cancelled'
         || (e instanceof Error && e.message === t("本轮回答已取消。"));
       const visibleError = userFacingError(e, t('服务端错误，请稍后重试。'));
@@ -3146,6 +3171,10 @@ export default function App() {
             aria-label={t('展开项目栏')} aria-expanded={mobileSidebarOpen} aria-controls="project-sidebar"
             onClick={() => setMobileSidebarOpen(true)}><PanelLeftOpen size={22} /></button>
           <ProjectGitHubLink compact />
+          <button type="button" className="btn btn-icon" aria-label={t('新建项目')}
+            onClick={() => setShowNew(true)}>
+            <Plus className="sketch-action-icon sketch-action-plus" size={20} strokeWidth={2.35} />
+          </button>
         </div>
         {project && snapshot && <button type="button" className="btn mobile-project-toggle"
           aria-label={repositoryOpen ? t('返回聊天') : t('展开项目视图')}
@@ -3181,6 +3210,7 @@ export default function App() {
             </button>
           </div>
         </div>
+        {!isMobile && <ProjectGitHubLink compact={sidebarCollapsed} />}
         <button className="sidebar-new-project" aria-label={t("新建项目")}
           data-tooltip={sidebarCollapsed ? t("新建项目") : undefined} onClick={() => setShowNew(true)}>
           <Plus className="sketch-action-icon sketch-action-plus" size={20} strokeWidth={2.35} />
@@ -3328,9 +3358,6 @@ export default function App() {
 
       {/* Main */}
       <div className="main" ref={mainRef} inert={isMobile && mobileSidebarOpen}>
-        {!project && !isMobile && <div className="chat-toolbar">
-          <ProjectGitHubLink />
-        </div>}
         {!project ? (
           activeId && loadError ? (
             <div className="empty-state">
@@ -3354,7 +3381,6 @@ export default function App() {
             <aside className="teaching-pane" inert={singlePageProject && repositoryOpen}>
               {!isMobile && (
                 <div className="chat-toolbar">
-                  <ProjectGitHubLink />
                   {snapshot && <button className={`repository-peek${repositoryOpen ? ' active' : ''}`}
                     type="button"
                     aria-label={repositoryOpen ? t("收起项目视图") : t("展开项目视图")}
@@ -3448,8 +3474,10 @@ export default function App() {
                       )}
                       <MsgBubble msg={msg}
                         onEdit={!sending && msg.role === 'user' && !project.messages.slice(index + 1).some(message => message.role === 'user')
-                          ? () => setEditingMessageId(msg.message_id) : undefined}
+                          ? () => { setRejectedEdit(null); setEditingMessageId(msg.message_id); } : undefined}
                         edit={editingMessageId === msg.message_id && !sending ? {
+                          content: rejectedEdit?.projectId === project.project_id && rejectedEdit.messageId === msg.message_id
+                            ? rejectedEdit.content : undefined,
                           onCancel: () => setEditingMessageId(null),
                           onSubmit: content => { void sendMessage({ messageId: msg.message_id, content }); },
                         } : undefined}
@@ -3477,7 +3505,9 @@ export default function App() {
                   <ConversationActivity events={conversationActivity}
                     startedAt={conversationStartedAt} />
                 ) : null}
-                {conversationError?.projectId === project.project_id && !sending && <ConversationErrorNotice text={conversationError.text} />}
+                {!sending && (conversationError?.projectId === project.project_id
+                  ? <ConversationErrorNotice text={conversationError.capacity ? t('此项目已达到聊天上限') : conversationError.text} />
+                  : newMessageBlocked && <ConversationErrorNotice text={t('此项目已达到聊天上限')} />)}
                 </div>
               </div>
               <div className="composer-wrap">
@@ -3486,7 +3516,10 @@ export default function App() {
                   <textarea className="composer-textarea" rows={1} enterKeyHint="enter"
                     ref={composerRef}
                     placeholder={t("尽情提问")}
-                     value={input} onChange={e => setInput(e.target.value)}
+                     value={input} onChange={e => {
+                       setInput(e.target.value);
+                       setConversationError(current => current?.projectId === project.project_id && current.capacity ? null : current);
+                     }}
                     onKeyDown={handleKeyDown} />
                   <div className="composer-controls"
                     onPointerDownCapture={event => {
@@ -3542,6 +3575,7 @@ export default function App() {
                           project?.project_id !== activeId
                           || !input.trim()
                           || !selectedModelReady
+                          || newMessageBlocked
                         }>
                         <Send className="sketch-action-icon sketch-action-send" size={30} />
                       </button>
@@ -3574,13 +3608,18 @@ export default function App() {
                   <button className="btn" onClick={() => activeId && loadProject(activeId)}>{t("重试")}</button>
                 </div>
               ) : snapshot ? (
-                (!singlePageProject || repositoryOpen) && <RepositoryWorkspace
+                (!singlePageProject || repositoryOpen) && <LazyLoadBoundary beforeReload={() => {
+                  if (input.trim() || editingMessageId || pendingConversationsRef.current.size > 0) {
+                    return window.confirm(t('重新加载会中断当前回答并清除未发送的内容。请先复制保存草稿。仍要继续吗？'));
+                  }
+                  return true;
+                }}><Suspense fallback={<div className="workspace-loading"><div className="spinner" /></div>}><RepositoryWorkspace
                   snapshot={snapshot}
                   project={project}
                   onOpenEvidence={openEvidence}
                   onQueueTopic={queueTopic}
                   onSelectionChange={setConversationSelection}
-                />
+                /></Suspense></LazyLoadBoundary>
               ) : (
                 <div className="workspace-loading">
                   {isAnalyzing && <div className="spinner" />}

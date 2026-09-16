@@ -858,7 +858,7 @@ export const PROVIDER_PRESETS: readonly ProviderPresetDefinition[] = [
 
 // These definitions remain readable so old settings can be shown and deleted,
 // but they are deliberately excluded from the public provider picker and from
-// model resolution. Retired endpoint definitions are kept only for compatibility.
+// model resolution. Use the supported presets or a custom endpoint instead.
 const RETIRED_PROVIDER_PRESETS: readonly ProviderPresetDefinition[] = [
   synthetic("qwen-token-plan", "qwen", "通义千问", "已停用的境外 Token Plan", "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", { icon: "qwen" }),
   synthetic("qwen-token-plan-individual", "qwen", "通义千问", "已停用的境外个人版", "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", { icon: "qwen" }),

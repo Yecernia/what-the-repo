@@ -1,0 +1,136 @@
+/* Product colors mirrored for the independent admin theme; guarded by admin-palette.test.ts. */
+:root, :root[data-admin-theme='light'] {
+  --admin-color-scheme: light;
+  --admin-paper: #f5efe3;
+  --admin-ink: #30332b;
+  --admin-line: #d4cbb8;
+  --admin-accent: #39815a;
+  --admin-surface: #fff9ed;
+  --admin-input: #fffbf1;
+  --admin-sidebar: #e9e2d3;
+  --admin-hover: #e8eadf;
+  --admin-active: #e1ecd9;
+  --admin-active-ink: #2c6847;
+  --admin-primary: #386e4c;
+  --admin-primary-ink: #fffef6;
+  --admin-primary-hover: #2b5b3d;
+  --admin-muted: #727365;
+  --admin-link: #39815a;
+  --admin-focus: rgba(57,129,90,.26);
+  --admin-subtle-line: #d4cbb8;
+  --admin-empty-surface: rgba(64,65,49,.035);
+  --admin-chart-guest: #b57614;
+  --admin-success-dot: #3e8e57;
+  --admin-success-ring: rgba(62, 142, 87, .12);
+  --admin-danger: #d0503a;
+  --admin-danger-line: #d0503a;
+  --admin-danger-surface: rgba(208, 80, 58, .10);
+  --admin-warning-dot: #b57614;
+  --admin-warning-ring: rgba(181, 118, 20, .12);
+  --admin-warning-surface: rgba(181, 118, 20, .12);
+  --admin-warning-ink: #b57614;
+  --admin-warning-line: #b57614;
+  --admin-notice-surface: rgba(62, 142, 87, .12);
+  --admin-notice-ink: #3e8e57;
+  --admin-notice-line: #3e8e57;
+  --admin-code-surface: #eee6d7;
+  --admin-code-ink: #30332b;
+  --admin-code-comment: #818271;
+  --admin-code-keyword: #9b3f84;
+  --admin-code-string: #a15c20;
+  --admin-code-number: #176f76;
+  --admin-code-title: #315fb4;
+  --admin-code-built-in: #7a4ca0;
+  --admin-code-meta: #806f21;
+  --admin-code-muted: #929284;
+  --admin-diff-add: rgba(62, 142, 87, .12);
+  --admin-diff-remove: rgba(208, 80, 58, .10);
+  --admin-diff-hunk: rgba(77, 120, 201, .14);
+  --admin-code-header: #f8f1e5;
+  --admin-backdrop: rgba(38, 35, 26, .32);
+  --admin-shadow-color: rgba(65,65,42,.11);
+  --admin-diff-add-gutter: color-mix(in srgb, var(--admin-success-dot) 22%, var(--admin-code-surface));
+  --admin-diff-remove-gutter: color-mix(in srgb, var(--admin-danger) 22%, var(--admin-code-surface));
+}
+:root[data-admin-theme='dark'] {
+  --admin-color-scheme: dark;
+  --admin-paper: #26281f;
+  --admin-ink: #e9eadc;
+  --admin-line: #474c3e;
+  --admin-accent: #8cca98;
+  --admin-surface: #303329;
+  --admin-input: #2c3025;
+  --admin-sidebar: #20231c;
+  --admin-hover: #38402f;
+  --admin-active: #3c4c33;
+  --admin-active-ink: #6db980;
+  --admin-primary: #91c99b;
+  --admin-primary-ink: #213023;
+  --admin-primary-hover: #a9d9b1;
+  --admin-muted: #b3b8a3;
+  --admin-link: #8cca98;
+  --admin-focus: rgba(140,202,152,.30);
+  --admin-subtle-line: #474c3e;
+  --admin-empty-surface: rgba(233,234,220,.045);
+  --admin-chart-guest: #e0a43c;
+  --admin-success-dot: #7ec98f;
+  --admin-success-ring: rgba(126, 201, 143, .16);
+  --admin-danger: #e0745c;
+  --admin-danger-line: #e0745c;
+  --admin-danger-surface: rgba(224, 116, 92, .14);
+  --admin-warning-dot: #e0a43c;
+  --admin-warning-ring: rgba(224, 164, 60, .15);
+  --admin-warning-surface: rgba(224, 164, 60, .15);
+  --admin-warning-ink: #e0a43c;
+  --admin-warning-line: #e0a43c;
+  --admin-notice-surface: rgba(126, 201, 143, .16);
+  --admin-notice-ink: #7ec98f;
+  --admin-notice-line: #7ec98f;
+  --admin-code-surface: #20231b;
+  --admin-code-ink: #e9eadc;
+  --admin-code-comment: #8e977e;
+  --admin-code-keyword: #e58ad5;
+  --admin-code-string: #ddb77a;
+  --admin-code-number: #79c6c9;
+  --admin-code-title: #8eb8ff;
+  --admin-code-built-in: #c5a1e5;
+  --admin-code-meta: #d1c06a;
+  --admin-code-muted: #8c947f;
+  --admin-diff-add: rgba(126, 201, 143, .16);
+  --admin-diff-remove: rgba(224, 116, 92, .14);
+  --admin-diff-hunk: rgba(120, 167, 255, .18);
+  --admin-code-header: #282b22;
+  --admin-backdrop: rgba(0, 0, 0, .55);
+  --admin-shadow-color: rgba(0, 0, 0, .34);
+  --admin-diff-add-gutter: color-mix(in srgb, var(--admin-success-dot) 22%, var(--admin-code-surface));
+  --admin-diff-remove-gutter: color-mix(in srgb, var(--admin-danger) 22%, var(--admin-code-surface));
+}
+
+/* The shared bootstrap sets an inline product scheme; override it only inside admin. */
+:root[data-admin-theme] { color-scheme: var(--admin-color-scheme) !important; }
+.admin-console, .admin-code-dialog { color-scheme: var(--admin-color-scheme); }
+body:has(.admin-console) { color: var(--admin-ink); }
+.admin-console a, .admin-code-dialog a { color: var(--admin-accent); }
+.admin-console ::selection, .admin-code-dialog ::selection {
+  background: var(--admin-active, #dce5d8); color: var(--admin-ink);
+}
+:root[data-admin-theme] .app-tooltip {
+  background: var(--admin-surface, #fffefa); color: var(--admin-ink);
+  border-color: var(--admin-line); box-shadow: 0 4px 16px var(--admin-shadow-color);
+}
+.admin-header-actions, .admin-login-header {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.admin-header-actions { margin-left: auto; }
+.admin-login-header { justify-content: space-between; }
+.admin-theme-toggle { white-space: nowrap; flex-shrink: 0; }
+.admin-console .admin-theme-toggle[aria-checked='true'] {
+  background: var(--admin-active, #dce5d8); color: var(--admin-active-ink, #234633);
+  border-color: var(--admin-accent);
+}
+.admin-console input::placeholder, .admin-console textarea::placeholder { color: var(--admin-muted, #7b8377); }
+@media (max-width: 700px) {
+  .admin-header { flex-wrap: wrap; gap: 12px; }
+  .admin-header-actions { gap: 8px; }
+  .admin-console .admin-theme-toggle, .admin-console .admin-refresh { min-height: 44px; }
+}

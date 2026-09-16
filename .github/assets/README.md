@@ -8,7 +8,7 @@ The wordmark uses JasonHandwriting6p outlines under [SIL OFL 1.1](../../web/publ
 
 ## Product screenshots
 
-Product screenshots illustrate the Web interface.
+Product UI examples studying [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness). Both README languages use these Chinese examples.
 
 - `dsh-learning.jpg`: a four-step learning route and an understanding check from its first explanation.
 - `dsh-component.jpg`: the session task-list component selected in the task orchestration layer, highlighting its connections and fading unrelated nodes.

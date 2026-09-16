@@ -57,7 +57,7 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
   const client = {
     async query(sql: string, values: unknown[] = []) {
       queries.push({ sql: sql.replace(/\s+/gu, " ").trim(), values });
-      return { rows: [], rowCount: 1 };
+      return { rows: sql.includes("RETURNING directory_id") ? [{ directory_id: "1" }] : [], rowCount: 1 };
     },
     release() { released = true; },
   };
@@ -226,7 +226,7 @@ test("PostgreSQL stores and reloads large analysis payload chunks", async () => 
   const client = {
     async query(sql: string, values: unknown[] = []) {
       queries.push({ sql: sql.replace(/\s+/gu, " ").trim(), values });
-      return { rows: [], rowCount: 1 };
+      return { rows: sql.includes("RETURNING directory_id") ? [{ directory_id: "1" }] : [], rowCount: 1 };
     },
     release() {},
   };

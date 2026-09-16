@@ -1,4 +1,4 @@
-import { useState, type ComponentType, type ReactNode } from 'react';
+import { useState, type ComponentProps, type ComponentType, type ReactNode } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Edge, Node } from '@xyflow/react';
@@ -13,12 +13,14 @@ import {
 } from './component-flow';
 import type { Project, Snapshot } from './types';
 import { setUiLanguage } from './ui-language';
+import * as languageGlyph from './language-glyph';
+import { SPLIT_SNAP_DURATION_MS } from './useWorkspaceSplit';
 
 vi.mock('@xyflow/react', () => ({
   Background: () => null,
   BackgroundVariant: { Dots: 'dots' },
-  Controls: () => null,
-  ControlButton: () => null,
+  Controls: ({ children }: { children?: ReactNode }) => <div data-testid="graph-controls">{children}</div>,
+  ControlButton: (props: ComponentProps<'button'>) => <button {...props} />,
   Handle: () => null,
   MarkerType: { ArrowClosed: 'arrowclosed' },
   MiniMap: () => null,
@@ -31,10 +33,12 @@ vi.mock('@xyflow/react', () => ({
     onNodeMouseLeave,
     onEdgeClick,
     nodeTypes,
+    ariaLabelConfig,
     children,
   }: {
     nodes: Node[];
     edges: Edge[];
+    ariaLabelConfig?: Record<string, string>;
     onNodeClick?: (event: unknown, node: Node) => void;
     onNodeMouseEnter?: (event: unknown, node: Node) => void;
     onNodeMouseLeave?: (event: unknown, node: Node) => void;
@@ -42,7 +46,7 @@ vi.mock('@xyflow/react', () => ({
     nodeTypes: Record<string, ComponentType<{ data: Node['data'] }>>;
     children?: ReactNode;
   }) => (
-    <div data-testid="mock-flow" style={{ visibility: 'visible' }}>
+    <div data-testid="mock-flow" data-control-labels={JSON.stringify(ariaLabelConfig)} style={{ visibility: 'visible' }}>
       {nodes.map(node => {
         if (node.type === 'group') {
           const Group = nodeTypes.group;
@@ -1326,4 +1330,67 @@ describe('component graph contract', () => {
       label: '入口调用领域服务',
     });
   });
+});
+
+it('keeps only the minimap extension and restores via the divider without remounting content', () => {
+  // Drive the animation explicitly so worker contention cannot expire a wall-clock wait.
+  let now = 0, nextFrame = 0;
+  const frames = new Map<number, FrameRequestCallback>();
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const animation = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => { frames.set(++nextFrame, callback); return nextFrame; });
+  const cancellation = vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(id => { frames.delete(id); });
+  const original = window.getComputedStyle;
+  const styles = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
+    const result = original(element, pseudo);
+    if (element.classList.contains('workspace-body')) result.setProperty('--workspace-stacked', '1');
+    return result;
+  });
+  const bounds = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ x:0, y:0, left:0, top:0, right:600, bottom:1000, width:600, height:1000, toJSON: () => ({}) });
+  const view = render(<RepositoryWorkspace snapshot={snapshot} project={project}
+    onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+  try {
+    const graph = screen.getByTestId('mock-flow'), details = screen.getByTestId('component-details');
+    // JSDOM does not evaluate @container visibility; assert the mounted control/state, not a browser layout.
+    const bar = view.container.querySelector<HTMLDivElement>('.workspace-divider')!;
+    expect(view.container.querySelector('.workspace-body')).toHaveClass('has-workspace-split');
+    expect(bar).not.toHaveAttribute('hidden');
+    const controls = screen.getByTestId('graph-controls');
+    expect(controls.lastElementChild).toHaveAttribute('aria-label', '小地图');
+    expect(screen.queryByRole('button', { name: '恢复初始上下比例' })).not.toBeInTheDocument();
+    const evidenceRenders = vi.spyOn(languageGlyph, 'languageFromPath');
+    fireEvent.keyDown(bar, { key: 'End' });
+    act(() => {
+      now = SPLIT_SNAP_DURATION_MS;
+      const pending = [...frames.values()]; frames.clear();
+      pending.forEach(callback => callback(now));
+    });
+    expect(bar).toHaveAttribute('aria-valuenow', '100');
+    expect(details.parentElement).toHaveAttribute('inert');
+    expect(details.parentElement).toHaveAttribute('aria-hidden', 'true');
+    fireEvent.keyDown(bar, { key: 'Home' });
+    expect(evidenceRenders).not.toHaveBeenCalled();
+    evidenceRenders.mockRestore();
+    expect(bar).toHaveAttribute('aria-valuenow', '60');
+    expect(details.parentElement).not.toHaveAttribute('inert');
+    expect(screen.getByTestId('mock-flow')).toBe(graph);
+    expect(screen.getByTestId('component-details')).toBe(details);
+  } finally {
+    view.unmount(); styles.mockRestore(); bounds.mockRestore();
+    animation.mockRestore(); cancellation.mockRestore(); clock.mockRestore();
+  }
+});
+it('updates built-in graph control labels and memoized details with the interface language', () => {
+  const view = render(<RepositoryWorkspace snapshot={snapshot} project={project}
+    onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+  const labels = () => JSON.parse(screen.getByTestId('mock-flow').getAttribute('data-control-labels')!);
+  try {
+    expect(labels()).toMatchObject({ 'controls.zoomIn.ariaLabel': '放大', 'controls.zoomOut.ariaLabel': '缩小', 'controls.fitView.ariaLabel': '适应视图' });
+    expect(screen.getByTestId('component-details')).toHaveTextContent('相关代码');
+    act(() => setUiLanguage('en'));
+    expect(labels()).toMatchObject({ 'controls.zoomIn.ariaLabel': 'Zoom in', 'controls.zoomOut.ariaLabel': 'Zoom out', 'controls.fitView.ariaLabel': 'Fit view' });
+    expect(screen.getByTestId('component-details')).not.toHaveTextContent('相关代码');
+    act(() => setUiLanguage('zh-CN'));
+    expect(labels()['controls.zoomIn.ariaLabel']).toBe('放大');
+    expect(screen.getByTestId('component-details')).toHaveTextContent('相关代码');
+  } finally { view.unmount(); act(() => setUiLanguage('zh-CN')); }
 });

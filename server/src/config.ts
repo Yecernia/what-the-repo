@@ -55,6 +55,9 @@ export interface ServerConfig {
   databaseConnectionTimeoutMs?: number;
   /** Maximum time a new conversation waits to acquire its Session lock. */
   sessionLockWaitTimeoutMs?: number;
+  /** Per-project admission limits; an answer already in progress is retained. */
+  chatMaxRounds?: number;
+  chatMaxContentBytes?: number;
   cosBucket?: string | null;
   cosRegion?: string | null;
   cosSecretId?: string | null;
@@ -233,6 +236,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     databaseIdleTimeoutMs: positiveInt(env.WHAT_THE_REPO_DB_IDLE_TIMEOUT_MS, 30_000),
     databaseConnectionTimeoutMs: positiveInt(env.WHAT_THE_REPO_DB_CONNECTION_TIMEOUT_MS, 10_000),
     sessionLockWaitTimeoutMs: positiveInt(env.WHAT_THE_REPO_SESSION_LOCK_WAIT_TIMEOUT_MS, 10 * 60_000),
+    chatMaxRounds: positiveInt(env.WHAT_THE_REPO_CHAT_MAX_ROUNDS, 10_000),
+    chatMaxContentBytes: positiveInt(env.WHAT_THE_REPO_CHAT_MAX_CONTENT_BYTES, 100 * 1024 * 1024),
     cosBucket: optionalSecret(env.WHAT_THE_REPO_COS_BUCKET),
     cosRegion: optionalSecret(env.WHAT_THE_REPO_COS_REGION),
     cosSecretId: secretValue(

@@ -2,6 +2,18 @@
 import { detailedAnalysisStages } from './analysis-stage-catalog';
 
 export const englishMessages: Record<string, string> = {
+  "适应视图": "Fit view",
+  "缩小": "Zoom out",
+  "放大": "Zoom in",
+  "图形操作": "Graph controls",
+  '恢复初始上下比例': 'Restore initial split',
+  '调整架构图与详情高度': 'Resize architecture and details',
+  '架构图 {0}%，详情 {1}%': 'Architecture {0}%, details {1}%',
+  '界面加载失败': 'Could not load this view',
+  '请检查网络连接后重新加载页面。': 'Check your connection, then reload the page.',
+  '重新加载页面': 'Reload page',
+  '重新加载会中断当前回答并清除未发送的内容。请先复制保存草稿。仍要继续吗？': 'Reloading will interrupt the current reply and clear unsent content. Copy your drafts first. Continue?',
+  '此项目已达到聊天上限': 'This project has reached its chat limit',
   '平台模型缺少可靠的费用估计，暂时无法在有限预算下调用，请联系管理员。': 'This platform model has no reliable cost estimate and cannot run under a finite budget. Please contact the administrator.',
   '今日全站分析额度已用完，请明天再试。已有分析结果仍可查看。': 'Today’s site-wide analysis budget is exhausted. Please try again tomorrow. Existing results remain available.',
   '今日全站免费聊天额度已用完，请明天再试，也可以使用自己的 API Key 继续聊天。': 'Today’s site-wide free chat budget is exhausted. Please try again tomorrow, or continue chatting with your own API key.',

@@ -26,3 +26,17 @@ it('shows two names, then opens all users in a dialog',async()=>{
   expect(within(dialog).getByLabelText('在线')).toBeTruthy();
   fireEvent.click(within(dialog).getByRole('button',{name:'关闭'}));expect(screen.queryByRole('dialog')).toBeNull();
 });
+
+it.each(['idle','queued','done','failed',undefined])('running execution overrides outdated project stage %s',stage=>{
+  render(<AnalysisStatus row={{status:'running',stage}}/>);
+  expect(screen.getByText('正在分析')).toBeTruthy();
+  expect(screen.queryByText('排队中')).toBeNull();
+});
+it.each([['queued','排队中'],['succeeded','已完成'],['failed','失败'],['cancelled','已取消']])('execution state %s is not overridden by project progress',(status,label)=>{
+  render(<AnalysisStatus row={{status,stage:'interpreting'}}/>);
+  expect(screen.getByText(label)).toBeTruthy();
+});
+it('running execution retains a current analysis phase',()=>{
+  render(<AnalysisStatus row={{status:'running',stage:'interpreting'}}/>);
+  expect(screen.getByText('分析中')).toBeTruthy();
+});

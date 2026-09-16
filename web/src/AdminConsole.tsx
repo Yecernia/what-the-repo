@@ -20,6 +20,9 @@ import {
   storagePolicyPayload,
 } from './admin-storage-units';
 import './admin.css';
+import { useAdminTheme } from './admin-theme';
+import { AdminThemeToggle } from './AdminThemeToggle';
+import { AdminServiceMonitoring } from './AdminServiceMonitoring';
 import { AdminCode, AdminDiffButton } from './AdminCode';
 import { AdminModal, UserIdentity, Pagination, RepositoryName, RepositoryUsers, AnalysisStatus } from './AdminRepositoryViews';
 
@@ -160,6 +163,7 @@ function Details({
 }
 
 export default function AdminConsole() {
+  const { theme, toggle } = useAdminTheme();
   const [auth, setAuth] = useState<Auth | null>(null),
     [page, setPageValue] = useState<Page>('overview'),
     [userPage, setUserPage] = useState(1),
@@ -265,9 +269,12 @@ export default function AdminConsole() {
   if (!auth?.authenticated)
     return (
       <div className="admin-console admin-login">
+        <header className="admin-login-header">
         <a className="admin-wordmark" href="/">
           what-the-repo<span>管理台</span>
         </a>
+        <AdminThemeToggle theme={theme} toggle={toggle} />
+        </header>
         <main className="admin-login-panel">
           <ShieldCheck size={34} />
           <h1>管理员登录</h1>
@@ -431,6 +438,8 @@ export default function AdminConsole() {
             <span className="admin-eyebrow">WHAT-THE-REPO / ADMIN</span>
             <h1>{pages.find((p) => p[0] === page)?.[1]}</h1>
           </div>
+          <div className="admin-header-actions">
+          <AdminThemeToggle theme={theme} toggle={toggle} />
           <button
             className="admin-refresh"
             disabled={busy}
@@ -439,6 +448,7 @@ export default function AdminConsole() {
             <RefreshCw size={17} />
             刷新
           </button>
+          </div>
         </header>
         {auth.isolatedPreview && (
           <div className="admin-notice">
@@ -534,7 +544,7 @@ function Overview({ data }: { data: AdminRow }) {
       </p>
       <div className="admin-stat-grid">
         {[
-          ['服务健康', health.database ? '正常' : '异常', 'API 与数据库'],
+          ['接口与数据库', health.database ? '可用' : '异常', '当前接口响应与数据库连接检查'],
           [
             '近 90 秒在线',
             Number(online.github) + Number(online.guest),
@@ -557,13 +567,13 @@ function Overview({ data }: { data: AdminRow }) {
         ))}
       </div>
       <p className="admin-muted admin-online-note" title="相同身份多标签页只计一次；手机后台停止心跳；访客按浏览器身份近似统计，不等于真实人数。">在线：近 90 秒有前台心跳的去重身份 <span aria-label="在线统计说明">ⓘ</span></p>
-      {rows(data.observations).some(r => !r.fresh) && <p className="admin-monitor-warning">部分服务的监控上报已过期，可展开下方状态查看。</p>}
+      <AdminServiceMonitoring observations={rows(data.observations)} observedAt={String(data.observedAt ?? '')} />
       <AdminAudienceCharts
         audience={record(data.audience)}
         history={rows(data.audienceHistory) as unknown as AudienceSample[]}
         observedAt={String(data.observedAt)}
       />
-      <details className="admin-monitor-details"><summary>运行参数与监控上报状态</summary>
+      <details className="admin-monitor-details"><summary>查看部署运行参数</summary>
         <Card title="运行参数">
           <p className="admin-muted">由部署配置调整。</p>
           <Table
@@ -577,36 +587,22 @@ function Overview({ data }: { data: AdminRow }) {
             ]}
           />
         </Card>
-      <Card title="监控上报状态">
-        <p className="admin-muted">
-          各个服务定期报告运行情况。超过 45 秒未收到报告会标记过期，表示监控数据可能不再可靠，并不直接等于服务宕机。
-        </p>
-        <Table
-          data={rows(data.observations)}
-          columns={[
-            ['role', '服务'],
-            ['observed_at', '采集时间', (v) => time(v)],
-            ['fresh', '状态', (v) => (v ? '有效' : '已过期')],
-            ['payload', '指标', (v) => <Details value={v} />],
-          ]}
-        />
-      </Card>
       </details>
       <Card title="预算与错误">
         <p>
-          已有失败分析任务 {text(jobs.failed)} 项。日预算采用北京时间自然日。
+          已有失败分析任务 {text(jobs.failed)} 项。日预算采用北京时间自然日。自进化单任务按任务累计，明细见“预算”页。
         </p>
         <Table
           data={rows(data.budgets)}
           columns={[
             ['key', '业务', (v) => budgetNames[String(v)]],
-            ['limit', '限额', (v) => (v === null ? '不设限' : money(v))],
-            ['used', '已用', money],
-            ['reserved', '预留', money],
+            ['limit', '限额', (v, r) => (v === null ? '不设限' : money(v) + (r.key === 'evolution_task' && v !== undefined ? ' / 任务' : ''))],
+            ['used', '已用', (v, r) => r.key === 'evolution_task' ? '按任务查看' : money(v)],
+            ['reserved', '预留', (v, r) => r.key === 'evolution_task' ? '按任务查看' : money(v)],
             [
               'remaining',
               '剩余',
-              (v, r) => (r.limit === null ? '不设限' : money(v)),
+              (v, r) => (r.limit === null ? '不设限' : r.key === 'evolution_task' ? '按任务查看' : money(v)),
             ],
           ]}
         />

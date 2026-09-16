@@ -19,6 +19,119 @@ import type {
 import { clearSnapshotCache } from './snapshot-cache';
 import { getUiLanguage, setUiLanguage, UI_LANGUAGE_STORAGE_KEY } from './ui-language';
 
+describe('project chat capacity', () => {
+  const lastUser: Message = { message_id: 'capacity-user', role: 'user', content: '原问题',
+    created_at: '2026-09-15T00:00:00Z', evidence: [], model: null, usage: null, latency_ms: null, error: null, placeholder: false };
+  const answer: Message = { ...lastUser, message_id: 'capacity-answer', role: 'assistant', content: '原回答' };
+
+  it('shows a persistent limit notice and blocks new sends, while allowing last-turn retry', async () => {
+    let saved = project({ messages: [lastUser, answer], chat_limits: { max_rounds: 1, max_content_bytes: 1000 } });
+    vi.mocked(apiClient.getProject).mockImplementation(async () => detail(saved, null, true));
+    vi.mocked(apiClient.sendMessageStream).mockImplementation(async (_id, _content, _selection, _progress, _review, replaceId) => {
+      expect(replaceId).toBe(lastUser.message_id);
+      const updated = { ...answer, content: '重新回答' };
+      saved = { ...saved, messages: [lastUser, updated] };
+      return { user_message: lastUser, assistant_message: updated, teaching_phase: 'orienting', validation_errors: [], tools_used: [], state_changed: false };
+    });
+    const view = render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('此项目已达到聊天上限');
+    const composer = screen.getByPlaceholderText('尽情提问');
+    await userEvent.type(composer, '新问题{enter}');
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: '重新发送' }));
+    expect(await screen.findByText('重新回答')).toBeVisible();
+    expect(composer).toHaveValue('新问题');
+    view.unmount();
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('此项目已达到聊天上限');
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
+  });
+
+  it.each(['site_project_chat_round_limit', 'site_project_chat_size_limit'])('restores the draft and removes unsaved bubbles after %s', async code => {
+    let saved = project({ chat_limits: { max_rounds: 1, max_content_bytes: 1000 } });
+    vi.mocked(apiClient.getProject).mockImplementation(async () => detail(saved, null, true));
+    vi.mocked(apiClient.sendMessageStream).mockImplementation(async () => {
+      saved = { ...saved, messages: [lastUser, answer] }; // Another tab used the last slot.
+      throw Object.assign(new Error('capacity'), { code });
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    const composer = screen.getByPlaceholderText('尽情提问');
+    await userEvent.type(composer, '未保存的问题');
+    await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('此项目已达到聊天上限');
+    expect(composer).toHaveValue('未保存的问题');
+    expect(await screen.findByText('原回答')).toBeVisible();
+    expect(document.querySelectorAll('.msg.user')).toHaveLength(1);
+    expect(screen.queryByText('回答失败')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
+  });
+
+  it('re-enables sending when a draft is shortened below the UTF-8 byte limit', async () => {
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ chat_limits: { max_rounds: 10, max_content_bytes: 7 } }), null, true));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    const composer = screen.getByPlaceholderText('尽情提问');
+    await userEvent.type(composer, '中文啊');
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
+    expect(screen.getByRole('alert')).toHaveTextContent('此项目已达到聊天上限');
+    await userEvent.type(composer, '{backspace}');
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+  });
+
+  it('restores a rejected inline edit without changing saved messages or the separate composer draft', async () => {
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [lastUser, answer],
+      chat_limits: { max_rounds: 1, max_content_bytes: 1000 } }), null, true));
+    vi.mocked(apiClient.sendMessageStream).mockRejectedValue(Object.assign(new Error('capacity'), { code: 'site_project_chat_size_limit' }));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await userEvent.type(screen.getByPlaceholderText('尽情提问'), '独立草稿');
+    await userEvent.click(screen.getByRole('button', { name: '编辑' }));
+    const editor = screen.getByRole('textbox', { name: '编辑最后一条消息' });
+    await userEvent.clear(editor);
+    await userEvent.type(editor, '修改后的内容');
+    await userEvent.click(screen.getByRole('button', { name: '发送编辑后的消息' }));
+    await waitFor(() => expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('textbox', { name: '编辑最后一条消息' })).toHaveValue('修改后的内容');
+    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('独立草稿');
+    expect(screen.getByText('原回答')).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: /^取消$/ }));
+    expect(screen.getByText('原问题')).toBeVisible();
+    expect(screen.queryByText('回答失败')).not.toBeInTheDocument();
+  });
+
+  it('keeps an oversized edit open without requesting a model, and reports an actual retry failure at capacity', async () => {
+    let saved = project({ messages: [lastUser, answer], chat_limits: { max_rounds: 1, max_content_bytes: 20 } });
+    vi.mocked(apiClient.getProject).mockImplementation(async () => detail(saved, null, true));
+    vi.mocked(apiClient.sendMessageStream).mockImplementation(async () => {
+      const failed = { ...answer, content: '', error: 'message_failed' };
+      saved = { ...saved, messages: [lastUser, failed] };
+      return { user_message: lastUser, assistant_message: failed, teaching_phase: 'orienting',
+        validation_errors: [], tools_used: [], state_changed: false,
+        error: { code: 'provider_rate_limited', message: '上游请求过多，请稍后重试。' } };
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await userEvent.click(screen.getByRole('button', { name: '编辑' }));
+    const editor = screen.getByRole('textbox', { name: '编辑最后一条消息' });
+    await userEvent.clear(editor);
+    await userEvent.type(editor, '超出容量限制的修改内容');
+    await userEvent.click(screen.getByRole('button', { name: '发送编辑后的消息' }));
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+    expect(editor).toHaveValue('超出容量限制的修改内容');
+    expect(screen.getByText('原回答')).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: /^取消$/ }));
+    await userEvent.click(screen.getByRole('button', { name: '重新发送' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('上游请求过多，请稍后重试。');
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
+  });
+});
+
 it('replaces the last turn after failure and edit, without persisting the bottom notice', async () => {
   const user: Message = { message_id: 'last-user', role: 'user', content: '原问题',
     created_at: '2026-09-09T10:00:00Z', evidence: [], model: null, usage: null, latency_ms: null, error: null, placeholder: false };
@@ -540,10 +653,10 @@ describe('public compliance', () => {
     expect(screen.queryByLabelText('网站备案信息')).not.toBeInTheDocument();
   });
   it('links the configured ICP record to the MIIT filing site', async () => {
-    vi.stubEnv('VITE_ICP_RECORD', '示例备案号');
+    vi.stubEnv('VITE_ICP_RECORD', '蜀ICP备2000000000号-1');
     render(<App />);
 
-    const record = await screen.findByRole('link', { name: '示例备案号' });
+    const record = await screen.findByRole('link', { name: '蜀ICP备2000000000号-1' });
     expect(record).toHaveAttribute('href', 'https://beian.miit.gov.cn/');
   });
 });
@@ -845,7 +958,7 @@ describe('App project state synchronization', () => {
       await userEvent.click(screen.getByRole('button', { name: '展开项目视图' }));
       expect(document.querySelector('.repository-pane')).toHaveClass('open');
       expect(document.querySelector('.teaching-pane')).toHaveAttribute('inert');
-      expect(screen.getByTestId('repository-workspace')).toBeInTheDocument();
+      expect(await screen.findByTestId('repository-workspace')).toBeInTheDocument();
       await userEvent.click(screen.getByRole('button', { name: '返回聊天' }));
       expect(screen.queryByTestId('repository-workspace')).not.toBeInTheDocument();
       expect(document.querySelector('.teaching-pane')).not.toHaveAttribute('inert');

@@ -20,6 +20,57 @@ import type { ServerConfig } from "../config.js";
 import type { PiAgentRunOptions, PiModelRuntime, PiRunFinalization, PiRunResult } from "./types.js";
 import { providerErrorCode } from "./provider-error.js";
 
+test('chat history admission preserves the last answer and rejects new work before model calls', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-chat-capacity-'));
+  try {
+    const { context, store } = await fixture(root);
+    const sessions = new PiSessionStore(join(root, 'sessions'));
+    const faux = fauxProvider({ provider: 'chat-capacity-test' });
+    const models = createModels(); models.setProvider(faux.provider);
+    const originalRun = PiConversationRuntime.prototype.run;
+    let runs = 0;
+    t.mock.method(PiConversationRuntime.prototype, 'run', function(this: PiConversationRuntime, options: PiAgentRunOptions,
+      finalize: (result: PiRunResult) => Promise<PiRunFinalization<unknown>>) {
+      runs++;
+      return originalRun.call(this, { ...options, modelRuntime: { models, model: faux.getModel() } }, finalize);
+    });
+    t.mock.method(MemoryMaintenance.prototype, 'schedule', () => {});
+    t.mock.method(FeedbackAnalysisWorker.prototype, 'schedule', () => {});
+    const config = { root, dataDir: root, nodeEnv: 'test', sessionSecret: 'test-only-secret',
+      freeProviderBaseUrl: 'https://api.deepseek.com', freeProviderModel: 'deepseek-chat',
+      freeProviderApiKey: 'never-used', keyEncryptionSecret: 'test-only-secret',
+      chatMaxRounds: 10, chatMaxContentBytes: 128 } as ServerConfig;
+    const service = new ConversationService(config, store, sessions, new PiMemoryStore(join(root, 'memory')));
+    const base = { owner: { owner_id: context.project.owner_id, kind: 'guest' as const }, projectId: context.project.project_id };
+    faux.setResponses([fauxAssistantMessage('x'.repeat(100))]);
+    const first = (await service.run({ ...base, content: 'a' }))!;
+    faux.setResponses([async () => {
+      await store.updateProject(base.projectId, base.owner.owner_id, row => {
+        row.title = 'Changed during generation';
+        row.messages.find(m => m.message_id === first.assistant_message.message_id)!.feedback = { vote: 'up', updated_at: '2026-01-01T00:00:00Z' };
+      });
+      return fauxAssistantMessage('y'.repeat(100));
+    }]);
+    const second = (await service.run({ ...base, content: 'b' }))!;
+    const full = (await store.loadProject(base.projectId))!;
+    assert.equal(full.title, 'Changed during generation');
+    assert.equal(full.messages[1].feedback?.vote, 'up');
+    assert.equal(full.messages.at(-1)!.content, 'y'.repeat(100), 'admitted answer is not truncated at the threshold');
+    await assert.rejects(service.run({ ...base, content: 'blocked' }), { code: 'site_project_chat_size_limit' });
+    assert.equal(runs, 2, 'rejected request never starts the runtime');
+    assert.deepEqual((await store.loadProject(base.projectId))!.messages, full.messages);
+    faux.setResponses([fauxAssistantMessage('short')]);
+    await service.run({ ...base, content: 'b', replaceMessageId: second.user_message.message_id });
+    assert.equal((await store.loadProject(base.projectId))!.messages.length, 4);
+    config.chatMaxRounds = 2;
+    await assert.rejects(service.run({ ...base, content: 'third' }), { code: 'site_project_chat_round_limit' });
+    faux.setResponses([fauxAssistantMessage('retry')]);
+    const current = (await store.loadProject(base.projectId))!;
+    await service.run({ ...base, content: 'b', retryRunId: current.messages.at(-1)!.trace_id! });
+    assert.equal((await store.loadProject(base.projectId))!.messages.length, 4);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("last turn editing replaces Pi context, including a later compaction, and saves failed summaries", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "wtr-last-turn-"));
   try {

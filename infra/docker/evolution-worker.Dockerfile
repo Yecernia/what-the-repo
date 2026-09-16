@@ -6,7 +6,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY evolution/pi/tsconfig.json evolution/pi/tsconfig.runtime.json ./
 COPY evolution/pi/src ./src
 COPY evolution/pi/scripts/build-platform-budget.mjs ./scripts/build-platform-budget.mjs
-COPY server/src/agent/provider-budget.ts server/src/agent/mutex.ts /app/server/src/agent/
+COPY server/src /app/server/src
 RUN npm run build:runtime && npm prune --omit=dev --ignore-scripts
 
 FROM node:24.14.0-bookworm-slim
@@ -29,7 +29,7 @@ WORKDIR /app/evolution/pi
 COPY --from=build /app/evolution/pi/package.json ./
 COPY --from=build /app/evolution/pi/node_modules ./node_modules
 COPY --from=build /app/evolution/pi/.dist ./.dist
-COPY --from=build /app/server/dist/agent /app/server/dist/agent
+COPY --from=build /app/server/dist /app/server/dist
 COPY server/package.json /app/server/package.json
 COPY server/skills /app/server/skills
 

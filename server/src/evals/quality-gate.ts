@@ -189,7 +189,7 @@ async function main(): Promise<void> {
     if (!executableAvailable(docker, root)) {
       gates.push(
         skipped("pi_docker_runtime_probe", "Docker CLI unavailable"),
-        skipped("docker_compose_config", "Docker CLI unavailable"),
+        skipped("runtime_compose_config", "Docker CLI unavailable"),
       );
     } else {
       gates.push(
@@ -206,8 +206,8 @@ async function main(): Promise<void> {
           { timeoutMs: 15 * 60_000 },
         ),
         runGate(
-          "docker_compose_config",
-          { file: docker.file, args: ["compose", "-f", "compose.dev-deps.yaml", "config", "--quiet"] },
+          "runtime_compose_config",
+          { file: docker.file, args: ["compose", "-f", "compose.runtime.yaml", "config", "--quiet"] },
           root,
           {
             timeoutMs: 120_000,
@@ -232,7 +232,7 @@ async function main(): Promise<void> {
       skipped("web_e2e", "not requested; pass --all"),
       skipped("pi_evolution_test", "not requested; pass --all"),
       skipped("pi_docker_runtime_probe", "not requested; pass --all"),
-      skipped("docker_compose_config", "not requested; pass --all"),
+      skipped("runtime_compose_config", "not requested; pass --all"),
     );
   }
 

@@ -458,6 +458,7 @@ export class RepositoryService {
         publicKey: project.analysis.canonical_snapshot_key,
         snapshotId,
         query: {
+          include_metadata: false,
           text: query.text?.slice(0, 500),
           paths: boundedStrings(query.paths, 20, 500),
           languages: boundedStrings(query.languages, 12, 100),

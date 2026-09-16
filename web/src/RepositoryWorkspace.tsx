@@ -1,6 +1,6 @@
 import { usePhoneDevice } from './usePhoneDevice';
-import { t, useUiLanguage } from './ui-language';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { t, translateFor, useUiLanguage } from './ui-language';
+import { memo, useId, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -36,6 +36,9 @@ import MapIcon from '@sketchyicons/react/icons/map';
 import Link2 from '@sketchyicons/react/icons/link-2';
 import MessageSquarePlus from '@sketchyicons/react/icons/message-square-plus';
 import Route from '@sketchyicons/react/icons/route';
+import './workspace-split.css';
+import { useWorkspaceSplit } from './useWorkspaceSplit';
+import { SplitGripIcon } from './WorkspaceSplitIcons';
 import { InkOutline } from './InkOutline';
 import { FieldIllustration } from './FieldIllustration';
 import type {
@@ -466,6 +469,7 @@ function DetailsPanel({
   onOpenEvidence: (evidence: GraphEvidence) => void;
   onQueueTopic: (request: TopicRequest) => void;
 }) {
+  useUiLanguage();
   if (!selected) {
     return (
       <div className="workspace-details-empty">
@@ -623,6 +627,13 @@ function ArchitectureView({
 }) {
   const phone = usePhoneDevice();
   const uiLanguage = useUiLanguage();
+  const ariaLabelConfig = useMemo(() => ({
+    'controls.ariaLabel': translateFor(uiLanguage, '图形操作'),
+    'controls.zoomIn.ariaLabel': translateFor(uiLanguage, '放大'),
+    'controls.zoomOut.ariaLabel': translateFor(uiLanguage, '缩小'),
+    'controls.fitView.ariaLabel': translateFor(uiLanguage, '适应视图'),
+    'minimap.ariaLabel': translateFor(uiLanguage, '小地图'),
+  }), [uiLanguage]);
   const architectureLayers = useMemo(() => getArchitectureLayers(snapshot), [snapshot, uiLanguage]);
   const [overviewSelection, setOverviewSelection] = useState<string | null>(null);
   const [overviewHover, setOverviewHover] = useState<string | null>(null);
@@ -745,11 +756,13 @@ function ArchitectureView({
   useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === 'undefined') return;
+    let previousWidth = 0, previousHeight = 0;
     const observer = new ResizeObserver(() => {
-      // The workspace grows from a narrow panel while it opens. Refit when its
-      // size changes so the first measurement cannot leave the graph zoomed out.
-      hasFittedRef.current = false;
-      scheduleFit();
+      const width = container.clientWidth, height = container.clientHeight;
+      // Opening/width changes still fit. A vertical split must preserve pan and zoom.
+      const needsFit = !hasFittedRef.current || Math.abs(width - previousWidth) > 0.5 || previousHeight === 0;
+      previousWidth = width; previousHeight = height;
+      if (needsFit) { hasFittedRef.current = false; scheduleFit(); }
     });
     observer.observe(container);
     return () => {
@@ -918,6 +931,7 @@ function ArchitectureView({
             {t("当前显示 {0}/{1} 条关系", initial.edges.length, initial.edges.length + initial.omittedEdgeCount)}</div>
         )}
         <ReactFlow<ArchitectureFlowNode, Edge>
+        ariaLabelConfig={ariaLabelConfig}
         nodes={phone ? displayedNodes.map(node => ({ ...node, draggable: false })) : displayedNodes}
         edges={displayedEdges}
         nodeTypes={nodeTypes}
@@ -971,62 +985,11 @@ function ArchitectureView({
   );
 }
 
-export function RepositoryThumbnail({ snapshot }: { snapshot: Snapshot }) {
-  const uiLanguage = useUiLanguage();
-  const flow = useMemo(() => buildLayerOverviewFlow(snapshot), [snapshot, uiLanguage]);
-  const positions = new Map(flow.nodes.map(node => [
-    node.id,
-    {
-      x: node.position.x,
-      y: node.position.y,
-      width: node.width ?? 260,
-      height: node.height ?? 156,
-    },
-  ]));
-  if (!flow.nodes.length) return <div className="repository-thumbnail-empty" />;
+const MemoArchitectureView = memo(ArchitectureView);
+// Dragging only changes the split; unchanged evidence must not render on every move.
+const MemoDetailsPanel = memo(DetailsPanel);
 
-  const minX = Math.min(...flow.nodes.map(node => node.position.x));
-  const minY = Math.min(...flow.nodes.map(node => node.position.y));
-  const maxX = Math.max(...flow.nodes.map(node => node.position.x + (node.width ?? 260)));
-  const maxY = Math.max(...flow.nodes.map(node => node.position.y + (node.height ?? 156)));
-
-  return (
-    <svg
-      className="repository-thumbnail"
-      viewBox={`${minX - 30} ${minY - 30} ${maxX - minX + 60} ${maxY - minY + 60}`}
-      aria-hidden="true"
-      preserveAspectRatio="xMidYMid meet"
-    >
-      {flow.edges.map(edge => {
-        const source = positions.get(edge.source);
-        const target = positions.get(edge.target);
-        if (!source || !target) return null;
-        return (
-          <line
-            key={edge.id}
-            x1={source.x + source.width}
-            y1={source.y + source.height / 2}
-            x2={target.x}
-            y2={target.y + target.height / 2}
-          />
-        );
-      })}
-      {flow.nodes.map(node => {
-        const point = positions.get(node.id)!;
-        return (
-          <rect
-            key={node.id}
-            x={point.x}
-            y={point.y}
-            width={point.width}
-            height={point.height}
-            rx={10}
-          />
-        );
-      })}
-    </svg>
-  );
-}
+export { RepositoryThumbnail } from './RepositoryThumbnail';
 
 function ValuePointsView({
   snapshot,
@@ -1113,6 +1076,11 @@ export function RepositoryWorkspace({
   onSelectionChange: (selection: ConversationSelection | null) => void;
 }) {
   const [tab, setTab] = useState<WorkspaceTab>('architecture');
+  const split = useWorkspaceSplit(tab === 'architecture');
+  // Local layout properties avoid inheriting a changing CSS variable through every graph/evidence element.
+  const canvasSize = (split.style as { '--workspace-canvas-share': string })['--workspace-canvas-share'];
+  const phone = usePhoneDevice();
+  const detailsId = useId();
   const uiLanguage = useUiLanguage();
   const [selected, setSelected] = useState<SelectedItem | null>(() => firstTabSelection(snapshot, 'architecture'));
   const previousSnapshotId = useRef(snapshot.snapshot_id);
@@ -1133,10 +1101,10 @@ export function RepositoryWorkspace({
     onSelectionChange(item ? conversationSelection(item, snapshot) : null);
   }, [onSelectionChange, project, selected, snapshot, tab]);
 
-  function select(item: SelectedItem | null) {
+  const select = useCallback((item: SelectedItem | null) => {
     setSelected(item);
     onSelectionChange(item ? conversationSelection(item, snapshot) : null);
-  }
+  }, [snapshot, onSelectionChange]);
 
   function switchTab(next: WorkspaceTab) {
     if (next === tab) return;
@@ -1194,12 +1162,13 @@ export function RepositoryWorkspace({
         </div>
       </header>
 
-      <div className="workspace-body">
+      <div ref={split.bodyRef} className={`workspace-body${split.active ? ' has-workspace-split' : ''}${split.collapsed ? ' details-collapsed' : ''}`}
+        data-split-touch={phone || undefined} style={split.active ? { gridTemplateRows: `minmax(0, ${canvasSize}) minmax(0, 1fr)` } : undefined}>
         <main className="workspace-canvas">
           {/* Keep the canvas mounted and measured so returning preserves its viewport and navigation. */}
           <div className="workspace-architecture-panel" aria-hidden={tab !== 'architecture'}
             inert={tab !== 'architecture'} style={{ opacity: tab === 'architecture' ? 1 : 0 }}>
-            <ArchitectureView snapshot={snapshot} onSelect={select} />
+            <MemoArchitectureView snapshot={snapshot} onSelect={select} />
           </div>
           {tab === 'value-points' && (
             <ValuePointsView snapshot={snapshot} selected={selected} onSelect={select} />
@@ -1213,8 +1182,14 @@ export function RepositoryWorkspace({
             />
           )}
         </main>
-        <aside className="workspace-details">
-          <DetailsPanel
+        <div className={`workspace-divider${split.dragging ? ' is-dragging' : ''}`} hidden={!split.active}
+          role="separator" tabIndex={0} aria-label={t('调整架构图与详情高度')} aria-orientation="horizontal"
+          aria-controls={detailsId} aria-valuemin={60} aria-valuemax={100} aria-valuenow={split.percent}
+          aria-valuetext={t('架构图 {0}%，详情 {1}%', split.percent, 100 - split.percent)}
+          style={{ top: canvasSize }}
+          {...split.separatorProps}><SplitGripIcon /></div>
+        <aside id={detailsId} className="workspace-details" aria-hidden={split.collapsed || undefined} inert={split.collapsed}>
+          <MemoDetailsPanel
             selected={selected}
             onOpenEvidence={onOpenEvidence}
             onQueueTopic={onQueueTopic}

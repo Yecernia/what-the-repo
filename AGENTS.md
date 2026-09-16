@@ -10,6 +10,7 @@ what-the-repo is a TypeScript Web application for understanding public GitHub re
 - `server/skills/`: product runtime assets, not instructions for repository contributors.
 - `eval/`: evaluation fixtures. `scripts/`: development and validation tools.
 - `licenses/`: dependency and asset attribution.
+- `compose.runtime.yaml`: the complete portable Web runtime; optional hardening is in `compose.runtime-secrets.yaml`.
 
 ## Development
 
@@ -26,6 +27,9 @@ Run `npm run build` and `npm test` in the affected package; Web also provides
 Playwright configuration and `web/e2e/global-setup.ts` for prerequisites.
 For dependency or asset changes, run `node scripts/check-license-inventory.mjs`
 from the repository root. CI is defined in `.github/workflows/ci.yml`.
+Runtime setup is in README. Integration checks are in CONTRIBUTING; use disposable
+PostgreSQL instances for concurrency, scheduling and persistence tests.
+Keep reusable runtime templates public and instance credentials/overrides private.
 
 ## Change conventions
 

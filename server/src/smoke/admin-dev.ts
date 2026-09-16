@@ -1,5 +1,6 @@
 /** Persistent loopback development environment. Never imported by production. */
 import { randomBytes, randomUUID } from 'node:crypto';
+import { refreshDevelopmentRuntime, RUNTIME_SCENARIOS, runtimeScenarioLabels, type RuntimeScenario } from './admin-dev-runtime.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
@@ -40,6 +41,12 @@ const store = await developmentStore(root, dataDir, credentials.secret);
 const docs = adminDocuments(store);
 await seedDevelopmentRecords(store);
 await seedDevelopmentRepositories(store);
+let runtimeScenario = (await docs.read('development-runtime-scenario', { value: 'reporting' as RuntimeScenario })).value;
+if (!RUNTIME_SCENARIOS.includes(runtimeScenario)) runtimeScenario = 'reporting';
+let runtimeSampling: Promise<void> | null = null;
+const refreshRuntime = () => runtimeSampling ??= refreshDevelopmentRuntime(store, runtimeScenario).finally(() => { runtimeSampling = null; });
+await refreshRuntime();
+const runtimeTimer = setInterval(() => { void refreshRuntime().catch(() => console.error('development_runtime_fixture_refresh_failed')); }, 15000);
 // Bind a dedicated test authenticator through the existing security service.
 // The real administrator's identity, seed and sessions are never read or reused.
 const security = new AdminSecurity(docs, { githubId: config.adminGithubId,
@@ -64,7 +71,7 @@ const app = buildApp({ config, store, metrics,
   sessions: new PiSessionStore(config.sessionDir), memories: new PiMemoryStore(config.memoryDir),
   providerBudget: new PostgresProviderUsageBudget(store.pool, { maxCallsPerMinute: 60,
     deploymentMaxCallsPerMinute: 240, minimumReservationUsd: 0.01 }) });
-app.get('/api/__admin-dev/status', async () => ({ environment: 'isolated-admin-development', scenario, synthetic: true }));
+app.get('/api/__admin-dev/status', async () => ({ environment: 'isolated-admin-development', scenario, runtimeScenario, synthetic: true }));
 // Avoid leaving a synthetic publication command waiting forever: no worker exists here.
 app.addHook('onRequest', async (request, reply) => {
   if (request.method !== 'GET' && /^\/api\/admin\/evolution\//.test(request.url))
@@ -85,7 +92,7 @@ gateway.get('/oauth/github/start', async (request, reply) => {
   return reply.redirect(webUrl + '/api/auth/github/callback?ticket=' + ticket);
 });
 const labels: Record<Scenario, string> = { normal: '完整 24 小时 · 日间起伏与高峰', low: '低人数 · 0–2 人', gap: '采集缺口 · 小时和分钟断点', empty: '没有历史数据', stale: '采集过期 · 最后数据在 15 分钟前' };
-gateway.get('/', async (_, reply) => reply.type('text/html; charset=utf-8').send(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>管理台 · 本机开发数据</title><style>body{max-width:720px;margin:60px auto;padding:24px;font:16px/1.7 system-ui;color:#263b32;background:#f8f7f3}section{background:white;border:1px solid #ddd;border-radius:12px;padding:24px;margin:20px 0}a{color:#285b47}button,select{font:inherit;padding:10px;max-width:100%;margin:8px 0}code{font-size:32px;letter-spacing:8px}small{color:#68736e}</style><h1>管理台 · 本机开发数据</h1><p>此处全部是可重复生成的模拟数据，存放在独立的本机 PostgreSQL 数据库。没有连接生产数据库、COS 或付费模型。</p><section><h2>打开管理台</h2><a href="${webUrl}/admin">进入可热更新的管理台 →</a><p>点击 GitHub 登录后会使用本机模拟身份。二步验证请输入下面的测试验证码：</p><code>${totp(credentials.seed!, Math.floor(Date.now() / 30_000))}</code><p><small>仅用于这个本机测试账号；每 30 秒变化，刷新此页可获取新码。无需使用你手机上的真实验证器。</small></p></section><section><h2>切换图表数据</h2><p>当前场景：${labels[scenario]}</p><form method="post" action="/scenario"><label>数据场景<br><select name="scenario">${SCENARIOS.map(s => `<option value="${s}" ${s === scenario ? 'selected' : ''}>${labels[s]}</option>`).join('')}</select></label><br><button>应用场景</button></form><small>仅替换这个开发库中的模拟人数数据。切换后回管理台点击刷新；配置和登录状态保留。</small></section><p>前端修改自动热更新；服务端修改自动重启；模拟趋势每分钟更新。候选与发布历史用于展示，没有连接发布 Worker。</p></html>`));
+gateway.get('/', async (_, reply) => reply.type('text/html; charset=utf-8').send(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>管理台 · 本机开发数据</title><style>body{max-width:720px;margin:60px auto;padding:24px;font:16px/1.7 system-ui;color:#263b32;background:#f8f7f3}section{background:white;border:1px solid #ddd;border-radius:12px;padding:24px;margin:20px 0}a{color:#285b47}button,select{font:inherit;padding:10px;max-width:100%;margin:8px 0}code{font-size:32px;letter-spacing:8px}small{color:#68736e}</style><h1>管理台 · 本机开发数据</h1><p>此处全部是可重复生成的模拟数据，存放在独立的本机 PostgreSQL 数据库。没有连接生产数据库、COS 或付费模型。</p><section><h2>打开管理台</h2><a href="${webUrl}/admin">进入可热更新的管理台 →</a><p>点击 GitHub 登录后会使用本机模拟身份。二步验证请输入下面的测试验证码：</p><code>${totp(credentials.seed!, Math.floor(Date.now() / 30_000))}</code><p><small>仅用于这个本机测试账号；每 30 秒变化，刷新此页可获取新码。无需使用你手机上的真实验证器。</small></p></section><section><h2>切换图表数据</h2><p>当前场景：${labels[scenario]}</p><form method="post" action="/scenario"><label>数据场景<br><select name="scenario">${SCENARIOS.map(s => `<option value="${s}" ${s === scenario ? 'selected' : ''}>${labels[s]}</option>`).join('')}</select></label><br><button>应用场景</button></form><small>仅替换这个开发库中的模拟人数数据。切换后回管理台点击刷新；配置和登录状态保留。</small></section><section><h2>分析任务与服务上报</h2><p>example/fastify 的批次故意保留 queued，但执行任务为 running；总览应为分析执行中 1，列表应显示分析解读。所有任务与报告均为模拟数据，不会执行仓库或调用模型。</p><p>当前场景：${runtimeScenarioLabels[runtimeScenario]}</p><form method="post" action="/runtime-scenario"><label>服务上报场景<br><select name="runtimeScenario">${RUNTIME_SCENARIOS.map(s => `<option value="${s}" ${s === runtimeScenario ? 'selected' : ''}>${runtimeScenarioLabels[s]}</option>`).join('')}</select></label><br><button>应用上报场景</button></form><small>切换后回管理台点击刷新。旧记录保留，指标不代表真实服务器；不会改变生产数据。</small></section><p>前端修改自动热更新；服务端修改自动重启；模拟趋势每分钟更新。候选与发布历史用于展示，没有连接发布 Worker。</p></html>`));
 gateway.post('/scenario', async (request, reply) => {
   if (request.headers.origin !== controlUrl) return reply.code(403).send('Origin rejected');
   const value = (request.body as URLSearchParams).get('scenario');
@@ -96,9 +103,19 @@ gateway.post('/scenario', async (request, reply) => {
   await docs.change('development-scenario', { value: scenario }, v => { v.value = scenario; });
   return reply.redirect('/');
 });
+gateway.post('/runtime-scenario', async (request, reply) => {
+  if (request.headers.origin !== controlUrl) return reply.code(403).send('Origin rejected');
+  const value = (request.body as URLSearchParams).get('runtimeScenario');
+  if (!RUNTIME_SCENARIOS.includes(value as RuntimeScenario)) return reply.code(400).send('Unknown scenario');
+  if (runtimeSampling) await runtimeSampling;
+  runtimeScenario = value as RuntimeScenario;
+  await refreshRuntime();
+  await docs.change('development-runtime-scenario', { value: runtimeScenario }, v => { v.value = runtimeScenario; });
+  return reply.redirect('/');
+});
 await gateway.listen({ host: '127.0.0.1', port: 8491 });
 await app.listen({ host: '127.0.0.1', port: 8391 });
 console.log('Admin development ready: http://127.0.0.1:5391/admin; data controls: http://127.0.0.1:8491/');
-const stop = async () => { clearInterval(timer); stopObservations(); if (sampling) await sampling;
+const stop = async () => { clearInterval(timer); clearInterval(runtimeTimer); stopObservations(); if (sampling) await sampling; if (runtimeSampling) await runtimeSampling;
   await app.close(); await gateway.close(); await store.close(); process.exit(0); };
 process.once('SIGINT', () => void stop()); process.once('SIGTERM', () => void stop());

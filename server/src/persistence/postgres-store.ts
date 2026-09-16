@@ -1,4 +1,6 @@
+import { readSnapshotQuery } from './snapshot-query-reader.js';
 import { randomUUID, createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool, type PoolClient } from "pg";
@@ -47,18 +49,11 @@ import { asEvidenceSnapshot } from "../domain/snapshot.js";
 import { normalizeDisplayLanguage } from "../domain/display-language.js";
 import {
   buildSnapshotQueryDirectory,
-  encodeSnapshotQueryCursor,
   querySnapshotQueryDirectory,
   type SnapshotQueryDirectory,
-  type SnapshotQueryEdgeRow,
-  type SnapshotQueryMembershipRow,
-  type SnapshotQueryProjectionRow,
-  type SnapshotQueryAggregateRow,
   type SnapshotQueryInput,
-  type SnapshotQueryNodeRow,
   type SnapshotQueryResult,
 } from "../domain/snapshot-query.js";
-import { estimateQueryTokens } from "../domain/query-relevance.js";
 import { EncryptedPostgresKeyVault } from "./encrypted-key-vault.js";
 import { FileStore } from "./file-store.js";
 import { insertSnapshotRows } from "./postgres-snapshot-rows.js";
@@ -536,6 +531,7 @@ export class PostgresStore extends FileStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT project_id FROM projects WHERE project_id = $1 FOR UPDATE", [project.project_id]);
       await this.saveProjectWithClient(client, project);
       await client.query("COMMIT");
     } catch (error) {
@@ -572,7 +568,8 @@ export class PostgresStore extends FileStore {
       await client.query("SELECT project_id FROM projects WHERE project_id = $1 FOR UPDATE", [projectId]);
       const project = await this.loadProjectWithDb(client, projectId, ownerId);
       if (!project) return null;
-      const previousMessageIds = project.messages.map(message => message.message_id);
+      const previousMessages = structuredClone(project.messages);
+      const previousMessageIds = previousMessages.map(message => message.message_id);
       mutate(project);
       const retainedIds = new Set(project.messages.map(message => message.message_id));
       const removedIds = previousMessageIds.filter(id => !retainedIds.has(id));
@@ -581,7 +578,7 @@ export class PostgresStore extends FileStore {
         [projectId, removedIds],
       );
       project.updated_at = nowIso();
-      await this.saveProjectWithClient(client, project);
+      await this.saveProjectWithClient(client, project, true, previousMessages);
       return project;
     };
     if (fence) return this.withAnalysisLeaseTransaction(fence, update);
@@ -731,7 +728,7 @@ export class PostgresStore extends FileStore {
     const publicKey = binding.rows[0]?.public_snapshot_key;
     if (publicKey) {
       const [bundle, project] = await Promise.all([
-        this.loadPublicSnapshot<unknown>(publicKey),
+        this.readPublicSnapshotParts<unknown>(publicKey, "view"),
         this.loadProject(projectId),
       ]);
       if (!bundle) return null;
@@ -779,7 +776,7 @@ export class PostgresStore extends FileStore {
       [projectId],
     );
     const publicKey = binding.rows[0]?.public_snapshot_key;
-    if (publicKey) return (await this.loadPublicSnapshot<T>(publicKey))?.analysis as T ?? null;
+    if (publicKey) return (await this.readPublicSnapshotParts<T>(publicKey, "analysis"))?.analysis as T ?? null;
     const local = await this.pool.query<{ analysis_payload: T | null }>(
       "SELECT analysis_payload FROM project_snapshots WHERE project_id = $1",
       [projectId],
@@ -814,6 +811,16 @@ export class PostgresStore extends FileStore {
   }
 
   override async loadPublicSnapshot<T = Record<string, unknown>>(publicKey: string): Promise<PublicSnapshotBundle<T> | null> {
+    const bundle = await this.readPublicSnapshotParts<T>(publicKey, 'all');
+    if (!bundle) return null;
+    if (bundle.view === null || bundle.analysis === null) throw new Error('public_snapshot_payload_missing');
+    return { ...bundle, view: bundle.view, analysis: bundle.analysis };
+  }
+
+  private async readPublicSnapshotParts<T>(publicKey: string, part: 'all' | 'view' | 'analysis'): Promise<{
+    metadata: PublicSnapshotBundle<T>['metadata']; view: T | null; analysis: Record<string, unknown> | null;
+  } | null> {
+    const wantView = part !== 'analysis', wantAnalysis = part !== 'view';
     const result = await this.pool.query<{
       repository_identity: string;
       commit_sha: string;
@@ -844,7 +851,12 @@ export class PostgresStore extends FileStore {
       purge_after: Date | string | null;
       payload_purged_at: Date | string | null;
     }>(
-      "SELECT * FROM canonical_public_repository_snapshots WHERE public_snapshot_key = $1",
+      `SELECT repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,
+        source_storage_key,reuse_count,logical_bytes,created_at,last_used_at,
+        ${wantView ? 'view_payload' : 'NULL AS view_payload'}, ${wantAnalysis ? 'analysis_payload' : 'NULL AS analysis_payload'},
+        view_storage_key,analysis_storage_key,manifest_storage_key,manifest_sha256,manifest_bytes,view_sha256,view_bytes,
+        analysis_sha256,analysis_bytes,source_manifest_sha256,source_manifest_bytes,source_file_count,language_overlay_version,
+        retired_at,purge_after,payload_purged_at FROM canonical_public_repository_snapshots WHERE public_snapshot_key = $1`,
       [publicKey],
     );
     const row = result.rows[0];
@@ -852,7 +864,7 @@ export class PostgresStore extends FileStore {
     if (row.payload_purged_at) return null;
     let externalView: T | null = null;
     let externalAnalysis: Record<string, unknown> | null = null;
-    if (row.view_payload === null || row.analysis_payload === null) {
+    if ((wantView && row.view_payload === null) || (wantAnalysis && row.analysis_payload === null)) {
       const manifestFields = [
         row.manifest_storage_key,
         row.manifest_sha256,
@@ -887,41 +899,41 @@ export class PostgresStore extends FileStore {
           || analysisDescriptor.bytes !== Number(row.analysis_bytes)) {
           throw new Error("public_snapshot_manifest_metadata_mismatch");
         }
-        if (row.view_payload === null) {
+        if (wantView && row.view_payload === null) {
           externalView = verifySnapshotObject<T>(
             await this.snapshotObjects.get(viewDescriptor.key),
             viewDescriptor,
           );
         }
-        if (row.analysis_payload === null) {
+        if (wantAnalysis && row.analysis_payload === null) {
           externalAnalysis = verifySnapshotObject<Record<string, unknown>>(
             await this.snapshotObjects.get(analysisDescriptor.key),
             analysisDescriptor,
           );
         }
       } else {
-        if (row.view_payload === null) {
+        if (wantView && row.view_payload === null) {
           externalView = parseJsonObject<T>(await this.snapshotObjects.get(
             row.view_storage_key ?? `public-repository-snapshots/${publicKey}/view.json`,
           ));
         }
-        if (row.analysis_payload === null) {
+        if (wantAnalysis && row.analysis_payload === null) {
           externalAnalysis = parseJsonObject<Record<string, unknown>>(await this.snapshotObjects.get(
             row.analysis_storage_key ?? `public-repository-snapshots/${publicKey}/analysis.json`,
           ));
         }
       }
     }
-    if ((row.view_payload === null && !externalView) || (row.analysis_payload === null && !externalAnalysis)) {
+    if ((wantView && row.view_payload === null && !externalView) || (wantAnalysis && row.analysis_payload === null && !externalAnalysis)) {
       throw new Error("public_snapshot_payload_missing");
     }
-    const storedAnalysis = row.analysis_payload === null
+    const storedAnalysis = !wantAnalysis ? null : row.analysis_payload === null
       ? externalAnalysis
       : jsonObject<Record<string, unknown>>(row.analysis_payload);
     const analysis = storedAnalysis === null
       ? null
       : await assembleAnalysisPayload(storedAnalysis, (key) => this.snapshotObjects.get(key));
-    if (!analysis || typeof analysis !== "object" || Array.isArray(analysis)) {
+    if (wantAnalysis && (!analysis || typeof analysis !== "object" || Array.isArray(analysis))) {
       throw new Error("public_snapshot_payload_missing");
     }
     return {
@@ -957,8 +969,8 @@ export class PostgresStore extends FileStore {
         created_at: iso(row.created_at),
         last_used_at: iso(row.last_used_at),
       },
-      view: row.view_payload === null ? externalView as T : jsonObject<T>(row.view_payload),
-      analysis: analysis as Record<string, unknown>,
+      view: !wantView ? null : row.view_payload === null ? externalView as T : jsonObject<T>(row.view_payload),
+      analysis: analysis as Record<string, unknown> | null,
     };
   }
 
@@ -1257,7 +1269,7 @@ export class PostgresStore extends FileStore {
     const ownsTransaction = transactionClient === undefined;
     try {
       if (ownsTransaction) await client.query("BEGIN");
-      await client.query(
+      const saved = await client.query<{ directory_id: string }>(
         `INSERT INTO snapshot_query_directories(
            public_snapshot_key, snapshot_id, schema_version, directory_digest,
            node_count, edge_count, evidence_count, layer_count, value_point_count, ready_at
@@ -1271,7 +1283,7 @@ export class PostgresStore extends FileStore {
            evidence_count = EXCLUDED.evidence_count,
            layer_count = EXCLUDED.layer_count,
            value_point_count = EXCLUDED.value_point_count,
-           ready_at = EXCLUDED.ready_at`,
+           ready_at = EXCLUDED.ready_at RETURNING directory_id`,
         [
           directory.public_snapshot_key,
           directory.snapshot_id,
@@ -1283,67 +1295,56 @@ export class PostgresStore extends FileStore {
           directory.value_points.length,
         ],
       );
-      await client.query("DELETE FROM snapshot_query_evidence_links WHERE public_snapshot_key = $1", [directory.public_snapshot_key]);
-      await client.query("DELETE FROM snapshot_query_evidence WHERE public_snapshot_key = $1", [directory.public_snapshot_key]);
-      await client.query("DELETE FROM snapshot_query_edges WHERE public_snapshot_key = $1", [directory.public_snapshot_key]);
-      await client.query("DELETE FROM snapshot_query_nodes WHERE public_snapshot_key = $1", [directory.public_snapshot_key]);
-      await client.query("DELETE FROM snapshot_query_layers WHERE public_snapshot_key = $1", [directory.public_snapshot_key]);
-      await client.query("DELETE FROM snapshot_query_value_points WHERE public_snapshot_key = $1", [directory.public_snapshot_key]);
-      await client.query("DELETE FROM snapshot_query_projection_edges WHERE public_snapshot_key = $1", [directory.public_snapshot_key]);
-      await client.query("DELETE FROM snapshot_query_projection_nodes WHERE public_snapshot_key = $1", [directory.public_snapshot_key]);
-      await client.query("DELETE FROM snapshot_query_overlay_memberships WHERE public_snapshot_key = $1", [directory.public_snapshot_key]);
-      await insertSnapshotRows(
-        client,
+      const directoryId = saved.rows[0]?.directory_id;
+      if (!directoryId) throw new Error('snapshot_query_directory_identity_missing');
+      for (const table of ['evidence_links','evidence','edges','nodes','layers','value_points','projection_edges','projection_nodes','overlay_memberships'])
+        await client.query('DELETE FROM snapshot_directory_' + table + ' WHERE directory_id=$1', [directoryId]);
+      const writeRows = <T extends object>(table: string, columns: string[], rows: readonly T[], convert?: (row: T) => object) =>
+        insertSnapshotRows(client, table.replace('snapshot_query_', 'snapshot_directory_'), ['directory_id', ...columns.filter(column => !['public_snapshot_key','snapshot_id'].includes(column))], rows,
+          row => ({ ...(convert ? convert(row) : row), directory_id: directoryId }));
+      await writeRows(
         "snapshot_query_nodes",
         ["public_snapshot_key", "snapshot_id", "node_key", "node_id", "node_kind", "entity_kind", "parent_entity_id", "depth", "label", "name", "responsibility", "path", "language", "layer_id", "layer_name", "certainty", "lifecycle_status", "payload"],
         directory.nodes,
       );
-      await insertSnapshotRows(
-        client,
+      await writeRows(
         "snapshot_query_edges",
         ["public_snapshot_key", "snapshot_id", "edge_key", "edge_id", "edge_kind", "source_node_key", "target_node_key", "relation_kind", "label", "description", "certainty", "weight", "lifecycle_status", "payload"],
         directory.edges,
       );
-      await insertSnapshotRows(
-        client,
+      await writeRows(
         "snapshot_query_evidence",
         ["public_snapshot_key", "snapshot_id", "evidence_id", "label", "path", "start_line", "end_line", "kind", "source_id", "target_id", "payload"],
         directory.evidence,
       );
-      await insertSnapshotRows(
-        client,
+      await writeRows(
         "snapshot_query_evidence_links",
         ["public_snapshot_key", "evidence_id", "owner_kind", "owner_key", "role"],
         directory.evidence_links,
       );
-      await insertSnapshotRows(
-        client,
+      await writeRows(
         "snapshot_query_layers",
         ["public_snapshot_key", "snapshot_id", "layer_id", "name", "responsibility", "certainty", "payload"],
         directory.layers,
       );
-      await insertSnapshotRows(
-        client,
+      await writeRows(
         "snapshot_query_value_points",
         ["public_snapshot_key", "snapshot_id", "value_point_id", "kind", "title", "claim", "certainty", "connectivity", "payload"],
         directory.value_points,
       );
-      await insertSnapshotRows(
-        client,
+      await writeRows(
         "snapshot_query_overlay_memberships",
         ["public_snapshot_key", "snapshot_id", "overlay_id", "overlay_kind", "entity_id", "relation_id", "role", "payload"],
         directory.memberships ?? [],
         row => ({ ...row, relation_id: row.relation_id ?? "" }),
       );
-      await insertSnapshotRows(
-        client,
+      await writeRows(
         "snapshot_query_projection_nodes",
         ["public_snapshot_key", "snapshot_id", "projection_kind", "projection_node_id", "entity_id", "parent_projection_node_id", "depth", "aggregate_member_entity_ids", "evidence_ids", "overlay_ids", "payload"],
         directory.projections ?? [],
         row => ({ ...row, overlay_ids: row.overlay_ids ?? [] }),
       );
-      await insertSnapshotRows(
-        client,
+      await writeRows(
         "snapshot_query_projection_edges",
         ["public_snapshot_key", "snapshot_id", "projection_kind", "projection_edge_id", "relation_id", "source_projection_node_id", "target_projection_node_id", "source_entity_id", "target_entity_id", "aggregate_relation_ids", "evidence_ids", "overlay_ids", "payload"],
         directory.aggregates ?? [],
@@ -1358,309 +1359,13 @@ export class PostgresStore extends FileStore {
     }
   }
 
-  override async queryPublicSnapshot(input: {
-    publicKey: string;
-    snapshotId: string;
-    query: SnapshotQueryInput;
-  }): Promise<SnapshotQueryResult> {
-    const directory = await this.pool.query<{ snapshot_id: string; directory_digest: string; ready_at: Date | string }>(
-      `SELECT snapshot_id, directory_digest, ready_at FROM snapshot_query_directories
-       WHERE public_snapshot_key = $1`,
-      [input.publicKey],
-    );
-    if (!directory.rows[0] || directory.rows[0].snapshot_id !== input.snapshotId) {
-      const bundle = await this.loadPublicSnapshot(input.publicKey);
-      if (!bundle || String(bundle.metadata.analysis_snapshot_id ?? "") !== input.snapshotId) {
-        throw new Error("snapshot_query_not_found");
-      }
-      return querySnapshotQueryDirectory(
-        buildSnapshotQueryDirectory(input.publicKey, input.snapshotId, bundle.view, bundle.analysis),
-        input.query,
-      );
-    }
-
-    const expandHops = Math.max(0, Math.min(2, Math.floor(input.query.expand_hops ?? 0)));
-    const advancedDirectoryQuery = expandHops > 0
-      || Boolean(input.query.text?.trim()
-        || input.query.paths?.length
-        || input.query.languages?.length
-        || input.query.symbol_ids?.length
-        || input.query.component_ids?.length
-        || input.query.entity_ids?.length
-        || input.query.entity_kinds?.length
-        || input.query.scope
-        || input.query.projection
-        || input.query.depth !== undefined
-        || input.query.personalized_entity_ids?.length
-        || input.query.evidence_budget_tokens !== undefined
-        || input.query.relation_kinds?.length
-        || input.query.cursor);
-    if (advancedDirectoryQuery) {
-      // Expansion is defined by the shared directory query implementation. Load
-      // the immutable snapshot directory so PostgreSQL and FileStore use exactly
-      // the same hop, filter, cursor and evidence semantics.
-      const [nodes, edges, evidence, evidenceLinks, layers, valuePoints, memberships, projections, aggregates] = await Promise.all([
-        this.pool.query<SnapshotQueryNodeRow>(
-          `SELECT * FROM snapshot_query_nodes
-           WHERE public_snapshot_key = $1 AND snapshot_id = $2
-           ORDER BY node_key`,
-          [input.publicKey, input.snapshotId],
-        ),
-        this.pool.query<SnapshotQueryEdgeRow>(
-          `SELECT * FROM snapshot_query_edges
-           WHERE public_snapshot_key = $1 AND snapshot_id = $2
-           ORDER BY edge_key`,
-          [input.publicKey, input.snapshotId],
-        ),
-        this.pool.query(
-          `SELECT * FROM snapshot_query_evidence
-           WHERE public_snapshot_key = $1 AND snapshot_id = $2
-           ORDER BY evidence_id`,
-          [input.publicKey, input.snapshotId],
-        ),
-        this.pool.query(
-          `SELECT * FROM snapshot_query_evidence_links
-           WHERE public_snapshot_key = $1
-           ORDER BY evidence_id, owner_kind, owner_key, role`,
-          [input.publicKey],
-        ),
-        this.pool.query(
-          `SELECT * FROM snapshot_query_layers
-           WHERE public_snapshot_key = $1 AND snapshot_id = $2
-           ORDER BY layer_id`,
-          [input.publicKey, input.snapshotId],
-        ),
-        this.pool.query(
-          `SELECT * FROM snapshot_query_value_points
-           WHERE public_snapshot_key = $1 AND snapshot_id = $2
-           ORDER BY value_point_id`,
-          [input.publicKey, input.snapshotId],
-        ),
-        this.pool.query<SnapshotQueryMembershipRow>(
-          `SELECT * FROM snapshot_query_overlay_memberships
-           WHERE public_snapshot_key = $1 AND snapshot_id = $2
-           ORDER BY overlay_id, entity_id, relation_id, role`,
-          [input.publicKey, input.snapshotId],
-        ).catch(() => ({ rows: [] as SnapshotQueryMembershipRow[] })),
-        this.pool.query<SnapshotQueryProjectionRow>(
-          `SELECT * FROM snapshot_query_projection_nodes
-           WHERE public_snapshot_key = $1 AND snapshot_id = $2
-           ORDER BY projection_kind, projection_node_id`,
-          [input.publicKey, input.snapshotId],
-        ).catch(() => ({ rows: [] as SnapshotQueryProjectionRow[] })),
-        this.pool.query<SnapshotQueryAggregateRow>(
-          `SELECT * FROM snapshot_query_projection_edges
-           WHERE public_snapshot_key = $1 AND snapshot_id = $2
-           ORDER BY projection_kind, projection_edge_id`,
-          [input.publicKey, input.snapshotId],
-        ).catch(() => ({ rows: [] as SnapshotQueryAggregateRow[] })),
-      ]);
-      const directoryRows: SnapshotQueryDirectory = {
-        public_snapshot_key: input.publicKey,
-        snapshot_id: input.snapshotId,
-        nodes: nodes.rows.map((row) => ({ ...row, payload: jsonObject<Record<string, unknown>>(row.payload) })),
-        edges: edges.rows.map((row) => ({ ...row, payload: jsonObject<Record<string, unknown>>(row.payload) })),
-        evidence: evidence.rows.map((row) => ({ ...row, payload: jsonObject<Record<string, unknown>>(row.payload) })),
-        evidence_links: evidenceLinks.rows.map((row) => ({
-          ...row,
-          owner_kind: row.owner_kind as SnapshotQueryDirectory["evidence_links"][number]["owner_kind"],
-          role: row.role as SnapshotQueryDirectory["evidence_links"][number]["role"],
-        })),
-        layers: layers.rows.map((row) => ({ ...row, payload: jsonObject<Record<string, unknown>>(row.payload) })),
-        value_points: valuePoints.rows.map((row) => ({ ...row, payload: jsonObject<Record<string, unknown>>(row.payload) })),
-        memberships: memberships.rows.map((row) => ({
-          ...row,
-          relation_id: row.relation_id || null,
-          payload: jsonObject<Record<string, unknown>>(row.payload),
-        })),
-        projections: projections.rows.map((row) => ({
-          ...row,
-          aggregate_member_entity_ids: Array.isArray(row.aggregate_member_entity_ids) ? row.aggregate_member_entity_ids : [],
-          evidence_ids: Array.isArray(row.evidence_ids) ? row.evidence_ids : [],
-          overlay_ids: Array.isArray(row.overlay_ids) ? row.overlay_ids : [],
-          payload: jsonObject<Record<string, unknown>>(row.payload),
-        })),
-        aggregates: aggregates.rows.map((row) => ({
-          ...row,
-          aggregate_relation_ids: Array.isArray(row.aggregate_relation_ids) ? row.aggregate_relation_ids : [],
-          evidence_ids: Array.isArray(row.evidence_ids) ? row.evidence_ids : [],
-          overlay_ids: Array.isArray(row.overlay_ids) ? row.overlay_ids : [],
-          payload: jsonObject<Record<string, unknown>>(row.payload),
-        })),
-        digest: directory.rows[0]?.directory_digest ?? "",
-      };
-      return querySnapshotQueryDirectory(directoryRows, { ...input.query, expand_hops: expandHops });
-    }
-
-    const limit = Math.max(1, Math.min(100, Math.floor(input.query.limit ?? 20)));
-    let cursor: string | null = null;
-    if (input.query.cursor) {
-      try {
-        const decoded = Buffer.from(input.query.cursor, "base64url").toString("utf8");
-        cursor = decoded.startsWith("k:") ? decoded.slice(2) : null;
-      } catch {
-        cursor = null;
-      }
-    }
-    const cursorKind = cursor?.slice(0, 2);
-    const cursorValue = cursor?.slice(2) ?? null;
-    const nodeParams: unknown[] = [input.publicKey, input.snapshotId];
-    const nodeWhere = ["public_snapshot_key = $1", "snapshot_id = $2"];
-    if (cursorKind === "1:") nodeWhere.push("FALSE");
-    else if (cursorKind === "0:") {
-      nodeParams.push(cursorValue);
-      nodeWhere.push(`node_key > $${nodeParams.length}`);
-    }
-    const textQuery = input.query.text?.trim();
-    if (textQuery) {
-      nodeParams.push(`%${textQuery}%`);
-      const index = nodeParams.length;
-      nodeWhere.push(`(node_key ILIKE $${index} OR node_id ILIKE $${index} OR name ILIKE $${index} OR label ILIKE $${index} OR responsibility ILIKE $${index} OR path ILIKE $${index} OR payload::text ILIKE $${index})`);
-    }
-    if (input.query.paths?.length) {
-      nodeParams.push(input.query.paths.map((value) => `%${value}%`));
-      nodeWhere.push(`path ILIKE ANY($${nodeParams.length}::text[])`);
-    }
-    if (input.query.languages?.length) {
-      nodeParams.push(input.query.languages.map((value) => value.toLowerCase()));
-      nodeWhere.push(`language = ANY($${nodeParams.length}::text[])`);
-    }
-    if (input.query.symbol_ids?.length) {
-      nodeParams.push(input.query.symbol_ids);
-      nodeWhere.push(`(node_id = ANY($${nodeParams.length}::text[]) OR node_key = ANY($${nodeParams.length}::text[]))`);
-    }
-    if (input.query.component_ids?.length) {
-      nodeParams.push(input.query.component_ids);
-      nodeWhere.push(`(node_id = ANY($${nodeParams.length}::text[]) OR node_key = ANY($${nodeParams.length}::text[]))`);
-    }
-    if (input.query.entity_ids?.length) {
-      nodeParams.push(input.query.entity_ids);
-      nodeWhere.push(`(node_id = ANY($${nodeParams.length}::text[]) OR node_key = ANY($${nodeParams.length}::text[]))`);
-    }
-    if (input.query.entity_kinds?.length) {
-      nodeParams.push(input.query.entity_kinds);
-      nodeWhere.push(`entity_kind = ANY($${nodeParams.length}::text[])`);
-    }
-    if (input.query.depth !== undefined) {
-      nodeParams.push(Math.max(0, Math.min(100, Math.floor(input.query.depth))));
-      nodeWhere.push(`depth <= $${nodeParams.length}`);
-    }
-    const nodeRows = await this.pool.query<SnapshotQueryNodeRow>(
-      `SELECT * FROM snapshot_query_nodes WHERE ${nodeWhere.join(" AND ")} ORDER BY node_key LIMIT ${limit + 1}`,
-      nodeParams,
-    );
-
-    const edgeParams: unknown[] = [input.publicKey, input.snapshotId];
-    const edgeWhere = ["public_snapshot_key = $1", "snapshot_id = $2"];
-    if (cursorKind === "1:") {
-      edgeParams.push(cursorValue);
-      edgeWhere.push(`edge_key > $${edgeParams.length}`);
-    }
-    if (textQuery) {
-      edgeParams.push(`%${textQuery}%`);
-      const index = edgeParams.length;
-      edgeWhere.push(`(edge_key ILIKE $${index} OR edge_id ILIKE $${index} OR relation_kind ILIKE $${index} OR label ILIKE $${index} OR description ILIKE $${index} OR source_node_key ILIKE $${index} OR target_node_key ILIKE $${index})`);
-    }
-    if (input.query.relation_kinds?.length) {
-      edgeParams.push(input.query.relation_kinds);
-      edgeWhere.push(`relation_kind = ANY($${edgeParams.length}::text[])`);
-    }
-    const edgeRows = await this.pool.query<SnapshotQueryEdgeRow>(
-      `SELECT * FROM snapshot_query_edges WHERE ${edgeWhere.join(" AND ")} ORDER BY edge_key LIMIT ${limit + 1}`,
-      edgeParams,
-    );
-    const combined = [
-      ...nodeRows.rows.map((row) => ({ key: `0:${row.node_key}`, row, kind: "node" as const })),
-      ...edgeRows.rows.map((row) => ({ key: `1:${row.edge_key}`, row, kind: "edge" as const })),
-    ].sort((left, right) => left.key.localeCompare(right.key));
-    const page = combined.slice(0, limit);
-    const nodes = page.filter((row): row is { key: string; row: SnapshotQueryNodeRow; kind: "node" } => row.kind === "node").map((row) => ({
-      ...row.row,
-      payload: jsonObject<Record<string, unknown>>(row.row.payload),
-    }));
-    const edges = page.filter((row): row is { key: string; row: SnapshotQueryEdgeRow; kind: "edge" } => row.kind === "edge").map((row) => ({
-      ...row.row,
-      payload: jsonObject<Record<string, unknown>>(row.row.payload),
-    }));
-    const ownerTokens = [
-      ...nodes.map((row) => `node:${row.node_key}`),
-      ...edges.map((row) => `edge:${row.edge_key}`),
-    ];
-    const links = ownerTokens.length
-      ? await this.pool.query<{ evidence_id: string; owner_kind: string; owner_key: string; role: string }>(
-        `SELECT evidence_id, owner_kind, owner_key, role FROM snapshot_query_evidence_links
-         WHERE public_snapshot_key = $1 AND (owner_kind || ':' || owner_key) = ANY($2::text[])`,
-        [input.publicKey, ownerTokens],
-      )
-      : { rows: [] };
-    const evidenceIds = [...new Set(links.rows.map((row) => row.evidence_id))];
-    const evidence = evidenceIds.length
-      ? await this.pool.query(
-        `SELECT * FROM snapshot_query_evidence
-         WHERE public_snapshot_key = $1 AND evidence_id = ANY($2::text[])
-         ORDER BY evidence_id`,
-        [input.publicKey, evidenceIds],
-      )
-      : { rows: [] };
-    const layers = await this.pool.query("SELECT * FROM snapshot_query_layers WHERE public_snapshot_key = $1 ORDER BY layer_id", [input.publicKey]);
-    const valuePoints = await this.pool.query("SELECT * FROM snapshot_query_value_points WHERE public_snapshot_key = $1 ORDER BY value_point_id", [input.publicKey]);
-    const [memberships, projections, aggregates] = await Promise.all([
-      this.pool.query<SnapshotQueryMembershipRow>(
-        "SELECT * FROM snapshot_query_overlay_memberships WHERE public_snapshot_key = $1 ORDER BY overlay_id, entity_id, relation_id, role",
-        [input.publicKey],
-      ).catch(() => ({ rows: [] as SnapshotQueryMembershipRow[] })),
-      this.pool.query<SnapshotQueryProjectionRow>(
-        "SELECT * FROM snapshot_query_projection_nodes WHERE public_snapshot_key = $1 ORDER BY projection_kind, projection_node_id",
-        [input.publicKey],
-      ).catch(() => ({ rows: [] as SnapshotQueryProjectionRow[] })),
-      this.pool.query<SnapshotQueryAggregateRow>(
-        "SELECT * FROM snapshot_query_projection_edges WHERE public_snapshot_key = $1 ORDER BY projection_kind, projection_edge_id",
-        [input.publicKey],
-      ).catch(() => ({ rows: [] as SnapshotQueryAggregateRow[] })),
-    ]);
-    const hasMore = combined.length > page.length;
-    const pageEvidence = evidence.rows.map((row) => ({ ...row, payload: jsonObject<Record<string, unknown>>(row.payload) }));
-    return {
-      public_snapshot_key: input.publicKey,
-      snapshot_id: input.snapshotId,
-      nodes,
-      edges,
-      evidence: pageEvidence,
-      evidence_links: links.rows.map((row) => ({
-        public_snapshot_key: input.publicKey,
-        evidence_id: row.evidence_id,
-        owner_kind: row.owner_kind as "node" | "edge" | "layer" | "value_point",
-        owner_key: row.owner_key,
-        role: row.role as "evidence" | "member",
-      })),
-      layers: layers.rows.map((row) => ({ ...row, payload: jsonObject<Record<string, unknown>>(row.payload) })),
-      value_points: valuePoints.rows.map((row) => ({ ...row, payload: jsonObject<Record<string, unknown>>(row.payload) })),
-      memberships: memberships.rows.map((row) => ({
-        ...row,
-        relation_id: row.relation_id || null,
-        payload: jsonObject<Record<string, unknown>>(row.payload),
-      })),
-      projections: projections.rows.map((row) => ({
-        ...row,
-        aggregate_member_entity_ids: Array.isArray(row.aggregate_member_entity_ids) ? row.aggregate_member_entity_ids : [],
-        evidence_ids: Array.isArray(row.evidence_ids) ? row.evidence_ids : [],
-        overlay_ids: Array.isArray(row.overlay_ids) ? row.overlay_ids : [],
-        payload: jsonObject<Record<string, unknown>>(row.payload),
-      })),
-      aggregates: aggregates.rows.map((row) => ({
-        ...row,
-        aggregate_relation_ids: Array.isArray(row.aggregate_relation_ids) ? row.aggregate_relation_ids : [],
-        evidence_ids: Array.isArray(row.evidence_ids) ? row.evidence_ids : [],
-        overlay_ids: Array.isArray(row.overlay_ids) ? row.overlay_ids : [],
-        payload: jsonObject<Record<string, unknown>>(row.payload),
-      })),
-      next_cursor: hasMore && page.length ? encodeSnapshotQueryCursor(page[page.length - 1]!.key) : null,
-      truncated: hasMore,
-      estimated_tokens: estimateQueryTokens({ nodes, edges, evidence: pageEvidence }),
-      budget_tokens: input.query.evidence_budget_tokens ?? null,
-      returned_evidence_count: pageEvidence.length,
-      truncation_reason: hasMore ? "limit" : null,
-    };
+  override async queryPublicSnapshot(input: { publicKey: string; snapshotId: string; query: SnapshotQueryInput }): Promise<SnapshotQueryResult> {
+    const result = await readSnapshotQuery(this.pool, input);
+    if (result) return result;
+    // Legacy snapshots without a materialized directory still retain their complete object data.
+    const bundle = await this.loadPublicSnapshot(input.publicKey);
+    if (!bundle || String(bundle.metadata.analysis_snapshot_id ?? '') !== input.snapshotId) throw new Error('snapshot_query_not_found');
+    return querySnapshotQueryDirectory(buildSnapshotQueryDirectory(input.publicKey, input.snapshotId, bundle.view, bundle.analysis), input.query);
   }
 
   override async loadRepositoryHead(input: RepositoryIdentityInput): Promise<RepositoryHead | null> {
@@ -3916,6 +3621,7 @@ export class PostgresStore extends FileStore {
     client: PoolClient,
     project: Project,
     enforceStorageQuota = true,
+    previousMessages?: Message[],
   ): Promise<void> {
     await client.query(
       `INSERT INTO projects(project_id, owner_id, payload, created_at, updated_at)
@@ -3927,14 +3633,26 @@ export class PostgresStore extends FileStore {
       [project.project_id, project.owner_id, JSON.stringify(projectPayload(project)), project.created_at, project.updated_at],
     );
     if (project.messages.length) {
-      await client.query(
-        `INSERT INTO project_messages(message_id, project_id, role, created_at, payload)
-         SELECT
-           item->>'message_id', $1, item->>'role', (item->>'created_at')::timestamptz, item
-         FROM jsonb_array_elements($2::jsonb) AS item
-         ON CONFLICT(message_id) DO UPDATE SET payload = EXCLUDED.payload`,
-        [project.project_id, JSON.stringify(project.messages)],
-      );
+      // Metadata-only updates must not rewrite the transcript. Compare before
+      // sending parameters, so unchanged history is not transmitted to PostgreSQL.
+      const previous = previousMessages ?? (await client.query<{ payload: Message }>(
+        "SELECT payload FROM project_messages WHERE project_id = $1",
+        [project.project_id],
+      )).rows.map(row => jsonObject<Message>(row.payload));
+      const byId = new Map(previous.map(message => [message.message_id, message]));
+      const changed = project.messages.filter(message => !isDeepStrictEqual(byId.get(message.message_id), message));
+      if (changed.length) {
+        await client.query(
+          `INSERT INTO project_messages(message_id, project_id, role, created_at, payload)
+           SELECT
+             item->>'message_id', $1, item->>'role', (item->>'created_at')::timestamptz, item
+           FROM jsonb_array_elements($2::jsonb) AS item
+           ON CONFLICT(message_id) DO UPDATE SET payload = EXCLUDED.payload
+           WHERE project_messages.project_id = EXCLUDED.project_id
+             AND project_messages.payload IS DISTINCT FROM EXCLUDED.payload`,
+          [project.project_id, JSON.stringify(changed)],
+        );
+      }
     }
     const publicKey = project.analysis.canonical_snapshot_key;
     const current = await client.query<{ public_snapshot_key: string }>(

@@ -4,6 +4,7 @@
 
 [Back to product overview](README.en.md)
 
+Contributions to what-the-repo code and documentation are welcome. See [AGENTS.md](AGENTS.md) for code entry points, development setup and common commands.
 
 ## Changes and pull requests
 
@@ -15,6 +16,12 @@
 GitHub runs CI after the PR is opened. Once checks pass, a maintainer reviews and merges the change. PR checks use test configuration; they do not connect to production services or paid models, or deploy the application.
 
 Use Conventional Commit titles such as `fix: restore cancelled analysis jobs`, `feat: add an evidence filter`, `docs: explain local setup`, or `ci: update quality checks`. Maintainers can normalize the final squash title.
+
+## Integration checks
+
+After installing the server dependencies, set `WTR_TEST_POSTGRES_URL` to a disposable local PostgreSQL database named `wtr_test_bootstrap`, then run `node scripts/test-postgres.mjs`. It compiles the tests and creates a separate temporary database for each PostgreSQL test file; it never reads your local credentials file. This covers persistence and any committed concurrency/scheduling integration tests.
+
+`node scripts/test-runtime-config.mjs` checks the complete portable composition without starting services. `pwsh -File scripts/test-runtime-compose.ps1` starts an isolated two-API/two-worker test stack, checks failover, and removes its own containers and volumes. It uses test-only credentials and invalid model endpoints. These tests need Docker, not access to a maintainer deployment.
 
 ## Dependencies and attribution
 
