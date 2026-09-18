@@ -17,10 +17,12 @@ test('admin execution stage cannot be replaced by stale project lifecycle', () =
   assert.equal(executionStage('running', 'interpreting'), 'interpreting');
 });
 const url = process.env.WTR_ADMIN_TEST_DATABASE_URL;
+const displayFixtureLimits = { running: 64, ownerRunning: 64, ownerWaiting: 64, waiting: 128 };
 test('admin repository activity follows the current executor, not queued batch metadata', { skip: !url, timeout: 60000 }, async t => {
   assert.match(new URL(url!).pathname, /^\/wtr_admin_test_[a-z0-9_]+$/);
   const root = await mkdtemp(join(tmpdir(), 'wtr-admin-activity-'));
-  const store = new PostgresStore({ root, databaseUrl: url!, migrationsRoot: join(process.cwd(), 'migrations'), encryptionSecret: 'isolated-activity-secret'.repeat(2) });
+  const store = new PostgresStore({ root, databaseUrl: url!, migrationsRoot: join(process.cwd(), 'migrations'),
+    encryptionSecret: 'isolated-activity-secret'.repeat(2), analysisLimits: displayFixtureLimits });
   const admin = new AdminRepositories(store, { ...loadConfig({}), dataDir: root });
   const stamp = '2026-01-01T00:00:00Z', later = '2026-01-01T01:00:00Z';
   let initialized = false;
