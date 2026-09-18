@@ -47,6 +47,7 @@ function modelStage(summary: string): { stage: string; text: string } {
 type PiRunEventType = PiRunEvent["type"];
 
 const LEGACY_EVENT_TYPES: Record<string, PiRunEventType> = {
+  capacity_waiting: 'capacity_waiting',
   run_started: "run_started",
   model_started: "model_started",
   model_completed: "model_started",
@@ -110,6 +111,8 @@ export function displayForEvent(input: {
 }): PiRunDisplay {
   const safeLabel = label(input.summary, "正在处理");
   switch (input.type) {
+    case 'capacity_waiting':
+      return { kind: 'summary', stage: 'capacity_waiting', label: '服务器繁忙，正在等待处理…', status: 'running', visible: true };
     case "run_started":
       return {
         kind: "summary",
@@ -272,6 +275,7 @@ export function displayForEvent(input: {
 
 export function isPiRunEventType(value: unknown): value is PiRunEvent["type"] {
   return typeof value === "string" && [
+    "capacity_waiting",
     "run_started",
     "model_started",
     "assistant_delta",

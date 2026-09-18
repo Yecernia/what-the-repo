@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   LocalProviderCallGate,
-  PostgresProviderCallGate,
+  createProviderGateFactory,
+  providerGateKey,
 } from "./provider-gate.js";
 
 function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -40,42 +41,17 @@ test("waiting provider calls can be cancelled without consuming the next slot", 
   await next.release();
 });
 
-test("PostgreSQL provider gate shares advisory-lock slots across gate instances", async () => {
-  const locked = new Set<string>();
-  const calls: string[] = [];
-  const pool = {
-    async connect() {
-      return {
-        async query<T extends Record<string, unknown>>(sql: string, params: unknown[]): Promise<{ rows: T[] }> {
-          calls.push(sql);
-          const slot = String(params[1]);
-          const key = `${String(params[0])}:${slot}`;
-          if (sql.includes("try_advisory_lock")) {
-            const acquired = !locked.has(key);
-            if (acquired) locked.add(key);
-            return { rows: [{ acquired } as unknown as T] };
-          }
-          locked.delete(key);
-          return { rows: [] as T[] };
-        },
-        release() {},
-      };
-    },
-  };
-  const firstGate = new PostgresProviderCallGate(pool, "provider:test", 1, 10);
-  const secondGate = new PostgresProviderCallGate(pool, "provider:test", 1, 10);
-  const first = await firstGate.acquire();
-  const secondReady = deferred<void>();
-  const second = secondGate.acquire().then((permit) => {
-    secondReady.resolve();
-    return permit;
-  });
-  await new Promise<void>((resolve) => setTimeout(resolve, 25));
-  let ready = false;
-  secondReady.promise.then(() => { ready = true; });
-  assert.equal(ready, false);
-  await first.release();
-  const secondPermit = await second;
-  assert.ok(calls.some((sql) => sql.includes("pg_try_advisory_lock")));
-  await secondPermit.release();
+
+test('model capacity is shared across keys but isolated by business; upstream identity ignores connection labels', async () => {
+  const factory = createProviderGateFactory({ maxConcurrent: 1, analysisConcurrent: 1 });
+  const provider = { provider:'custom',connectionId:'one',baseUrl:'https://provider.example/v1',apiKey:'same-key',model:'m',modelId:'m',modelSelector:'m',api:'openai-completions' as const,builtin:false };
+  assert.equal(providerGateKey(provider),providerGateKey({ ...provider,connectionId:'two',modelId:'another' }));
+  assert.notEqual(providerGateKey(provider),providerGateKey({ ...provider,apiKey:'different' }));
+  const first = await factory(provider,'chat').acquire();
+  const controller = new AbortController();
+  const second = factory({ ...provider,apiKey:'different' },'chat').acquire(controller.signal);
+  const rejection = assert.rejects(second,/cancelled/);
+  const analysis = await factory(provider,'analysis').acquire();
+  controller.abort(new Error('cancelled')); await rejection;
+  await first.release(); await analysis.release();
 });

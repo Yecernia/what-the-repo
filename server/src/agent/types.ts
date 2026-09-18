@@ -61,6 +61,7 @@ export interface PiRunEvent {
   sequence: number;
   timestamp: string;
   type:
+    | "capacity_waiting"
     | "run_started"
     | "model_started"
     | "assistant_delta"

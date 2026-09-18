@@ -287,11 +287,18 @@ export function registerAdminRoutes(
           observations,
           budgets: (await readBudgets()).budgets,
           tuning: {
-            providerConcurrency: config.providerConcurrency ?? 4,
-            analysisConcurrency: config.analysisQueueConcurrency ?? 1,
-            ownerCallsPerMinute: config.quotaProviderCallsPerMinute ?? 60,
-            deploymentCallsPerMinute:
-              config.quotaProviderDeploymentCallsPerMinute ?? 240,
+            chatConcurrency: config.chatConcurrency ?? 8,
+            chatOwnerConcurrency: config.chatOwnerConcurrency ?? 2,
+            chatQueueLimit: config.chatQueueLimit ?? 16,
+            chatWaitTimeoutMs: config.chatWaitTimeoutMs ?? 30_000,
+            chatDisconnectGraceMs: config.chatDisconnectGraceMs ?? 30_000,
+            analysisConcurrency: config.analysisConcurrency ?? 1,
+            analysisWorkerConcurrency: config.analysisQueueConcurrency ?? 1,
+            analysisOwnerConcurrency: config.analysisOwnerConcurrency ?? 2,
+            analysisOwnerQueueLimit: config.analysisOwnerQueueLimit ?? 4,
+            analysisQueueLimit: config.analysisQueueLimit ?? 32,
+            analysisModelConcurrency: config.analysisModelConcurrency ?? 4,
+            upstreamConcurrency: config.upstreamConcurrency ?? null,
           },
         };
       });

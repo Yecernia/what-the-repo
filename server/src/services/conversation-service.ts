@@ -2,6 +2,7 @@ import { acquireRepositoryReadLease, type RepositoryReadLease } from '../persist
 import { runtimeConfig } from '../admin/runtime-config.js';
 import { assertChatHistoryCapacity } from './chat-history-limits.js';
 import { isDeepStrictEqual } from 'node:util';
+import { CapacityScheduler, permitStoreFor, type CapacityPermit } from '../scheduling/permits.js';
 import type { UsageAttribution } from '../agent/provider-budget.js';
 import { randomUUID } from "node:crypto";
 import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
@@ -108,6 +109,7 @@ export type LearningActionDecision = "confirm" | "decline";
 
 export class ConversationService {
   private readonly runtime: PiConversationRuntime;
+  private readonly chatAdmission: CapacityScheduler;
   private readonly memoryMaintenance: MemoryMaintenance;
   private readonly feedbackWorker: FeedbackAnalysisWorker;
   private readonly runOwners = new Map<string, { ownerId: string; projectId: string }>();
@@ -122,6 +124,11 @@ export class ConversationService {
     private readonly metrics: RuntimeMetrics = defaultRuntimeMetrics,
     private readonly providerBudget?: ProviderUsageBudget,
   ) {
+    this.chatAdmission = new CapacityScheduler(permitStoreFor(store), 'chat', {
+      running: config.chatConcurrency ?? 8, waiting: config.chatQueueLimit ?? 16,
+      waitMs: config.chatWaitTimeoutMs ?? 30_000, ownerActive: config.chatOwnerConcurrency ?? 2,
+      ownerWaiting: 1, exclusiveResource: true,
+    });
     this.runtime = new PiConversationRuntime(sessions, config.sessionLockWaitTimeoutMs ?? 10 * 60_000);
     this.memoryMaintenance = new MemoryMaintenance(store, memories);
     this.feedbackWorker = new FeedbackAnalysisWorker(
@@ -141,7 +148,7 @@ export class ConversationService {
     });
     return feedbackProvider
       ? createModelRuntime(feedbackProvider, {
-        providerGate: this.providerGateFactory?.(feedbackProvider),
+        providerGate: this.providerGateFactory?.(feedbackProvider, 'evolution'),
         providerBudget: this.providerBudget,
         ownerId: "system:runtime",
         attribution: { business: "evolution", payer: "platform", agentRole: "feedback-analysis", configVersion: config.adminConfigVersion, taskId },
@@ -359,9 +366,21 @@ export class ConversationService {
     }
     const runId = input.runId ?? randomUUID();
     this.runOwners.set(runId, { ownerId: input.owner.owner_id, projectId: input.projectId });
-    this.runtime.prepareRun(runId);
+    const controlSignal = this.runtime.prepareRun(runId);
+    input = { ...input, signal: input.signal ? AbortSignal.any([input.signal, controlSignal]) : controlSignal };
+    let admission: CapacityPermit | undefined;
+    let admissionEvents = 0;
     let releaseRepository: RepositoryReadLease | null = null;
     try {
+    const owned = await this.store.loadProject(input.projectId, input.owner.owner_id);
+    if (!owned) throw serviceError('not_found', '项目不存在', 404);
+    admission = await this.chatAdmission.acquire(input.owner.owner_id, input.projectId, input.signal, () => {
+      admissionEvents = 1;
+      input.onEvent?.({ runId, sequence: 1, timestamp: nowIso(), type: 'capacity_waiting',
+        summary: '服务器繁忙，正在等待处理…', elapsedMs: 0,
+        display: { kind: 'summary', stage: 'capacity_waiting', label: '服务器繁忙，正在等待处理…', status: 'running', visible: true } });
+    });
+    input = { ...input, signal: admission.signal };
     releaseRepository = await acquireRepositoryReadLease(this.store);
     if(releaseRepository) input={...input,signal:input.signal ? AbortSignal.any([input.signal,releaseRepository.signal]) : releaseRepository.signal};
     const project = await this.store.loadProject(input.projectId, input.owner.owner_id);
@@ -472,6 +491,7 @@ export class ConversationService {
     });
 
     const finalize = async (result: PiRunResult) => {
+      if (input.signal?.aborted && /lease_lost|maintenance_connection_lost/.test(String(input.signal.reason))) input.signal.throwIfAborted();
       if (!turnStarted) throw serviceError(result.stopReason === "cancelled" ? "cancelled" : "server_error", failureMessage(result.stopReason), 503);
       const explicitAdvance = isExplicitAdvanceRequest(content);
       if (explicitAdvance && snapshot && pendingLearningAction.value?.action !== "advance_learning_step") {
@@ -755,11 +775,12 @@ export class ConversationService {
       tools,
       runId,
       signal: input.signal,
-      onEvent: input.onEvent,
+      onEvent: event => input.onEvent?.({ ...event, sequence: event.sequence + admissionEvents }),
       }, async (result) => {
         return finalize(result);
       });
     } catch (error) {
+      if (controlSignal.aborted) throw serviceError('cancelled', '本轮回答已取消。', 409);
       if (error instanceof PiSessionWaitTimeoutError) {
         throw serviceError("session_busy", "上一轮仍在处理，请等待它结束或取消后再试", 409);
       }
@@ -767,7 +788,7 @@ export class ConversationService {
     } finally {
       this.runOwners.delete(runId);
       this.runtime.releaseRun(runId);
-      await releaseRepository?.();
+      try { await releaseRepository?.(); } finally { await admission?.release(); }
     }
   }
 }

@@ -309,6 +309,8 @@ function jobResponse(job: AnalysisJob | null): Record<string, unknown> | null {
   if (!job) return null;
   return {
     ...job,
+    status: job.scheduling_state === 'running' ? 'running'
+      : job.scheduling_state?.startsWith('waiting') ? 'queued' : job.status,
     error: job.error
       ? failureMessage(analysisFailureCode(job.error))
       : null,
@@ -897,7 +899,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
   const metrics = dependencies.metrics ?? defaultRuntimeMetrics;
   const adminSecurity = createAdminSecurity(dependencies);
   const storageManager = new StorageManager(store, config);
-  const conversationStreams = new ConversationStreamHub();
+  const conversationStreams = new ConversationStreamHub({ disconnectGraceMs: config.chatDisconnectGraceMs });
   configureProductSkillRegistry(config.skillVersionsRoot);
   const conversation = new ConversationService(
     config,

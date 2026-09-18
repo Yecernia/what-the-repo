@@ -3517,3 +3517,21 @@ describe('identity and onboarding controls', () => {
     }));
   });
 });
+
+describe('chat concurrency admission feedback', () => {
+  it.each(['chat_owner_busy', 'chat_queue_full', 'chat_wait_timeout', 'session_busy'])(
+    'restores the unsaved draft after %s without adding a failed answer', async code => {
+      vi.mocked(apiClient.getProject).mockResolvedValue(detail(project(), null, true));
+      vi.mocked(apiClient.sendMessageStream).mockRejectedValue(Object.assign(new Error('rejected before start'), { code }));
+      render(<App />);
+      await userEvent.click(await screen.findByText('python-edge-cases'));
+      const composer = screen.getByPlaceholderText('尽情提问');
+      await userEvent.type(composer, '保留这条草稿');
+      await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+      expect(await screen.findByRole('alert')).not.toHaveTextContent('此项目已达到聊天上限');
+      expect(composer).toHaveValue('保留这条草稿');
+      expect(document.querySelectorAll('.msg.user')).toHaveLength(0);
+      expect(screen.queryByText('回答失败')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
+    });
+});

@@ -52,6 +52,6 @@ export async function selectAnalysisExecution(runtime: PiModelRuntime | null, se
 export async function resolveAnalysisExecution(config: ServerConfig, options: RoleRuntimeOptions = {}) {
   const provider = resolveAnalysisProvider(config);
   const runtime = provider ? withAgentModels(config,
-    createModelRuntime(provider, { ...options, providerGate: options.providerGateFactory?.(provider) }), provider, ANALYSIS_MODEL_ROLES, options) : null;
+    createModelRuntime(provider, { ...options, providerGate: options.providerGateFactory?.(provider, 'analysis') }), provider, ANALYSIS_MODEL_ROLES, { ...options, business: 'analysis' }) : null;
   return { provider, ...await selectAnalysisExecution(runtime, Boolean(config.webSearchApiKey?.trim())) };
 }

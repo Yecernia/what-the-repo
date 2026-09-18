@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "auditedAt": "2026-09-12",
+  "auditedAt": "2026-09-18",
   "assets": [
     {
       "path": "web/public/app-icon-1024.png",
@@ -33,8 +33,18 @@
       ]
     },
     {
+      "path": "web/public/favicon.ico",
+      "sha256": "d9ccb9ee9d90180253cc35e0cc10d487dd51962d7454967d29fe01a93ed11753",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
       "path": "web/public/favicon.png",
-      "sha256": "16cb20b3c0ece9d18a0d4d935e2956e4f94b344edc451841774bcddfa20ae722",
+      "sha256": "f7a70f097fb3c5d7b8db282b50bedaaec0bd1bb86f51eb0029886528dfe4b081",
       "source": "what-the-repo project assets",
       "license": "Project license to the extent rights apply",
       "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
@@ -44,7 +54,7 @@
     },
     {
       "path": "web/public/favicon.svg",
-      "sha256": "61bc9a161de58248288e6905425d7180f0624c2865007b97d763fdac12043a66",
+      "sha256": "bbcd5071fe6cac12488cd9d7b23f1614da9389f774fbf045d836cdc78f25d902",
       "source": "what-the-repo project assets",
       "license": "Project license to the extent rights apply",
       "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
@@ -671,16 +681,6 @@
       "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
       "notices": [
         "licenses/upstream/lobehub-icons.txt"
-      ]
-    },
-    {
-      "path": "web/public/what-the-repo-icon.png",
-      "sha256": "07ff979e2e844a8f197aa6bd2abfe5af23f944cc669687805ce93b70c2ae81a8",
-      "source": "what-the-repo project assets",
-      "license": "Project license to the extent rights apply",
-      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
-      "notices": [
-        "LICENSE"
       ]
     }
   ]

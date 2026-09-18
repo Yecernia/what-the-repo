@@ -242,6 +242,7 @@ export interface ProjectDetail {
 }
 
 export interface AnalysisJob {
+  scheduling_state?: 'waiting_capacity' | 'waiting_owner' | 'running' | 'completed';
   job_id: string;
   project_id: string;
   idempotency_key: string;

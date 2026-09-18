@@ -64,7 +64,7 @@ test('null is unlimited, zero is disabled, legacy identity $1 never applies', as
     code: 'site_budget_disabled',
   });
 });
-test('BYOK never debits platform business budgets but remains rate limited and recorded', async () => {
+test('BYOK never debits platform business budgets or the obsolete mixed call counters', async () => {
   const budget = new LocalProviderUsageBudget({
     ...limits({
       analysis_daily: 0,
@@ -85,9 +85,8 @@ test('BYOK never debits platform business budgets but remains rate limited and r
   const permit = await budget.acquire(user);
   await permit.release({ ...report, costUsd: 100 });
   assert.equal(budget.events[0]?.report?.costUsd, 100);
-  await assert.rejects(() => budget.acquire(user), {
-    code: 'site_rate_limited',
-  });
+  await budget.acquire(user);
+  assert.equal(budget.events.length, 2);
 });
 test('unlimited evolution daily/task budget does not bypass the other finite budget', async () => {
   const evolution = {
@@ -169,7 +168,7 @@ test('PostgreSQL uses atomic reservation, Beijing boundaries, full attribution a
             failSettlement = false;
             throw new Error('connection failed');
           }
-          return { rows: [] };
+          return { rows: sql.includes('pg_try_advisory_xact_lock') ? [{ acquired: true } as never] : [] };
         },
         release() {},
       };
@@ -194,20 +193,17 @@ test('PostgreSQL uses atomic reservation, Beijing boundaries, full attribution a
     2,
   );
 });
-test('request frequency still limits owners and the whole deployment', async () => {
+test('legacy mixed frequency limits are disabled by default', async () => {
   const budget = new LocalProviderUsageBudget({
     ...limits(),
     maxCallsPerMinute: 1,
     deploymentMaxCallsPerMinute: 2,
   });
   await budget.acquire(input);
-  await assert.rejects(() => budget.acquire(input), {
-    code: 'site_rate_limited',
-  });
+  await budget.acquire(input);
   await budget.acquire({ ...input, ownerId: 'other' });
-  await assert.rejects(() => budget.acquire({ ...input, ownerId: 'third' }), {
-    code: 'site_rate_limited',
-  });
+  await budget.acquire({ ...input, ownerId: 'third' });
+  assert.equal(budget.events.length, 4);
 });
 
 test('unknown model pricing cannot masquerade as free under a finite platform budget', async () => {

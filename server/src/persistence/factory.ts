@@ -14,8 +14,13 @@ function quotas(config: ServerConfig): QuotaLimits {
   };
 }
 
+function analysisLimits(config: ServerConfig) {
+  return { running: config.analysisConcurrency ?? 1, ownerRunning: config.analysisOwnerConcurrency ?? 2,
+    ownerWaiting: config.analysisOwnerQueueLimit ?? 4, waiting: config.analysisQueueLimit ?? 32 };
+}
+
 export function createProductStore(config: ServerConfig, applicationRole = "api"): ProductStore {
-  if (!config.databaseUrl) return new FileStore(config.dataDir, quotas(config));
+  if (!config.databaseUrl) return new FileStore(config.dataDir, quotas(config), undefined, analysisLimits(config));
   if (config.keyEncryptionSecret.length < 16) {
     throw new Error("PostgreSQL 模式需要至少 16 字符的 WHAT_THE_REPO_KEY_ENCRYPTION_SECRET 或 SESSION_SECRET");
   }
@@ -26,6 +31,7 @@ export function createProductStore(config: ServerConfig, applicationRole = "api"
     encryptionSecret: config.keyEncryptionSecret,
     applicationRole,
     quotaLimits: quotas(config),
+    analysisLimits: analysisLimits(config),
     poolMax: config.databasePoolMax,
     idleTimeoutMs: config.databaseIdleTimeoutMs,
     connectionTimeoutMs: config.databaseConnectionTimeoutMs,

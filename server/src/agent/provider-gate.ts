@@ -1,4 +1,7 @@
 import type { ProviderConfig } from "./provider-types.js";
+import { createHash } from 'node:crypto';
+import type { Pool } from 'pg';
+import { CapacityScheduler, LocalPermitStore, PostgresPermitStore } from '../scheduling/permits.js';
 
 export interface ProviderDbClient {
   query<T extends Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
@@ -10,6 +13,7 @@ export interface ProviderDbPool {
 }
 
 export interface ProviderPermit {
+  signal?: AbortSignal;
   release(): Promise<void>;
 }
 
@@ -87,97 +91,48 @@ export class LocalProviderCallGate implements ProviderCallGate {
   }
 }
 
-/** Cross-process gate backed by PostgreSQL advisory locks. */
+/** Cross-process model capacity without holding a connection during inference. */
 export class PostgresProviderCallGate implements ProviderCallGate {
-  private readonly limit: number;
-  private readonly pollMs: number;
-
-  constructor(
-    private readonly pool: ProviderDbPool,
-    private readonly key: string,
-    limit: number,
-    pollMs = 100,
-  ) {
-    this.limit = Math.max(1, Math.min(64, Math.floor(limit)));
-    this.pollMs = Math.max(10, Math.min(5_000, Math.floor(pollMs)));
+  private readonly scheduler: CapacityScheduler;
+  constructor(pool: ProviderDbPool, key: string, limit: number, _pollMs = 100) {
+    this.scheduler = new CapacityScheduler(new PostgresPermitStore(pool as Pool), 'model:' + key,
+      { running: limit, waiting: 128, waitMs: 60_000 });
   }
-
-  async acquire(signal?: AbortSignal): Promise<ProviderPermit> {
-    while (true) {
-      if (signal?.aborted) throw abortError(signal);
-      const client = await this.pool.connect();
-      try {
-        for (let slot = 0; slot < this.limit; slot += 1) {
-          if (signal?.aborted) throw abortError(signal);
-          const result = await client.query<{ acquired: boolean }>(
-            "SELECT pg_try_advisory_lock(hashtext($1), $2) AS acquired",
-            [this.key, slot],
-          );
-          if (result.rows[0]?.acquired) return this.permit(client, slot);
-        }
-      } catch (error) {
-        client.release();
-        throw error;
-      }
-      client.release();
-      await wait(this.pollMs, signal);
-    }
-  }
-
-  private permit(client: ProviderDbClient, slot: number): ProviderPermit {
-    let released = false;
-    return {
-      release: async () => {
-        if (released) return;
-        released = true;
-        try {
-          await client.query(
-            "SELECT pg_advisory_unlock(hashtext($1), $2)",
-            [this.key, slot],
-          );
-        } finally {
-          client.release();
-        }
-      },
-    };
-  }
+  acquire(signal?: AbortSignal): Promise<ProviderPermit> { return this.scheduler.acquire('', '', signal); }
 }
 
-function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return Promise.reject(abortError(signal));
-  return new Promise<void>((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(abortError(signal));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, milliseconds);
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-export type ProviderGateFactory = (provider: ProviderConfig) => ProviderCallGate;
+export type ProviderGateFactory = (provider: ProviderConfig, business?: string) => ProviderCallGate;
 
 export function providerGateKey(provider: ProviderConfig): string {
-  return [provider.provider, provider.connectionId, provider.baseUrl, provider.modelId].join("|");
+  // Connection labels do not identify upstream accounts; never persist raw keys.
+  return createHash('sha256').update(`${provider.baseUrl.replace(/\/+$/, '').toLowerCase()}\0${provider.apiKey ?? ''}`).digest('hex');
 }
 
 export function createProviderGateFactory(input: {
   pool?: ProviderDbPool | null;
   maxConcurrent: number;
   pollMs?: number;
+  analysisConcurrent?: number;
+  upstreamConcurrent?: number;
 }): ProviderGateFactory {
-  const gates = new Map<string, ProviderCallGate>();
-  return (provider) => {
-    const key = providerGateKey(provider);
-    const existing = gates.get(key);
-    if (existing) return existing;
-    const gate = input.pool
-      ? new PostgresProviderCallGate(input.pool, key, input.maxConcurrent, input.pollMs)
-      : new LocalProviderCallGate(Math.max(1, Math.min(64, Math.floor(input.maxConcurrent))));
-    gates.set(key, gate);
-    return gate;
+  const store = input.pool ? new PostgresPermitStore(input.pool as Pool) : new LocalPermitStore();
+  return (provider, business = 'chat') => {
+    const category = business === 'analysis' ? 'analysis' : business === 'evolution' ? 'evolution' : 'chat';
+    const scheduler = new CapacityScheduler(store, `model:${category}`, {
+      running: category === 'analysis' ? input.analysisConcurrent ?? 4 : category === 'evolution' ? 1 : input.maxConcurrent,
+      waiting: 128, waitMs: 60_000, fullError: 'model_capacity_busy', timeoutError: 'model_capacity_timeout',
+    });
+    return { acquire: async signal => {
+      const permit = await scheduler.acquire('', '', signal);
+      try {
+        const upstream = input.upstreamConcurrent ? await new CapacityScheduler(store, `upstream:${providerGateKey(provider)}`, {
+          running: input.upstreamConcurrent, waiting: 128, waitMs: 60_000,
+          fullError: 'upstream_capacity_busy', timeoutError: 'upstream_capacity_timeout',
+        }).acquire('', '', permit.signal) : undefined;
+        return { signal: upstream?.signal ?? permit.signal, release: async () => {
+          try { await upstream?.release(); } finally { await permit.release(); }
+        } };
+      } catch (error) { await permit.release(); throw error; }
+    } };
   };
 }

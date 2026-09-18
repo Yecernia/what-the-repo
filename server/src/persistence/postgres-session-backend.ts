@@ -1,4 +1,6 @@
 import type { Pool, PoolClient } from "pg";
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { CapacityScheduler, PostgresPermitStore, assertSessionPermit, connectWithAbort } from '../scheduling/permits.js';
 import {
   Session,
   type AgentMessage,
@@ -39,7 +41,9 @@ function orderSql(order: "newestFirst" | "oldestFirst" | undefined): string {
 }
 
 class PostgresSessionStorage implements SessionStorage<ProductSessionMetadata> {
-  constructor(private readonly client: PoolClient, private readonly sessionId: string) {}
+  private readonly transactionClient = new AsyncLocalStorage<PoolClient>();
+  constructor(private readonly pool: Pool, private readonly sessionId: string, private readonly permitId: string, private readonly signal: AbortSignal) {}
+  private get client(): Pool | PoolClient { this.signal.throwIfAborted(); return this.transactionClient.getStore() ?? this.pool; }
 
   async getMetadata(): Promise<ProductSessionMetadata> {
     const result = await this.client.query<{ metadata: ProductSessionMetadata }>(
@@ -371,15 +375,18 @@ class PostgresSessionStorage implements SessionStorage<ProductSessionMetadata> {
   }
 
   private async transaction<T>(task: () => Promise<T>): Promise<T> {
-    await this.client.query("BEGIN");
+    const client = await connectWithAbort<PoolClient>(this.pool, this.signal);
     try {
-      const result = await task();
-      await this.client.query("COMMIT");
+      await client.query('BEGIN');
+      await assertSessionPermit(client, this.permitId);
+      const result = await this.transactionClient.run(client, task);
+      this.signal.throwIfAborted();
+      await client.query("COMMIT");
       return result;
     } catch (error) {
-      await this.client.query("ROLLBACK");
+      await client.query("ROLLBACK");
       throw error;
-    }
+    } finally { client.release(); }
   }
 }
 
@@ -391,14 +398,14 @@ export class PostgresPiSessionBackend implements PiSessionBackend {
     task: (session: Session<SessionMetadata>) => Promise<T>,
     options: PiSessionBackendOptions = {},
   ): Promise<T> {
-    const client = await connectWithSignal(this.pool, options.signal);
-    let lockAcquired = false;
+    const permit = await new CapacityScheduler(new PostgresPermitStore(this.pool), 'session', {
+      // Zero queue means conflicting sessions fail fast; SQL admission still needs a bounded RPC deadline.
+      running: 1024, waiting: 0, waitMs: 30_000, exclusiveResource: true,
+    }).acquire(identity.ownerId, identity.sessionId, options.signal);
     try {
-      if (options.signal?.aborted) throw sessionAbortError(options.signal);
-      await acquireSessionLock(client, identity.sessionId, options.signal);
-      lockAcquired = true;
+      permit.signal.throwIfAborted();
       options.onAcquired?.();
-      if (options.signal?.aborted) throw sessionAbortError(options.signal);
+      permit.signal.throwIfAborted();
       const metadata: ProductSessionMetadata = {
         id: identity.sessionId,
         createdAt: Date.now(),
@@ -408,7 +415,7 @@ export class PostgresPiSessionBackend implements PiSessionBackend {
         skillId: identity.skillId,
         skillVersion: identity.skillVersion,
       };
-      const opened = await client.query<{ owner_id: string; project_id: string }>(
+      const opened = await this.pool.query<{ owner_id: string; project_id: string }>(
         `INSERT INTO pi_sessions(
            session_id, owner_id, project_id, snapshot_id, skill_id, skill_version, metadata
          ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
@@ -436,16 +443,13 @@ export class PostgresPiSessionBackend implements PiSessionBackend {
         ],
       );
       if (!opened.rowCount) throw new Error("pi_session_identity_mismatch");
-      const storage = new PostgresSessionStorage(client, identity.sessionId);
+      const storage = new PostgresSessionStorage(this.pool, identity.sessionId, permit.id, permit.signal);
       return await task(new Session(storage) as unknown as Session<SessionMetadata>);
     } catch (error) {
-      if (options.signal?.aborted) throw sessionAbortError(options.signal);
+      if (permit.signal.aborted) throw permit.signal.reason;
       throw error;
     } finally {
-      if (lockAcquired) {
-        await client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [`pi-session:${identity.sessionId}`]).catch(() => undefined);
-      }
-      client.release();
+      await permit.release();
     }
   }
 
@@ -477,70 +481,4 @@ export class PostgresPiSessionBackend implements PiSessionBackend {
     const result = await this.pool.query("DELETE FROM pi_sessions WHERE owner_id = $1", [ownerId]);
     return result.rowCount ?? 0;
   }
-}
-
-function sessionAbortError(signal?: AbortSignal): Error {
-  return signal?.reason instanceof Error ? signal.reason : new Error("pi_session_lock_wait_cancelled");
-}
-
-async function acquireSessionLock(client: PoolClient, sessionId: string, signal?: AbortSignal): Promise<void> {
-  // Bound database-side waits so cancellation never depends on socket teardown.
-  await client.query("SET lock_timeout = '1s'");
-  let acquired = false;
-  try {
-    while (!acquired) {
-      if (signal?.aborted) throw sessionAbortError(signal);
-      try {
-        await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [`pi-session:${sessionId}`]);
-        acquired = true;
-      } catch (error) {
-        if (signal?.aborted) throw sessionAbortError(signal);
-        if (postgresErrorCode(error) === "55P03") continue;
-        throw error;
-      }
-    }
-    if (signal?.aborted) throw sessionAbortError(signal);
-    await client.query("SET lock_timeout = 0");
-  } catch (error) {
-    if (acquired) {
-      await client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [`pi-session:${sessionId}`]).catch(() => undefined);
-    }
-    await client.query("SET lock_timeout = 0").catch(() => undefined);
-    throw error;
-  }
-}
-
-function postgresErrorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
-  const code = (error as { code?: unknown }).code;
-  return typeof code === "string" ? code : undefined;
-}
-
-async function connectWithSignal(pool: Pool, signal?: AbortSignal): Promise<PoolClient> {
-  if (!signal) return pool.connect();
-  if (signal.aborted) throw sessionAbortError(signal);
-  return new Promise<PoolClient>((resolve, reject) => {
-    let settled = false;
-    const onAbort = (): void => {
-      if (settled) return;
-      settled = true;
-      reject(sessionAbortError(signal));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    void pool.connect().then((client) => {
-      signal.removeEventListener("abort", onAbort);
-      if (settled || signal.aborted) {
-        client.release();
-        if (!settled) reject(sessionAbortError(signal));
-        return;
-      }
-      settled = true;
-      resolve(client);
-    }, (error: unknown) => {
-      signal.removeEventListener("abort", onAbort);
-      if (settled) return;
-      settled = true;
-      reject(error);
-    });
-  });
 }

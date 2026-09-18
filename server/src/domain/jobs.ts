@@ -4,6 +4,9 @@ import { nowIso } from "./conversation.js";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export interface AnalysisJob {
+  /** Per-user attachment, independent of the shared executor's status. */
+  participation_state?: 'waiting' | 'running';
+  scheduling_state?: 'waiting_capacity' | 'waiting_owner' | 'running' | 'completed';
   job_id: string;
   config_version?: number;
   project_id: string;

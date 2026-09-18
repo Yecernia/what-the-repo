@@ -338,7 +338,9 @@ export class RepositoryService {
       error: project.analysis.stage === "failed" ? (project.analysis.error || "分析未完成，请重试。") : null,
       error_code: job?.error_code ?? null,
       job_id: job?.job_id ?? null,
-      job_status: job?.status ?? null,
+      scheduling_state: job?.scheduling_state ?? null,
+      job_status: job?.scheduling_state === 'running' ? 'running'
+        : job?.scheduling_state?.startsWith('waiting') ? 'queued' : job?.status ?? null,
       job_attempt: job?.attempt ?? null,
       job_max_attempts: job?.max_attempts ?? null,
       heartbeat_at: job?.heartbeat_at ?? null,

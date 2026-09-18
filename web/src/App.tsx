@@ -2057,7 +2057,7 @@ export default function App() {
   const [learningActionPending, setLearningActionPending] = useState<Record<string, boolean>>({});
   const [analysisActivity, setAnalysisActivity] = useState<RuntimeProgressEvent[]>([]);
   const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
-  const [analysisJobDetails, setAnalysisJobDetails] = useState<{ attempt: number; max_attempts: number; error: string | null; error_code?: string | null } | null>(null);
+  const [analysisJobDetails, setAnalysisJobDetails] = useState<{ attempt: number; max_attempts: number; error: string | null; error_code?: string | null; scheduling_state?: import('./types').AnalysisJob['scheduling_state'] } | null>(null);
   const [reviewEvidence, setReviewEvidence] = useState(() => (
     window.localStorage.getItem(REVIEW_PREFERENCE_KEY) === 'true'
   ));
@@ -2772,7 +2772,9 @@ export default function App() {
       if (pendingConversationsRef.current.get(projectId)?.token === pendingToken) {
         pendingConversationsRef.current.delete(projectId);
       }
-      if (isChatCapacityError(streamErrorCode)) {
+      const admissionRejected = isChatCapacityError(streamErrorCode)
+        || ['chat_owner_busy', 'chat_queue_full', 'chat_wait_timeout', 'session_busy'].includes(streamErrorCode ?? '');
+      if (admissionRejected) {
         const cached = projectCacheRef.current.get(projectId);
         if (cached) projectCacheRef.current.set(projectId, { ...cached, messages: originalMessages });
       }
@@ -2793,8 +2795,10 @@ export default function App() {
         }
         return;
       }
-      if (isChatCapacityError(streamErrorCode)) {
-        setConversationError({ projectId, text: t('此项目已达到聊天上限'), capacity: true });
+      if (admissionRejected) {
+        setConversationError(isChatCapacityError(streamErrorCode)
+          ? { projectId, text: t('此项目已达到聊天上限'), capacity: true }
+          : { projectId, text: userFacingError(e, t('服务器错误，请稍后重试。')) });
         setProject(current => current?.project_id === projectId ? { ...current, messages: originalMessages } : current);
         if (replacement) {
           setRejectedEdit({ projectId, messageId: replacement.messageId, content: replacement.content });
@@ -3146,6 +3150,10 @@ export default function App() {
     ? { stage: 'provider_retry', status: 'running', kind: 'summary', visible: true,
         label: `${t((analysisJobDetails.error ?? '上游错误').replace(/，请.*。$/u, ''))}，${t('正在重试（{0}/{1}）', analysisJobDetails.attempt, Math.max(0, analysisJobDetails.max_attempts - 1))}`,
         elapsed_ms: analysisActivity.at(-1)?.elapsed_ms ?? 0 } : null;
+  const analysisWaitingEvent: RuntimeProgressEvent | null = analysisJobDetails?.scheduling_state?.startsWith('waiting')
+    ? { stage: analysisJobDetails.scheduling_state === 'waiting_owner' ? 'analysis_waiting_owner' : 'analysis_waiting_capacity',
+      status: 'running', kind: 'summary', visible: true, elapsed_ms: 0,
+      label: analysisJobDetails.scheduling_state === 'waiting_owner' ? '等待个人分析名额' : '正在等待分析' } : null;
   const isAnalyzing = !analysisJobTerminal
     && !analysisDismissed
     && (analysisJobActive || !['done', 'failed', 'idle'].includes(analysisStage));
@@ -3414,7 +3422,7 @@ export default function App() {
                 <div className="chat-messages">
                 {isAnalyzing && (
                   <ActivityDisclosure
-                    events={analysisRetryEvent ? [...analysisActivity, analysisRetryEvent] : analysisActivity}
+                    events={analysisRetryEvent ? [...analysisActivity, analysisRetryEvent] : analysisWaitingEvent ? [analysisWaitingEvent] : analysisActivity}
                     startedAt={Number.isFinite(analysisStartedAt) ? analysisStartedAt : null}
                     exactStages
                     testId="analysis-activity"

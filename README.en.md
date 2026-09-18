@@ -8,7 +8,7 @@
 <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
 <p>
-  <a href="https://bottlecapduel.com"><img src="https://img.shields.io/badge/Try%20online-7C5CBF?style=flat-square" alt="Try what-the-repo online"></a>
+  <a href="https://what-the-repo.com"><img src="https://img.shields.io/badge/Try%20online-7C5CBF?style=flat-square" alt="Try what-the-repo online"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/MIT%20license-D4A72C?style=flat-square" alt="Read the MIT license"></a>
   <a href="https://github.com/Yecernia/what-the-repo/releases/latest"><img src="https://img.shields.io/github/v/release/Yecernia/what-the-repo?style=flat-square&amp;color=39815A" alt="Latest release"></a>
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contribute-536878?style=flat-square" alt="Contribute"></a>
@@ -16,7 +16,7 @@
 
 <p><img src=".github/assets/product-hero.svg" width="600" alt="what-the-repo — Start with curiosity. A line drawing of a person exploring code on a park bench."></p>
 
-<p><a href="https://bottlecapduel.com"><strong>Open what-the-repo ↗</strong></a> · <a href="https://github.com/Yecernia/what-the-repo/issues">Feedback & ideas</a></p>
+<p><a href="https://what-the-repo.com"><strong>Open what-the-repo ↗</strong></a> · <a href="https://github.com/Yecernia/what-the-repo/issues">Feedback & ideas</a></p>
 
 </div>
 
@@ -62,7 +62,7 @@ Try asking:
 
 ## Get started online
 
-1. Open **[bottlecapduel.com](https://bottlecapduel.com)** and sign in with GitHub or use the guest entry.
+1. Open **[what-the-repo.com](https://what-the-repo.com)** and sign in with GitHub or use the guest entry.
 2. Paste a **public GitHub repository URL** and wait for its analysis.
 3. Explore the project view, ask about something that interests you, or begin guided learning.
 

@@ -75,3 +75,16 @@ test("changing only one analysis role changes snapshot identity; changing creden
     assert.equal(keyOnly.digest, original.digest);
   }
 });
+
+test('analysis role overrides keep the analysis gate even before usage attribution is attached', async () => {
+  const categories: Array<string | undefined> = [];
+  await resolveAnalysisExecution({ ...config, agentModels: {
+    'architecture-planning': { model: 'analysis-architecture-test' },
+    'component-explanation': { model: 'analysis-component-test' },
+    'repository-value-discovery': { model: 'analysis-value-test' },
+  } }, { providerGateFactory: (_provider, business) => {
+    categories.push(business);
+    return { acquire: async () => ({ release: async () => {} }) };
+  } });
+  assert.deepEqual(categories, ['analysis', 'analysis', 'analysis', 'analysis']);
+});

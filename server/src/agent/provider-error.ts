@@ -1,9 +1,9 @@
 /** Public categories only. Never forward an upstream response body to the UI. */
 export function providerErrorCode(error: unknown, fallback = "provider_request_failed"): string {
   const explicit = error && typeof error === "object" && "code" in error ? String(error.code) : "";
-  if (explicit.startsWith("site_") && FAILURE_MESSAGES[explicit]) return explicit;
+  if (FAILURE_MESSAGES[explicit]) return explicit;
   const value = error instanceof Error ? `${error.name} ${error.message} ${error.cause instanceof Error ? error.cause.message : ""}` : String(error ?? "");
-  const businessCode = Object.keys(FAILURE_MESSAGES).find(code => code.startsWith("site_") && value.includes(code));
+  const businessCode = Object.keys(FAILURE_MESSAGES).find(code => (code.startsWith('site_') || code.includes('capacity_') || code === 'runtime_lease_lost') && value.includes(code));
   if (businessCode) return businessCode;
   if (/provider_budget_exceeded|budget.{0,20}exceed/iu.test(value)) return "provider_budget_exceeded";
   if (/insufficient[_\s-](?:balance|quota|credit)|balance.{0,20}insufficient|credit.{0,20}exhaust|余额不足|欠费/iu.test(value)) return "provider_balance_insufficient";
@@ -17,6 +17,16 @@ export function providerErrorCode(error: unknown, fallback = "provider_request_f
 }
 
 export const FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  chat_owner_busy: '你已有多轮对话正在进行，请等待一轮结束或取消后再试。',
+  chat_queue_full: '服务器繁忙，请稍后重试。',
+  chat_wait_timeout: '等待处理超时，请稍后重试。',
+  runtime_lease_lost: '处理已中断，请重试。',
+  analysis_owner_queue_full: '你的待分析任务已满，请等待已有任务完成后再试。',
+  analysis_queue_full: '分析队列已满，请稍后重试。',
+  model_capacity_busy: '服务器的模型处理容量已满，请稍后重试。',
+  model_capacity_timeout: '等待模型处理超时，请稍后重试。',
+  upstream_capacity_busy: '上游模型名额已满，请稍后重试。',
+  upstream_capacity_timeout: '等待上游模型名额超时，请稍后重试。',
   site_project_chat_round_limit: '此项目已达到聊天上限',
   site_project_chat_size_limit: '此项目已达到聊天上限',
   site_model_pricing_unknown: "平台模型缺少可靠的费用估计，暂时无法在有限预算下调用，请联系管理员。",

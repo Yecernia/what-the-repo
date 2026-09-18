@@ -18,6 +18,8 @@ import {
   type ProviderSettings,
 } from "../domain/conversation.js";
 import { newAnalysisJob, type AnalysisJob } from "../domain/jobs.js";
+import { admitAnalysisWithDb, claimFairAnalysis } from './analysis-scheduler.js';
+import { analysisParticipationView, type AnalysisLimits } from '../scheduling/analysis.js';
 import type { SemanticBatch } from "../domain/semantic-batch.js";
 import type {
   EvolutionFeedbackRequest,
@@ -103,6 +105,7 @@ export function shouldInlinePublicSnapshotPayload(fileBytes: number): boolean {
 }
 
 interface PostgresStoreOptions {
+  analysisLimits?: AnalysisLimits;
   databaseUrl: string;
   root: string;
   migrationsRoot: string;
@@ -206,6 +209,7 @@ function mergeSettings(source: ProviderSettings, target: ProviderSettings): Prov
 function jobFromRow(row: Record<string, unknown>): AnalysisJob {
   return {
     config_version: row.config_version == null ? undefined : Number(row.config_version),
+    participation_state: row.participation_state === 'running' ? 'running' : 'waiting',
     job_id: String(row.job_id),
     project_id: String(row.project_id),
     idempotency_key: String(row.idempotency_key),
@@ -331,7 +335,7 @@ export class PostgresStore extends FileStore {
       ...poolSettings,
     });
     const limits = options.quotaLimits ?? DEFAULT_QUOTA_LIMITS;
-    super(options.root, limits, new EncryptedPostgresKeyVault(pool, options.encryptionSecret));
+    super(options.root, limits, new EncryptedPostgresKeyVault(pool, options.encryptionSecret), options.analysisLimits);
     // pg removes the idle client before emitting this event. Active queries still
     // reject normally; an idle disconnect must not crash the entire Worker or
     // dump a client object (which can contain credentials) through an unhandled event.
@@ -1434,6 +1438,7 @@ export class PostgresStore extends FileStore {
          WHERE repository_identity = $1
            AND analyzer_bundle_version = $2
            AND analysis_config_digest = $3
+           AND target_commit_sha IS NOT DISTINCT FROM $4
            AND status IN ('queued', 'running')
          ORDER BY created_at
          LIMIT 1
@@ -1442,6 +1447,7 @@ export class PostgresStore extends FileStore {
           input.identity.repository.toLowerCase(),
           input.identity.analyzerBundleVersion,
           input.identity.analysisConfigDigest,
+          input.targetCommitSha?.toLowerCase() ?? null,
         ],
       );
       const leader = !active.rows[0];
@@ -1462,7 +1468,7 @@ export class PostgresStore extends FileStore {
             input.identity.repository.toLowerCase(),
             input.identity.analyzerBundleVersion,
             input.identity.analysisConfigDigest,
-            input.targetCommitSha ?? null,
+            input.targetCommitSha?.toLowerCase() ?? null,
             input.project.project_id,
           ],
         );
@@ -1597,7 +1603,7 @@ export class PostgresStore extends FileStore {
       const joined = await client.query<{ project_id: string }>(
         `SELECT project.project_id
          FROM projects AS project
-         WHERE EXISTS (
+         WHERE (EXISTS (
            SELECT 1
            FROM project_public_snapshot_bindings AS binding
            JOIN canonical_public_repository_snapshots AS snapshot
@@ -1612,6 +1618,10 @@ export class PostgresStore extends FileStore {
            FROM repository_analysis_update_projects AS joined_project
            WHERE joined_project.update_id = $4
              AND joined_project.project_id = project.project_id
+         )) AND NOT EXISTS (
+           SELECT 1 FROM analysis_jobs pending WHERE pending.project_id=project.project_id
+             AND pending.status IN ('queued','running')
+             AND COALESCE(pending.repository_update_id,'') <> $4
          )
          ORDER BY project.project_id
          FOR UPDATE OF project`,
@@ -2624,25 +2634,31 @@ export class PostgresStore extends FileStore {
   }
 
   override async saveJob(job: AnalysisJob): Promise<void> {
-    await this.saveJobWithDb(this.pool, job);
+    const client = await this.pool.connect();
+    try { await client.query('BEGIN'); await this.saveJobWithDb(client, job); await client.query('COMMIT'); }
+    catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
   }
 
   override async loadJob(jobId: string): Promise<AnalysisJob | null> {
-    const result = await this.pool.query("SELECT * FROM analysis_jobs WHERE job_id = $1", [jobId]);
+    const result = await this.pool.query("SELECT j.*,a.state AS participation_state FROM analysis_jobs j LEFT JOIN analysis_participants a USING(job_id) WHERE job_id = $1", [jobId]);
     return result.rows[0] ? jobFromRow(result.rows[0]) : null;
   }
 
   override async listJobs(): Promise<AnalysisJob[]> {
-    const result = await this.pool.query("SELECT * FROM analysis_jobs ORDER BY created_at");
+    const result = await this.pool.query("SELECT j.*,a.state AS participation_state FROM analysis_jobs j LEFT JOIN analysis_participants a USING(job_id) ORDER BY created_at");
     return result.rows.map(jobFromRow);
   }
 
   override async latestJob(projectId: string): Promise<AnalysisJob | null> {
     const result = await this.pool.query(
-      "SELECT * FROM analysis_jobs WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1",
+      "SELECT j.*,a.state AS participation_state FROM analysis_jobs j LEFT JOIN analysis_participants a USING(job_id) WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1",
       [projectId],
     );
-    return result.rows[0] ? jobFromRow(result.rows[0]) : null;
+    if (!result.rows[0]) return null;
+    const job = jobFromRow(result.rows[0]);
+    const active = await this.pool.query("SELECT * FROM analysis_jobs WHERE status='running' AND execution_role<>'waiter'");
+    return analysisParticipationView(job, active.rows.map(jobFromRow));
   }
 
   override async cancelAnalysisJob(
@@ -2821,42 +2837,8 @@ export class PostgresStore extends FileStore {
   }
 
   override async claimAnalysisJob(workerId: string, leaseSeconds: number): Promise<AnalysisJob | null> {
-    await this.pool.query(
-      `WITH expired AS (
-         SELECT job_id FROM analysis_jobs
-         WHERE status = 'running' AND attempt >= max_attempts
-           AND lease_expires_at <= clock_timestamp()
-         FOR UPDATE SKIP LOCKED
-       )
-       UPDATE analysis_jobs AS job SET
-         status = 'failed', lease_owner = NULL, lease_expires_at = NULL,
-         heartbeat_at = clock_timestamp(), updated_at = clock_timestamp(),
-         completed_at = clock_timestamp(),
-         error = 'analysis job lease expired after maximum attempts',
-         error_code = 'lease_attempts_exhausted'
-       FROM expired WHERE job.job_id = expired.job_id`,
-    );
-    const result = await this.pool.query(
-      `WITH candidate AS (
-       SELECT job_id FROM analysis_jobs
-         WHERE execution_role <> 'waiter'
-           AND attempt < max_attempts AND available_at <= clock_timestamp() AND (
-           status = 'queued' OR (status = 'running' AND lease_expires_at <= clock_timestamp())
-         )
-         ORDER BY created_at
-         FOR UPDATE SKIP LOCKED
-         LIMIT 1
-       )
-       UPDATE analysis_jobs AS job SET
-         status = 'running', attempt = job.attempt + 1, lease_owner = $1,
-         lease_expires_at = clock_timestamp() + ($2 * interval '1 second'),
-         heartbeat_at = clock_timestamp(), updated_at = clock_timestamp(),
-         completed_at = NULL, error = NULL, error_code = NULL
-       FROM candidate WHERE job.job_id = candidate.job_id
-       RETURNING job.*`,
-      [workerId, leaseSeconds],
-    );
-    return result.rows[0] ? jobFromRow(result.rows[0]) : null;
+    const row = await claimFairAnalysis(this.pool, this.analysisLimits, workerId, leaseSeconds);
+    return row ? jobFromRow(row) : null;
   }
 
   override async heartbeatAnalysisJob(
@@ -3679,7 +3661,8 @@ export class PostgresStore extends FileStore {
     }
   }
 
-  private async saveJobWithDb(db: Db, job: AnalysisJob): Promise<void> {
+  private async saveJobWithDb(db: PoolClient, job: AnalysisJob): Promise<void> {
+    const participation = await admitAnalysisWithDb(db, job, this.analysisLimits);
     await db.query(
       `INSERT INTO analysis_jobs(
          job_id, project_id, idempotency_key, status, attempt, max_attempts,
@@ -3724,6 +3707,8 @@ export class PostgresStore extends FileStore {
         job.config_version ?? null,
       ],
     );
+    await db.query('INSERT INTO analysis_participants(job_id,state) VALUES($1,$2) ON CONFLICT(job_id) DO NOTHING', [job.job_id, participation]);
+    job.participation_state = participation;
   }
 
   private async saveRevisionRedirectsWithDb(db: Db, redirects: RevisionRedirect[]): Promise<void> {
@@ -3926,16 +3911,6 @@ export class PostgresStore extends FileStore {
     );
     if (Number(events.rows[0]?.count ?? 0) >= this.limits.maxCreationsPerHour) {
       throw new QuotaExceededError("creation_rate", this.limits.maxCreationsPerHour);
-    }
-    const active = await client.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count
-       FROM analysis_jobs AS job
-       JOIN projects AS project ON project.project_id = job.project_id
-       WHERE project.owner_id = $1 AND job.status IN ('queued', 'running')`,
-      [ownerId],
-    );
-    if (Number(active.rows[0]?.count ?? 0) >= this.limits.maxActiveAnalysisJobs) {
-      throw new QuotaExceededError("active_analysis_jobs", this.limits.maxActiveAnalysisJobs);
     }
   }
 

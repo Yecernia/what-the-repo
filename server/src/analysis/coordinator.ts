@@ -338,20 +338,26 @@ export class AnalysisCoordinator {
 
   async runOnce(): Promise<void> {
     if (this.stopping || this.activeRuns >= this.concurrency) return;
-    this.activeRuns += 1;
-    this.metrics.setGauge(METRIC_NAMES.analysisActive, this.activeRuns, { worker: "analysis" });
-    const execution = this.claimAndProcess().finally(() => {
-      this.activeRuns -= 1;
+    const lanes: Promise<void>[] = [];
+    while (!this.stopping && this.activeRuns < this.concurrency) {
+      this.activeRuns += 1;
       this.metrics.setGauge(METRIC_NAMES.analysisActive, this.activeRuns, { worker: "analysis" });
-      this.inFlight.delete(execution);
-    });
-    this.inFlight.add(execution);
-    await execution;
+      const execution = (async () => {
+        while (!this.stopping && await this.claimAndProcess()) { /* Drain durable work whenever a slot becomes free. */ }
+      })().finally(() => {
+        this.activeRuns -= 1;
+        this.metrics.setGauge(METRIC_NAMES.analysisActive, this.activeRuns, { worker: "analysis" });
+        this.inFlight.delete(execution);
+      });
+      this.inFlight.add(execution);
+      lanes.push(execution);
+    }
+    await Promise.all(lanes);
   }
 
-  private async claimAndProcess(): Promise<void> {
+  private async claimAndProcess(): Promise<boolean> {
     const candidate = await this.store.claimAnalysisJob(this.workerId, JOB_LEASE_SECONDS);
-    if (!candidate) return;
+    if (!candidate) return false;
     const startedAt = performance.now();
     const role = candidate.execution_role ?? "standalone";
     this.metrics.increment(METRIC_NAMES.analysisJobs, 1, { role, phase: "claimed" });
@@ -365,6 +371,7 @@ export class AnalysisCoordinator {
     if (status === "queued" && (finalJob?.attempt ?? candidate.attempt) > candidate.attempt) {
       this.metrics.increment(METRIC_NAMES.analysisJobs, 1, { role, outcome: "retry" });
     }
+    return true;
   }
 
   private async requeueAfterTransientFailure(
@@ -496,6 +503,26 @@ export class AnalysisCoordinator {
       attempt: job.attempt,
       projectId: project.project_id,
     };
+    // Exhausted leases are reclaimed only to finalize the durable task and all
+    // shared participants. This path must never start source or model work.
+    if (job.error_code === 'lease_attempts_exhausted') {
+      const message = 'analysis job lease expired after maximum attempts';
+      if (job.repository_update_id) {
+        await this.store.failRepositoryUpdate(job.repository_update_id, message, fence);
+      } else if (job.language_overlay_key && project.analysis.canonical_snapshot_key) {
+        await this.store.failSnapshotLanguageOverlay(project.analysis.canonical_snapshot_key,
+          normalizeDisplayLanguage(project.display_language), message, fence);
+      } else {
+        const completed = nowIso();
+        await this.store.updateProject(project.project_id, project.owner_id, row => {
+          recordAnalysisProgress(row.analysis, 'failed', 'failed', completed);
+          row.analysis.stage = 'failed'; row.analysis.error = message; row.analysis.completed_at = completed;
+        }, fence);
+        await this.store.finishAnalysisJob({ ...job, status: 'failed', lease_owner: null,
+          lease_expires_at: null, completed_at: completed, updated_at: completed, error: message }, worker, job.attempt);
+      }
+      return;
+    }
     const semanticBatchContext = this.progressContext(job, fence);
     await this.updateAnalysisProjects(job, fence, row => {
       // A reclaimed lease is a new attempt; old in-flight rows must not keep spinning.
@@ -820,7 +847,7 @@ export class AnalysisCoordinator {
           semantic = await enrichSnapshotSafely(
             structuralSnapshot,
             { ...execution.runtime,
-              providerGate: this.providerGateFactory?.(semanticProvider),
+              providerGate: this.providerGateFactory?.(semanticProvider, 'analysis'),
               providerBudget: this.providerBudget,
               ownerId: REPOSITORY_ANALYSIS_OWNER_ID,
               attribution: { business: "analysis", payer: "platform", agentRole: "repository-analysis", connectionId: semanticProvider.connectionId, configVersion: config.adminConfigVersion, taskId: job.job_id },
@@ -1369,7 +1396,7 @@ export class AnalysisCoordinator {
         source,
         targetLanguage,
         modelRuntime: { ...createModelRuntime(provider, {
-          providerGate: this.providerGateFactory?.(provider),
+          providerGate: this.providerGateFactory?.(provider, 'analysis'),
           providerBudget: this.providerBudget,
           ownerId: REPOSITORY_ANALYSIS_OWNER_ID,
         }), beforeWorkerRequest: budget.beforeRequest },

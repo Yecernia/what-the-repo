@@ -101,6 +101,16 @@ function publicErrorMessage(status: number, code: string | undefined, detail: un
 export function conversationErrorMessage(code: string): string | null {
   const labels: Record<string, string> = {
     site_project_chat_round_limit: '此项目已达到聊天上限',
+    chat_owner_busy: '你已有多轮对话正在进行，请等待一轮结束或取消后再试。',
+    chat_queue_full: '服务器繁忙，请稍后重试。',
+    chat_wait_timeout: '等待处理超时，请稍后重试。',
+    runtime_lease_lost: '处理已中断，请重试。',
+    analysis_owner_queue_full: '你的待分析任务已满，请等待已有任务完成后再试。',
+    analysis_queue_full: '分析队列已满，请稍后重试。',
+    model_capacity_busy: '服务器的模型处理容量已满，请稍后重试。',
+    model_capacity_timeout: '等待模型处理超时，请稍后重试。',
+    upstream_capacity_busy: '上游模型名额已满，请稍后重试。',
+    upstream_capacity_timeout: '等待上游模型名额超时，请稍后重试。',
     site_project_chat_size_limit: '此项目已达到聊天上限',
     platform_provider_balance_insufficient: "平台模型服务的上游账户余额不足，请联系管理员。",
   provider_balance_insufficient: '余额不足，请检查 API 配置。',

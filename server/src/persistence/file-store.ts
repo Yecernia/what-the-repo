@@ -15,6 +15,8 @@ import {
   type ProviderSettings,
 } from "../domain/conversation.js";
 import { newAnalysisJob, type AnalysisJob } from "../domain/jobs.js";
+import { admitAnalysis, scheduleAnalysis, analysisParticipationView, DEFAULT_ANALYSIS_LIMITS, type AnalysisLimits, type ScheduledAnalysis } from '../scheduling/analysis.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SemanticBatch } from "../domain/semantic-batch.js";
 import type {
   EvolutionFeedbackRequest,
@@ -210,6 +212,16 @@ export class KeyVault implements ProviderKeyVault {
 }
 
 export class FileStore implements ProductStore {
+  private readonly admissionContext = new AsyncLocalStorage<boolean>();
+  private withAnalysisAdmission<T>(task: () => Promise<T>): Promise<T> {
+    return this.admissionContext.getStore() ? task()
+      : this.mutex.runExclusive('analysis-admission', () => this.admissionContext.run(true, task));
+  }
+  private async preflightAnalysis(job: AnalysisJob, ownerId: string): Promise<void> {
+    if (!(await this.loadJob(job.job_id))) {
+      admitAnalysis(await this.scheduledJobs(), { ...job, owner_id: ownerId }, this.analysisLimits, Date.now());
+    }
+  }
   readonly kind: ProductStore["kind"] = "file";
   readonly keys: ProviderKeyVault;
   private readonly mutex = new KeyedMutex();
@@ -219,6 +231,7 @@ export class FileStore implements ProductStore {
     readonly root: string,
     private readonly quotaLimits: QuotaLimits = DEFAULT_QUOTA_LIMITS,
     keys: ProviderKeyVault = new KeyVault(),
+    protected readonly analysisLimits: AnalysisLimits = DEFAULT_ANALYSIS_LIMITS,
   ) {
     this.keys = keys;
     this.dirs = {
@@ -407,7 +420,7 @@ export class FileStore implements ProductStore {
     job: AnalysisJob,
     fence?: AnalysisLeaseFence,
   ): Promise<void> {
-    await this.writeJsonWithAnalysisLease(this.path("jobs", job.job_id), job, fence);
+    await this.withAnalysisAdmission(() => this.writeJsonWithAnalysisLease(this.path("jobs", job.job_id), job, fence));
   }
 
   private async saveRepositoryHeadWithAnalysisLease(
@@ -505,12 +518,13 @@ export class FileStore implements ProductStore {
   }
 
   async createProjectWithJob(project: Project, job: AnalysisJob): Promise<void> {
-    await this.mutex.runExclusive(`owner:${project.owner_id}`, async () => {
+    await this.mutex.runExclusive(`owner:${project.owner_id}`, async () => this.withAnalysisAdmission(async () => {
       await this.checkCreationQuotas(project.owner_id, true);
+      await this.preflightAnalysis(job, project.owner_id);
       await this.saveProject(project);
       await this.saveJob(job);
       await this.writeQuotaEvent(project.owner_id, project.project_id);
-    });
+    }));
   }
 
   async enqueueAnalysisJob(ownerId: string, projectId: string, job: AnalysisJob): Promise<void> {
@@ -870,12 +884,11 @@ export class FileStore implements ProductStore {
     newProject: boolean;
   }): Promise<{ update: RepositoryUpdate; job: AnalysisJob; leader: boolean }> {
     const key = identityKey(input.identity);
-    return this.mutex.runExclusive(`repository-update:${key}`, async () => {
+    return this.mutex.runExclusive(`repository-update:${key}`, async () => this.withAnalysisAdmission(async () => {
       await this.checkCreationQuotas(input.project.owner_id, input.newProject);
       if (!input.newProject && !(await this.loadProject(input.project.project_id, input.project.owner_id))) {
         throw new Error("project_not_found");
       }
-      await this.saveProject(input.project);
       const { readdir } = await import("node:fs/promises");
       const names = await readdir(this.dirs.repositoryUpdates).catch(() => [] as string[]);
       const rows = await Promise.all(names.filter((name) => name.endsWith(".json")).map((name) => readJson<RepositoryUpdate>(join(this.dirs.repositoryUpdates, name))));
@@ -884,9 +897,12 @@ export class FileStore implements ProductStore {
           && row.repository_identity === input.identity.repository.toLowerCase()
           && row.analyzer_bundle_version === input.identity.analyzerBundleVersion
           && row.analysis_config_digest === input.identity.analysisConfigDigest
+          && (row.target_commit_sha?.toLowerCase() ?? null) === (input.targetCommitSha?.toLowerCase() ?? null)
           && (row.status === "queued" || row.status === "running"),
       ));
       if (update) {
+        await this.preflightAnalysis({ ...input.job, repository_update_id: update.update_id, execution_role: 'waiter' }, input.project.owner_id);
+        await this.saveProject(input.project);
         await writeJson(join(this.dirs.repositoryUpdateProjects, `${safeId(update.update_id)}-${safeId(input.project.project_id)}.json`), {
           project_id: input.project.project_id,
           update_id: update.update_id,
@@ -907,7 +923,7 @@ export class FileStore implements ProductStore {
         repository_identity: input.identity.repository.toLowerCase(),
         analyzer_bundle_version: input.identity.analyzerBundleVersion,
         analysis_config_digest: input.identity.analysisConfigDigest,
-        target_commit_sha: input.targetCommitSha ?? null,
+        target_commit_sha: input.targetCommitSha?.toLowerCase() ?? null,
         status: "queued",
         leader_project_id: input.project.project_id,
         lease_owner: null,
@@ -919,6 +935,8 @@ export class FileStore implements ProductStore {
         updated_at: timestamp,
         completed_at: null,
       };
+      await this.preflightAnalysis({ ...input.job, repository_update_id: update.update_id, execution_role: 'leader' }, input.project.owner_id);
+      await this.saveProject(input.project);
       await writeJson(this.path("repositoryUpdates", update.update_id), update);
       await writeJson(join(this.dirs.repositoryUpdateProjects, `${safeId(update.update_id)}-${safeId(input.project.project_id)}.json`), {
         project_id: input.project.project_id,
@@ -933,7 +951,7 @@ export class FileStore implements ProductStore {
       await this.saveJob(leader);
       await this.writeQuotaEvent(input.project.owner_id, input.project.project_id);
       return { update, job: leader, leader: true };
-    });
+    }));
   }
 
   async loadRepositoryUpdateForProject(projectId: string): Promise<RepositoryUpdate | null> {
@@ -1012,7 +1030,8 @@ export class FileStore implements ProductStore {
       });
       const projects = [...new Map(
         [...joinedProjects, ...boundProjects].map((project) => [project.project_id, project]),
-      ).values()];
+      ).values()].filter(project => !jobs.some(job => job.project_id === project.project_id
+        && (job.status === 'queued' || job.status === 'running') && job.repository_update_id !== input.updateId));
       if (previousPublicKey && previousPublicKey !== input.publicKey) {
         await this.saveRevisionLinkWithAnalysisLease({
           repository_identity: current.repository_identity,
@@ -1248,7 +1267,7 @@ export class FileStore implements ProductStore {
   }): Promise<{ job: AnalysisJob; ready: boolean }> {
     const language = languageKey(normalizeDisplayLanguage(input.language));
     const overlayKey = snapshotLanguageOverlayKey(input.publicKey, language);
-    return this.mutex.runExclusive(`snapshot-language:${overlayKey}`, async () => {
+    return this.mutex.runExclusive(`snapshot-language:${overlayKey}`, async () => this.withAnalysisAdmission(async () => {
       if (!input.systemManaged) await this.checkCreationQuotas(input.project.owner_id, input.newProject);
       if (!input.newProject && !(await this.loadProject(input.project.project_id, input.project.owner_id))) {
         throw new Error("project_not_found");
@@ -1264,7 +1283,6 @@ export class FileStore implements ProductStore {
         input.project.analysis.completed_at = null;
       }
       input.project.updated_at = timestamp;
-      await this.saveProject(input.project);
       const active = ready ? null : (await this.listJobs()).find((row) =>
         row.language_overlay_key === overlayKey
         && row.execution_role === "overlay"
@@ -1279,13 +1297,15 @@ export class FileStore implements ProductStore {
         completed_at: ready ? timestamp : null,
         updated_at: timestamp,
       };
+      await this.preflightAnalysis(queued, input.project.owner_id);
+      await this.saveProject(input.project);
       await this.saveJob(queued);
       if (!ready && !existing) {
         await this.saveSnapshotLanguageOverlay({ publicKey: input.publicKey, language, status: "pending", payload: null });
       }
       if (!input.systemManaged) await this.writeQuotaEvent(input.project.owner_id, input.project.project_id);
       return { job: queued, ready };
-    });
+    }));
   }
 
   async publishSnapshotLanguageOverlay(input: SnapshotLanguageOverlayPublication & { fence?: AnalysisLeaseFence }): Promise<string[]> {
@@ -1543,7 +1563,32 @@ export class FileStore implements ProductStore {
     });
   }
 
-  async saveJob(job: AnalysisJob): Promise<void> { await writeJson(this.path("jobs", job.job_id), job); }
+  async saveJob(job: AnalysisJob): Promise<void> {
+    await this.withAnalysisAdmission(async () => {
+      const current = await this.loadJob(job.job_id);
+      if (!current && ['queued','running'].includes(job.status)) {
+        const project = await this.loadProject(job.project_id);
+        if (!project) throw new Error('project_not_found');
+        job.participation_state = admitAnalysis(await this.scheduledJobs(), { ...job, owner_id: project.owner_id }, this.analysisLimits, Date.now());
+      }
+      await writeJson(this.path('jobs', job.job_id), job);
+    });
+  }
+
+  private async scheduledJobs(): Promise<ScheduledAnalysis[]> {
+    const jobs = (await this.listJobs()).filter(job => ['queued','running'].includes(job.status));
+    const result: ScheduledAnalysis[] = [];
+    for (const job of jobs) {
+      const project = await this.loadProject(job.project_id);
+      if (project) {
+        const update = job.repository_update_id
+          ? await readJson<RepositoryUpdate>(this.path('repositoryUpdates', job.repository_update_id)) : null;
+        result.push({ ...job, owner_id: project.owner_id, execution_scope: update
+          ? JSON.stringify([update.repository_identity, update.analyzer_bundle_version, update.analysis_config_digest]) : undefined });
+      }
+    }
+    return result;
+  }
   async loadJob(jobId: string): Promise<AnalysisJob | null> { return readJson<AnalysisJob>(this.path("jobs", jobId)); }
   async listJobs(): Promise<AnalysisJob[]> {
     const { readdir } = await import("node:fs/promises");
@@ -1563,7 +1608,9 @@ export class FileStore implements ProductStore {
       16,
       (name) => readJson<AnalysisJob>(join(this.dirs.jobs, name)),
     );
-    return rows.filter((row): row is AnalysisJob => Boolean(row && row.project_id === projectId)).sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
+    const jobs = rows.filter((row): row is AnalysisJob => Boolean(row));
+    const job = jobs.filter(row => row.project_id === projectId).sort((a,b) => b.created_at.localeCompare(a.created_at))[0];
+    return job ? analysisParticipationView(job, jobs) : null;
   }
 
   async cancelAnalysisJob(
@@ -1626,71 +1673,43 @@ export class FileStore implements ProductStore {
   }
 
   async claimAnalysisJob(workerId: string, leaseSeconds: number): Promise<AnalysisJob | null> {
-    return this.mutex.runExclusive("analysis-job-claim", async () => {
-      let now = nowIso();
-      let jobs = await this.listJobs();
-      for (const expired of jobs.filter((job) =>
-        job.status === "running"
-        && job.attempt >= job.max_attempts
-        && job.lease_expires_at !== null
-        && job.lease_expires_at <= now)) {
-        await this.mutex.runExclusive(this.analysisLeaseKey(expired.job_id), async () => {
-          const current = await this.loadJob(expired.job_id);
-          if (!current
-            || current.status !== "running"
-            || current.attempt < current.max_attempts
-            || !current.lease_expires_at
-            || current.lease_expires_at > now) return;
-          await this.saveJob({
-            ...current,
-            status: "failed",
-            lease_owner: null,
-            lease_expires_at: null,
-            heartbeat_at: now,
-            updated_at: now,
-            completed_at: now,
-            error: "analysis job lease expired after maximum attempts",
-            error_code: "lease_attempts_exhausted",
-          });
-        });
-      }
-      jobs = await this.listJobs();
-      const candidates = jobs
-        .filter((job) => job.attempt < job.max_attempts && job.available_at <= now && (
-          job.execution_role !== "waiter" && (
-          job.status === "queued"
-          || (job.status === "running" && job.lease_expires_at !== null && job.lease_expires_at <= now)
-          )
-        ))
-        .sort((left, right) => left.created_at.localeCompare(right.created_at));
-      for (const candidate of candidates) {
-        const claimed = await this.mutex.runExclusive(this.analysisLeaseKey(candidate.job_id), async () => {
-          const current = await this.loadJob(candidate.job_id);
-          now = nowIso();
-          if (!current || current.attempt >= current.max_attempts || current.available_at > now
-            || current.execution_role === "waiter"
-            || (current.status !== "queued"
-              && !(current.status === "running" && current.lease_expires_at !== null && current.lease_expires_at <= now))) {
-            return null;
-          }
-          const claimedJob: AnalysisJob = {
-            ...current,
-            status: "running",
-            attempt: current.attempt + 1,
-            lease_owner: workerId,
-            lease_expires_at: new Date(Date.now() + leaseSeconds * 1000).toISOString(),
-            heartbeat_at: now,
-            updated_at: now,
-            completed_at: null,
-            error: null,
-            error_code: null,
-          };
-          await this.saveJob(claimedJob);
-          return claimedJob;
-        });
-        if (claimed) return claimed;
-      }
-      return null;
+    return this.withAnalysisAdmission(async () => {
+      const scheduling = await this.scheduledJobs();
+      const prior = new Map(scheduling.map(job => [job.job_id, job.participation_state]));
+      const turnsPath = join(this.root, 'analysis-scheduler.json');
+      const served = new Map(Object.entries(await readJson<Record<string, number>>(turnsPath) ?? {}));
+      const previousTurns = new Map(served);
+      const selected = scheduleAnalysis(scheduling, served, this.analysisLimits, Date.now(),
+        job => !this.mutex.isLocked(this.analysisLeaseKey(job.job_id)));
+      const commit = async (): Promise<AnalysisJob | null> => {
+        let claimed: AnalysisJob | null = null;
+        if (selected) {
+          const current = await this.loadJob(selected.job_id);
+          const now = nowIso();
+          if (!current || current.available_at > now || current.execution_role === 'waiter'
+            || (current.status !== 'queued' && !(current.status === 'running'
+              && current.lease_expires_at !== null && current.lease_expires_at <= now))) return null;
+          claimed = { ...current, participation_state: selected.participation_state,
+            status: 'running', attempt: Math.min(current.attempt + 1, current.max_attempts),
+            lease_owner: workerId, lease_expires_at: new Date(Date.now() + leaseSeconds * 1000).toISOString(),
+            heartbeat_at: now, updated_at: now, completed_at: null, error: null,
+            error_code: current.attempt >= current.max_attempts ? 'lease_attempts_exhausted' : null };
+        }
+        for (const job of scheduling) if (job.job_id !== claimed?.job_id && prior.get(job.job_id) !== job.participation_state) {
+          const { owner_id: _owner, execution_scope: _scope, ...persisted } = job;
+          await this.saveJob(persisted);
+        }
+        if (claimed) await this.saveJob(claimed);
+        if ([...served].some(([owner, turn]) => previousTurns.get(owner) !== turn)) {
+          await writeJson(turnsPath, Object.fromEntries(served));
+        }
+        return claimed;
+      };
+      if (!selected) return commit();
+      // A fenced writer owns this per-job lock before entering admission. Never
+      // wait in the reverse order; skip locked jobs and preserve other capacity.
+      const result = await this.mutex.tryRunExclusive(this.analysisLeaseKey(selected.job_id), commit);
+      return result.acquired ? result.value : null;
     });
   }
 
@@ -1700,7 +1719,7 @@ export class FileStore implements ProductStore {
     attempt: number,
     leaseSeconds: number,
   ): Promise<boolean> {
-    return this.mutex.runExclusive(this.analysisLeaseKey(jobId), async () => {
+    return this.mutex.runExclusive(this.analysisLeaseKey(jobId), async () => this.withAnalysisAdmission(async () => {
       const current = await this.loadJob(jobId);
       if (!current || current.status !== "running" || current.lease_owner !== workerId || current.attempt !== attempt) return false;
       const now = nowIso();
@@ -1712,22 +1731,22 @@ export class FileStore implements ProductStore {
         updated_at: now,
       });
       return true;
-    });
+    }));
   }
 
   async finishAnalysisJob(job: AnalysisJob, workerId: string, attempt: number): Promise<boolean> {
-    return this.mutex.runExclusive(this.analysisLeaseKey(job.job_id), async () => {
+    return this.mutex.runExclusive(this.analysisLeaseKey(job.job_id), async () => this.withAnalysisAdmission(async () => {
       const current = await this.loadJob(job.job_id);
       if (!current || current.status !== "running" || current.lease_owner !== workerId || current.attempt !== attempt) return false;
       const expiresAt = current.lease_expires_at ? Date.parse(current.lease_expires_at) : Number.NaN;
       if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
       await this.saveJob(job);
       return true;
-    });
+    }));
   }
 
   async releaseAnalysisJobForResume(jobId: string, workerId: string, attempt: number): Promise<boolean> {
-    return this.mutex.runExclusive(this.analysisLeaseKey(jobId), async () => {
+    return this.mutex.runExclusive(this.analysisLeaseKey(jobId), async () => this.withAnalysisAdmission(async () => {
       const current = await this.loadJob(jobId);
       if (!current || current.status !== "running" || current.lease_owner !== workerId || current.attempt !== attempt) return false;
       const timestamp = nowIso();
@@ -1745,7 +1764,7 @@ export class FileStore implements ProductStore {
         error_code: null,
       });
       return true;
-    });
+    }));
   }
 
   async saveSemanticBatch(batch: SemanticBatch, fence?: AnalysisLeaseFence): Promise<void> {
@@ -2249,12 +2268,6 @@ export class FileStore implements ProductStore {
   private async checkCreationQuotas(ownerId: string, includeProject: boolean): Promise<void> {
     if (includeProject && (await this.listProjects(ownerId)).length >= this.quotaLimits.maxProjects) {
       throw new QuotaExceededError("projects", this.quotaLimits.maxProjects);
-    }
-    const jobs = await this.listJobs();
-    const ownedProjects = new Set((await this.listProjects(ownerId)).map((project) => project.project_id));
-    const active = jobs.filter((job) => ownedProjects.has(job.project_id) && (job.status === "queued" || job.status === "running"));
-    if (active.length >= this.quotaLimits.maxActiveAnalysisJobs) {
-      throw new QuotaExceededError("active_analysis_jobs", this.quotaLimits.maxActiveAnalysisJobs);
     }
     const events = await this.readQuotaEvents(ownerId);
     const cutoff = Date.now() - 60 * 60 * 1000;

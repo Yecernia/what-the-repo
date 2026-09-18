@@ -41,6 +41,28 @@ export interface ModelRuntimeOptions {
   metrics?: RuntimeMetrics;
 }
 
+const rawModels = new WeakMap<PiModelRuntime['models'], PiModelRuntime['models']>();
+
+/** Also covers Pi's direct completeSimple calls during context compaction. */
+export function modelsWithProviderControl(runtime: PiModelRuntime): PiModelRuntime['models'] {
+  const raw = rawModels.get(runtime.models) ?? runtime.models;
+  const controlled = new Proxy(raw, {
+    get(target, name) {
+      if (['stream', 'streamSimple', 'complete', 'completeSimple'].includes(String(name))) {
+        return (candidate: Model<Api>, context: Parameters<typeof raw.streamSimple>[1], options?: Parameters<typeof raw.streamSimple>[2]) => {
+          const stream = streamWithProviderPermit({ ...runtime, model: candidate }, candidate, context,
+            { apiKey: runtime.apiKey, ...(runtime.networkTimeoutMs ? { timeoutMs: runtime.networkTimeoutMs } : {}), ...options }, undefined, name === 'stream' || name === 'complete' ? 'api' : 'simple');
+          return name === 'complete' || name === 'completeSimple' ? stream.result() : stream;
+        };
+      }
+      const value = Reflect.get(target, name);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  rawModels.set(controlled, raw);
+  return controlled;
+}
+
 class DeferredAssistantStream implements AsyncIterable<AssistantMessageEvent> {
   private readonly queue: AssistantMessageEvent[] = [];
   private readonly waiting: ((value: IteratorResult<AssistantMessageEvent>) => void)[] = [];
@@ -258,7 +280,7 @@ export function createModelRuntime(config: ProviderConfig, options: ModelRuntime
   const model = provider.getModels().find((candidate) => candidate.id === config.modelId)
     ?? models.getModel(config.provider, config.modelId);
   if (!model) throw new Error(`unsupported_model:${config.provider}:${config.modelId}`);
-  return {
+  const runtime: PiModelRuntime = {
     models,
     model: model as Model<Api>,
     apiKey: config.apiKey,
@@ -271,6 +293,8 @@ export function createModelRuntime(config: ProviderConfig, options: ModelRuntime
     attribution: options.attribution ? { ...options.attribution, connectionId: config.connectionId } : undefined,
     metrics: options.metrics ?? defaultRuntimeMetrics,
   };
+  runtime.models = modelsWithProviderControl(runtime);
+  return runtime;
 }
 
 interface ProviderUsage {
@@ -395,7 +419,7 @@ async function acquireBudget(
 export async function withProviderPermit<T>(
   runtime: PiModelRuntime,
   signal: AbortSignal | undefined,
-  operation: () => Promise<T>,
+  operation: (signal?: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const acquireStarted = performance.now();
   let permit: Awaited<ReturnType<ProviderCallGate["acquire"]>> | undefined;
@@ -405,6 +429,7 @@ export async function withProviderPermit<T>(
   let status: ProviderUsageReport["status"] = "failed";
   try {
     permit = await runtime.providerGate?.acquire(signal);
+    if (permit?.signal) signal = signal ? AbortSignal.any([signal, permit.signal]) : permit.signal;
     recordGateWait(runtime, performance.now() - acquireStarted);
     try {
       budgetPermit = await acquireBudget(runtime, signal);
@@ -423,7 +448,7 @@ export async function withProviderPermit<T>(
     active = true;
     const callStarted = performance.now();
     try {
-      const value = await operation();
+      const value = await operation(signal);
       finalUsage = usageFrom(value);
       status = "completed";
       recordProviderCall(runtime, "success", performance.now() - callStarted, finalUsage);
@@ -456,6 +481,7 @@ export function streamWithProviderPermit(
   context: Parameters<ReturnType<typeof createModels>["streamSimple"]>[1],
   streamOptions: Parameters<ReturnType<typeof createModels>["streamSimple"]>[2] | undefined,
   diagnostic?: ProviderRequestDiagnostic,
+  mode: 'simple' | 'api' = 'simple',
 ): ReturnType<ReturnType<typeof createModels>["streamSimple"]> {
   const wrapped = new DeferredAssistantStream();
   void (async () => {
@@ -467,9 +493,12 @@ export function streamWithProviderPermit(
     let outcome: "success" | "error" | "aborted" | "gate_error" = "success";
     let budgetRejected = false;
     let usageStatus: ProviderUsageReport["status"] = "failed";
+    let terminal: AssistantMessageEvent | undefined;
     let callStarted = performance.now();
     try {
       permit = await runtime.providerGate?.acquire(streamOptions?.signal);
+      if (permit?.signal) streamOptions = { ...streamOptions, signal: streamOptions?.signal
+        ? AbortSignal.any([streamOptions.signal, permit.signal]) : permit.signal };
       recordGateWait(runtime, performance.now() - acquireStarted);
       if (diagnostic) diagnostic.gateWaitMs = performance.now() - acquireStarted;
       const budgetStarted = performance.now();
@@ -514,7 +543,8 @@ export function streamWithProviderPermit(
         }
         : baseFetch;
       if (observedFetch && baseFetch && observedFetch !== baseFetch) observedFetchBases.set(observedFetch, baseFetch);
-      const source = runtime.models.streamSimple(candidate, context, {
+      const models = rawModels.get(runtime.models) ?? runtime.models;
+      const source = (mode === 'api' ? models.stream.bind(models) : models.streamSimple.bind(models))(candidate, context, {
         ...streamOptions,
         ...(observedFetch ? { fetch: observedFetch } : {}),
         ...(diagnostic ? { onPayload: async (payload: unknown, requestModel: typeof candidate) => {
@@ -553,10 +583,11 @@ export function streamWithProviderPermit(
           if (diagnostic) diagnostic.completionReason = event.reason;
           outcome = event.reason === "aborted" || streamOptions?.signal?.aborted ? "aborted" : "error";
         }
-        wrapped.push(event);
+        if (event.type === 'done' || event.type === 'error') terminal = event;
+        else wrapped.push(event);
       }
+      if (!terminal) throw new Error("provider_stream_incomplete");
       usageStatus = outcome === "success" ? "completed" : outcome === "aborted" ? "cancelled" : "failed";
-      wrapped.end();
     } catch (error) {
       outcome = streamOptions?.signal?.aborted ? "aborted" : "error";
       if (diagnostic) diagnostic.completionReason = outcome;
@@ -580,11 +611,11 @@ export function streamWithProviderPermit(
         errorMessage: message,
         timestamp: Date.now(),
       };
-      wrapped.push({
+      terminal = {
         type: "error",
         reason: assistant.stopReason === "aborted" ? "aborted" : "error",
         error: assistant,
-      });
+      };
       finalUsage = usageFrom(error) ?? finalUsage;
     } finally {
       if (!active && !budgetRejected) outcome = streamOptions?.signal?.aborted ? "aborted" : "gate_error";
@@ -602,7 +633,12 @@ export function streamWithProviderPermit(
       } catch {
         runtime.metrics?.increment(METRIC_NAMES.providerBudgetRecordErrors, 1, providerLabels(runtime));
       }
-      await permit?.release();
+      try { await permit?.release(); }
+      catch { runtime.metrics?.increment(METRIC_NAMES.providerBudgetRecordErrors, 1, providerLabels(runtime)); }
+      finally {
+        if (terminal) wrapped.push(terminal);
+        wrapped.end();
+      }
     }
   })();
   return wrapped as unknown as ReturnType<ReturnType<typeof createModels>["streamSimple"]>;

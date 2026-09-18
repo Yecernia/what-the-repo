@@ -6,8 +6,16 @@ import { join } from 'node:path';
 import { FileStore } from '../persistence/file-store.js';
 import { loadConfig } from '../config.js';
 import { newAnalysisJob } from '../domain/jobs.js';
+import { createProject } from '../domain/conversation.js';
 import { StorageManager, DEFAULT_STORAGE_POLICY } from './storage.js';
 const GiB = 1024 ** 3;
+async function projectJob(store: FileStore, key: string) {
+  const owner = 'guest:storage-fixture';
+  await store.saveUser(owner, { kind: 'guest' });
+  const project = createProject(owner, 'https://github.com/example/storage-fixture', 'storage fixture');
+  await store.saveProject(project);
+  return newAnalysisJob(project.project_id, key);
+}
 
 test('inventory refresh skips fresh samples and preserves the old timestamp after failure', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wtr-inventory-'));
@@ -56,7 +64,7 @@ test('capacity admission reserves running work, persists recovery threshold, and
   try {
     assert.equal((await manager.candidates()).scan, 'not_needed');
     assert.equal(scans, 0);
-    const job = newAnalysisJob('isolated', 'test');
+    const job = await projectJob(store, 'test');
     free = 2.5 * GiB;
     let dispatched = false;
     await assert.rejects(
@@ -141,7 +149,7 @@ test('COS uses actual object bytes, unknown inventory is not zero, and deletion 
       code: 'admin_snapshot_protected',
     });
     assert.equal(deleted, 1, 'Final store check may veto changed references');
-    await store.saveJob(newAnalysisJob('isolated', 'running'));
+    await store.saveJob(await projectJob(store, 'running'));
     await assert.rejects(() => manager.remove(key), {
       code: 'admin_snapshot_busy',
     });

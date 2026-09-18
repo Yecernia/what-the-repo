@@ -30,7 +30,7 @@ export function resolveAgentProvider(config: ServerConfig, role: AgentModelRole,
   return resolved;
 }
 
-export type RoleRuntimeOptions = ModelRuntimeOptions & { providerGateFactory?: ProviderGateFactory };
+export type RoleRuntimeOptions = ModelRuntimeOptions & { providerGateFactory?: ProviderGateFactory; business?: import('./provider-budget.js').UsageBusiness };
 
 /** Build only explicit overrides. The fallback keeps existing model choices and mock runtimes intact. */
 export function withAgentModels(config: ServerConfig, runtime: PiModelRuntime, fallback: ProviderConfig | null,
@@ -39,7 +39,7 @@ export function withAgentModels(config: ServerConfig, runtime: PiModelRuntime, f
   for (const role of roles) {
     if (!config.agentModels?.[role]) continue;
     const provider = resolveAgentProvider(config, role, fallback)!;
-    roleRuntimes[role] = createModelRuntime(provider, { ...options, providerGate: options.providerGateFactory?.(provider) });
+    roleRuntimes[role] = createModelRuntime(provider, { ...options, providerGate: options.providerGateFactory?.(provider, options.business ?? options.attribution?.business) });
   }
   return { ...runtime, roleRuntimes };
 }

@@ -8,7 +8,7 @@
 <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
 <p>
-  <a href="https://bottlecapduel.com"><img src="https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-7C5CBF?style=flat-square" alt="在线体验 what-the-repo"></a>
+  <a href="https://what-the-repo.com"><img src="https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-7C5CBF?style=flat-square" alt="在线体验 what-the-repo"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/MIT%20%E8%AE%B8%E5%8F%AF%E8%AF%81-D4A72C?style=flat-square" alt="查看 MIT 许可证"></a>
   <a href="https://github.com/Yecernia/what-the-repo/releases/latest"><img src="https://img.shields.io/github/v/release/Yecernia/what-the-repo?style=flat-square&amp;color=39815A" alt="最新 Release"></a>
   <a href="CONTRIBUTING.zh-CN.md"><img src="https://img.shields.io/badge/%E5%8F%82%E4%B8%8E%E8%B4%A1%E7%8C%AE-536878?style=flat-square" alt="参与贡献"></a>
@@ -16,7 +16,7 @@
 
 <p><img src=".github/assets/product-hero.svg" width="600" alt="what-the-repo：从好奇开始。树下长椅上的人用电脑探索仓库。"></p>
 
-<p><a href="https://bottlecapduel.com"><strong>打开 what-the-repo ↗</strong></a> · <a href="https://github.com/Yecernia/what-the-repo/issues">反馈与建议</a></p>
+<p><a href="https://what-the-repo.com"><strong>打开 what-the-repo ↗</strong></a> · <a href="https://github.com/Yecernia/what-the-repo/issues">反馈与建议</a></p>
 
 </div>
 
@@ -62,7 +62,7 @@
 
 ## 在线开始
 
-1. 打开 **[bottlecapduel.com](https://bottlecapduel.com)**，通过 GitHub 登录或使用访客入口。
+1. 打开 **[what-the-repo.com](https://what-the-repo.com)**，通过 GitHub 登录或使用访客入口。
 2. 输入一个**公开 GitHub 仓库链接**，等待分析完成。
 3. 浏览项目视图，选择感兴趣的内容提问，或开始一段引导式学习。
 

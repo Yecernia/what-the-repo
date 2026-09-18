@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { newAnalysisJob } from "../domain/jobs.js";
+import { createProject } from "../domain/conversation.js";
 import type { SemanticBatch } from "../domain/semantic-batch.js";
 import { FileStore } from "./file-store.js";
 
@@ -35,7 +36,11 @@ test("FileStore persists, orders, and cancels semantic batches", async () => {
   const store = new FileStore(root);
   await store.init();
   try {
-    const job = newAnalysisJob("project:test", "batch-test");
+    const owner = 'guest:semantic-fixture';
+    await store.saveUser(owner, { kind: 'guest' });
+    const project = createProject(owner, 'https://github.com/example/semantic-fixture', 'semantic fixture');
+    await store.saveProject(project);
+    const job = newAnalysisJob(project.project_id, 'batch-test');
     await store.saveJob(job);
     await store.saveSemanticBatch(batch(job.job_id, "batch-2"));
     await store.saveSemanticBatch(batch(job.job_id, "batch-1", "succeeded"));

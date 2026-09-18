@@ -130,6 +130,7 @@ export const analysisIcons: Record<string, ActivityIconName> = {
 };
 
 export function activityStatusLabel(event: RuntimeProgressEvent): string | null {
+  if (event.stage === 'capacity_waiting' || event.stage === 'analysis_waiting_owner' || event.stage === 'analysis_waiting_capacity') return t(event.label);
   if (event.stage === 'reconnecting' || event.stage === 'provider_retry') return t(event.label);
   if (event.analysis_progress && ['failed', 'cancelled', 'skipped', 'degraded', 'reused'].includes(event.analysis_progress.status)) {
     return analysisEventLabel(event);

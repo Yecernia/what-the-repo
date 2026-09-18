@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const brandingIconPath = fileURLToPath(new URL('./public/what-the-repo-icon.png', import.meta.url))
+const brandingIconPath = fileURLToPath(new URL('./public/app-icon-1024.png', import.meta.url))
 
 // Set only by the opt-in Windows LAN launcher. No application/production auth changes.
 const lanOrigin = process.env.WTR_DEV_LAN_ORIGIN?.trim()

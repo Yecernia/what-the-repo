@@ -29,8 +29,9 @@ const databaseMetrics = store instanceof PostgresStore
   : null;
 const providerGateFactory = createProviderGateFactory({
   pool: store instanceof PostgresStore ? store.pool : null,
-  maxConcurrent: config.providerConcurrency ?? 4,
-  pollMs: config.providerGatePollMs ?? 100,
+  maxConcurrent: config.chatConcurrency ?? 8,
+  analysisConcurrent: config.analysisModelConcurrency ?? 4,
+  upstreamConcurrent: config.upstreamConcurrency,
 });
 const providerBudget = createProviderUsageBudget({
   loadPolicies: () => adminDocuments(store).read("budgets", DEFAULT_BUDGET_POLICIES),

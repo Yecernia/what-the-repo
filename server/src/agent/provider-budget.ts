@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { KeyedMutex } from './mutex.js';
+import { connectWithAbort, delay } from '../scheduling/permits.js';
 export type UsageBusiness =
   | 'analysis'
   | 'chat'
@@ -47,6 +48,20 @@ export interface ProviderBudgetDbClient {
 }
 export interface ProviderBudgetDbPool {
   connect(): Promise<ProviderBudgetDbClient>;
+}
+
+async function connectBudget(pool: ProviderBudgetDbPool, signal?: AbortSignal): Promise<ProviderBudgetDbClient> {
+  for (;;) {
+    const client = await connectWithAbort<ProviderBudgetDbClient>(pool, signal);
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<{ acquired: boolean }>('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired', ['provider-budget-global']);
+      if (result.rows[0]?.acquired) return client;
+      await client.query('ROLLBACK');
+    } catch (error) { await client.query('ROLLBACK').catch(() => undefined); client.release(); throw error; }
+    client.release();
+    await delay(25, signal);
+  }
 }
 export type BudgetKey =
   | 'analysis_daily'
@@ -122,6 +137,8 @@ export class ProviderBudgetExceededError extends Error {
   }
 }
 export interface ProviderBudgetLimits {
+  /** Legacy frequency rules are opt-in; product capacity is owned by admission. */
+  enforceLegacyCallRates?: boolean;
   maxCallsPerMinute: number;
   minimumReservationUsd: number;
   deploymentMaxCallsPerMinute?: number;
@@ -201,14 +218,14 @@ export class LocalProviderUsageBudget implements ProviderUsageBudget {
         a = attribution(input);
       const recent = this.events.filter((e) => e.startedAt > now - 60_000);
       if (
-        recent.filter((e) => e.ownerId === input.ownerId).length >=
+        this.configured.enforceLegacyCallRates === true && recent.filter((e) => e.ownerId === input.ownerId).length >=
         this.configured.maxCallsPerMinute
       )
         throw new ProviderBudgetExceededError(
           'calls_per_minute',
           this.configured.maxCallsPerMinute,
         );
-      if (recent.length >= (this.configured.deploymentMaxCallsPerMinute ?? 240))
+      if (this.configured.enforceLegacyCallRates === true && recent.length >= (this.configured.deploymentMaxCallsPerMinute ?? 240))
         throw new ProviderBudgetExceededError(
           'calls_per_minute',
           this.configured.deploymentMaxCallsPerMinute ?? 240,
@@ -274,29 +291,24 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
   ) {}
   async acquire(input: ProviderBudgetInput): Promise<ProviderBudgetPermit> {
     input.signal?.throwIfAborted();
-    const client = await this.pool.connect(),
+    const client = await connectBudget(this.pool, input.signal),
       eventId = randomUUID(),
       a = attribution(input);
     try {
-      await client.query('BEGIN');
-      await client.query(
-        'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
-        ['provider-budget-global'],
-      );
       input.signal?.throwIfAborted();
-      const calls = await client.query<{ owner: string; deployment: string }>(
+      const calls = this.configured.enforceLegacyCallRates === true ? await client.query<{ owner: string; deployment: string }>(
         `SELECT COUNT(*) FILTER(WHERE owner_id=$1)::text AS owner,COUNT(*)::text AS deployment FROM provider_usage_events WHERE started_at>=clock_timestamp()-interval '1 minute'`,
         [input.ownerId],
-      );
+      ) : { rows: [] };
       if (
-        Number(calls.rows[0]?.owner ?? 0) >= this.configured.maxCallsPerMinute
+        this.configured.enforceLegacyCallRates === true && Number(calls.rows[0]?.owner ?? 0) >= this.configured.maxCallsPerMinute
       )
         throw new ProviderBudgetExceededError(
           'calls_per_minute',
           this.configured.maxCallsPerMinute,
         );
       if (
-        Number(calls.rows[0]?.deployment ?? 0) >=
+        this.configured.enforceLegacyCallRates === true && Number(calls.rows[0]?.deployment ?? 0) >=
         (this.configured.deploymentMaxCallsPerMinute ?? 240)
       )
         throw new ProviderBudgetExceededError(

@@ -46,6 +46,17 @@ export interface ServerConfig {
   redisUrl?: string | null;
   redisPrefix?: string;
   analysisQueueConcurrency?: number;
+  chatConcurrency?: number;
+  chatOwnerConcurrency?: number;
+  chatQueueLimit?: number;
+  chatWaitTimeoutMs?: number;
+  chatDisconnectGraceMs?: number;
+  analysisConcurrency?: number;
+  analysisOwnerConcurrency?: number;
+  analysisOwnerQueueLimit?: number;
+  analysisQueueLimit?: number;
+  analysisModelConcurrency?: number;
+  upstreamConcurrency?: number;
   providerConcurrency?: number;
   providerGatePollMs?: number;
   retentionEnabled: boolean;
@@ -228,6 +239,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     redisUrl: optionalSecret(env.WHAT_THE_REPO_REDIS_URL),
     redisPrefix: optionalSecret(env.WHAT_THE_REPO_REDIS_PREFIX) ?? "what-the-repo",
     analysisQueueConcurrency: positiveInt(env.WHAT_THE_REPO_ANALYSIS_QUEUE_CONCURRENCY, 1),
+    chatConcurrency: positiveInt(env.WHAT_THE_REPO_CHAT_CONCURRENCY, 8),
+    chatOwnerConcurrency: positiveInt(env.WHAT_THE_REPO_CHAT_OWNER_CONCURRENCY, 2),
+    chatQueueLimit: positiveInt(env.WHAT_THE_REPO_CHAT_QUEUE_LIMIT, 16),
+    chatWaitTimeoutMs: positiveInt(env.WHAT_THE_REPO_CHAT_WAIT_TIMEOUT_MS, 30_000),
+    chatDisconnectGraceMs: positiveInt(env.WHAT_THE_REPO_CHAT_DISCONNECT_GRACE_MS, 30_000),
+    analysisConcurrency: positiveInt(env.WHAT_THE_REPO_ANALYSIS_CONCURRENCY, 1),
+    analysisOwnerConcurrency: positiveInt(env.WHAT_THE_REPO_ANALYSIS_OWNER_CONCURRENCY, 2),
+    analysisOwnerQueueLimit: positiveInt(env.WHAT_THE_REPO_ANALYSIS_OWNER_QUEUE_LIMIT, 4),
+    analysisQueueLimit: positiveInt(env.WHAT_THE_REPO_ANALYSIS_QUEUE_LIMIT, 32),
+    analysisModelConcurrency: positiveInt(env.WHAT_THE_REPO_ANALYSIS_MODEL_CONCURRENCY, 4),
+    upstreamConcurrency: env.WHAT_THE_REPO_UPSTREAM_CONCURRENCY ? positiveInt(env.WHAT_THE_REPO_UPSTREAM_CONCURRENCY, 1) : undefined,
     providerConcurrency: positiveInt(env.WHAT_THE_REPO_PROVIDER_CONCURRENCY, 4),
     providerGatePollMs: positiveInt(env.WHAT_THE_REPO_PROVIDER_GATE_POLL_MS, 100),
     retentionEnabled: booleanValue(env.WHAT_THE_REPO_RETENTION_ENABLED, true),

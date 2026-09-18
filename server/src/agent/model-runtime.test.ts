@@ -477,12 +477,14 @@ test("provider runtime checks the owner budget before contacting the provider", 
   models.setProvider(faux.provider);
   const runtime = {
     models,
-    model: faux.getModel(),
+    model: { ...faux.getModel(), cost: { input: 0.001, output: 0.001, cacheRead: 0, cacheWrite: 0 } },
     ownerId: "owner-budget-runtime",
+    attribution: { business: 'chat' as const, payer: 'platform' as const },
     providerBudget: new LocalProviderUsageBudget({
       maxCallsPerMinute: 1,
       maxCostUsdPerDay: 1,
-      minimumReservationUsd: 0.01,
+      minimumReservationUsd: 1,
+      policies: { chat_daily: 1, analysis_daily: null, evolution_task: null, evolution_daily: null },
     }),
   };
   let calls = 0;

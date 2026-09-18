@@ -1,6 +1,16 @@
 export class KeyedMutex {
   private readonly tails = new Map<string, Promise<void>>();
 
+  isLocked(key: string): boolean { return this.tails.has(key); }
+
+  /** Never wait while holding another lock; the reservation is synchronous. */
+  async tryRunExclusive<T>(key: string, task: () => Promise<T>): Promise<
+    { acquired: false } | { acquired: true; value: T }
+  > {
+    if (this.isLocked(key)) return { acquired: false };
+    return { acquired: true, value: await this.runExclusive(key, task) };
+  }
+
   async runExclusive<T>(
     key: string,
     task: () => Promise<T>,

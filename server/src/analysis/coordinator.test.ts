@@ -143,12 +143,15 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 test("analysis coordinator honors configured concurrency without claiming extra work", async () => {
   let claims = 0;
+  let available = 4;
   let active = 0;
   let maximumActive = 0;
   let release!: () => void;
   const blocked = new Promise<void>((resolve) => { release = resolve; });
   const store = {
     claimAnalysisJob: async () => {
+      if (available === 0) return null;
+      available--;
       claims += 1;
       return job(`job:${claims}`);
     },
@@ -171,6 +174,8 @@ test("analysis coordinator honors configured concurrency without claiming extra 
   release();
   await firstBatch;
 
+  assert.equal(claims, 4, "completion drains accepted work without another wakeup");
+  available = 2;
   let secondRelease!: () => void;
   const secondBlocked = new Promise<void>((resolve) => { secondRelease = resolve; });
   (coordinator as unknown as { process: (item: AnalysisJob) => Promise<void> }).process = async () => {
@@ -183,7 +188,7 @@ test("analysis coordinator honors configured concurrency without claiming extra 
   await waitFor(() => active === 2);
   secondRelease();
   await secondBatch;
-  assert.equal(claims, 4);
+  assert.equal(claims, 6);
   assert.equal(maximumActive, 2);
   await coordinator.stop();
 });
