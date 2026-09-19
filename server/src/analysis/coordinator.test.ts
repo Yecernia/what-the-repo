@@ -1,4 +1,8 @@
+import { ANALYZER_BUNDLE_VERSION, ANALYSIS_CONFIG_DIGEST } from "./identity.js";
 import assert from "node:assert/strict";
+import { buildFullPlan, createAnalysisCache } from './incremental.js';
+import { decodeSource } from './source-input.js';
+import type { LspRunResult, ParsedFile } from './facts.js';
 import test from "node:test";
 import {
   AnalysisCoordinator,
@@ -260,6 +264,7 @@ test("analysis retry policy only schedules transient failures with bounded backo
   assert.equal(isRetryableAnalysisError("provider_rate_limited"), true);
   assert.equal(isRetryableAnalysisError("component_semantics_incomplete"), false);
   assert.equal(isRetryableAnalysisError("github_api_429"), true);
+  assert.equal(isRetryableAnalysisError("github_rate_limited"), false);
   assert.equal(isRetryableAnalysisError("provider_timeout"), true);
   assert.equal(isRetryableAnalysisError("invalid_github_repository"), false);
   assert.equal(isRetryableAnalysisError("analysis_lease_lost"), false);
@@ -359,7 +364,7 @@ test("early source storage failure stops the semantic stage and preserves the st
   const store = {
     root,
     kind: "postgres", loadProject: async () => project,
-    loadAnalysisCheckpoint: async () => ({ checkpoint: { stage: "semantic", source_root: root, snapshot_id: "saved-static", parsed: [], lsp_results: [],
+    loadAnalysisCheckpoint: async () => ({ checkpoint: { analyzer_bundle_version: ANALYZER_BUNDLE_VERSION, static_identity: ANALYSIS_CONFIG_DIGEST, stage: "semantic", source_root: root, snapshot_id: "saved-static", parsed: [], lsp_results: [],
       fetched: { owner: "example", repo: "repo", commitSha: snapshot.commit_sha, files: [], manifest: [], research: snapshot.research } }, snapshot }),
     loadPublicSnapshotMetadata: async () => null, loadPublicSnapshot: async () => null, loadLatestPublicSnapshot: async () => null,
     heartbeatAnalysisJob: async () => true, saveAnalysisCheckpoint: async () => {},
@@ -409,4 +414,29 @@ test("failed batch diagnostics survive retries in a bounded history without beco
   assert.deepEqual(runs.map((run) => run.attempt), [2, 3, 4, 5, 6, 7, 8, 9]);
   assert.deepEqual(runs.map((run) => run.diagnostics.identity.jobAttempt), runs.map((run) => run.attempt));
   assert.equal(saved?.checkpoint.dropped_diagnostic_runs, 1);
+});
+test('LSP reuse binds the complete workspace, retries incomplete runs and reacts to missing context', async () => {
+  const files = ['main.py', 'types.pyi'].map(path => decodeSource(path, Buffer.from('def run(): pass')).file);
+  let runs = 0;
+  const coordinator = new AnalysisCoordinator({} as ProductStore, { ...config(1), dataDir: tmpdir() }) as unknown as {
+    lspRunner: { analyze: (input: { workspaceFiles: ParsedFile[] }) => Promise<LspRunResult> };
+    analyzeWithLsp: (files: ParsedFile[], root: string, cache: ReturnType<typeof createAnalysisCache> | null, plan: ReturnType<typeof buildFullPlan>) => Promise<LspRunResult[]>;
+  };
+  coordinator.lspRunner = { analyze: async input => {
+    runs++;
+    assert.ok(input.workspaceFiles.length);
+    return { language: 'python', completed: true, toolchainVerified: false,
+      serverName: 'fixture', serverVersion: '1', capabilities: [], reasonCodes: [], symbols: [], relations: [] };
+  } };
+  const plan = { ...buildFullPlan([]), mode: 'incremental' as const };
+  const first = await coordinator.analyzeWithLsp(files, '/unused', null, plan);
+  const cache = createAnalysisCache({ manifest: [], parsedFiles: files, lspResults: first });
+  await coordinator.analyzeWithLsp(files, '/unused', cache, plan);
+  assert.equal(runs, 1);
+  await coordinator.analyzeWithLsp(files.slice(0, 1), '/unused', cache, plan);
+  assert.equal(runs, 2, 'missing context requires a refresh even without a proven deletion');
+  await coordinator.analyzeWithLsp([...files, decodeSource('build.gradle', Buffer.from('changed')).file], '/unused', cache, plan);
+  assert.equal(runs, 3, 'a cross-language config participates in the workspace identity');
+  await coordinator.analyzeWithLsp(files, '/unused', { ...cache, lsp_results: [{ ...first[0]!, completed: false }] }, plan);
+  assert.equal(runs, 4, 'incomplete server runs are not reusable semantic caches');
 });

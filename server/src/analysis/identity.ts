@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { skillMetadata } from "../agent/skill-registry.js";
 import { PROVIDER_WIRE_VERSION } from "../agent/provider-catalog.js";
 import { RESEARCH_VERSION } from "./github.js";
+import { STATIC_TOOLCHAIN_IDENTITY } from "./toolchain.js";
 
-export const ANALYZER_BUNDLE_VERSION = "typescript-0.4.0";
+export const ANALYZER_BUNDLE_VERSION = "static-kernel-1.0.0";
 
 const SEMANTIC_SKILL_VERSIONS = [
   skillMetadata("component-explanation"),
@@ -13,7 +14,9 @@ const SEMANTIC_SKILL_VERSIONS = [
 
 export const ANALYSIS_CONFIG_DIGEST = createHash("sha256")
   .update([
-    "nine-language-lsp-tree-sitter-two-layer-incremental-v3",
+    "project-native-facts-v1",
+    STATIC_TOOLCHAIN_IDENTITY,
+    process.env.WHAT_THE_REPO_LSP_ATTESTATION_SHA256?.trim().toLowerCase() ?? "no-attested-lsp",
     RESEARCH_VERSION,
     SEMANTIC_SKILL_VERSIONS,
     PROVIDER_WIRE_VERSION,

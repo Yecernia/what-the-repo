@@ -48,6 +48,7 @@ accepted range fail startup instead of being silently clamped.
 | ANALYSIS_QUEUE_LIMIT | 32 | 1–256 | Physical jobs waiting for participation/scheduling |
 | ANALYSIS_PENDING_LIMIT | 32 | 1–256 | Total accepted unfinished physical jobs, including running |
 | ANALYSIS_MEMORY_MB | 6144 | 1024–1048576 | Shared stage working-memory reservation budget |
+| ANALYSIS_CPU_MEMORY_EXPANSION | 80 | 8–128 | Static-stage memory estimate per byte of source; larger values also increase its V8 heap allowance |
 | OBJECT_STORE_CONCURRENCY | 8 | 1–64 | Shared snapshot object I/O requests |
 
 The two analysis backlog limits count different things. Setting both to 32 means
@@ -69,6 +70,17 @@ Memory estimates include source expansion and checkpoint sizes. Parsed caches an
 previous graph data live in a separate checkpoint part; semantic work does not
 load them. Legacy inline checkpoints can be converted when resumed. Publication
 loads both parts. Checkpoint hashes are checked before use.
+
+Static stages reserve 768 MiB plus the larger of source bytes times
+`ANALYSIS_CPU_MEMORY_EXPANSION` and checkpoint bytes times 10, rounded up to
+64 MiB. This estimate is distinct from the total memory pool: increasing only
+`ANALYSIS_MEMORY_MB` does not increase an individual process's heap limit.
+The native project compiler retains more syntax and semantic state than the old
+shallow extractor; the default expansion factor is now 80. Existing explicit
+environment overrides retain their value and need revalidation before rollout.
+Tune the expansion estimate using representative large repositories and leave
+room in the pool for other work. A recognized V8 heap exhaustion is a memory-limit
+failure, not a transient error to retry unchanged.
 
 Each stage gets a V8 heap limit and an RSS guard. On Linux the supervisor also
 samples the process tree, including native tools. Oversized jobs fail explicitly;

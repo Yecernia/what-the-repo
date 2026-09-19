@@ -2,6 +2,9 @@ import {
   jsonBytes,
   snapshotObjectDigest,
 } from "./snapshot-object-store.js";
+import type { EvidenceSnapshot } from "../domain/snapshot.js";
+
+export type StaticFileFacts = NonNullable<EvidenceSnapshot["static_analysis"]>["files"][number];
 
 /**
  * Large repositories can produce hundreds of thousands of graph relations and
@@ -14,6 +17,8 @@ export const ANALYSIS_PAYLOAD_CHUNK_SIZE = 2_048;
 export type AnalysisPayloadChunkPath =
   | "fact_graph.nodes"
   | "fact_graph.edges"
+  | "analysis_cache.syntax_files"
+  | "static_analysis.files"
   | "analysis_cache.manifest"
   | "analysis_cache.parsed_files"
   | "analysis_cache.lsp_results";
@@ -21,6 +26,8 @@ export type AnalysisPayloadChunkPath =
 const CHUNK_PATHS: readonly AnalysisPayloadChunkPath[] = [
   "fact_graph.nodes",
   "fact_graph.edges",
+  "analysis_cache.syntax_files",
+  "static_analysis.files",
   "analysis_cache.manifest",
   "analysis_cache.parsed_files",
   "analysis_cache.lsp_results",
@@ -36,6 +43,8 @@ export interface AnalysisPayloadChunkDescriptor {
   bytes: number;
   sha256: string;
   count: number;
+  /** Exact file paths permit a bounded lookup without loading the graph/cache. */
+  file_paths?: string[];
 }
 
 export interface ChunkedAnalysisPayloadEnvelope {
@@ -85,10 +94,10 @@ function isSafeObjectKey(value: string): boolean {
     && normalized.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
 }
 
-function pathParts(path: AnalysisPayloadChunkPath): { parent: "fact_graph" | "analysis_cache"; child: string } {
+function pathParts(path: AnalysisPayloadChunkPath): { parent: "fact_graph" | "analysis_cache" | "static_analysis"; child: string } {
   const separator = path.indexOf(".");
   return {
-    parent: path.slice(0, separator) as "fact_graph" | "analysis_cache",
+    parent: path.slice(0, separator) as "fact_graph" | "analysis_cache" | "static_analysis",
     child: path.slice(separator + 1),
   };
 }
@@ -97,14 +106,24 @@ function chunkKeyPart(path: AnalysisPayloadChunkPath): string {
   return path.replace(".", "-");
 }
 
+function chunkSize(path: AnalysisPayloadChunkPath): number {
+  return path === "static_analysis.files" ? 32 : ANALYSIS_PAYLOAD_CHUNK_SIZE;
+}
+
+function indexedPaths(path: AnalysisPayloadChunkPath, items: unknown[]): { file_paths?: string[] } {
+  return path === "static_analysis.files"
+    ? { file_paths: items.map(item => String(record(item)?.path ?? "")) }
+    : {};
+}
+
 function chunkArray(
   values: unknown[],
   path: AnalysisPayloadChunkPath,
   keyForChunk: (path: AnalysisPayloadChunkPath, index: number, sha256: string) => string,
 ): PreparedAnalysisPayloadChunk[] {
   const chunks: PreparedAnalysisPayloadChunk[] = [];
-  for (let offset = 0, index = 0; offset < values.length; offset += ANALYSIS_PAYLOAD_CHUNK_SIZE, index += 1) {
-    const items = values.slice(offset, offset + ANALYSIS_PAYLOAD_CHUNK_SIZE);
+  for (let offset = 0, index = 0; offset < values.length; offset += chunkSize(path), index += 1) {
+    const items = values.slice(offset, offset + chunkSize(path));
     const body = jsonBytes(items);
     const sha256 = snapshotObjectDigest(body);
     const key = keyForChunk(path, index, sha256);
@@ -117,6 +136,7 @@ function chunkArray(
         bytes: body.byteLength,
         sha256,
         count: items.length,
+        ...indexedPaths(path, items),
       },
       body,
     });
@@ -141,7 +161,7 @@ export function prepareAnalysisPayload(
     const { parent, child } = pathParts(path);
     const parentValue = record(payload[parent]);
     const values = parentValue?.[child];
-    if (!Array.isArray(values) || values.length <= ANALYSIS_PAYLOAD_CHUNK_SIZE) continue;
+    if (!Array.isArray(values) || !values.length || (path !== "static_analysis.files" && values.length <= ANALYSIS_PAYLOAD_CHUNK_SIZE)) continue;
     payload[parent] = { ...parentValue };
     delete (payload[parent] as Record<string, unknown>)[child];
     chunks.push(...chunkArray(values, path, keyForChunk));
@@ -172,6 +192,11 @@ function parseDescriptor(value: unknown): AnalysisPayloadChunkDescriptor {
     || Number(row.count) < 0) {
     throw new Error("analysis_payload_manifest_invalid");
   }
+  if (row.file_paths !== undefined && (row.path !== "static_analysis.files"
+    || !Array.isArray(row.file_paths) || row.file_paths.length !== row.count
+    || row.file_paths.some(path => typeof path !== "string" || !isSafeObjectKey(path)))) {
+    throw new Error("analysis_payload_manifest_invalid");
+  }
   return {
     path: row.path,
     index: Number(row.index),
@@ -179,6 +204,7 @@ function parseDescriptor(value: unknown): AnalysisPayloadChunkDescriptor {
     bytes: Number(row.bytes),
     sha256: row.sha256,
     count: Number(row.count),
+    ...(row.file_paths === undefined ? {} : { file_paths: row.file_paths as string[] }),
   };
 }
 
@@ -271,17 +297,17 @@ export async function prepareStoredAnalysisPayload(
     const { parent, child } = pathParts(path);
     const parentValue = record(payload[parent]);
     const values = parentValue?.[child];
-    if (!Array.isArray(values) || values.length <= ANALYSIS_PAYLOAD_CHUNK_SIZE) continue;
+    if (!Array.isArray(values) || !values.length || (path !== "static_analysis.files" && values.length <= ANALYSIS_PAYLOAD_CHUNK_SIZE)) continue;
     payload[parent] = { ...parentValue };
     delete (payload[parent] as Record<string, unknown>)[child];
-    for (let offset = 0, index = 0; offset < values.length; offset += ANALYSIS_PAYLOAD_CHUNK_SIZE, index += 1) {
+    for (let offset = 0, index = 0; offset < values.length; offset += chunkSize(path), index += 1) {
       tasks.push({ path, index, offset, values });
     }
   }
   if (!tasks.length) return { value, envelope: null, chunks: [] };
 
   const prepared = await mapWithConcurrency(tasks, concurrency, async (task) => {
-    const items = task.values.slice(task.offset, task.offset + ANALYSIS_PAYLOAD_CHUNK_SIZE);
+    const items = task.values.slice(task.offset, task.offset + chunkSize(task.path));
     const body = jsonBytes(items);
     const sha256 = snapshotObjectDigest(body);
     const key = keyForChunk(task.path, task.index, sha256);
@@ -293,6 +319,7 @@ export async function prepareStoredAnalysisPayload(
       bytes: body.byteLength,
       sha256,
       count: items.length,
+      ...indexedPaths(task.path, items),
     };
     const stored = await put(key, body);
     if (stored.key !== key || stored.bytes !== descriptor.bytes || stored.sha256 !== descriptor.sha256) {
@@ -359,6 +386,26 @@ export async function assembleAnalysisPayload(
 
 export function analysisPayloadChunkKeys(value: unknown): string[] {
   return parseAnalysisPayloadEnvelope(value)?.chunks.map((chunk) => chunk.key) ?? [];
+}
+
+/** Read just the indexed static-fact block; never hydrate graph or cache arrays. */
+export async function readStaticFileFacts(
+  value: unknown,
+  loadChunk: (key: string) => Promise<Uint8Array | null>,
+  path: string,
+): Promise<StaticFileFacts | null> {
+  if (!isSafeObjectKey(path)) throw new Error("static_file_path_invalid");
+  const envelope = parseAnalysisPayloadEnvelope(value);
+  const inline = record(record(envelope?.payload ?? value)?.static_analysis)?.files;
+  if (Array.isArray(inline)) return inline.find(file => record(file)?.path === path) ?? null;
+  const descriptor = envelope?.chunks.find(chunk => chunk.path === "static_analysis.files" && chunk.file_paths?.includes(path));
+  if (!descriptor) return null;
+  const items: unknown = JSON.parse(Buffer.from(verifiedChunkBody(await loadChunk(descriptor.key), descriptor)).toString("utf8"));
+  if (!Array.isArray(items) || items.length !== descriptor.count
+    || items.some((item, index) => record(item)?.path !== descriptor.file_paths?.[index])) {
+    throw new Error("analysis_payload_chunk_invalid");
+  }
+  return items.find(file => record(file)?.path === path) as StaticFileFacts ?? null;
 }
 
 export function defaultAnalysisChunkKey(

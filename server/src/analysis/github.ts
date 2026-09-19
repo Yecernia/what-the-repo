@@ -3,7 +3,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { unzipSync } from "fflate";
 import type { SourceFileManifest } from "./facts.js";
-import { isTextPath } from "./languages.js";
+import { sourceRole } from "./source-input.js";
+import { isTextPath, languageForPath } from "./languages.js";
 import type { RepositoryResearch, RepositoryResearchPage } from "../domain/snapshot.js";
 import {
   safePublicHttpsUrl,
@@ -25,6 +26,7 @@ export interface GithubSource {
   sourceRoot: string;
   files: string[];
   manifest: SourceFileManifest[];
+  completeness?: import("./facts.js").SourceCompleteness;
   totalBytes: number;
   research: RepositoryResearch;
 }
@@ -270,10 +272,14 @@ export async function fetchPublicGithubSource(
   signal?.throwIfAborted();
   const tree = await githubJson({ kind: "tree", owner, repo, ref: commitSha }, clientId, clientSecret, gateway, signal);
   const rows = Array.isArray(tree.tree) ? tree.tree as GithubTreeEntry[] : [];
-  const files = rows
-    .filter((row) => row.type === "blob" && row.path && safePath(row.path) && Number(row.size ?? 0) <= MAX_FILE_BYTES)
-    .slice(0, MAX_FILES)
-    .map((row) => row.path as string);
+  const completeness: import('./facts.js').SourceCompleteness = { inventoryComplete: tree.truncated !== true,
+    knownSourceFiles: rows.filter(r => r.type === 'blob' && r.path && languageForPath(r.path)).length, omitted: [], reasons: tree.truncated ? ['github_tree_truncated'] : [] };
+  const files: string[] = [];
+  for (const row of [...rows].sort((a,b) => (a.path??'').localeCompare(b.path??''))) {
+    if (row.type !== 'blob' || !row.path) continue;
+    const reason = row.mode === '120000' ? 'symlink' : !safePath(row.path) ? 'excluded_path' : Number(row.size ?? 0) > MAX_FILE_BYTES ? 'file_size_limit' : files.length >= MAX_FILES ? 'file_count_limit' : null;
+    if (reason) completeness.omitted.push({ path: row.path, reason }); else files.push(row.path);
+  }
   if (!files.length) throw new Error("github_no_safe_files");
   signal?.throwIfAborted();
   const response = gateway
@@ -315,10 +321,13 @@ export async function fetchPublicGithubSource(
     written.push(relative);
     manifest.push({
       path: relative,
+      role: sourceRole(relative),
       bytes: bytes.byteLength,
       digest: createHash("sha256").update(bytes).digest("hex"),
     });
   }
+  const writtenPaths = new Set(written);
+  for (const path of files) if (!writtenPaths.has(path)) completeness.omitted.push({ path, reason: "archive_missing" });
   if (!written.length) throw new Error("github_archive_empty");
   signal?.throwIfAborted();
   written.sort();
@@ -332,8 +341,8 @@ export async function fetchPublicGithubSource(
   } : null;
   const research = collectRepositoryResearch(owner, repo, commitSha, metadata, readme);
   signal?.throwIfAborted();
-  await writeFile(join(destination, ".snapshot-meta.json"), JSON.stringify({ owner, repo, commitSha, files: written, manifest, totalBytes, research }, null, 2), "utf8");
-  return { owner, repo, commitSha, sourceRoot: destination, files: written, manifest, totalBytes, research };
+  await writeFile(join(destination, ".snapshot-meta.json"), JSON.stringify({ owner, repo, commitSha, files: written, manifest, totalBytes, research, completeness }, null, 2), "utf8");
+  return { owner, repo, commitSha, sourceRoot: destination, files: written, manifest, totalBytes, research, completeness };
 }
 
 export async function readSnapshotMeta(sourceRoot: string): Promise<GithubSource | null> {

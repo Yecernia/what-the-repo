@@ -68,6 +68,8 @@ import {
   assembleAnalysisPayload,
   defaultAnalysisChunkKey,
   prepareStoredAnalysisPayload,
+  readStaticFileFacts,
+  type StaticFileFacts,
 } from "./analysis-payload.js";
 import {
   jsonBytes,
@@ -834,7 +836,13 @@ export class PostgresStore extends FileStore {
     return { ...bundle, view: bundle.view, analysis: bundle.analysis };
   }
 
-  private async readPublicSnapshotParts<T>(publicKey: string, part: 'all' | 'view' | 'analysis'): Promise<{
+  protected override async readPublicStaticFile(publicKey: string, snapshotId: string, path: string): Promise<StaticFileFacts | null> {
+    const bundle = await this.readPublicSnapshotParts(publicKey, 'analysis', false);
+    if (!bundle || bundle.metadata.analysis_snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
+    return readStaticFileFacts(bundle.analysis, key => this.snapshotObjects.get(key), path);
+  }
+
+  private async readPublicSnapshotParts<T>(publicKey: string, part: 'all' | 'view' | 'analysis', hydrateAnalysis = true): Promise<{
     metadata: PublicSnapshotBundle<T>['metadata']; view: T | null; analysis: Record<string, unknown> | null;
   } | null> {
     const wantView = part !== 'analysis', wantAnalysis = part !== 'view';
@@ -949,7 +957,7 @@ export class PostgresStore extends FileStore {
       : jsonObject<Record<string, unknown>>(row.analysis_payload);
     const analysis = storedAnalysis === null
       ? null
-      : await assembleAnalysisPayload(storedAnalysis, (key) => this.snapshotObjects.get(key));
+      : hydrateAnalysis ? await assembleAnalysisPayload(storedAnalysis, (key) => this.snapshotObjects.get(key)) : storedAnalysis;
     if (wantAnalysis && (!analysis || typeof analysis !== "object" || Array.isArray(analysis))) {
       throw new Error("public_snapshot_payload_missing");
     }

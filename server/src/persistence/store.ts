@@ -140,6 +140,7 @@ export interface ProductStore {
   loadSnapshot<T = Record<string, unknown>>(projectId: string, displayLanguage?: string): Promise<T | null>;
   saveAnalysisResult(projectId: string, payload: unknown): Promise<void>;
   loadAnalysisResult<T = Record<string, unknown>>(projectId: string): Promise<T | null>;
+  readStaticFile(projectId: string, snapshotId: string, path: string): Promise<import("./analysis-payload.js").StaticFileFacts | null>;
   /** Persist an analysis-stage checkpoint independently of any published snapshot binding. */
   saveAnalysisCheckpoint(projectId: string, checkpoint: unknown, snapshot: unknown): Promise<void>;
   loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string, options?: { omitStatic?: boolean }): Promise<{ checkpoint: T; snapshot: T | null } | null>;

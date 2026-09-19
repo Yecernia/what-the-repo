@@ -1,4 +1,5 @@
 import { runtimeConfig } from '../admin/runtime-config.js';
+import { snapshotPublicView } from '../domain/snapshot-public-view.js';
 import { randomUUID, createHash } from "node:crypto";
 import { analysisFailureCode } from "../agent/provider-error.js";
 import { access, rm } from "node:fs/promises";
@@ -29,7 +30,7 @@ import { createAnalysisExecutionBudget } from "./execution-budget.js";
 import type { SemanticBatchContext } from "./semantic-worker.js";
 import { fetchPublicGithubSource, type GithubSource } from "./github.js";
 import { buildSnapshot, type BuiltSnapshot } from "./graph.js";
-import { TreeSitterAnalyzer } from "./tree-sitter.js";
+import { analyzeStaticSource } from "./static-kernel.js";
 import { resolveAnalysisExecution, resolveAnalysisProvider } from "./execution-identity.js";
 export { resolveAnalysisProvider } from "./execution-identity.js";
 import { createModelRuntime } from "../agent/model-runtime.js";
@@ -43,7 +44,6 @@ import { createLspRunner, type LspRunner } from "./lsp.js";
 import {
   type LspRunResult,
   type ParsedFile,
-  type SourceFileManifest,
   unavailableLspResult,
 } from "./facts.js";
 import {
@@ -52,14 +52,10 @@ import {
   buildIncrementalPlan,
   createAnalysisCache,
   incrementalSummary,
-  lspTargetFiles,
-  mergeLspResult,
-  mergeParsedFiles,
   readAnalysisCache,
   type AnalysisCache,
   type IncrementalPlan,
 } from "./incremental.js";
-import { languageForPath } from "./languages.js";
 import type { EvidenceSnapshot } from "../domain/snapshot.js";
 import type { RevisionRedirect } from "../domain/lifecycle.js";
 import {
@@ -110,6 +106,7 @@ interface AnalysisCheckpoint {
   schema_version?: 1;
   analysis_config_digest?: string;
   analyzer_bundle_version?: string;
+  static_identity?: string;
   stage: "source" | "semantic" | "assembly";
   source_root: string;
   fetched: GithubSource;
@@ -119,6 +116,7 @@ interface AnalysisCheckpoint {
   commit_sha: string;
   plan?: IncrementalPlan;
   parsed?: ParsedFile[];
+  syntax_files?: ParsedFile[];
   lsp_results?: LspRunResult[];
   display_language?: string;
   provenance_applied?: boolean;
@@ -295,7 +293,6 @@ export class AnalysisCoordinator {
   private readonly inFlight = new Set<Promise<void>>();
   private readonly activeControllers = new Map<string, AbortController>();
   private readonly concurrency: number;
-  private readonly parser = new TreeSitterAnalyzer();
   private lspRunner: LspRunner | null = null;
   private readonly workerId = `ts-analysis-${process.pid}-${randomUUID()}`;
   private executionStage?: AnalysisExecutionStage;
@@ -316,7 +313,7 @@ export class AnalysisCoordinator {
 
   async start(options: { poll?: boolean } = {}): Promise<void> {
     this.stopping = false;
-    if (!this.stageExecutor) { await this.parser.init(); this.lspRunner = await createLspRunner(); }
+    if (!this.stageExecutor) { this.lspRunner = await createLspRunner(); }
     if (options.poll === false) return;
     if (this.timer) return;
     this.timer = setInterval(() => { void this.runOnce(); }, 500);
@@ -530,7 +527,7 @@ export class AnalysisCoordinator {
   async runAssignedStage(job: AnalysisJob, stage: AnalysisExecutionStage, signal: AbortSignal): Promise<AnalysisExecutionStage | null> {
     this.executionStage = stage;
     this.nextStage = null;
-    if (stage === 'cpu') { await this.parser.init(); this.lspRunner = await createLspRunner(); }
+    if (stage === 'cpu') { this.lspRunner = await createLspRunner(); }
     await this.processClaimedJob(job, signal);
     return this.nextStage;
   }
@@ -663,6 +660,7 @@ export class AnalysisCoordinator {
       // Missing checkpoints return null. Corruption or read errors must stop
       // recovery instead of silently discarding completed work and model cost.
       checkpoint = await this.store.loadAnalysisCheckpoint<AnalysisCheckpoint>(project.project_id, { omitStatic: this.executionStage === 'semantic' });
+      if (checkpoint && (checkpoint.checkpoint.analyzer_bundle_version !== ANALYZER_BUNDLE_VERSION || checkpoint.checkpoint.static_identity !== ANALYSIS_CONFIG_DIGEST)) throw new Error("analysis_checkpoint_version_mismatch");
       checkpointPersisted = Boolean(checkpoint);
       if (checkpoint?.checkpoint.source_root) temporary = checkpoint.checkpoint.source_root;
       const checkpointStage = checkpoint?.checkpoint.stage ?? "fetching";
@@ -747,6 +745,7 @@ export class AnalysisCoordinator {
           schema_version: 1,
           analysis_config_digest: analysisConfigDigest,
           analyzer_bundle_version: ANALYZER_BUNDLE_VERSION,
+          static_identity: ANALYSIS_CONFIG_DIGEST,
           stage: "source",
           source_root: temporary,
           fetched,
@@ -802,16 +801,18 @@ export class AnalysisCoordinator {
               previousCache,
               previousFactGraph,
               currentManifest: fetched.manifest,
+              currentCompleteness: fetched.completeness,
             })
           : buildFullPlan(fetched.manifest);
       const analysisKind = plan.mode === "incremental" ? "incremental_analysis" : "full_analysis";
       await this.recordAnalysisPhase(job, fence, "comparing_versions", "completed", { strategy: plan.mode });
       let parsed: ParsedFile[];
+      let syntaxFiles: ParsedFile[] = checkpoint?.checkpoint.syntax_files ?? [];
       let lspResults: LspRunResult[];
       let structuralSnapshot: BuiltSnapshot;
       if (resumingSemantic && checkpoint?.snapshot) {
         if (checkpoint.checkpoint.snapshot_id !== snapshotId && this.executionStage) {
-          const { parsed: _parsed, lsp_results: _lsp, previous_fact_graph: _previous, ...sourceCheckpoint } = checkpoint.checkpoint;
+          const { parsed: _parsed, syntax_files: _syntax, lsp_results: _lsp, previous_fact_graph: _previous, ...sourceCheckpoint } = checkpoint.checkpoint;
           await this.store.saveAnalysisCheckpoint(project.project_id, { ...sourceCheckpoint, stage: 'source' }, null);
           this.nextStage = 'cpu'; return;
         }
@@ -823,7 +824,7 @@ export class AnalysisCoordinator {
         structuralSnapshot = checkpoint.checkpoint.snapshot_id === snapshotId
           ? checkpoint.snapshot as unknown as BuiltSnapshot
           : buildSnapshot({ snapshotId, repository, commitSha: fetched.commitSha, files: parsed,
-              sourceRoot: temporary, lspResults, research: fetched.research });
+              sourceRoot: temporary, lspResults, research: fetched.research, completeness: fetched.completeness });
       } else {
         await this.recordAnalysisPhase(job, fence, analysisKind, "running", {
           stage: "scanning",
@@ -833,17 +834,12 @@ export class AnalysisCoordinator {
           row.source.commit_sha = fetched.commitSha;
         }, fence);
         await this.recordAnalysisPhase(job, fence, "parsing_source", "running");
-        parsed = await this.analyzeWithTreeSitter(
-          fetched.manifest,
-          temporary,
-          previousCache,
-          plan,
-          signal,
-        );
+        const staticResult = await analyzeStaticSource({ manifest: fetched.manifest, sourceRoot: temporary, previous: previousCache, signal });
+        parsed = staticResult.files;
+        syntaxFiles = staticResult.syntaxFiles;
         await this.recordAnalysisPhase(job, fence, "parsing_source", "completed");
         await this.recordAnalysisPhase(job, fence, "resolving_relations", "running");
-        const { bindTypeScriptRelations } = await import("./typescript-relations.js");
-        parsed = await bindTypeScriptRelations(parsed, temporary, signal);
+        const lspStarted = performance.now();
         lspResults = await this.analyzeWithLsp(
           parsed,
           temporary,
@@ -852,7 +848,9 @@ export class AnalysisCoordinator {
           signal,
         );
         await this.recordAnalysisPhase(job, fence, "resolving_relations", "completed");
+        const lspDurationMs = performance.now() - lspStarted;
         await this.recordAnalysisPhase(job, fence, "building_fact_graph", "running");
+        const graphStarted = performance.now();
         structuralSnapshot = buildSnapshot({
           snapshotId,
           repository,
@@ -861,7 +859,10 @@ export class AnalysisCoordinator {
           sourceRoot: temporary,
           lspResults,
           research: fetched.research,
+          completeness: fetched.completeness,
         });
+        structuralSnapshot.static_analysis!.metrics = { ...staticResult.metrics, lsp_duration_ms: lspDurationMs,
+          graph_duration_ms: performance.now() - graphStarted, lsp_requests: lspResults.reduce((n,r)=>n+(r.coverage?.requests??0),0) };
         await this.recordAnalysisPhase(job, fence, "building_fact_graph", "completed");
       }
       if (!resumingSemantic || checkpoint?.checkpoint.snapshot_id !== snapshotId) {
@@ -869,6 +870,7 @@ export class AnalysisCoordinator {
           schema_version: 1,
           analysis_config_digest: analysisConfigDigest,
           analyzer_bundle_version: ANALYZER_BUNDLE_VERSION,
+          static_identity: ANALYSIS_CONFIG_DIGEST,
           stage: "semantic",
           source_root: temporary,
           fetched,
@@ -878,6 +880,7 @@ export class AnalysisCoordinator {
           commit_sha: fetched.commitSha,
           plan,
           parsed,
+          syntax_files: syntaxFiles,
           lsp_results: lspResults,
           previous_fact_graph: previousFactGraph,
           from_public_key: typeof previous?.metadata.public_snapshot_key === 'string' ? previous.metadata.public_snapshot_key : null,
@@ -1017,6 +1020,7 @@ export class AnalysisCoordinator {
         schema_version: 1,
         analysis_config_digest: analysisConfigDigest,
         analyzer_bundle_version: ANALYZER_BUNDLE_VERSION,
+          static_identity: ANALYSIS_CONFIG_DIGEST,
         stage: "assembly",
         prepared_source: preparedSource,
         source_root: temporary,
@@ -1026,7 +1030,7 @@ export class AnalysisCoordinator {
         repository,
         commit_sha: fetched.commitSha,
         plan,
-        ...(this.executionStage === 'semantic' ? {} : { parsed, lsp_results: lspResults, previous_fact_graph: previousFactGraph }),
+        ...(this.executionStage === 'semantic' ? {} : { parsed, syntax_files: syntaxFiles, lsp_results: lspResults, previous_fact_graph: previousFactGraph }),
         display_language: displayLanguage,
         provenance_applied: false,
         redirects,
@@ -1056,7 +1060,8 @@ export class AnalysisCoordinator {
         : "degraded";
       const baseSnapshot = stripSnapshotLanguage(localizedSnapshot);
       const validatedSnapshot = assertValidEvidenceSnapshot(baseSnapshot);
-      const { fact_graph: factGraph, source_root: _sourceRoot, ...view } = validatedSnapshot;
+      const factGraph = validatedSnapshot.fact_graph;
+      const view = snapshotPublicView(validatedSnapshot);
       await this.recordAnalysisPhase(job, fence, "validating_analysis", "completed");
       await this.recordAnalysisPhase(job, fence, "publishing_analysis", "running");
       const publicationTimings = await this.store.savePublicSnapshot({
@@ -1073,10 +1078,12 @@ export class AnalysisCoordinator {
           semantic_graph: view.graph,
           value_points: view.value_points,
           languages: view.languages,
-          source_reports: view.source_reports,
+          source_reports: validatedSnapshot.source_reports,
+          static_analysis: validatedSnapshot.static_analysis,
           analysis_cache: createAnalysisCache({
             manifest: fetched.manifest,
             parsedFiles: parsed,
+            syntaxFiles,
             lspResults,
           }),
           incremental: incrementalSummary(plan),
@@ -1177,44 +1184,6 @@ export class AnalysisCoordinator {
     }
   }
 
-  private async analyzeWithTreeSitter(
-    manifest: SourceFileManifest[],
-    sourceRoot: string,
-    previousCache: AnalysisCache | null,
-    plan: IncrementalPlan,
-    signal?: AbortSignal,
-  ): Promise<ParsedFile[]> {
-    const targets = new Set(plan.recomputePaths);
-    const recomputed: ParsedFile[] = [];
-    for (const file of manifest) {
-      if (!targets.has(file.path)) continue;
-      signal?.throwIfAborted();
-      try {
-        recomputed.push(await this.parser.analyzeFile(sourceRoot, file.path, signal));
-        signal?.throwIfAborted();
-      } catch (error) {
-        if (signal?.aborted) throw error;
-        recomputed.push({
-          path: file.path,
-          language: languageForPath(file.path)?.id ?? "unknown",
-          bytes: file.bytes,
-          digest: file.digest,
-          symbols: [],
-          imports: [],
-          calls: [],
-          parseError: error instanceof Error ? `file_analysis_failed:${error.name}` : "file_analysis_failed",
-        });
-      }
-    }
-    signal?.throwIfAborted();
-    return mergeParsedFiles({
-      previous: previousCache?.parsed_files ?? [],
-      recomputed,
-      currentManifest: manifest,
-      plan,
-    });
-  }
-
   private async analyzeWithLsp(
     files: ParsedFile[],
     sourceRoot: string,
@@ -1222,38 +1191,38 @@ export class AnalysisCoordinator {
     plan: IncrementalPlan,
     signal?: AbortSignal,
   ): Promise<LspRunResult[]> {
-    const languages = [...new Set(files
-      .map((file) => file.language)
-      .filter((language) => language !== "unknown"))];
+    const groups = new Map<string, ParsedFile[]>();
+    for (const file of files) {
+      if (['unknown', 'typescript', 'javascript'].includes(file.language)) continue;
+      if (file.encoding && file.encoding !== 'utf8') continue;
+      const key = file.project?.id ?? file.language;
+      const group = groups.get(key) ?? [];
+      group.push(file);
+      groups.set(key, group);
+    }
     const results: LspRunResult[] = [];
-    const invalidatedPaths = new Set(plan.affectedPaths);
-    const previousByLanguage = new Map(
-      (previousCache?.lsp_results ?? []).map((result) => [result.language, result]),
-    );
-    for (const language of languages) {
+    const previous = new Map((previousCache?.lsp_results ?? []).map(run => [run.projectId ?? run.language, run]));
+    // Context loss invalidates bindings even when an incomplete inventory cannot
+    // prove a deletion. Bind all observed inputs, including cross-language configs.
+    const workspaceIdentity = createHash('sha256').update(JSON.stringify(
+      files.map(file => [file.path, file.digest]).sort(([a], [b]) => a!.localeCompare(b!)),
+    )).digest('hex');
+    for (const [projectId, group] of groups) {
       signal?.throwIfAborted();
-      const languageFiles = files.filter((file) => file.language === language);
-      const targetFiles = lspTargetFiles(files, language, plan);
-      const fresh = targetFiles.length
-        ? this.lspRunner
-          ? await this.lspRunner.analyze({
-              language,
-              files: targetFiles,
-              workspaceFiles: languageFiles,
-              sourceRoot,
-              runtimeRoot: join(this.config.dataDir, "lsp-runtime"),
-              signal,
-            })
-          : unavailableLspResult(language, "sandbox_attestation_unavailable", "tree_sitter_only")
-        : null;
-      signal?.throwIfAborted();
-      results.push(mergeLspResult({
-        language,
-        previous: plan.mode === "incremental" ? previousByLanguage.get(language) ?? null : null,
-        fresh,
-        invalidatedPaths,
-        currentPaths: new Set(languageFiles.map((file) => file.path)),
-      }));
+      const language = group[0]!.language;
+      const inputIdentity = createHash('sha256').update(JSON.stringify([
+        workspaceIdentity, projectId, group[0]!.project?.configDigest,
+      ])).digest('hex');
+      const cached = previous.get(projectId);
+      const reuse = plan.mode !== 'full' && cached?.completed && cached.inputIdentity === inputIdentity;
+      const run = reuse ? cached : this.lspRunner
+        ? await this.lspRunner.analyze({
+            language, files: group, workspaceFiles: files, projectRoot: group[0]!.project?.root,
+            sourceRoot, runtimeRoot: join(this.config.dataDir, 'lsp-runtime'), signal,
+          })
+        : unavailableLspResult(language, 'sandbox_attestation_unavailable');
+      results.push({ ...run, projectId, inputIdentity });
+      for (const file of group) file.semanticComplete = run.completed;
     }
     signal?.throwIfAborted();
     return results;
@@ -1324,7 +1293,8 @@ export class AnalysisCoordinator {
         });
     const baseSnapshot = stripSnapshotLanguage(localizedSnapshot);
     const validatedSnapshot = assertValidEvidenceSnapshot(baseSnapshot);
-    const { fact_graph: factGraph, source_root: _sourceRoot, ...view } = validatedSnapshot;
+    const factGraph = validatedSnapshot.fact_graph;
+    const view = snapshotPublicView(validatedSnapshot);
     await this.recordAnalysisPhase(input.job, input.fence, "validating_analysis", "completed");
     await this.recordAnalysisPhase(input.job, input.fence, "publishing_analysis", "running");
     const publicationTimings = await this.store.savePublicSnapshot({
@@ -1341,11 +1311,13 @@ export class AnalysisCoordinator {
         semantic_graph: view.graph,
         value_points: view.value_points,
         languages: view.languages,
-        source_reports: view.source_reports,
+        source_reports: validatedSnapshot.source_reports,
+        static_analysis: validatedSnapshot.static_analysis,
         analysis_cache: input.checkpoint.parsed && input.checkpoint.lsp_results && input.checkpoint.plan
           ? createAnalysisCache({
               manifest: input.checkpoint.fetched.manifest,
               parsedFiles: input.checkpoint.parsed,
+              syntaxFiles: input.checkpoint.syntax_files,
               lspResults: input.checkpoint.lsp_results,
             })
           : undefined,

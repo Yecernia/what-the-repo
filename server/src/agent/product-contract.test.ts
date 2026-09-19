@@ -345,6 +345,7 @@ test("online tool catalog contains no shell database or arbitrary file capabilit
       "get_learner_profile",
       "get_learning_context",
       "get_project_overview",
+      "get_static_file_facts",
       "list_value_points",
       "propose_learning_action",
       "query_code_evidence",

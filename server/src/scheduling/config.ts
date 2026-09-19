@@ -13,6 +13,7 @@ export interface ConcurrencyConfig {
   analysisPublishConcurrency?: number;
   analysisPendingLimit?: number;
   analysisMemoryMb?: number;
+  analysisCpuMemoryExpansion?: number;
   objectStoreConcurrency?: number;
   upstreamCapacities?: UpstreamCapacityRule[];
 }
@@ -58,6 +59,7 @@ export function concurrencyConfig(env: NodeJS.ProcessEnv): ConcurrencyConfig {
     analysisPublishConcurrency: integerSetting(env, 'ANALYSIS_PUBLISH_CONCURRENCY', 1, 1, 16),
     analysisPendingLimit: integerSetting(env, 'ANALYSIS_PENDING_LIMIT', 32, 1, 256),
     analysisMemoryMb: integerSetting(env, 'ANALYSIS_MEMORY_MB', 6144, 1024, 1048576),
+    analysisCpuMemoryExpansion: integerSetting(env, 'ANALYSIS_CPU_MEMORY_EXPANSION', 80, 8, 128),
     objectStoreConcurrency: integerSetting(env, 'OBJECT_STORE_CONCURRENCY', 8, 1, 64),
     upstreamCapacities: rules as UpstreamCapacityRule[],
   };

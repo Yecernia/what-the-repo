@@ -2,7 +2,7 @@ import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "n
 import { createHash, randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
 function hasInlineStaticCheckpoint(value: unknown): boolean {
-  return Boolean(value && typeof value === 'object' && ['parsed', 'lsp_results', 'previous_fact_graph']
+  return Boolean(value && typeof value === 'object' && ['parsed', 'syntax_files', 'lsp_results', 'previous_fact_graph']
     .some(key => (value as Record<string, unknown>)[key] !== undefined));
 }
 import { join } from "node:path";
@@ -59,6 +59,8 @@ import {
   assembleAnalysisPayload,
   defaultAnalysisChunkKey,
   prepareStoredAnalysisPayload,
+  readStaticFileFacts,
+  type StaticFileFacts,
 } from "./analysis-payload.js";
 import {
   DEFAULT_QUOTA_LIMITS,
@@ -573,6 +575,28 @@ export class FileStore implements ProductStore {
     return readJson<T>(this.path("snapshots", projectId));
   }
   async saveAnalysisResult(projectId: string, payload: unknown): Promise<void> { await writeJson(this.path("analysisResults", projectId), payload); }
+  async readStaticFile(projectId: string, snapshotId: string, path: string): Promise<StaticFileFacts | null> {
+    const project = await this.loadProject(projectId);
+    if (!project || project.analysis.snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
+    const key = project.analysis.canonical_snapshot_key;
+    if (!key) return readStaticFileFacts(await this.loadAnalysisResult(projectId), async () => null, path);
+    const metadata = await this.loadPublicSnapshotMetadata(key);
+    if (!metadata || metadata.analysis_snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
+    return this.readPublicStaticFile(key, snapshotId, path);
+  }
+
+  protected async readPublicStaticFile(publicKey: string, _snapshotId: string, path: string): Promise<StaticFileFacts | null> {
+    const directory = join(this.dirs.publicSnapshots, safePublicKey(publicKey));
+    const raw = await readJson<unknown>(join(directory, "analysis.json"));
+    return readStaticFileFacts(raw, async key => {
+      try { return await readFile(this.analysisChunkPath(directory, key)); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+    }, path);
+  }
+
   async loadAnalysisResult<T = Record<string, unknown>>(projectId: string): Promise<T | null> {
     const project = await this.loadProject(projectId);
     const key = project?.analysis.canonical_snapshot_key;
@@ -598,9 +622,9 @@ export class FileStore implements ProductStore {
     let staticPayload = previous?.static_payload;
     let savedCheckpoint = checkpoint;
     if (fields && typeof fields === 'object') {
-      const { parsed, lsp_results, previous_fact_graph, ...light } = fields;
-      if (parsed !== undefined || lsp_results !== undefined || previous_fact_graph !== undefined) {
-        const bytes = serialize({ parsed, lsp_results, previous_fact_graph });
+      const { parsed, syntax_files, lsp_results, previous_fact_graph, ...light } = fields;
+      if (parsed !== undefined || syntax_files !== undefined || lsp_results !== undefined || previous_fact_graph !== undefined) {
+        const bytes = serialize({ parsed, syntax_files, lsp_results, previous_fact_graph });
         const file = `${safeId(projectId)}.${randomUUID()}.static.bin`;
         await writeBytes(join(this.dirs.analysisCheckpoints, file), bytes);
         staticPayload = { file, bytes: bytes.byteLength, sha256: bytesSha256(bytes) };

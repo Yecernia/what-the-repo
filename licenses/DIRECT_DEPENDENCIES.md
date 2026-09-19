@@ -20,13 +20,12 @@ Direct dependencies for each module, with versions taken from the lockfiles.
 | server | tree-sitter-cpp | 0.23.4 | runtime | MIT |
 | server | tree-sitter-go | 0.25.0 | runtime | MIT |
 | server | tree-sitter-java | 0.23.5 | runtime | MIT |
-| server | tree-sitter-javascript | 0.25.0 | runtime | MIT |
 | server | tree-sitter-php | 0.23.12 | runtime | MIT |
 | server | tree-sitter-python | 0.25.0 | runtime | MIT |
 | server | tree-sitter-rust | 0.24.0 | runtime | MIT |
-| server | tree-sitter-typescript | 0.23.2 | runtime | MIT |
 | server | typebox | 1.3.7 | runtime | MIT |
 | server | typescript | 6.0.2 | runtime | Apache-2.0 |
+| server | vscode-jsonrpc | 8.2.1 | runtime | MIT |
 | server | web-tree-sitter | 0.26.8 | runtime | MIT |
 | server | yaml | 2.9.0 | runtime | ISC |
 | server | zod | 4.4.3 | runtime | MIT |

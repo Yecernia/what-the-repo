@@ -28,11 +28,11 @@ async function fixture(t: TestContext) {
 test("static fixture eval checks local calls and reports full-binding gaps without generating a learning route", async (t) => {
   const { report, snapshot } = await fixture(t);
   assert.equal(report.passed, true);
-  const truth = report.truth as { call_metrics: { expected: number; recall: number }; tree_sitter_local_call_metrics: { precision: number; recall: number } };
+  const truth = report.truth as { call_metrics: { expected: number; recall: number }; lexical_candidate_call_metrics: { precision: number; recall: number } };
   assert.equal(truth.call_metrics.expected, 58);
   assert.ok(truth.call_metrics.recall < 0.5, "full-binding gaps must remain visible");
-  assert.equal(truth.tree_sitter_local_call_metrics.precision, 1);
-  assert.equal(truth.tree_sitter_local_call_metrics.recall, 1);
+  assert.equal(truth.lexical_candidate_call_metrics.precision, 1);
+  assert.equal(truth.lexical_candidate_call_metrics.recall, 1);
   assert.deepEqual(snapshot.learning_plan.steps, []);
   assert.deepEqual(snapshot.value_points, []);
 });
@@ -44,7 +44,7 @@ test("static fixture eval fails when a required local call is missing or its tru
     edge.relation_kind !== "calls" || edge.source !== call.source || edge.target !== call.target);
   assert.equal(evaluateStaticSnapshot(snapshot, fixedCase.expected_files, fixedCase).checks.fixed_local_call_recall, false);
   const missingTruth = structuredClone(fixedCase);
-  delete missingTruth.relation_anchors!.tree_sitter_local_calls;
+  delete missingTruth.relation_anchors!.lexical_candidate_calls;
   assert.equal(evaluateStaticSnapshot(snapshot, fixedCase.expected_files, missingTruth).checks.fixed_local_call_anchors_present, false);
 });
 

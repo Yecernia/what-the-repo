@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildSnapshot } from "../analysis/graph.js";
 import { isTextPath } from "../analysis/languages.js";
-import { TreeSitterAnalyzer } from "../analysis/tree-sitter.js";
+import { analyzeStaticSource } from "../analysis/static-kernel.js";
 import type { EvidenceSnapshot, SnapshotNode } from "../domain/snapshot.js";
 
 const SKIP_DIRECTORIES = new Set([
@@ -21,7 +21,7 @@ export interface FixedCase {
   import_anchors: Array<[string, string]>;
   relation_anchors?: {
     calls?: Array<[string, string]>;
-    tree_sitter_local_calls?: Array<[string, string]>;
+    lexical_candidate_calls?: Array<[string, string]>;
   };
 }
 
@@ -36,11 +36,10 @@ interface ProductEvalOptions {
 
 export async function runProductEval(options: ProductEvalOptions): Promise<Record<string, unknown>> {
   const before = await sourceManifest(options.target);
-  const analyzer = new TreeSitterAnalyzer();
-  await analyzer.init();
   const startedAt = Date.now();
-  const parsed = [];
-  for (const path of before.files) parsed.push(await analyzer.analyzeFile(options.target, path));
+  const manifest = await Promise.all(before.files.map(async path => { const bytes=await readFile(join(options.target,path));return {path,bytes:bytes.length,digest:createHash('sha256').update(bytes).digest('hex')}; }));
+  const kernel = await analyzeStaticSource({manifest,sourceRoot:options.target,previous:null});
+  const parsed = kernel.files;
   const actualCommit = options.expectedCommit === "fixture"
     ? "fixture"
     : gitCommit(options.target);
@@ -88,11 +87,11 @@ export async function runProductEval(options: ProductEvalOptions): Promise<Recor
     languages: snapshot.languages,
     configuration: {
       runtime: `node ${process.version}`,
-      analyzer: "TypeScript Tree-sitter fact chain",
+      analyzer: "project-facts-v1",
       semantic_mode: snapshot.graph.semantic_mode,
       provider_called: false,
       target_code_executed: false,
-      call_gate_scope: "tree_sitter_local_candidates",
+      call_gate_scope: "lexical_binding_candidates",
       full_call_recall_is_gate: false,
     },
     subjective_quality: {
@@ -155,7 +154,7 @@ function evaluateTruth(
   const expectedCalls = new Set((fixedCase.relation_anchors?.calls ?? []).map(pairKey));
   const callMatches = intersect(calls, expectedCalls).size;
   const callPrecision = calls.size ? callMatches / calls.size : 0;
-  const expectedLocalCalls = new Set((fixedCase.relation_anchors?.tree_sitter_local_calls ?? []).map(pairKey));
+  const expectedLocalCalls = new Set((fixedCase.relation_anchors?.lexical_candidate_calls ?? []).map(pairKey));
   const localMatches = intersect(calls, expectedLocalCalls).size;
   const missingSymbols = fixedCase.symbol_anchors
     .map((item) => `${item.path}|${item.name}|${item.kind}`)
@@ -181,7 +180,7 @@ function evaluateTruth(
       import_metrics: relationMetrics(imports, expectedImports),
       inheritance_metrics: relationMetrics(inheritance, expectedInheritance),
       call_metrics: relationMetrics(calls, expectedCalls),
-      tree_sitter_local_call_metrics: relationMetrics(calls, expectedLocalCalls),
+      lexical_candidate_call_metrics: relationMetrics(calls, expectedLocalCalls),
     },
   };
 }

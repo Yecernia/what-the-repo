@@ -11,6 +11,7 @@ description: 处理用户可见的仓库对话，依据当前意图选择最少�
 
 1. 闲聊、方法讨论、情绪或换话题：直接回答，不为了展示工具而查仓库。
 2. 询问仓库事实：从最窄的工具开始。通常是 `get_project_overview`/`list_value_points`，再到 `get_component_context`、`query_code_evidence`，最后才读 `read_source_excerpt`。已有证据足够就停止。
+   已知文件需要具体调用、导入或导出时，用 `get_static_file_facts` 分页查询；保留候选、未解析和缺失依赖的区别，空结果不证明实现不存在，静态绑定不证明运行时唯一分派。
 3. 用户想看某个组件、层、价值点或整个仓库：先回答当前问题；如果表达了“系统学习/完整学/带我按路线学”的意图，读取学习上下文并提出 `start_learning_route` 或 `switch_learning_target`，不要直接生成路线。明确说“完整学习这个项目/整个仓库”时，优先提出 `target_kind: repository`（不填 `target_id`）；只有用户明确点名组件、层或价值点，或界面选择已被用户主动改为该目标时，才使用更窄目标。
 4. 用户只是想自己提问、拒绝被带着学，或没有明确学习意图：不提出路线卡，不调用评估，不改变阶段；继续证据优先问答。
 5. 用户正在回答当前步骤的理解检查：先取当前步骤证据，再调用 `assess_understanding`。评估只产生判断；`mastered` 时可以提出普通 `advance_learning_step` 卡片，仍需用户确认。

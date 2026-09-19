@@ -6,7 +6,9 @@ import { serialize } from 'node:v8';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from '../persistence/file-store.js';
-import { stageMemoryMb } from './stage-executor.js';
+import { stageMemoryMb, stageMemoryFailureDetector } from './stage-executor.js';
+import { concurrencyConfig } from '../scheduling/config.js';
+import { isRetryableAnalysisError } from './coordinator.js';
 import { checkpointExecutionStage } from './stage-protocol.js';
 
 test('semantic checkpoint loading excludes static caches and preserves them for publication', async () => {
@@ -14,17 +16,19 @@ test('semantic checkpoint loading excludes static caches and preserves them for 
   const store = new FileStore(root);
   try {
     await store.init();
-    const staticFields = { parsed: [{ path: 'a.ts' }], lsp_results: [], previous_fact_graph: { nodes: ['old'] } };
+    const staticFields = { parsed: [{ path: 'a.ts' }], syntax_files: [{ path: 'a.ts', syntaxKey: 'test' }], lsp_results: [], previous_fact_graph: { nodes: ['old'] } };
     const checkpoint = { stage: 'semantic', fetched: { manifest: [{ bytes: 25 }] }, ...staticFields };
     await store.saveAnalysisCheckpoint('project', checkpoint, { graph: { nodes: ['facts'] } });
     const info = await store.analysisCheckpointInfo('project');
     assert.equal(info?.stage, 'semantic'); assert.equal(info?.sourceBytes, 25);
     const light = await store.loadAnalysisCheckpoint('project', { omitStatic: true });
     assert.equal(light?.checkpoint.parsed, undefined);
+    assert.equal(light?.checkpoint.syntax_files, undefined);
     assert.deepEqual(light?.snapshot, { graph: { nodes: ['facts'] } });
     await store.saveAnalysisCheckpoint('project', { ...light!.checkpoint, stage: 'assembly' }, { graph: { nodes: ['enriched'] } });
     const full = await store.loadAnalysisCheckpoint('project');
     assert.deepEqual(full?.checkpoint.parsed, staticFields.parsed);
+    assert.deepEqual(full?.checkpoint.syntax_files, staticFields.syntax_files);
     assert.deepEqual(full?.checkpoint.previous_fact_graph, staticFields.previous_fact_graph);
     assert.deepEqual(full?.snapshot, { graph: { nodes: ['enriched'] } });
     assert.equal(checkpointExecutionStage((await store.analysisCheckpointInfo('project'))?.stage), 'publish');
@@ -38,6 +42,29 @@ test('stage resource estimates distinguish source expansion and graph publicatio
   const large = { bytes: 100 * 1048576, sourceBytes: 100 * 1048576 };
   assert.ok(stageMemoryMb('cpu', large) > stageMemoryMb('cpu', small));
   assert.ok(stageMemoryMb('publish', large) > stageMemoryMb('semantic', large));
+});
+
+test('large static stages can raise heap allowance without inflating semantic reservations', () => {
+  const info = { bytes: 2 * 1048576, sourceBytes: 92 * 1048576 };
+  const tuned = concurrencyConfig({ WHAT_THE_REPO_ANALYSIS_CPU_MEMORY_EXPANSION: '96' });
+  assert.ok(stageMemoryMb('cpu', info, tuned.analysisCpuMemoryExpansion) > stageMemoryMb('cpu', info));
+  assert.equal(stageMemoryMb('semantic', info, tuned.analysisCpuMemoryExpansion), stageMemoryMb('semantic', info));
+  for (const value of ['0', '129', '1.5', 'NaN']) {
+    assert.throws(() => concurrencyConfig({ WHAT_THE_REPO_ANALYSIS_CPU_MEMORY_EXPANSION: value }), /ANALYSIS_CPU_MEMORY_EXPANSION/);
+  }
+});
+
+test('fragmented fatal V8 diagnostics classify memory exhaustion without retrying it', () => {
+  const detect = stageMemoryFailureDetector();
+  assert.equal(detect('private diagnostic payload; ordinary heap usage\n'), false);
+  assert.equal(detect('FATAL ERROR: Reached heap li'), false);
+  assert.equal(detect(Buffer.from('mit Allocation failed - JavaScript heap out of memory\n')), true);
+  assert.equal(detect(''), true);
+  assert.equal(isRetryableAnalysisError('analysis_stage_memory_limit_exceeded'), false);
+  assert.equal(isRetryableAnalysisError('analysis_stage_process_failed'), true);
+  const bounded = stageMemoryFailureDetector();
+  bounded('FATAL ERROR:' + 'x'.repeat(2048));
+  assert.equal(bounded('heap out of memory'), false);
 });
 
 test('legacy inline checkpoints keep static caches when resumed into the lean semantic phase', async () => {

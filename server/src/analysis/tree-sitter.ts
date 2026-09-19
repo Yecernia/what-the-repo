@@ -1,361 +1,450 @@
-import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { Language, Parser, type Node } from "web-tree-sitter";
 import {
   type FactSymbolKind,
-  type ParsedCallSite,
   type ParsedFile,
-  type ParsedImport,
+  type SourceRange,
   type StaticSymbolFact,
+  stableDigest,
   symbolStableId,
 } from "./facts.js";
-import { languageForPath, LANGUAGE_SPECS, type LanguageSpec } from "./languages.js";
-
-const require = createRequire(import.meta.url);
-const ignoredCallNames = new Set([
-  "if",
-  "for",
-  "while",
-  "switch",
-  "catch",
-  "function",
-  "require",
-  "print",
-]);
-
+import { languageForPath } from "./languages.js";
+import { decodeSource, readSnapshotFile } from "./source-input.js";
+import { extractTypeScriptSyntax } from "./typescript.js";
+import { bindPythonSyntax } from "./python-syntax.js";
+import { syntaxToolchain } from "./toolchain.js";
 export type {
   ParsedCallSite as ParsedCall,
   ParsedFile,
   ParsedImport,
   StaticSymbolFact as ParsedSymbol,
 } from "./facts.js";
-
-function digest(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
+const require = createRequire(import.meta.url);
+type Rules = {
+  declarations: Record<string, FactSymbolKind>;
+  scopes: string[];
+  imports: string[];
+  calls: string[];
+};
+/** Grammar-specific nodes; source-text regular expressions never invent facts. */
+const rules: Record<string, Rules> = {
+  python: {
+    declarations: {
+      class_definition: "class",
+      function_definition: "function",
+      lambda: "function",
+    },
+    scopes: [],
+    imports: ["import_statement", "import_from_statement"],
+    calls: ["call"],
+  },
+  go: {
+    declarations: {
+      type_spec: "struct",
+      function_declaration: "function",
+      method_declaration: "method",
+      func_literal: "function",
+    },
+    scopes: [],
+    imports: ["import_spec"],
+    calls: ["call_expression"],
+  },
+  java: {
+    declarations: {
+      class_declaration: "class",
+      interface_declaration: "interface",
+      enum_declaration: "enum",
+      record_declaration: "struct",
+      method_declaration: "method",
+      constructor_declaration: "constructor",
+      lambda_expression: "function",
+    },
+    scopes: [],
+    imports: ["import_declaration"],
+    calls: [
+      "method_invocation",
+      "object_creation_expression",
+      "explicit_constructor_invocation",
+    ],
+  },
+  rust: {
+    declarations: {
+      struct_item: "struct",
+      enum_item: "enum",
+      trait_item: "interface",
+      function_item: "function",
+      function_signature_item: "function",
+      closure_expression: "function",
+      mod_item: "namespace",
+    },
+    scopes: ["impl_item"],
+    imports: ["use_declaration", "extern_crate_declaration", "mod_item"],
+    calls: ["call_expression"],
+  },
+  php: {
+    declarations: {
+      class_declaration: "class",
+      interface_declaration: "interface",
+      trait_declaration: "interface",
+      function_definition: "function",
+      method_declaration: "method",
+      anonymous_function: "function",
+      arrow_function: "function",
+      namespace_definition: "namespace",
+    },
+    scopes: [],
+    imports: [
+      "namespace_use_declaration",
+      "include_expression",
+      "require_expression",
+      "include_once_expression",
+      "require_once_expression",
+    ],
+    calls: [
+      "function_call_expression",
+      "member_call_expression",
+      "scoped_call_expression",
+      "object_creation_expression",
+      "nullsafe_member_call_expression",
+    ],
+  },
+  csharp: {
+    declarations: {
+      class_declaration: "class",
+      interface_declaration: "interface",
+      struct_declaration: "struct",
+      record_declaration: "struct",
+      enum_declaration: "enum",
+      method_declaration: "method",
+      constructor_declaration: "constructor",
+      local_function_statement: "function",
+      lambda_expression: "function",
+      anonymous_method_expression: "function",
+      accessor_declaration: "accessor",
+      namespace_declaration: "namespace",
+      file_scoped_namespace_declaration: "namespace",
+    },
+    scopes: [],
+    imports: ["using_directive"],
+    calls: ["invocation_expression", "object_creation_expression"],
+  },
+  cpp: {
+    declarations: {
+      class_specifier: "class",
+      struct_specifier: "struct",
+      enum_specifier: "enum",
+      function_definition: "function",
+      lambda_expression: "function",
+      namespace_definition: "namespace",
+    },
+    scopes: [],
+    imports: ["preproc_include"],
+    calls: ["call_expression", "new_expression"],
+  },
+};
+const range = (node: Node): SourceRange => ({
+  startLine: node.startPosition.row + 1,
+  startColumn: node.startPosition.column,
+  endLine: node.endPosition.row + 1,
+  endColumn: node.endPosition.column,
+});
+const field = (node: Node, ...names: string[]): Node | null =>
+  names.map((n) => node.childForFieldName(n)).find(Boolean) ?? null;
+function declaratorName(node: Node): Node | null {
+  if (
+    [
+      "identifier",
+      "field_identifier",
+      "type_identifier",
+      "name",
+      "operator_name",
+      "destructor_name",
+      "qualified_identifier",
+    ].includes(node.type)
+  )
+    return node;
+  const nested = field(node, "declarator", "name");
+  return nested ? declaratorName(nested) : null;
 }
-
-function firstIdentifier(node: Node): string | null {
-  if ([
-    "identifier",
-    "type_identifier",
-    "property_identifier",
-    "field_identifier",
-    "name",
-  ].includes(node.type)) {
-    const value = node.text.trim();
-    return /^[A-Za-z_$][\w$]*$/.test(value) ? value : null;
+function importSources(node: Node, language: string): string[] {
+  if (language === "python") {
+    const from = field(node, "module_name");
+    if (from) return [from.text];
+    return node.namedChildren
+      .filter((c) => ["dotted_name", "aliased_import"].includes(c.type))
+      .map((c) => (field(c, "name") ?? c).text);
   }
-  for (const child of node.namedChildren) {
-    const value = firstIdentifier(child);
-    if (value) return value;
-  }
-  return null;
+  if (language === "rust" && node.type === "mod_item" && field(node, "body"))
+    return [];
+  const path = field(node, "path", "source", "argument", "name");
+  return (
+    path
+      ? [path]
+      : node.namedChildren.filter((c) => !["comment", "block"].includes(c.type))
+  )
+    .map((c) => c.text.replace(/^["'<]|["'>]$/g, ""))
+    .filter(Boolean);
 }
-
-function nameFromNode(node: Node): string | null {
-  for (const field of ["name", "declarator", "type", "left"]) {
-    const candidate = node.childForFieldName(field);
-    if (!candidate) continue;
-    const value = firstIdentifier(candidate);
-    if (value) return value;
-  }
-  return firstIdentifier(node);
-}
-
-function symbolKind(node: Node): FactSymbolKind | null {
-  const type = node.type;
-  if (type.includes("constructor")) return "constructor";
-  if (type.includes("interface") || type === "trait_item" || type === "type_alias_declaration") return "interface";
-  if (type.includes("struct") || type === "record_declaration") return "struct";
-  if (type.includes("enum")) return "enum";
-  if (type.includes("class")) return "class";
-  if (type.includes("method")) return "method";
-  if (type.includes("function")) return "function";
-  if (type === "type_spec") return "struct";
-  return null;
-}
-
-function regexImports(source: string, language: string): ParsedImport[] {
-  const patterns: RegExp[] = language === "python"
-    ? [/^\s*(?:from\s+([^\s]+)\s+import|import\s+([^\s#]+))/gm]
-    : language === "go"
-      ? [/^\s*(?:import\s+)?(?:[\w_.]+\s+)?["']([^"']+)["']/gm]
-      : [
-          /\bimport\s+(?:[^;\n]*?\s+from\s+)?["']([^"']+)["']/g,
-          /\b(?:from|require\s*\()\s*["']([^"']+)["']/g,
-          /#include\s*[<"]([^>"]+)[>"]/g,
-          /\b(?:use|mod)\s+([A-Za-z0-9_:]+)/g,
-          /^\s*(?:using|import)\s+([A-Za-z0-9_.\\]+)/gm,
-        ];
-  const rows: ParsedImport[] = [];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      const value = match.slice(1).find(Boolean);
-      if (!value) continue;
-      const prefix = source.slice(0, match.index ?? 0);
-      rows.push({ source: value, line: prefix.split("\n").length });
+function collect(
+  root: Node,
+  file: ParsedFile,
+  rule: Rules,
+  signal?: AbortSignal,
+): void {
+  const seen = new Map<string, number>();
+  const stack: Array<{
+    node: Node;
+    owner: StaticSymbolFact | null;
+    lexical: string;
+    execution: string | null;
+  }> = [{ node: root, owner: null, lexical: "", execution: null }];
+  while (stack.length) {
+    const item = stack.pop()!,
+      { node } = item;
+    signal?.throwIfAborted();
+    let { owner, lexical, execution } = item;
+    if (node.type === "ERROR" || node.isMissing)
+      file.diagnostics!.push({
+        code: node.isMissing ? "syntax_missing" : "syntax_error",
+        range: range(node),
+      });
+    let kind = rule.declarations[node.type];
+    if (file.language === "go" && node.type === "type_spec") {
+      const type = field(node, "type")?.type;
+      kind =
+        type === "interface_type"
+          ? "interface"
+          : type === "struct_type"
+            ? "struct"
+            : "type_alias";
     }
-  }
-  return rows.filter((row, index, all) => all.findIndex(
-    (candidate) => candidate.source === row.source && candidate.line === row.line,
-  ) === index);
-}
-
-function regexCalls(source: string): ParsedCallSite[] {
-  const rows: ParsedCallSite[] = [];
-  const pattern = /\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\(([^()]*)\)/g;
-  for (const match of source.matchAll(pattern)) {
-    const callee = match[1];
-    if (!callee || ignoredCallNames.has(callee)) continue;
-    const prefix = source.slice(0, match.index ?? 0);
-    const line = prefix.split("\n").length;
-    const lineStart = prefix.lastIndexOf("\n") + 1;
-    const rawArguments = match[2]?.trim() ?? "";
-    rows.push({
-      callerStableId: null,
-      callee,
-      argumentCount: rawArguments ? rawArguments.split(",").length : 0,
-      line,
-      column: (match.index ?? 0) - lineStart,
-    });
-  }
-  return rows;
-}
-
-function parameterCount(node: Node): number | null {
-  let parameters = node.childForFieldName("parameters");
-  if (!parameters) {
-    parameters = node.namedChildren.find((child) => [
-      "parameters",
-      "formal_parameters",
-      "parameter_list",
-    ].includes(child.type)) ?? null;
-  }
-  if (!parameters) return null;
-  return parameters.namedChildren.filter((child) => child.type !== "comment").length;
-}
-
-function basesFromNode(node: Node): string[] {
-  const header = node.text.split(/\r?\n/, 3).join(" ");
-  const result: string[] = [];
-  const patterns = [
-    /\bextends\s+([\w.$]+)/g,
-    /\bimplements\s+([\w.$, <>]+)/g,
-    /\bclass\s+\w+\s*\(([^)]*)\)/g,
-    /\b(?:class|struct|interface)\s+\w+\s*:\s*([^\{]+)/g,
-    /\bimpl(?:<[^>]+>)?\s+([\w:]+)\s+for\s+[\w:]+/g,
-  ];
-  for (const pattern of patterns) {
-    for (const match of header.matchAll(pattern)) {
-      for (const raw of (match[1] ?? "").split(",")) {
-        const value = raw
-          .trim()
-          .replace(/^(public|private|protected)\s+/, "")
-          .split("<", 1)[0]
-          ?.split("::")
-          .at(-1)
-          ?.split(".")
-          .at(-1)
-          ?.trim();
-        if (value && /^[A-Za-z_$][\w$]*$/.test(value) && !result.includes(value)) result.push(value);
-      }
-    }
-  }
-  return result;
-}
-
-function calleeName(node: Node): string | null {
-  for (const field of ["function", "name", "method"]) {
-    const candidate = node.childForFieldName(field);
-    if (candidate) {
-      const value = candidate.text.trim();
-      if (value) return value;
-    }
-  }
-  const candidate = node.namedChildren.find((child) => [
-    "identifier",
-    "field_expression",
-    "member_expression",
-    "scoped_identifier",
-  ].includes(child.type));
-  return candidate?.text.trim() ?? null;
-}
-
-function callArgumentCount(node: Node): number | null {
-  let argumentsNode = node.childForFieldName("arguments");
-  if (!argumentsNode) {
-    argumentsNode = node.namedChildren.find((child) => [
-      "argument_list",
-      "arguments",
-      "value_arguments",
-    ].includes(child.type)) ?? null;
-  }
-  return argumentsNode
-    ? argumentsNode.namedChildren.filter((child) => child.type !== "comment").length
-    : null;
-}
-
-function collectFacts(root: Node, relativePath: string, language: string, spec: LanguageSpec): {
-  symbols: StaticSymbolFact[];
-  calls: ParsedCallSite[];
-} {
-  const symbols: StaticSymbolFact[] = [];
-  const calls: ParsedCallSite[] = [];
-
-  const visit = (node: Node, parents: StaticSymbolFact[]): void => {
-    let scope = parents;
-    if (spec.declarationTypes.has(node.type)) {
-      const name = nameFromNode(node);
-      const kind = symbolKind(node);
-      if (name && kind) {
-        const qualifiedName = [...parents.map((parent) => parent.name), name].join(".");
-        const count = parameterCount(node);
-        const parent = parents.at(-1);
-        const implicitReceiverCount = language === "python"
-          && Boolean(parent && ["class", "interface", "struct"].includes(parent.kind))
-          && Boolean(count && count > 0)
-          ? 1
-          : 0;
-        const symbol: StaticSymbolFact = {
-          stableId: symbolStableId(relativePath, qualifiedName, kind),
-          name,
-          qualifiedName,
-          kind,
-          path: relativePath,
-          language,
-          startLine: node.startPosition.row + 1,
-          endLine: node.endPosition.row + 1,
-          startColumn: node.startPosition.column,
-          endColumn: node.endPosition.column,
-          parameterCount: count,
-          implicitReceiverCount,
-          bases: basesFromNode(node),
-          sources: ["tree_sitter"],
-        };
-        symbols.push(symbol);
-        scope = [...parents, symbol];
-      }
-    }
-    if (spec.callTypes.has(node.type)) {
-      const callee = calleeName(node);
-      if (callee && !ignoredCallNames.has(callee)) {
-        calls.push({
-          callerStableId: scope.at(-1)?.stableId ?? null,
-          callee,
-          argumentCount: callArgumentCount(node),
-          line: node.startPosition.row + 1,
-          column: node.startPosition.column,
+    if (
+      file.language === "cpp" &&
+      ["declaration", "field_declaration"].includes(node.type) &&
+      field(node, "declarator")?.type === "function_declarator"
+    )
+      kind = "function";
+    if (kind) {
+      const nameNode =
+        field(node, "name") ??
+        (field(node, "declarator")
+          ? declaratorName(field(node, "declarator")!)
+          : null);
+      const name =
+        nameNode?.text ??
+        (kind === "accessor" ? node.firstChild?.text : null) ??
+        "<anonymous>";
+      const body = field(node, "body", "value");
+      const header = node.text
+        .slice(0, body ? body.startIndex - node.startIndex : node.text.length)
+        .replace(/\s+/g, " ");
+      const receiver = field(node, "receiver")?.text ?? "";
+      const key = `${lexical}/${kind}:${name}:${receiver}:${header}`;
+      const ordinal = seen.get(key) ?? 0;
+      seen.set(key, ordinal + 1);
+      const qualifiedName = [lexical, receiver, name].filter(Boolean).join(".");
+      const stableId = symbolStableId(
+        file.path,
+        qualifiedName,
+        kind,
+        `${stableDigest(header)}:${ordinal}`,
+      );
+      const parameters =
+        field(node, "parameters") ??
+        field(node, "declarator")?.childForFieldName("parameters");
+      const symbol: StaticSymbolFact = {
+        stableId,
+        name,
+        qualifiedName,
+        kind,
+        path: file.path,
+        language: file.language,
+        ...range(node),
+        parameterCount: parameters?.namedChildCount ?? null,
+        implicitReceiverCount: 0,
+        bases: [],
+        sources: ["tree_sitter"],
+        trackingKey: key,
+        scopeId: owner?.stableId ?? null,
+        valid: !node.hasError,
+        declarations: [
+          {
+            id: `declaration:${stableDigest(`${file.path}:${node.startIndex}:${node.endIndex}`)}`,
+            path: file.path,
+            range: range(node),
+            selection: range(nameNode ?? node),
+            role: body ? "definition" : "declaration",
+            valid: !node.hasError,
+          },
+        ],
+      };
+      file.symbols.push(symbol);
+      owner = symbol;
+      lexical = qualifiedName;
+      for (const base of node.namedChildren.filter((child) =>
+        [
+          "superclass",
+          "super_interfaces",
+          "interfaces",
+          "base_list",
+          "base_class_clause",
+          "superclasses",
+        ].includes(child.type),
+      )) {
+        (file.unresolvedHeritage ??= []).push({
+          sourceId: stableId,
+          name: base.text,
+          kind: ["interfaces", "super_interfaces"].includes(base.type)
+            ? "implements"
+            : base.type === "base_list"
+              ? "supertype"
+              : "inherits",
+          range: range(base),
         });
       }
+      if (["function", "method", "constructor", "accessor"].includes(kind))
+        execution = stableId;
+    } else if (rule.scopes.includes(node.type)) {
+      lexical += `.${node.type}:${field(node, "trait")?.text ?? ""}:${field(node, "type")?.text ?? ""}`;
+    } else if (
+      ["block", "compound_statement"].includes(node.type) &&
+      node.parent &&
+      field(node.parent, "body")?.id !== node.id
+    ) {
+      const key = `${lexical}/block`,
+        ordinal = seen.get(key) ?? 0;
+      seen.set(key, ordinal + 1);
+      lexical += `.<block:${ordinal}>`;
     }
-    for (const child of node.namedChildren) visit(child, scope);
-  };
-
-  visit(root, []);
-  return {
-    symbols: symbols.filter((row, index, all) => all.findIndex(
-      (candidate) => candidate.stableId === row.stableId,
-    ) === index),
-    calls,
-  };
+    if (rule.imports.includes(node.type))
+      for (const source of importSources(node, file.language))
+        file.imports.push({
+          source,
+          line: node.startPosition.row + 1,
+          column: node.startPosition.column,
+          range: range(node),
+          status: "unresolved",
+          kind: "imports",
+        });
+    if (rule.calls.includes(node.type)) {
+      const callee =
+        field(node, "function", "name", "method", "type") ??
+        node.namedChildren[0];
+      if (callee)
+        file.calls.push({
+          id: `call:${stableDigest(`${file.path}:${node.startIndex}:${node.endIndex}`)}`,
+          callerStableId: execution,
+          callee: callee.text,
+          argumentCount: field(node, "arguments")?.namedChildCount ?? null,
+          line: node.startPosition.row + 1,
+          column: node.startPosition.column,
+          range: range(node),
+          target: null,
+          status: "unresolved",
+          meaning: "syntax",
+        });
+    }
+    const children = node.namedChildren;
+    for (let i = children.length - 1; i >= 0; i--) {
+      const child = children[i]!;
+      const outside =
+        file.language === "python" &&
+        kind === "function" &&
+        child.id !== field(node, "body")?.id;
+      stack.push({
+        node: child,
+        owner,
+        lexical,
+        execution: outside ? item.execution : execution,
+      });
+    }
+  }
+  if (root.hasError) file.parseError = "syntax_error_recovery";
 }
-
 export class TreeSitterAnalyzer {
-  private initialized = false;
+  private static initialized: Promise<void> | undefined;
   private readonly languages = new Map<string, Language>();
-  private readonly parsers = new Map<string, Parser>();
-
   async init(): Promise<void> {
-    if (this.initialized) return;
-    await Parser.init();
-    await Promise.all(LANGUAGE_SPECS.map(async (spec) => {
-      try {
-        const grammarPath = require.resolve(`${spec.grammarPackage}/${spec.grammarFile}`);
-        this.languages.set(spec.id, await Language.load(grammarPath));
-        if (spec.id === "typescript") {
-          try {
-            this.languages.set(
-              "tsx",
-              await Language.load(require.resolve("tree-sitter-typescript/tree-sitter-tsx.wasm")),
-            );
-          } catch {
-            // TSX remains explicitly degraded when its grammar is unavailable.
-          }
-        }
-      } catch {
-        // A missing grammar marks only that language unavailable.
-      }
-    }));
-    this.initialized = true;
+    await (TreeSitterAnalyzer.initialized ??= Parser.init());
   }
-
-  grammarAvailable(language: string): boolean {
-    return this.languages.has(language);
+  async analyzeFile(
+    root: string,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<ParsedFile> {
+    return this.analyzeBytes(path, await readSnapshotFile(root, path), signal);
   }
-
-  private parserFor(path: string): { parser: Parser; spec: LanguageSpec } | null {
-    const spec = languageForPath(path);
-    if (!spec) return null;
-    const key = path.toLowerCase().endsWith(".tsx") ? "tsx" : spec.id;
-    const language = this.languages.get(key);
-    if (!language) return null;
-    let parser = this.parsers.get(key);
-    if (!parser) {
-      parser = new Parser();
-      parser.setLanguage(language);
-      this.parsers.set(key, parser);
-    }
-    return { parser, spec };
-  }
-
-  async analyzeFile(root: string, relativePath: string, signal?: AbortSignal): Promise<ParsedFile> {
+  async analyzeBytes(
+    path: string,
+    raw: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<ParsedFile> {
     signal?.throwIfAborted();
-    const normalized = relativePath.replaceAll("\\", "/");
-    if (normalized.startsWith("/") || normalized.split("/").some((part) => !part || part === "..")) {
-      throw new Error("unsafe_analysis_path");
-    }
-    const absolute = resolve(root, ...normalized.split("/"));
-    const raw = await readFile(absolute);
-    signal?.throwIfAborted();
-    const text = raw.toString("utf8");
-    const spec = languageForPath(normalized);
-    const base: ParsedFile = {
-      path: normalized,
-      language: spec?.id ?? "unknown",
-      bytes: raw.byteLength,
-      digest: digest(text),
-      symbols: [],
-      imports: spec ? regexImports(text, spec.id) : [],
-      calls: [],
-      parseError: null,
-    };
-    // Documentation remains file evidence, never executable call/import evidence.
-    if (!spec) return base;
-    const target = this.parserFor(normalized);
-    signal?.throwIfAborted();
-    if (!target) {
-      return { ...base, calls: regexCalls(text), parseError: "tree_sitter_grammar_unavailable" };
-    }
+    const { file, text } = decodeSource(path, raw),
+      spec = languageForPath(path);
+    if (
+      text === null ||
+      !spec ||
+      !["source", "declaration"].includes(file.role!)
+    )
+      return file;
+    if (["typescript", "javascript"].includes(spec.id))
+      return extractTypeScriptSyntax(file, text, signal);
+    await this.init();
+    const key = path.endsWith(".c") ? "c" : spec.id;
+    let language = this.languages.get(key);
     try {
-      const tree = target.parser.parse(text);
-      if (!tree) return { ...base, calls: regexCalls(text), parseError: "tree_parse_empty" };
+      if (!language) {
+        language = await Language.load(
+          require.resolve(
+            key === "c"
+              ? "tree-sitter-c/tree-sitter-c.wasm"
+              : `${spec.grammarPackage}/${spec.grammarFile}`,
+          ),
+        );
+        this.languages.set(key, language);
+      }
+    } catch {
+      return {
+        ...file,
+        parseError: "tree_sitter_grammar_unavailable",
+        diagnostics: [{ code: "tree_sitter_grammar_unavailable" }],
+      };
+    }
+    const parser = new Parser();
+    parser.setLanguage(language);
+    file.parser = syntaxToolchain(path);
+    try {
+      const started = performance.now();
+      const tree = parser.parse(text, null, {
+        progressCallback: () => {
+          signal?.throwIfAborted();
+          if (performance.now() - started > 10_000)
+            throw new Error("parse_budget");
+        },
+      });
+      if (!tree) return { ...file, parseError: "tree_parse_empty" };
       try {
-        signal?.throwIfAborted();
-        const facts = collectFacts(tree.rootNode, normalized, target.spec.id, target.spec);
-        signal?.throwIfAborted();
-        return { ...base, symbols: facts.symbols, calls: facts.calls };
+        collect(tree.rootNode, file, rules[spec.id]!, signal);
+        if (spec.id === "python") bindPythonSyntax(tree.rootNode, file);
       } finally {
         tree.delete();
       }
+      return file;
     } catch (error) {
-      if (signal?.aborted) throw error;
+      signal?.throwIfAborted();
       return {
-        ...base,
-        calls: regexCalls(text),
-        parseError: error instanceof Error ? error.name : "tree_parse_failed",
+        ...file,
+        parseError: "tree_parse_failed",
+        diagnostics: [
+          ...file.diagnostics!,
+          {
+            code: error instanceof Error ? error.message : "tree_parse_failed",
+          },
+        ],
       };
+    } finally {
+      parser.delete();
     }
   }
 }

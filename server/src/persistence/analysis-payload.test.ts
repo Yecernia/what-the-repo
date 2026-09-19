@@ -6,6 +6,7 @@ import {
   parseAnalysisPayloadEnvelope,
   prepareAnalysisPayload,
   prepareStoredAnalysisPayload,
+  readStaticFileFacts,
 } from "./analysis-payload.js";
 
 test("large analysis arrays are chunked and reassembled with ordering", async () => {
@@ -30,7 +31,8 @@ test("large analysis arrays are chunked and reassembled with ordering", async ()
   const original = {
     snapshot_id: "snap:chunked",
     fact_graph: { nodes, edges },
-    analysis_cache: { schema_version: "analysis-cache-v1", manifest: [], parsed_files: parsedFiles, lsp_results: [] },
+    analysis_cache: { schema_version: "analysis-cache-v3-project-facts", manifest: [], syntax_files: parsedFiles, parsed_files: parsedFiles, lsp_results: [] },
+    static_analysis: { schema_version: "project-facts-v1", files: parsedFiles.map(file => ({ path: file.path, calls: [], diagnostics: [] })) },
     semantic_graph: { nodes: [{ id: "component-1" }] },
   };
   const bodies = new Map<string, Uint8Array>();
@@ -56,6 +58,22 @@ test("large analysis arrays are chunked and reassembled with ordering", async ()
     assembleAnalysisPayload(prepared.value, async (key) => bodies.get(key) ?? null),
     /analysis_payload_chunk_integrity_mismatch/,
   );
+});
+
+test("static file lookup loads one indexed block and verifies its digest", async () => {
+  const files = Array.from({ length: 100 }, (_, index) => ({ path: `src/${index}.ts`, calls: [{ status: "unresolved" }] }));
+  const value = { static_analysis: { files }, fact_graph: { nodes: Array(3000).fill({ id: "unused" }) } };
+  const prepared = prepareAnalysisPayload(value, (path, index, digest) => `analysis-chunks/${path}-${index}-${digest}.json`);
+  const bodies = new Map(prepared.chunks.map(chunk => [chunk.descriptor.key, chunk.body]));
+  const reads: string[] = [];
+  const load = async (key: string) => { reads.push(key); return bodies.get(key) ?? null; };
+  assert.deepEqual(await readStaticFileFacts(prepared.value, load, "src/99.ts"), files[99]);
+  assert.equal(reads.length, 1);
+  assert.match(reads[0]!, /static_analysis.files/);
+  assert.equal(await readStaticFileFacts(prepared.value, load, "unknown.ts"), null);
+  assert.equal(reads.length, 1);
+  bodies.set(reads[0]!, Buffer.from("[]"));
+  await assert.rejects(readStaticFileFacts(prepared.value, load, "src/99.ts"), /integrity_mismatch/);
 });
 
 test("historical unchunked analysis values remain unchanged", async () => {

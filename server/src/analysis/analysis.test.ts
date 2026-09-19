@@ -1822,7 +1822,7 @@ test("TypeScript static analysis emits symbols and a user-facing component graph
     assert.ok(snapshot.fact_graph.nodes.some((node) => node.id.startsWith("fact:symbol:")));
     assert.equal(snapshot.value_points.length, 0);
     assert.equal(snapshot.languages[0]?.quality_tier, "degraded");
-    assert.ok(snapshot.languages[0]?.reason_codes.includes("lsp_unavailable"));
+    assert.ok(snapshot.languages[0]?.reason_codes.includes("syntax_only_bindings_unresolved"));
     const component = snapshot.graph.nodes[0];
     assert.match(component.grouping_rationale ?? "", /结构目录/);
     const memberIds = component.members.map((row) => row.stable_id);
@@ -2077,7 +2077,7 @@ test("missing optional architecture rationales do not downgrade valid component 
   }
 });
 
-test("truth-attested LSP facts upgrade language quality and bind symbol relations", async () => {
+test("toolchain attestation never upgrades server observations into runtime truth", async () => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-lsp-merge-"));
   try {
     await writeFile(join(root, "base.ts"), "export class Base { run() { return 1; } }\n", "utf8");
@@ -2091,7 +2091,7 @@ test("truth-attested LSP facts upgrade language quality and bind symbol relation
     const lsp: LspRunResult = {
       language: "typescript",
       completed: true,
-      truthVerified: true,
+      toolchainVerified: true,
       serverName: "typescript-language-server",
       serverVersion: "1.0.0",
       capabilities: ["document_symbols", "call_hierarchy", "type_hierarchy"],
@@ -2103,7 +2103,7 @@ test("truth-attested LSP facts upgrade language quality and bind symbol relation
         { path: "main.ts", name: "start", qualifiedName: "Child.start", kind: "method", startLine: 2, endLine: 2, startColumn: 34, endColumn: 39 },
       ],
       relations: [
-        { kind: "calls", sourcePath: "main.ts", sourceName: "Child.start", sourceLine: 2, sourceColumn: 56, targetPath: "base.ts", targetName: "Base.run", targetLine: 1, targetColumn: 20 },
+        { kind: "calls", sourcePath: "main.ts", sourceName: "Child.start", sourceSelection: { startLine: 2, endLine: 2, startColumn: 34, endColumn: 39 }, sourceLine: 2, sourceColumn: 56, targetPath: "base.ts", targetName: "Base.run", targetLine: 1, targetColumn: 20 },
         { kind: "inherits", sourcePath: "main.ts", sourceName: "Child", sourceLine: 2, sourceColumn: 13, targetPath: "base.ts", targetName: "Base", targetLine: 1, targetColumn: 13 },
       ],
     };
@@ -2115,9 +2115,9 @@ test("truth-attested LSP facts upgrade language quality and bind symbol relation
       sourceRoot: root,
       lspResults: [lsp],
     });
-    assert.equal(snapshot.languages[0]?.quality_tier, "verified");
-    assert.ok(snapshot.fact_graph.edges.some((edge) => edge.relation_kind === "calls" && edge.certainty === "verified"));
-    assert.ok(snapshot.fact_graph.edges.some((edge) => edge.relation_kind === "inherits" && edge.certainty === "verified"));
+    assert.equal(snapshot.languages[0]?.quality_tier, "degraded");
+    assert.ok(snapshot.fact_graph.edges.some((edge) => edge.relation_kind === "calls" && edge.certainty === "degraded"));
+    assert.ok(snapshot.fact_graph.edges.some((edge) => edge.relation_kind === "inherits" && edge.certainty === "degraded"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -69,7 +69,7 @@
     ["utils/__init__.py", "utils/helpers.py"]
   ],
   "relation_anchors": {
-    "tree_sitter_local_calls": [
+    "lexical_candidate_calls": [
       ["core/pipeline.py|build_query", "core/pipeline.py|QueryBuilder"],
       ["core/pipeline.py|create_and_summarize", "core/pipeline.py|create_profile"],
       ["core/pipeline.py|pipeline", "core/pipeline.py|generate_animals"],

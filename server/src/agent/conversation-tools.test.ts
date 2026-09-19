@@ -98,11 +98,36 @@ test("online conversation tools keep explanation in Primary and expose one actio
     "get_learner_profile",
     "get_learning_context",
     "get_project_overview",
+    "get_static_file_facts",
     "list_value_points",
     "propose_learning_action",
     "query_code_evidence",
     "read_source_excerpt",
   ]);
+});
+
+test("static file facts require exposed paths and page unresolved sites from the store", async () => {
+  const reads: unknown[][] = [];
+  const ctx = context({ store: { readStaticFile: async (...args: unknown[]) => {
+    reads.push(args);
+    return { path: evidence.path, language: "typescript", syntax_completed: true, semantic_completed: false,
+      diagnostics: [], imports: [], calls: Array.from({ length: 60 }, (_, line) => ({
+        id: `call:${line}`, callee: "missing", line: line + 1, column: 0, callerStableId: null, argumentCount: 0, status: "unresolved",
+      })) };
+  } } as unknown as ProductStore });
+  const tools = createConversationTools(ctx);
+  const facts = tools.find(tool => tool.name === "get_static_file_facts")!;
+  await assert.rejects(facts.execute("unknown", { path: evidence.path, kind: "calls" }), /请先通过证据/);
+  assert.equal(reads.length, 0);
+  await tools.find(tool => tool.name === "get_component_context")!.execute("component", { component_id: "component:entry" });
+  const result = await facts.execute("page", { path: evidence.path, kind: "calls", limit: 20 });
+  const page = JSON.parse((result.content[0] as { text: string }).text);
+  assert.deepEqual(reads, [[ctx.project.project_id, "snapshot:tools", evidence.path]]);
+  assert.equal(page.items.length, 20);
+  assert.equal(page.next_offset, 20);
+  assert.equal(page.total, 60);
+  assert.equal(page.items[0].status, "unresolved");
+  assert.equal(page.semantic_completed, false);
 });
 
 test("conversation source reads require exposed evidence and stay bound to the snapshot", async () => {

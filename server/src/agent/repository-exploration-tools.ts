@@ -7,6 +7,7 @@ import type {
   SnapshotNode,
 } from "../domain/snapshot.js";
 import { readSourcePage, type SourceLineReader } from "./source-read.js";
+import { staticFilePage } from "./static-file-facts.js";
 
 const PAGE_INPUT = Type.Object({
   offset: Type.Optional(Type.Integer({ minimum: 0, maximum: 1_000_000, default: 0 })),
@@ -41,6 +42,7 @@ const SOURCE_INPUT = Type.Object({
 });
 const FILE_OUTLINE_INPUT = Type.Object({
   path: Type.String({ minLength: 1, maxLength: 400 }),
+  kind: Type.Optional(Type.Union([Type.Literal("symbols"), Type.Literal("calls"), Type.Literal("imports")])),
   component_id: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
   query: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   offset: Type.Optional(Type.Integer({ minimum: 0, maximum: 1_000_000, default: 0 })),
@@ -71,6 +73,7 @@ export interface RepositoryExplorationState {
 export interface RepositoryExplorationOptions {
   snapshot: EvidenceSnapshot;
   readLines: SourceLineReader;
+  readStaticFile?: (path: string) => Promise<NonNullable<EvidenceSnapshot["static_analysis"]>["files"][number] | null>;
   allowedComponentIds?: ReadonlySet<string>;
   allowedEntityIds?: ReadonlySet<string>;
   seedEvidenceIds?: Iterable<string>;
@@ -177,6 +180,7 @@ function relationSummary(edge: SnapshotEdge): Record<string, unknown> {
     target_component_id: edge.target,
     kind: edge.relation_kind,
     weight: edge.weight,
+    certainty: edge.certainty,
     description: edge.description,
     evidence_ids: relationEvidence(edge).map((row) => row.stable_id),
     evidence_total: edge.evidence.length,
@@ -207,6 +211,7 @@ export function createRepositoryExplorationTools(
     .slice()
     .sort((left, right) => left.id.localeCompare(right.id));
   const componentById = new Map(options.snapshot.graph.nodes.map((node) => [node.id, node]));
+  const staticFiles = new Map((options.snapshot.static_analysis?.files ?? []).map(file => [file.path, file]));
 
   const expose = (rows: SnapshotEvidence[]): SnapshotEvidence[] => {
     const unique = uniqueEvidence(rows);
@@ -234,13 +239,20 @@ export function createRepositoryExplorationTools(
   const fileOutline = makeTool({
     name: "get_repository_file_outline",
     label: "正在定位文件中的函数和类",
-    description: "查询已知文件中静态扫描识别的函数、类等符号名与准确行号，不读取源码正文。已知文件但不知道实现位置时先用它；可用query按符号名作不区分大小写的字面包含筛选（不是自然语言搜索或正则）。用返回start_line/end_line再read_repository_source读取目标及相关上下文。首次访问成员文件时同时提供component_id和path，无须先翻成员页；省略component_id时路径须已由组件或证据工具暴露。offset为0-based结果分页。仅覆盖静态分析已识别符号，空结果不证明没有相应实现；文档、配置或未识别代码仍按需读正文。",
+    description: "查询已知文件中静态扫描识别的函数、类等符号名与准确行号，不读取源码正文。已知文件但不知道实现位置时先用它；可用query按符号名作不区分大小写的字面包含筛选（不是自然语言搜索或正则）。用返回start_line/end_line再read_repository_source读取目标及相关上下文。首次访问成员文件时同时提供component_id和path，无须先翻成员页；省略component_id时路径须已由组件或证据工具暴露。kind默认为symbols；改为calls或imports可分页查看调用或导入的具体位置、目标和解析状态，query改为筛选表达式。offset为0-based结果分页。仅覆盖静态分析已识别符号，空结果不证明没有相应实现；文档、配置或未识别代码仍按需读正文。",
     parameters: FILE_OUTLINE_INPUT,
     state,
     execute: async params => {
       const path = params.path.replaceAll("\\", "/");
       authorizeSourcePath(path, params.component_id);
       const query = params.query?.trim().toLowerCase();
+      const staticFile = staticFiles.get(path) ?? await options.readStaticFile?.(path);
+      if (params.kind === "calls" || params.kind === "imports") {
+        return result("get_repository_file_outline", {
+          ...staticFilePage(staticFile, { ...params, path, kind: params.kind }),
+          limitations: options.snapshot.static_analysis?.limitations,
+        }, { paths: [path] });
+      }
       const symbols: SnapshotEvidence[] = [];
       for (const row of evidence.values()) {
         if (row.path === path && row.kind === "symbol" && row.start_line != null
@@ -251,6 +263,12 @@ export function createRepositoryExplorationTools(
       const exposed = expose(selected.items);
       return result("get_repository_file_outline", {
         path, coverage: "static_symbols_only", ...selected,
+        analysis: (()=>{ const file=staticFile;return file ? {
+          syntax_completed:file.syntax_completed, semantic_completed:file.semantic_completed, diagnostics:file.diagnostics.slice(0,20), diagnostics_total:file.diagnostics.length,
+          call_sites:file.calls.length, unresolved_calls:file.calls.filter(c=>c.status==='unresolved'||c.status==='missing_dependency').length,
+          candidate_calls:file.calls.filter(c=>c.status==='candidate').length, imports:file.imports.length,
+        } : null; })(),
+        limitations: options.snapshot.static_analysis?.limitations,
         items: selected.items.map(row => ({ evidence_id: row.stable_id, label: row.label, start_line: row.start_line, end_line: row.end_line })),
       }, { paths: [path], evidence_ids: exposed.map(row => row.stable_id) });
     },
@@ -358,6 +376,8 @@ export function createRepositoryExplorationTools(
       return result("query_repository_relations", {
         ...selected,
         items: selected.items.map(relationSummary),
+        analysis_coverage: options.snapshot.languages,
+        limitations: options.snapshot.static_analysis?.limitations,
       }, {
         evidence_ids: exposed.map((row) => row.stable_id),
         paths: [...new Set(exposed.map((row) => row.path))],

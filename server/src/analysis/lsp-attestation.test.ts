@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   LSP_TRUTH_FIXTURE_DIGESTS,
+  runtimeBundleDigest,
   loadLspAttestation,
   lspCommandDigest,
 } from "./lsp-attestation.js";
@@ -57,6 +58,7 @@ test("LSP attestation binds sandbox, server and the fixed truth suite", async ()
       wrapper_sha256: wrapperSha,
       wrapper_version: "test-wrapper-1",
       wrapper_command_digest: lspCommandDigest([wrapperPath]),
+      wrapper_runtime_digest: runtimeBundleDigest(undefined),
       passed: true,
       network_disabled: true,
       target_filesystem_hidden: true,
@@ -71,6 +73,7 @@ test("LSP attestation binds sandbox, server and the fixed truth suite", async ()
       schema_version: "lsp-language-truth-v1",
       language: "typescript",
       server_sha256: serverSha,
+      runtime_digest: runtimeBundleDigest(undefined),
       server_version: "test-server-1",
       server_command_digest: lspCommandDigest([serverPath]),
       fixture_digest: LSP_TRUTH_FIXTURE_DIGESTS.typescript,
@@ -80,9 +83,10 @@ test("LSP attestation binds sandbox, server and the fixed truth suite", async ()
     await writeFile(truthPath, JSON.stringify(truth), "utf8");
     const attestationPath = join(root, "attestation.json");
     const attestation = {
-      schema_version: "lsp-attestation-v1",
+      schema_version: "lsp-attestation-v2",
       implementation: "test-sandbox",
       wrapper_command: [wrapperPath],
+      wrapper_runtime_mode: "standalone",
       wrapper_sha256: wrapperSha,
       wrapper_version: "test-wrapper-1",
       sandbox_probe_path: probePath,
@@ -90,6 +94,7 @@ test("LSP attestation binds sandbox, server and the fixed truth suite", async ()
       languages: {
         typescript: {
           server_command: [serverPath],
+          runtime_mode: "standalone",
           server_sha256: serverSha,
           server_version: "test-server-1",
           truth_artifact_path: truthPath,
@@ -112,6 +117,26 @@ test("LSP attestation binds sandbox, server and the fixed truth suite", async ()
         assert.equal((await stat(path)).mode & 0o777, 0o500);
       }
     }
+    const resourcePath = join(root, "assets", "package.json");
+    await mkdir(join(root, "assets"));
+    await writeFile(resourcePath, '{"name":"trusted-runtime-resource"}');
+    const runtimeBundle = { root: await realpath(root), files: [
+      { path: relative(root, serverPath).replaceAll("\\", "/"), sha256: serverSha },
+      { path: "assets/package.json", sha256: sha(await readFile(resourcePath)) },
+    ] };
+    const serverCommand = [serverPath, resourcePath];
+    await writeFile(truthPath, JSON.stringify({ ...truth, runtime_digest: runtimeBundleDigest(runtimeBundle), server_command_digest: lspCommandDigest(serverCommand) }));
+    const bundled = { ...attestation, languages: { typescript: { ...attestation.languages.typescript,
+      server_command: serverCommand, runtime_mode: "bundle", runtime_bundle: runtimeBundle, truth_artifact_sha256: sha(await readFile(truthPath)) } } };
+    await writeFile(attestationPath, JSON.stringify(bundled));
+    const verifiedBundle = await loadLspAttestation(attestationPath, sha(await readFile(attestationPath)));
+    const bundleStage = join(root, "staged-bundle");
+    const bundleCommands = await verifiedBundle.stageForExecution("typescript", bundleStage);
+    assert.equal(await readFile(bundleCommands.serverCommand[1]!, "utf8"), '{"name":"trusted-runtime-resource"}');
+    assert.ok(bundleCommands.serverCommand.every(argument => argument.startsWith(bundleStage)));
+    if (process.platform !== "win32") await chmod(bundleStage, 0o700);
+    await writeFile(resourcePath, "changed after attestation");
+    await assert.rejects(verifiedBundle.stageForExecution("typescript", join(root,"changed-runtime")), /changed before staging/);
   } finally {
     // Staging deliberately removes write permission; restore it only for test cleanup.
     if (process.platform !== "win32") {

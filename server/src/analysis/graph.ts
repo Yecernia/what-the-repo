@@ -31,6 +31,11 @@ interface FactRelation {
   column: number;
   certainty: "verified" | "degraded";
   sources: string[];
+  meaning?: string;
+  range?: import("./facts.js").SourceRange;
+  toolVersions?: Record<string, string | null>;
+  inputDigest?: string;
+  configDigest?: string;
 }
 
 export interface BuiltSnapshot extends EvidenceSnapshot {
@@ -117,7 +122,11 @@ function graphNode(input: {
 function groupKey(path: string): string {
   const parts = path.split("/");
   if (parts.length <= 1) return "root";
-  if (["src", "app", "packages", "lib", "server", "backend", "web"].includes(parts[0] as string)) {
+  if (
+    ["src", "app", "packages", "lib", "server", "backend", "web"].includes(
+      parts[0] as string,
+    )
+  ) {
     return parts.slice(0, Math.min(2, parts.length - 1)).join("/");
   }
   return parts[0] as string;
@@ -130,28 +139,60 @@ function structuralName(key: string): {
 } {
   const lower = key.toLowerCase();
   if (/auth|login|security|permission|identity/.test(lower)) {
-    return { name: "认证与权限层", responsibility: "处理身份、登录和访问控制相关职责。", layer: "入口与安全层" };
+    return {
+      name: "认证与权限层",
+      responsibility: "处理身份、登录和访问控制相关职责。",
+      layer: "入口与安全层",
+    };
   }
   if (/api|route|controller|handler|http|server/.test(lower)) {
-    return { name: "接口与入口层", responsibility: "接收外部请求并把请求交给应用服务。", layer: "入口与安全层" };
+    return {
+      name: "接口与入口层",
+      responsibility: "接收外部请求并把请求交给应用服务。",
+      layer: "入口与安全层",
+    };
   }
   if (/service|usecase|application|workflow/.test(lower)) {
-    return { name: "应用服务层", responsibility: "编排具体业务流程和跨模块协作。", layer: "业务编排层" };
+    return {
+      name: "应用服务层",
+      responsibility: "编排具体业务流程和跨模块协作。",
+      layer: "业务编排层",
+    };
   }
   if (/domain|model|entity|core/.test(lower)) {
-    return { name: "核心领域层", responsibility: "表达项目的核心对象、规则和稳定契约。", layer: "核心领域层" };
+    return {
+      name: "核心领域层",
+      responsibility: "表达项目的核心对象、规则和稳定契约。",
+      layer: "核心领域层",
+    };
   }
   if (/component|ui|view|page|screen|widget/.test(lower)) {
-    return { name: "界面组件层", responsibility: "组织用户界面组件和交互展示。", layer: "表现层" };
+    return {
+      name: "界面组件层",
+      responsibility: "组织用户界面组件和交互展示。",
+      layer: "表现层",
+    };
   }
   if (/test|spec|fixture/.test(lower)) {
-    return { name: "测试与验证层", responsibility: "验证代码行为和产品契约。", layer: "质量保障层" };
+    return {
+      name: "测试与验证层",
+      responsibility: "验证代码行为和产品契约。",
+      layer: "质量保障层",
+    };
   }
   if (/doc|readme|skill|guide/.test(lower)) {
-    return { name: "文档与规范层", responsibility: "保存项目说明、操作规范和可迁移知识。", layer: "知识与规范层" };
+    return {
+      name: "文档与规范层",
+      responsibility: "保存项目说明、操作规范和可迁移知识。",
+      layer: "知识与规范层",
+    };
   }
   if (/config|infra|deploy|docker|script|tool/.test(lower)) {
-    return { name: "基础设施与配置层", responsibility: "提供运行配置、部署和开发辅助能力。", layer: "基础设施层" };
+    return {
+      name: "基础设施与配置层",
+      responsibility: "提供运行配置、部署和开发辅助能力。",
+      layer: "基础设施层",
+    };
   }
   const last = key.split("/").at(-1) ?? key;
   return {
@@ -161,284 +202,299 @@ function structuralName(key: string): {
   };
 }
 
-function mergeSymbols(files: ParsedFile[], lspResults: LspRunResult[]): StaticSymbolFact[] {
-  const symbols = files.flatMap((file) => file.symbols.map((symbol) => ({
-    ...symbol,
-    bases: [...symbol.bases],
-    sources: [...symbol.sources],
-  })));
-  for (const result of lspResults) {
+function mergeSymbols(
+  files: ParsedFile[],
+  results: LspRunResult[],
+): StaticSymbolFact[] {
+  const symbols = files.flatMap((f) => f.symbols);
+  const paths = new Set(files.map((file) => file.path));
+  const sites = new Set(
+    symbols.flatMap((s) =>
+      (s.declarations ?? []).map((d) =>
+        [d.path, d.selection.startLine, d.selection.startColumn, s.kind].join(
+          ":",
+        ),
+      ),
+    ),
+  );
+  for (const result of results)
     for (const candidate of result.symbols) {
-      const existing = symbols.find((symbol) =>
-        symbol.path === candidate.path
-        && (symbol.qualifiedName === candidate.qualifiedName || symbol.name === candidate.name)
-        && Math.abs(symbol.startLine - candidate.startLine) <= 2);
-      if (existing) {
-        if (!existing.sources.includes("lsp")) existing.sources.push("lsp");
-        continue;
-      }
+      if (!paths.has(candidate.path)) continue;
+      const selection = candidate.selection ?? candidate;
+      const key = [
+        candidate.path,
+        selection.startLine,
+        selection.startColumn,
+        candidate.kind,
+      ].join(":");
+      if (sites.has(key)) continue;
+      sites.add(key);
       symbols.push({
-        stableId: symbolStableId(candidate.path, candidate.qualifiedName, candidate.kind),
-        name: candidate.name,
-        qualifiedName: candidate.qualifiedName,
-        kind: candidate.kind,
-        path: candidate.path,
+        ...candidate,
+        stableId: symbolStableId(
+          candidate.path,
+          candidate.qualifiedName,
+          candidate.kind,
+          key,
+        ),
         language: result.language,
-        startLine: candidate.startLine,
-        endLine: candidate.endLine,
-        startColumn: candidate.startColumn,
-        endColumn: candidate.endColumn,
         parameterCount: null,
         implicitReceiverCount: 0,
         bases: [],
         sources: ["lsp"],
+        valid: true,
+        declarations: [
+          {
+            id: "declaration:lsp:" + id(key),
+            path: candidate.path,
+            range: candidate,
+            selection,
+            role: "declaration",
+            valid: true,
+          },
+        ],
       });
     }
-  }
-  const seen = new Set<string>();
-  return symbols.filter((symbol) => {
-    if (seen.has(symbol.stableId)) return false;
-    seen.add(symbol.stableId); return true;
-  });
+  return [...new Map(symbols.map((s) => [s.stableId, s])).values()].sort(
+    (a, b) => a.stableId.localeCompare(b.stableId),
+  );
 }
-
-function resolveImportPath(
-  sourcePath: string,
-  rawImport: string,
-  language: string,
-  files: Set<string>,
-): string | null {
-  const raw = rawImport.trim();
-  let base: string;
-  if (raw.startsWith(".")) {
-    base = posix.normalize(posix.join(posix.dirname(sourcePath), raw));
-  } else if (language === "cpp") {
-    base = raw.replaceAll("\\", "/");
-  } else if (["csharp", "java", "php", "go"].includes(language)) {
-    base = raw.replaceAll("\\", "/").replaceAll(".", "/");
-  } else {
-    base = raw.replaceAll("::", "/").replaceAll(".", "/");
-  }
-  base = base.replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
-  const candidates = [...files].filter((path) => {
-    const stem = path.replace(/\.[^.\/]+$/, "");
-    const parent = posix.dirname(path) === "." ? "" : posix.dirname(path);
-    return path === base
-      || path.endsWith(`/${base}`)
-      || stem === base
-      || stem.endsWith(`/${base}`)
-      || parent === base
-      || parent.endsWith(`/${base}`)
-      || (posix.basename(stem) === posix.basename(base) && path.startsWith(base));
-  });
-  const exact = candidates.filter((path) => path === base || path.replace(/\.[^./]+$/, "") === base);
-  const unambiguous = exact.length ? exact : candidates;
-  return unambiguous.length === 1 ? unambiguous[0]! : null;
-}
-
-function chooseSymbol(
-  rawName: string,
-  symbols: StaticSymbolFact[],
-  currentPath: string,
-  argumentCount: number | null = null,
-): StaticSymbolFact | null {
-  const name = rawName.trim();
-  // A short name is not a cross-file binding. Receiver calls require a compiler/LSP result.
-  if (!/^[A-Za-z_$][\w$]*$/.test(name)) return null;
-  let candidates = symbols.filter((symbol) => symbol.path === currentPath && symbol.name === name
-    && !symbol.qualifiedName.includes("."));
-  if (argumentCount !== null) {
-    const arity = candidates.filter((symbol) =>
-      symbol.parameterCount !== null
-      && Math.max(0, symbol.parameterCount - symbol.implicitReceiverCount) === argumentCount);
-    if (arity.length) candidates = arity;
-  }
-  return candidates.length === 1 ? candidates[0]! : null;
-}
-
-function symbolAt(
-  symbols: StaticSymbolFact[],
-  path: string,
-  name: string,
-  line: number,
-): StaticSymbolFact | null {
-  return symbols
-    .filter((symbol) => symbol.path === path && (
-      symbol.qualifiedName === name
-      || symbol.name === name
-      || symbol.name === name.split(".").at(-1)
-    ))
-    .sort((left, right) => Math.abs(left.startLine - line) - Math.abs(right.startLine - line))[0] ?? null;
-}
-
 function buildRelations(
   files: ParsedFile[],
   symbols: StaticSymbolFact[],
-  lspResults: LspRunResult[],
-  fileIdByPath: Map<string, string>,
-): { relations: FactRelation[]; unresolvedCalls: number; unresolvedImports: number } {
-  const knownFiles = new Set(files.map((file) => file.path));
-  const byPath = new Map<string, StaticSymbolFact[]>();
-  for (const symbol of symbols) {
-    const group = byPath.get(symbol.path) ?? [];
-    group.push(symbol); byPath.set(symbol.path, group);
-  }
-  let unresolvedCalls = 0;
-  let unresolvedImports = 0;
-  const rows = new Map<string, FactRelation>();
-  const add = (relation: FactRelation): void => {
-    const key = [
-      relation.kind,
-      relation.sourceId,
-      relation.targetId,
-      relation.line,
-      relation.column,
-    ].join("|");
-    const existing = rows.get(key);
-    if (!existing) {
-      rows.set(key, relation);
-      return;
+  results: LspRunResult[],
+  fileIds: Map<string, string>,
+): {
+  relations: FactRelation[];
+  unresolvedCalls: number;
+  unresolvedImports: number;
+} {
+  const byId = new Map(symbols.map((s) => [s.stableId, s]));
+  const at = new Map<string, StaticSymbolFact[]>();
+  for (const symbol of symbols)
+    for (const declaration of symbol.declarations ?? []) {
+      const key = [
+        declaration.path,
+        declaration.selection.startLine,
+        declaration.selection.startColumn,
+      ].join(":");
+      const rows = at.get(key) ?? [];
+      rows.push(symbol);
+      at.set(key, rows);
     }
-    existing.sources = [...new Set([...existing.sources, ...relation.sources])];
-    if (relation.certainty === "verified") existing.certainty = "verified";
+  const exact = (path: string, line: number, column: number) => {
+    const rows = at.get([path, line, column].join(":")) ?? [];
+    return rows.length === 1 ? rows[0] : undefined;
   };
-
+  const rows = new Map<string, FactRelation>();
+  let unresolvedCalls = 0,
+    unresolvedImports = 0;
+  const add = (row: FactRelation) => {
+    const key = [
+      row.kind,
+      row.sourceId,
+      row.targetId,
+      row.line,
+      row.column,
+      row.certainty,
+    ].join("|");
+    const previous = rows.get(key);
+    if (previous)
+      previous.sources = [
+        ...new Set([...previous.sources, ...row.sources]),
+      ].sort();
+    else rows.set(key, row);
+  };
   for (const file of files) {
-    const fileId = fileIdByPath.get(file.path);
-    if (!fileId) continue;
-    const localSymbols = byPath.get(file.path) ?? [];
-    for (const symbol of localSymbols) {
+    const fileId = fileIds.get(file.path)!;
+    for (const symbol of file.symbols)
       add({
-        sourceId: fileId,
+        sourceId:
+          symbol.scopeId && byId.has(symbol.scopeId) ? symbol.scopeId : fileId,
         targetId: symbol.stableId,
         sourcePath: file.path,
         targetPath: symbol.path,
         kind: "contains",
         line: symbol.startLine,
         column: symbol.startColumn,
-        certainty: "verified",
+        certainty: symbol.valid === false ? "degraded" : "verified",
         sources: symbol.sources,
       });
-      for (const base of symbol.bases) {
-        const target = chooseSymbol(base, localSymbols, file.path);
-        if (!target) continue;
-        add({
-          sourceId: symbol.stableId,
-          targetId: target.stableId,
-          sourcePath: symbol.path,
-          targetPath: target.path,
-          kind: "inherits",
-          line: symbol.startLine,
-          column: symbol.startColumn,
-          certainty: "degraded",
-          sources: ["tree_sitter"],
-        });
-      }
-    }
-    // Old cached documentation can contain regex calls; do not turn them into executable relations.
-    if (file.language === "unknown") continue;
     for (const imported of file.imports) {
-      const targetPath = file.relationBinding === "typescript" ? imported.resolvedPath
-        : resolveImportPath(file.path, imported.source, file.language, knownFiles);
-      const targetId = targetPath ? fileIdByPath.get(targetPath) : null;
-      if (!targetPath || !targetId) { unresolvedImports++; continue; }
+      const targetId =
+        imported.resolvedPath && fileIds.get(imported.resolvedPath);
+      if (!targetId || !imported.resolvedPath) {
+        unresolvedImports++;
+        continue;
+      }
       add({
         sourceId: fileId,
         targetId,
         sourcePath: file.path,
-        targetPath,
-        kind: "imports",
+        targetPath: imported.resolvedPath,
+        kind: imported.kind ?? "imports",
         line: imported.line,
-        column: 0,
-        certainty: file.relationBinding === "typescript" ? "verified" : "degraded",
-        sources: [file.relationBinding === "typescript" ? imported.typeOnly ? "typescript_type_import" : "typescript" : "syntax_import_candidate"],
+        column: imported.column ?? 0,
+        certainty: imported.status === "static" ? "verified" : "degraded",
+        sources: [file.parser?.name ?? "syntax"],
       });
     }
     for (const call of file.calls) {
-      const bound = call.target;
-      const target = bound
-        ? (byPath.get(bound.path) ?? []).find((symbol) => bound.symbolId ? symbol.stableId === bound.symbolId
-          : symbol.startLine === bound.line && symbol.startColumn === bound.column)
-        : file.relationBinding === "typescript" ? null : chooseSymbol(call.callee, localSymbols, file.path, call.argumentCount);
-      const targetPath = bound?.path ?? target?.path;
-      const targetId = target?.stableId ?? (targetPath ? fileIdByPath.get(targetPath) : null);
-      if (!targetPath || !targetId) { unresolvedCalls++; continue; }
+      const target = call.target?.symbolId
+        ? byId.get(call.target.symbolId)
+        : undefined;
+      if (!target) {
+        if (
+          !call.status ||
+          ["unresolved", "missing_dependency"].includes(call.status)
+        )
+          unresolvedCalls++;
+        continue;
+      }
       add({
         sourceId: call.callerStableId ?? fileId,
-        targetId,
+        targetId: target.stableId,
         sourcePath: file.path,
-        targetPath,
+        targetPath: target.path,
         kind: "calls",
         line: call.line,
         column: call.column,
-        certainty: bound ? "verified" : "degraded",
-        sources: [bound ? "typescript" : "local_name_candidate"],
+        certainty:
+          call.status === "static" && call.meaning === "implementation"
+            ? "verified"
+            : "degraded",
+        sources: [file.parser?.name ?? "syntax"],
+        meaning: call.meaning,
+        range: call.range,
+      });
+    }
+    for (const base of file.heritage ?? []) {
+      const target = byId.get(base.targetId);
+      if (!target) continue;
+      add({
+        sourceId: base.sourceId,
+        targetId: base.targetId,
+        sourcePath: file.path,
+        targetPath: target.path,
+        kind: base.kind,
+        line: base.range.startLine,
+        column: base.range.startColumn,
+        certainty: base.status === "candidate" ? "degraded" : "verified",
+        sources: [file.parser?.name ?? "syntax"],
+        range: base.range,
       });
     }
   }
-
-  for (const result of lspResults) {
+  for (const result of results)
     for (const relation of result.relations) {
-      const source = symbolAt(symbols, relation.sourcePath, relation.sourceName, relation.sourceLine);
-      const target = symbolAt(symbols, relation.targetPath, relation.targetName, relation.targetLine);
+      const source = exact(
+        relation.sourcePath,
+        relation.sourceSelection?.startLine ?? relation.sourceLine,
+        relation.sourceSelection?.startColumn ?? relation.sourceColumn,
+      );
+      const target = exact(
+        relation.targetPath,
+        relation.targetLine,
+        relation.targetColumn,
+      );
       if (!source || !target) continue;
       add({
         sourceId: source.stableId,
         targetId: target.stableId,
-        sourcePath: relation.sourcePath,
-        targetPath: relation.targetPath,
+        sourcePath: source.path,
+        targetPath: target.path,
         kind: relation.kind,
         line: relation.sourceLine,
         column: relation.sourceColumn,
-        certainty: result.truthVerified ? "verified" : "degraded",
+        certainty: "degraded",
         sources: ["lsp"],
+        meaning: "server_reported_binding",
+        range: relation.range,
       });
     }
+  const filesByPath = new Map(files.map((file) => [file.path, file]));
+  const lspByProject = new Map(
+    results.map((result) => [result.projectId ?? result.language, result]),
+  );
+  for (const row of rows.values()) {
+    const file = filesByPath.get(row.sourcePath);
+    row.inputDigest = file?.digest;
+    row.configDigest = file?.project?.configDigest;
+    row.toolVersions = Object.fromEntries(
+      row.sources.map((source) => [
+        source,
+        source === "lsp"
+          ? (lspByProject.get(file?.project?.id ?? file?.language ?? "")
+              ?.serverVersion ?? null)
+          : (file?.parser?.version ?? null),
+      ]),
+    );
   }
-  return { relations: [...rows.values()], unresolvedCalls, unresolvedImports };
+  return {
+    relations: [...rows.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, row]) => row),
+    unresolvedCalls,
+    unresolvedImports,
+  };
 }
 
 function relationLabel(kind: FactEdgeKind): string {
   if (kind === "contains") return "包含";
-  if (kind === "imports") return "依赖";
+  if (
+    ["imports", "type_imports", "reexports", "dynamic_imports"].includes(kind)
+  )
+    return "依赖";
   if (kind === "inherits") return "继承";
   if (kind === "implements") return "实现";
   return "调用";
 }
 
 function factEdge(row: FactRelation): SnapshotEdge {
-  const edgeId = `fact:edge:${id([
-    row.sourceId,
-    row.targetId,
-    row.kind,
-    String(row.line),
-    String(row.column),
-  ].join(":"))}`;
+  const edgeId = `fact:edge:${id(
+    [
+      row.sourceId,
+      row.targetId,
+      row.kind,
+      String(row.line),
+      String(row.column),
+      row.certainty,
+    ].join(":"),
+  )}`;
   return {
     id: edgeId,
     source: row.sourceId,
     target: row.targetId,
     relation_kind: row.kind,
     label: relationLabel(row.kind),
-    description: row.kind === "contains"
-      ? "文件定义或包含该符号。"
-      : row.certainty === "verified" ? `${row.sources.join(" + ")} 静态分析确认这条${relationLabel(row.kind)}绑定。`
-        : `${row.sources.join(" + ")} 提供这条${relationLabel(row.kind)}候选，实际目标仍需核实。`,
+    description:
+      row.kind === "contains"
+        ? "文件定义或包含该符号。"
+        : row.certainty === "verified"
+          ? `${row.sources.join(" + ")} 静态分析确认这条${relationLabel(row.kind)}绑定。`
+          : `${row.sources.join(" + ")} 提供这条${relationLabel(row.kind)}候选，实际目标仍需核实。`,
     certainty: row.certainty,
-    evidence: [evidence(
-      edgeId,
-      `${row.sourcePath}:${row.line}`,
-      row.sourcePath,
-      row.line,
-      row.line,
-      row.kind,
-      { sourceId: row.sourceId, targetId: row.targetId },
-    )],
+    evidence: [
+      evidence(
+        edgeId,
+        `${row.sourcePath}:${row.line}`,
+        row.sourcePath,
+        row.line,
+        row.line,
+        row.kind,
+        { sourceId: row.sourceId, targetId: row.targetId },
+      ),
+    ],
     weight: 1,
     source_observations: row.sources.map((source) => ({
       extractor: source,
+      implementation_version: row.toolVersions?.[source] ?? null,
+      input_digest: row.inputDigest,
+      config_digest: row.configDigest,
       certainty: row.certainty === "verified" ? "direct" : "inferred",
       reason_code: `${source}_${row.kind}`,
+      meaning: row.meaning ?? row.kind,
+      range: row.range,
     })),
   };
 }
@@ -447,24 +503,32 @@ function aggregateComponentEdges(
   relations: FactRelation[],
   componentByFile: Map<string, string>,
 ): SnapshotEdge[] {
-  const groups = new Map<string, {
-    rows: FactRelation[];
-    source: string;
-    target: string;
-    kind: FactEdgeKind;
-  }>();
+  const groups = new Map<
+    string,
+    {
+      rows: FactRelation[];
+      source: string;
+      target: string;
+      kind: FactEdgeKind;
+    }
+  >();
   for (const row of relations) {
     if (row.kind === "contains") continue;
     const source = componentByFile.get(row.sourcePath);
     const target = componentByFile.get(row.targetPath);
     if (!source || !target || source === target) continue;
-    const key = [source, target, row.kind].join("|");
-    const current = groups.get(key) ?? { rows: [], source, target, kind: row.kind };
+    const key = [source, target, row.kind, row.certainty].join("|");
+    const current = groups.get(key) ?? {
+      rows: [],
+      source,
+      target,
+      kind: row.kind,
+    };
     current.rows.push(row);
     groups.set(key, current);
   }
   return [...groups.values()].map((group) => {
-    const edgeId = `component:edge:${id([group.source, group.target, group.kind].join(":"))}`;
+    const edgeId = `component:edge:${id([group.source, group.target, group.kind, group.rows[0]?.certainty].join(":"))}`;
     return {
       id: edgeId,
       source: group.source,
@@ -472,65 +536,79 @@ function aggregateComponentEdges(
       relation_kind: group.kind,
       label: relationLabel(group.kind),
       description: `${group.rows.length} 处静态分析记录支持此关系，其中${group.rows.filter((row) => row.certainty === "verified").length}处已确认绑定；其余为待核实候选。`,
-      certainty: group.rows.some((row) => row.certainty === "verified") ? "verified" : "degraded",
-      evidence: group.rows.slice(0, 12).map((row, index) => evidence(
-        `${edgeId}:evidence:${index}`,
-        `${row.sourcePath}:${row.line}`,
-        row.sourcePath,
-        row.line,
-        row.line,
-        row.kind,
-        { sourceId: row.sourceId, targetId: row.targetId },
-      )),
+      certainty: group.rows.some((row) => row.certainty === "verified")
+        ? "verified"
+        : "degraded",
+      evidence: group.rows.map((row, index) =>
+        evidence(
+          `${edgeId}:evidence:${index}`,
+          `${row.sourcePath}:${row.line}`,
+          row.sourcePath,
+          row.line,
+          row.line,
+          row.kind,
+          { sourceId: row.sourceId, targetId: row.targetId },
+        ),
+      ),
       weight: group.rows.length,
-      source_observations: group.rows.flatMap((row) => row.sources.map((source) => ({
-        extractor: source,
-        certainty: row.certainty,
-        reason_code: `${source}_${row.kind}`,
-      }))).slice(0, 24),
+      source_observations: group.rows.flatMap((row) =>
+        row.sources.map((source) => ({
+          extractor: source,
+          implementation_version: row.toolVersions?.[source] ?? null,
+          input_digest: row.inputDigest,
+          config_digest: row.configDigest,
+          certainty: row.certainty,
+          reason_code: `${source}_${row.kind}`,
+        })),
+      ),
     };
   });
 }
 
-function languageReports(files: ParsedFile[], lspResults: LspRunResult[]): EvidenceSnapshot["languages"] {
-  const lspByLanguage = new Map(lspResults.map((result) => [result.language, result]));
-  const languages = [...new Set(files.map((file) => file.language).filter((language) => language !== "unknown"))];
-  return languages.map((language) => {
-    const rows = files.filter((file) => file.language === language);
-    const parsed = rows.filter((file) => file.parseError === null).length;
-    const grammarUnavailable = rows.every((file) => file.parseError === "tree_sitter_grammar_unavailable");
-    const lsp = lspByLanguage.get(language);
-    const quality = lsp?.truthVerified && parsed === rows.length
-      ? "verified"
-      : parsed > 0 || lsp?.completed
-        ? "degraded"
-        : "unavailable";
-    const reasonCodes = [
-      ...rows.flatMap((file) => file.parseError ? [file.parseError] : []),
-      ...(lsp?.reasonCodes ?? (grammarUnavailable ? ["lsp_unavailable"] : ["tree_sitter_only", "lsp_unavailable"])),
-    ];
-    if (lsp?.completed && !lsp.truthVerified) reasonCodes.push("lsp_not_truth_verified");
-    return {
-      language,
-      quality_tier: quality,
-      files_seen: rows.length,
-      files_analyzed: parsed,
-      files_failed: rows.length - parsed,
-      reason_codes: [...new Set(reasonCodes)],
-      adapter_name: "typescript-lsp-tree-sitter-adapter",
-      adapter_version: "0.2.0",
-      lsp_name: lsp?.serverName ?? null,
-      lsp_version: lsp?.serverVersion ?? null,
-      parser_name: `tree-sitter-${language}`,
-      parser_version: "node-wasm-0.26",
-      capabilities: [
-        "symbols",
-        "imports",
-        "locations",
-        ...(lsp?.capabilities ?? []),
-      ],
-    };
-  });
+function languageReports(
+  files: ParsedFile[],
+  lspResults: LspRunResult[],
+): EvidenceSnapshot["languages"] {
+  return [
+    ...new Set(files.map((f) => f.language).filter((l) => l !== "unknown")),
+  ]
+    .sort()
+    .map((language) => {
+      const rows = files.filter((f) => f.language === language),
+        completed = rows.filter((f) => !f.parseError).length;
+      const runs = lspResults.filter((r) => r.language === language),
+        compiler = rows.some((f) => f.relationBinding === "typescript");
+      const lsp = runs[0];
+      return {
+        language,
+        quality_tier: completed ? "degraded" : "unavailable",
+        files_seen: rows.length,
+        files_analyzed: completed,
+        files_failed: rows.length - completed,
+        reason_codes: [
+          ...new Set([
+            ...rows.flatMap((f) => (f.diagnostics ?? []).map((d) => d.code)),
+            ...runs.flatMap((r) => r.reasonCodes),
+            ...(compiler
+              ? ["static_binding_not_runtime_call_graph"]
+              : ["syntax_only_bindings_unresolved"]),
+          ]),
+        ],
+        adapter_name: compiler ? "typescript-compiler" : "language-syntax",
+        adapter_version: "project-facts-v1",
+        parser_name: rows[0]?.parser?.name ?? null,
+        parser_version: rows[0]?.parser?.version ?? null,
+        lsp_name: lsp?.serverName ?? null,
+        lsp_version: lsp?.serverVersion ?? null,
+        capabilities: [
+          "declarations",
+          "lexical_scopes",
+          "syntax_calls",
+          ...(compiler ? ["project_configuration", "static_binding"] : []),
+          ...new Set(runs.flatMap((r) => r.capabilities)),
+        ],
+      };
+    });
 }
 
 export function buildSnapshot(input: {
@@ -541,7 +619,12 @@ export function buildSnapshot(input: {
   sourceRoot: string;
   lspResults?: LspRunResult[];
   research?: RepositoryResearch;
+  completeness?: import("./facts.js").SourceCompleteness;
 }): BuiltSnapshot {
+  input = {
+    ...input,
+    files: [...input.files].sort((a, b) => a.path.localeCompare(b.path)),
+  };
   const lspResults = input.lspResults ?? [];
   const fileIdByPath = new Map<string, string>();
   const fileNodes = input.files.map((file) => {
@@ -558,48 +641,76 @@ export function buildSnapshot(input: {
         language: file.language,
         content_digest: file.digest,
         size_bytes: file.bytes,
+        role: file.role,
+        project_id: file.project?.id,
+        config_digest: file.project?.configDigest,
+        encoding: file.encoding,
+        diagnostics: file.diagnostics,
       },
-      observations: [{ extractor: "safe_manifest", certainty: "direct", reason_code: "file_scan" }],
+      observations: [
+        {
+          extractor: "safe_manifest",
+          certainty: "direct",
+          reason_code: "file_scan",
+        },
+      ],
     });
   });
   const symbols = mergeSymbols(input.files, lspResults);
-  const verifiedLanguages = new Set(lspResults.filter((result) => result.truthVerified).map((result) => result.language));
-  const symbolNodes = symbols.map((symbol) => graphNode({
-    id: symbol.stableId,
-    entityKind: "fact",
-    name: symbol.name,
-    evidence: [evidence(
-      symbol.stableId,
-      `${symbol.qualifiedName} (${symbol.kind})`,
-      symbol.path,
-      symbol.startLine,
-      symbol.endLine,
-      "symbol",
-    )],
-    certainty: symbol.sources.includes("tree_sitter") || verifiedLanguages.has(symbol.language) ? "verified" : "degraded",
-    attributes: {
-      path: symbol.path,
-      qualified_name: symbol.qualifiedName,
-      kind: symbol.kind,
-      language: symbol.language,
-      start_line: symbol.startLine,
-      end_line: symbol.endLine,
-      start_column: symbol.startColumn,
-      end_column: symbol.endColumn,
-    },
-    observations: symbol.sources.map((source) => ({
-      extractor: source,
-      certainty: source === "lsp" && verifiedLanguages.has(symbol.language) ? "direct" : "inferred",
-      reason_code: source === "lsp" ? "lsp_document_symbol" : "tree_sitter_declaration",
-    })),
-  }));
-  const { relations, unresolvedCalls, unresolvedImports } = buildRelations(input.files, symbols, lspResults, fileIdByPath);
+
+  const symbolNodes = symbols.map((symbol) =>
+    graphNode({
+      id: symbol.stableId,
+      entityKind: "fact",
+      name: symbol.name,
+      evidence: [
+        evidence(
+          symbol.stableId,
+          `${symbol.qualifiedName} (${symbol.kind})`,
+          symbol.path,
+          symbol.startLine,
+          symbol.endLine,
+          "symbol",
+        ),
+      ],
+      certainty:
+        symbol.valid === false || symbol.sources.every((s) => s === "lsp")
+          ? "degraded"
+          : "verified",
+      attributes: {
+        path: symbol.path,
+        qualified_name: symbol.qualifiedName,
+        kind: symbol.kind,
+        language: symbol.language,
+        declarations: symbol.declarations,
+        scope_id: symbol.scopeId,
+        tracking_key: symbol.trackingKey,
+        start_line: symbol.startLine,
+        end_line: symbol.endLine,
+        start_column: symbol.startColumn,
+        end_column: symbol.endColumn,
+      },
+      observations: symbol.sources.map((source) => ({
+        extractor: source,
+        certainty: source === "lsp" ? "inferred" : "direct",
+        reason_code: `${source}_declaration`,
+      })),
+    }),
+  );
+  const { relations, unresolvedCalls, unresolvedImports } = buildRelations(
+    input.files,
+    symbols,
+    lspResults,
+    fileIdByPath,
+  );
   const factEdges = relations.map(factEdge);
 
   const filesByGroup = new Map<string, ParsedFile[]>();
   for (const file of input.files) {
     const key = groupKey(file.path);
-    filesByGroup.set(key, [...(filesByGroup.get(key) ?? []), file]);
+    const group = filesByGroup.get(key) ?? [];
+    group.push(file);
+    filesByGroup.set(key, group);
   }
   const components: SnapshotNode[] = [];
   const layerGroups = new Map<string, SnapshotLayer>();
@@ -613,21 +724,23 @@ export function buildSnapshot(input: {
       componentByFile.set(file.path, componentId);
       return evidence(stableId, file.path, file.path, 1, null, "file");
     });
-    components.push(graphNode({
-      id: componentId,
-      entityKind: "component",
-      name: semantic.name,
-      responsibility: semantic.responsibility,
-      groupingRationale: `程序根据成员所在的结构目录“${key}”将它们聚合；语义 Worker 可在分析完成后补充更具体的职责关系。`,
-      layerId,
-      layerName: semantic.layer,
-      layerRationale: `成员都来自“${key}”这一结构分组，当前层级是基于目录和静态关系的候选归类。`,
-      layerCertainty: "degraded",
-      members: memberEvidence,
-      evidence: memberEvidence.slice(0, 24),
-      certainty: "unverified",
-      attributes: { structural_group: key },
-    }));
+    components.push(
+      graphNode({
+        id: componentId,
+        entityKind: "component",
+        name: semantic.name,
+        responsibility: semantic.responsibility,
+        groupingRationale: `程序根据成员所在的结构目录“${key}”将它们聚合；语义 Worker 可在分析完成后补充更具体的职责关系。`,
+        layerId,
+        layerName: semantic.layer,
+        layerRationale: `成员都来自“${key}”这一结构分组，当前层级是基于目录和静态关系的候选归类。`,
+        layerCertainty: "degraded",
+        members: memberEvidence,
+        evidence: memberEvidence.slice(0, 24),
+        certainty: "unverified",
+        attributes: { structural_group: key },
+      }),
+    );
     const layer = layerGroups.get(semantic.layer) ?? {
       id: layerId,
       name: semantic.layer,
@@ -640,7 +753,9 @@ export function buildSnapshot(input: {
     layerGroups.set(semantic.layer, layer);
   }
   const componentEdges = aggregateComponentEdges(relations, componentByFile);
-  const componentById = new Map(components.map((component) => [component.id, component]));
+  const componentById = new Map(
+    components.map((component) => [component.id, component]),
+  );
   for (const edge of componentEdges) {
     const source = componentById.get(edge.source);
     const target = componentById.get(edge.target);
@@ -649,24 +764,48 @@ export function buildSnapshot(input: {
   }
 
   const languages = languageReports(input.files, lspResults);
-  const sourceReports = languages.flatMap((report) => {
-    const lsp = lspResults.find((result) => result.language === report.language);
-    return [{
-      source_id: `source:tree_sitter:${report.language}`,
-      source_kind: "tree_sitter",
-      implementation_name: `tree-sitter-${report.language}`,
-      implementation_version: "node-wasm-0.26",
-      status: report.files_analyzed > 0 ? (report.files_failed ? "degraded" : "available") : "failed",
-      reason_codes: report.reason_codes.filter((code) => code.startsWith("tree_")),
-    }, {
-      source_id: `source:lsp:${report.language}`,
+  const sourceReports = [
+    ...languages.map((report) => ({
+      source_id: `source:${report.parser_name}:${report.language}`,
+      source_kind: report.parser_name,
+      implementation_name: report.parser_name,
+      implementation_version: report.parser_version,
+      status:
+        report.files_analyzed > 0
+          ? report.files_failed
+            ? "degraded"
+            : "available"
+          : "failed",
+      reason_codes: report.reason_codes,
+    })),
+    ...lspResults.map((run) => ({
+      source_id: `source:lsp:${run.projectId ?? run.language}`,
       source_kind: "lsp",
-      implementation_name: lsp?.serverName ?? "unavailable",
-      implementation_version: lsp?.serverVersion ?? null,
-      status: lsp?.truthVerified ? "available" : lsp?.completed ? "degraded" : "failed",
-      reason_codes: lsp?.reasonCodes ?? ["lsp_unavailable"],
-    }];
-  });
+      project_id: run.projectId,
+      implementation_name: run.serverName ?? "unavailable",
+      implementation_version: run.serverVersion,
+      status: run.completed ? "completed" : "incomplete",
+      toolchain_verified: run.toolchainVerified,
+      coverage: run.coverage,
+      reason_codes: run.reasonCodes,
+      workspace_diagnostics: run.workspaceDiagnostics,
+    })),
+  ];
+  const projects = new Map<string, import("./facts.js").ProjectContext>();
+  const statuses: Record<string, number> = {};
+  for (const file of input.files) {
+    if (file.project) {
+      const project = projects.get(file.project.id) ?? {
+        ...file.project,
+        files: [],
+      };
+      project.files.push(file.path);
+      projects.set(project.id, project);
+    }
+    for (const call of file.calls)
+      statuses[call.status ?? "unresolved"] =
+        (statuses[call.status ?? "unresolved"] ?? 0) + 1;
+  }
 
   const hierarchy = buildCandidateHierarchy({
     repository: input.repository,
@@ -698,12 +837,19 @@ export function buildSnapshot(input: {
       call_count: relations.filter((row) => row.kind === "calls").length,
       unresolved_syntax_call_count: unresolvedCalls,
       unresolved_import_count: unresolvedImports,
-      typescript_binding_file_count: input.files.filter((file) => file.relationBinding === "typescript").length,
+      typescript_binding_file_count: input.files.filter(
+        (file) => file.relationBinding === "typescript",
+      ).length,
       import_count: relations.filter((row) => row.kind === "imports").length,
-      inherit_count: relations.filter((row) => row.kind === "inherits" || row.kind === "implements").length,
+      inherit_count: relations.filter(
+        (row) => row.kind === "inherits" || row.kind === "implements",
+      ).length,
       component_count: components.length,
-      lsp_languages_completed: lspResults.filter((result) => result.completed).length,
-      lsp_languages_verified: lspResults.filter((result) => result.truthVerified).length,
+      lsp_projects_completed: lspResults.filter((result) => result.completed)
+        .length,
+      lsp_toolchains_verified: lspResults.filter(
+        (result) => result.toolchainVerified,
+      ).length,
     },
     graph: {
       schema_version: "evidence-graph-v2",
@@ -723,6 +869,46 @@ export function buildSnapshot(input: {
     value_points: [],
     languages,
     source_reports: sourceReports,
+    static_analysis: {
+      schema_version: "project-facts-v1",
+      position_encoding: "utf-16",
+      range_end: "exclusive",
+      completeness: input.completeness ?? {
+        inventoryComplete: false,
+        knownSourceFiles: input.files.filter((f) => f.language !== "unknown")
+          .length,
+        omitted: [],
+        reasons: ["inventory_completeness_unknown"],
+      },
+      projects: [...projects.values()],
+      files: input.files.map((f) => ({
+        path: f.path,
+        language: f.language,
+        syntax_completed: f.language !== "unknown" && !f.parseError,
+        semantic_completed: f.semanticComplete === true,
+        diagnostics: f.diagnostics ?? [],
+        calls: f.calls,
+        imports: f.imports,
+        exports: f.exports ?? [],
+        unresolvedHeritage: f.unresolvedHeritage ?? [],
+      })),
+      coverage: {
+        discovered_call_sites: input.files.reduce(
+          (n, f) => n + f.calls.length,
+          0,
+        ),
+        call_statuses: statuses,
+        syntax_files_completed: input.files.filter(
+          (f) => f.language !== "unknown" && !f.parseError,
+        ).length,
+        semantic_files_completed: input.files.filter((f) => f.semanticComplete)
+          .length,
+      },
+      limitations: [
+        "Static bindings do not prove unique runtime dispatch.",
+        "Missing facts are not evidence of absence; consult file diagnostics and source inventory.",
+      ],
+    },
     learning_plan: {
       snapshot_id: input.snapshotId,
       selected_value_point: null,

@@ -10,10 +10,11 @@ import { permitStoreFor } from '../scheduling/permits.js';
 import { ResourceScheduler, type ResourceDemands } from '../scheduling/resources.js';
 import { checkpointExecutionStage, type AnalysisExecutionStage, type AnalysisStageExecutor } from './stage-protocol.js';
 
-export function stageMemoryMb(stage: AnalysisExecutionStage, info: { bytes: number; sourceBytes: number; staticBytes?: number } | null): number {
+export function stageMemoryMb(stage: AnalysisExecutionStage, info: { bytes: number; sourceBytes: number; staticBytes?: number } | null,
+  cpuMemoryExpansion = 80): number {
   const bytes = (info?.bytes ?? 0) + (stage === 'semantic' ? 0 : info?.staticBytes ?? 0), source = info?.sourceBytes ?? 0;
   // Admission estimates are deliberately separate from the measured RSS guard.
-  const working = stage === 'fetch' ? 1024 : stage === 'cpu' ? 768 + Math.max(source * 24, bytes * 10) / 1048576
+  const working = stage === 'fetch' ? 1024 : stage === 'cpu' ? 768 + Math.max(source * cpuMemoryExpansion, bytes * 10) / 1048576
     : 512 + bytes / 1048576 * (stage === 'publish' ? 10 : 6);
   return Math.ceil(Math.max(working, stage === 'overlay' ? 2048 : 0) / 64) * 64;
 }
@@ -28,7 +29,7 @@ export function isolatedStageExecutor(store: ProductStore, config: ServerConfig)
     while (stage) {
       signal.throwIfAborted();
       const info = await store.analysisCheckpointInfo(job.project_id);
-      const memory = stageMemoryMb(stage, info);
+      const memory = stageMemoryMb(stage, info, config.analysisCpuMemoryExpansion);
       const budget = config.analysisMemoryMb ?? 6144;
       if (memory > budget) throw new Error('analysis_stage_memory_budget_exceeded');
       const demands: ResourceDemands = { 'analysis:memory-mb': { units: memory, limit: budget } };
@@ -67,6 +68,18 @@ export function isolatedStageExecutor(store: ProductStore, config: ServerConfig)
   } };
 }
 
+/** Retain only a bounded detection window; never expose child diagnostics. */
+export function stageMemoryFailureDetector(): (chunk: Uint8Array | string) => boolean {
+  let tail = '';
+  let exhausted = false;
+  return chunk => {
+    const text = tail + (typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+    exhausted ||= /FATAL ERROR:[^\r\n]*(?:heap out of memory|heap limit)/i.test(text);
+    tail = exhausted ? '' : text.slice(-512);
+    return exhausted;
+  };
+}
+
 export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionStage, config: ServerConfig,
   memoryMb: number, signal: AbortSignal): Promise<AnalysisExecutionStage | null> {
   signal.throwIfAborted();
@@ -103,7 +116,10 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
     };
     const abort = () => { failure = signal.reason instanceof Error ? signal.reason : new Error('analysis_stage_aborted'); stop(); };
     signal.addEventListener('abort', abort, { once: true });
-    child.stderr?.on('data', () => { /* Never forward credentials or repository payloads from child diagnostics. */ });
+    const memoryFailure = stageMemoryFailureDetector();
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (memoryFailure(chunk)) failure ??= new Error('analysis_stage_memory_limit_exceeded');
+    });
     child.on('message', message => {
       const value = message as { type?: string; next?: AnalysisExecutionStage | null; rss?: number; code?: string; metrics?: RuntimeMetricsSnapshot };
       if (value.type === 'metrics' && value.metrics) {
@@ -114,9 +130,12 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
       if (value.type === 'rss' && Number(value.rss) > memoryMb * 1048576) {
         failure = new Error('analysis_stage_memory_limit_exceeded'); stop();
       }
-      if (value.type === 'failure') failure = new Error(value.code === 'analysis_stage_memory_limit_exceeded' ? value.code : 'analysis_stage_execution_failed');
+      if (value.type === 'failure') failure ??= new Error(value.code === 'analysis_stage_memory_limit_exceeded' ? value.code : 'analysis_stage_execution_failed');
     });
     let settled = false;
+    const stopDescendants = () => {
+      if (process.platform !== 'win32' && child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* group empty */ } }
+    };
     const finish = (code: number | null) => {
       if (settled) return;
       settled = true;
@@ -124,13 +143,17 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
       for (const gauge of previousMetrics?.gauges ?? []) if (gauge.name === METRIC_NAMES.providerActive)
         defaultRuntimeMetrics.addGauge(gauge.name, -gauge.value, gauge.labels);
       // Native language tools inherit this dedicated process group.
-      if (process.platform !== 'win32' && child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* group empty */ } }
+      stopDescendants();
       if (failure) reject(failure);
       else if (code !== 0 || result === undefined) reject(new Error('analysis_stage_process_failed'));
       else resolve(result);
     };
     child.once('error', error => { failure = error; if (!child.pid) finish(null); else stop(); });
-    child.once('exit', finish);
+    // A surviving native tool must not keep the diagnostic pipe open forever.
+    child.once('exit', stopDescendants);
+    // stderr can still contain the fatal V8 marker when exit fires; close waits
+    // for the diagnostic pipe, so a known OOM never becomes a transient retry.
+    child.once('close', finish);
     child.send!({ type: 'run', job, stage, config: { ...config, databasePoolMax: 2 } }, error => {
       if (error) { failure = new Error('analysis_stage_dispatch_failed'); stop(); }
     });

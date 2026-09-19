@@ -193,6 +193,7 @@ export async function generateLearningRoute(input: {
     : null;
   const exploration = createRepositoryExplorationTools({
     snapshot: input.snapshot,
+    readStaticFile: path => input.store.readStaticFile(input.project.project_id, input.snapshot.snapshot_id, path),
     seedEvidenceIds: [
       ...(valuePoint?.evidence ?? []),
       ...(component ? [...component.evidence, ...component.members] : []),

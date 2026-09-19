@@ -247,6 +247,25 @@ export function validateEvidenceSnapshot(value: EvidenceSnapshot | unknown): Sna
   }
 
   const factNodes = new Set((snapshot.fact_graph?.nodes ?? []).map((node) => node.id));
+  if (snapshot.static_analysis) {
+    const analysis = snapshot.static_analysis;
+    if (analysis.schema_version !== "project-facts-v1" || analysis.position_encoding !== "utf-16" || analysis.range_end !== "exclusive") {
+      issue("static_contract_invalid", "static_analysis", "Static fact schema or position encoding is invalid.");
+    }
+    const paths = new Set<string>();
+    for (const file of analysis.files) {
+      if (paths.has(file.path)) issue("duplicate_static_file", file.path, "Duplicate static file record.");
+      paths.add(file.path);
+      for (const call of file.calls) {
+        if (call.callerStableId && !factNodes.has(call.callerStableId)) issue("call_scope_missing", file.path, "Call scope is absent from the fact graph.");
+        if (call.target?.symbolId && !factNodes.has(call.target.symbolId)) issue("call_target_missing", file.path, "Call target is absent from the fact graph.");
+        const range = call.range;
+        if (range && (![range.startLine,range.endLine,range.startColumn,range.endColumn].every(Number.isInteger)
+          || range.startLine<1 || range.startColumn<0 || range.endColumn<0 || range.endLine<range.startLine
+          || range.startLine===range.endLine && range.endColumn<range.startColumn)) issue("static_range_invalid", file.path, "Invalid half-open UTF-16 range.");
+      }
+    }
+  }
   for (const [index, edge] of (snapshot.fact_graph?.edges ?? []).entries()) {
     if (!factNodes.has(edge.source) || !factNodes.has(edge.target)) {
       issue("fact_relation_endpoint_missing", `fact_graph.edges[${index}]`, "事实关系端点不存在。" );

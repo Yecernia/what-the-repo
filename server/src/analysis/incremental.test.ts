@@ -9,9 +9,6 @@ import {
   buildIncrementalPlan,
   classifyFileChanges,
   createAnalysisCache,
-  lspTargetFiles,
-  mergeLspResult,
-  mergeParsedFiles,
 } from "./incremental.js";
 
 const SHA_A = "a".repeat(64);
@@ -44,9 +41,9 @@ test("classifies added, modified, deleted and unambiguous renamed files", () => 
   ]);
 });
 
-test("reverse dependency closure recomputes callers and reuses unrelated files", () => {
+test("syntax reuse is separate from conservative semantic project invalidation", () => {
   const previousFiles = [
-    parsed("main.ts", SHA_A, { imports: [{ source: "./helper", line: 1 }] }),
+    parsed("main.ts", SHA_A, { imports: [{ source: "./helper", line: 1, resolvedPath: "helper.ts", status: "static" }] }),
     parsed("helper.ts", SHA_B),
     parsed("unrelated.ts", SHA_C),
   ];
@@ -67,65 +64,19 @@ test("reverse dependency closure recomputes callers and reuses unrelated files",
     previousCache: createAnalysisCache({ manifest: previousFiles.map(toManifest), parsedFiles: previousFiles, lspResults: [] }),
     previousFactGraph: previousSnapshot.fact_graph,
     currentManifest,
+    currentCompleteness: { inventoryComplete: true, knownSourceFiles: currentManifest.length, omitted: [], reasons: [] },
   });
   assert.equal(plan.mode, "incremental");
-  assert.deepEqual(plan.recomputePaths, ["helper.ts", "main.ts"]);
-  assert.deepEqual(plan.reusedPaths, ["unrelated.ts"]);
-  assert.deepEqual(lspTargetFiles(previousFiles, "typescript", plan).map((file) => file.path), ["main.ts", "helper.ts"]);
-});
-
-test("parsed and LSP caches retain unaffected facts while replacing affected paths", () => {
-  const oldMain = parsed("main.ts", SHA_A);
-  const oldHelper = parsed("helper.ts", SHA_B);
-  const freshHelper = parsed("helper.ts", SHA_C);
-  const plan = {
-    ...buildFullPlan([toManifest(oldMain), toManifest(freshHelper)]),
-    mode: "incremental" as const,
-    parentSnapshotId: "snap:previous",
-    affectedPaths: ["helper.ts"],
-    recomputePaths: ["helper.ts"],
-    reusedPaths: ["main.ts"],
-  };
-  const merged = mergeParsedFiles({
-    previous: [oldMain, oldHelper],
-    recomputed: [freshHelper],
-    currentManifest: [toManifest(oldMain), toManifest(freshHelper)],
-    plan,
-  });
-  assert.deepEqual(merged.map((file) => [file.path, file.digest]), [
-    ["main.ts", SHA_A],
-    ["helper.ts", SHA_C],
-  ]);
-
-  const previousLsp = lspResult([
-    ["main.ts", "main"],
-    ["helper.ts", "helper"],
-  ]);
-  const freshLsp = lspResult([["helper.ts", "helperV2"]]);
-  const lsp = mergeLspResult({
-    language: "typescript",
-    previous: previousLsp,
-    fresh: freshLsp,
-    invalidatedPaths: new Set(["helper.ts"]),
-    currentPaths: new Set(["main.ts", "helper.ts"]),
-  });
-  assert.deepEqual(lsp.symbols.map((symbol) => [symbol.path, symbol.name]), [
-    ["main.ts", "main"],
-    ["helper.ts", "helperV2"],
-  ]);
-  assert.ok(lsp.reasonCodes.includes("incremental_reuse"));
-  for (const previous of [null, previousLsp]) {
-    const full = mergeLspResult({ language: "typescript", previous, fresh: freshLsp,
-      invalidatedPaths: new Set(["main.ts", "helper.ts"]), currentPaths: new Set(["helper.ts"]) });
-    assert.ok(!full.reasonCodes.includes("incremental_reuse"), "fresh-only facts must not claim reuse");
-  }
+  assert.deepEqual(plan.recomputePaths, ["helper.ts"]);
+  assert.deepEqual(plan.reusedPaths, ["main.ts", "unrelated.ts"]);
+  assert.deepEqual(plan.affectedPaths, ["helper.ts", "main.ts", "unrelated.ts"]);
 });
 
 test("incremental facts match a same-commit full build and retain explicit tombstones", () => {
   const previousFiles = [
     parsed("main.ts", SHA_A, { imports: [
-      { source: "./helper", line: 1 },
-      { source: "./deleted", line: 2 },
+      { source: "./helper", line: 1, resolvedPath: "helper.ts", status: "static" },
+      { source: "./deleted", line: 2, resolvedPath: "deleted.ts", status: "static" },
     ] }),
     parsed("helper.ts", SHA_B),
     parsed("deleted.ts", SHA_C),
@@ -139,7 +90,7 @@ test("incremental facts match a same-commit full build and retain explicit tombs
     sourceRoot: "C:/previous",
   }), buildFullPlan(previousFiles.map(toManifest)));
   const currentFiles = [
-    parsed("main.ts", SHA_A, { imports: [{ source: "./helper", line: 1 }] }),
+    parsed("main.ts", SHA_A, { imports: [{ source: "./helper", line: 1, resolvedPath: "helper.ts", status: "static" }] }),
     parsed("helper.ts", SHA_C),
     parsed("new-name.ts", SHA_B),
   ];
@@ -148,6 +99,7 @@ test("incremental facts match a same-commit full build and retain explicit tombs
     previousCache: createAnalysisCache({ manifest: previousFiles.map(toManifest), parsedFiles: previousFiles, lspResults: [] }),
     previousFactGraph: previous.fact_graph,
     currentManifest: currentFiles.map(toManifest),
+    currentCompleteness: { inventoryComplete: true, knownSourceFiles: currentFiles.length, omitted: [], reasons: [] },
   });
   const incremental = applyIncrementalProvenance({
     snapshot: buildSnapshot({
@@ -205,29 +157,6 @@ function parsed(
   };
 }
 
-function lspResult(rows: Array<[string, string]>): LspRunResult {
-  return {
-    language: "typescript",
-    completed: true,
-    truthVerified: true,
-    serverName: "typescript-language-server",
-    serverVersion: "1",
-    capabilities: ["document_symbols"],
-    reasonCodes: [],
-    symbols: rows.map(([path, name]) => ({
-      path,
-      name,
-      qualifiedName: name,
-      kind: "function",
-      startLine: 1,
-      endLine: 1,
-      startColumn: 0,
-      endColumn: name.length,
-    })),
-    relations: [],
-  };
-}
-
 function withProvenance(
   snapshot: ReturnType<typeof buildSnapshot>,
   plan: ReturnType<typeof buildFullPlan>,
@@ -244,3 +173,11 @@ function withProvenance(
       )),
   });
 }
+
+test('incomplete inventories never turn missing files or guessed renames into deletions',()=>{
+ const old=parsed('old.ts',SHA_A),manifestNow=manifest([['new.ts',SHA_A]]);
+ const previous=buildSnapshot({snapshotId:'old',repository:'example/repo',commitSha:COMMIT,files:[old],sourceRoot:'/none'});
+ const plan=buildIncrementalPlan({parentSnapshotId:'old',previousCache:createAnalysisCache({manifest:[toManifest(old)],parsedFiles:[old],lspResults:[]}),previousFactGraph:previous.fact_graph,currentManifest:manifestNow,
+  currentCompleteness:{inventoryComplete:false,knownSourceFiles:1,omitted:[],reasons:['truncated']}});
+ assert.deepEqual(plan.tombstonePaths,[]);assert.equal(plan.changes[0]?.kind,'added');assert.equal(plan.changes[0]?.renamed_from,null);
+});

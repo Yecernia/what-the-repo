@@ -194,6 +194,19 @@ export interface RepositoryResearch {
 }
 
 export interface EvidenceSnapshot {
+  static_analysis?: {
+    schema_version: "project-facts-v1";
+    position_encoding: "utf-16";
+    range_end: "exclusive";
+    /** Published views contain only the summary; the store serves indexed details. */
+    details_available?: boolean;
+    completeness: import("../analysis/facts.js").SourceCompleteness;
+    projects: import("../analysis/facts.js").ProjectContext[];
+    files: Array<{ path: string; language: string; syntax_completed: boolean; semantic_completed: boolean; diagnostics: import("../analysis/facts.js").AnalysisDiagnostic[]; calls: import("../analysis/facts.js").ParsedCallSite[]; imports: import("../analysis/facts.js").ParsedImport[]; exports?: import("../analysis/facts.js").ParsedFile["exports"]; unresolvedHeritage?: import("../analysis/facts.js").ParsedFile["unresolvedHeritage"] }>;
+    coverage: { discovered_call_sites: number; call_statuses: Record<string, number>; syntax_files_completed: number; semantic_files_completed: number };
+    limitations: string[];
+    metrics?: Record<string, number>;
+  };
   snapshot_id: string;
   display_language?: string;
   language_overlay_status?: "ready" | "degraded";

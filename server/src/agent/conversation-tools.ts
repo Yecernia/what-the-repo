@@ -24,6 +24,7 @@ import {
 } from "./teaching-workers.js";
 import { createLearningActionProposal } from "./learning-actions.js";
 import { readSourcePage } from "./source-read.js";
+import { STATIC_FILE_INPUT, staticFilePage } from "./static-file-facts.js";
 
 const EMPTY_INPUT = Type.Object({});
 const VALUE_POINT_INPUT = Type.Object({
@@ -359,6 +360,8 @@ export function createConversationTools(
           repository: context.project.source.display_name,
           summary: snapshot.summary,
           languages: snapshot.languages,
+          source_completeness: snapshot.static_analysis?.completeness,
+          static_limitations: snapshot.static_analysis?.limitations,
           components,
           value_points: points,
           semantic_mode: snapshot.graph.semantic_mode,
@@ -456,6 +459,7 @@ export function createConversationTools(
           name: row.name,
           responsibility: row.responsibility,
           layer: row.layer_name,
+          certainty: row.certainty,
           evidence: expose(context, linked("node", row.node_key).slice(0, 8)),
         }));
         const relations = result.edges.map((row) => ({
@@ -465,6 +469,7 @@ export function createConversationTools(
           relation_kind: row.relation_kind,
           label: row.label,
           description: row.description,
+          certainty: row.certainty,
           evidence: expose(context, linked("edge", row.edge_key).slice(0, 4)),
         }));
         return textResult(
@@ -529,6 +534,7 @@ export function createConversationTools(
         name: node.name,
         responsibility: node.responsibility,
         layer: node.architecture_layer_name,
+        certainty: node.certainty,
         evidence: expose(context, bounded(nodeEvidence(node), 8)),
       }));
       const edgeRows = bounded(edges, limit).map((edge) => ({
@@ -538,6 +544,7 @@ export function createConversationTools(
         relation_kind: edge.relation_kind,
         label: edge.label,
         description: edge.description,
+        certainty: edge.certainty,
         evidence: expose(context, bounded(edge.evidence, 4)),
       }));
       return textResult(
@@ -591,6 +598,7 @@ export function createConversationTools(
               kind: edge.relation_kind,
               label: edge.label,
               description: edge.description,
+              certainty: edge.certainty,
               source: source ? { id: source.id, name: source.name } : null,
               target: target ? { id: target.id, name: target.name } : null,
               evidence,
@@ -651,6 +659,23 @@ export function createConversationTools(
       }
     },
     "sequential",
+  );
+
+  const staticFacts = call(
+    "get_static_file_facts",
+    "正在查询文件的静态调用与导入",
+    "分页读取已由证据或组件工具暴露的文件的调用点、导入或导出。保留未解析、候选、外部依赖与标准库状态；静态绑定不证明唯一运行时目标。query是表达式/模块名的字面包含匹配。offset从0开始。",
+    STATIC_FILE_INPUT,
+    async (_id, params) => {
+      const input = params as Static<typeof STATIC_FILE_INPUT>;
+      const path = input.path.replaceAll("\\", "/");
+      if (!context.snapshot || !context.exposedPaths.has(path) || path.startsWith("/") || path.split("/").includes("..")) {
+        return errorResult("get_static_file_facts", "请先通过证据或组件工具取得这个文件路径。");
+      }
+      const file = context.snapshot.static_analysis?.files.find(file => file.path === path)
+        ?? await context.store.readStaticFile(context.project.project_id, context.snapshot.snapshot_id, path);
+      return textResult("get_static_file_facts", staticFilePage(file, { ...input, path }), { paths: [path] });
+    },
   );
 
   const learning = call(
@@ -866,6 +891,7 @@ export function createConversationTools(
     query,
     component,
     source,
+    staticFacts,
     learning,
     profile,
     assessment,

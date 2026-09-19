@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "auditedAt": "2026-09-13",
+  "auditedAt": "2026-09-19",
   "scope": "Source repository dependency declarations; not an image or native-binary SBOM",
   "manifests": [
     {
       "path": "server/package.json",
-      "sha256": "09853c76987b84a9d91494e34afc6fdd7761a77950d730d022079a48904938c5"
+      "sha256": "016434ca3c45c62c8a161fcc483c15885d9cc42a9184b47dd758eeadbf8d27b4"
     },
     {
       "path": "server/package-lock.json",
-      "sha256": "2c3768434e15de2c7a42fc88758a491aa8237b72f0994cf86df82456038c6494"
+      "sha256": "eb850a73162feed2e9db6731da298a737505a399011ed810bfbf70c560487fca"
     },
     {
       "path": "web/package.json",
@@ -20600,56 +20600,6 @@
       ]
     },
     {
-      "name": "tree-sitter-javascript",
-      "version": "0.23.1",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": "https://github.com/tree-sitter/tree-sitter-javascript",
-      "metadataSource": "https://registry.npmjs.org/tree-sitter-javascript/0.23.1",
-      "integrity": "sha512-/bnhbrTD9frUYHQTiYnPcxyHORIw157ERBa6dqzaKxvR/x3PC4Yzd+D1pZIMS6zNg2v3a8BZ0oK7jHqsQo9fWA==",
-      "uses": [
-        {
-          "scope": "server",
-          "location": "node_modules/tree-sitter-typescript/node_modules/tree-sitter-javascript",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1.txt",
-          "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
-          "source": "npm:tree-sitter-javascript@0.23.1/LICENSE"
-        }
-      ]
-    },
-    {
-      "name": "tree-sitter-javascript",
-      "version": "0.25.0",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": "https://github.com/tree-sitter/tree-sitter-javascript",
-      "metadataSource": "https://registry.npmjs.org/tree-sitter-javascript/0.25.0",
-      "integrity": "sha512-1fCbmzAskZkxcZzN41sFZ2br2iqTYP3tKls1b/HKGNPQUVOpsUxpmGxdN/wMqAk3jYZnYBR1dd/y/0avMeU7dw==",
-      "uses": [
-        {
-          "scope": "server",
-          "location": "node_modules/tree-sitter-javascript",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1.txt",
-          "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
-          "source": "npm:tree-sitter-javascript@0.25.0/LICENSE"
-        }
-      ]
-    },
-    {
       "name": "tree-sitter-php",
       "version": "0.23.12",
       "license": "MIT",
@@ -20721,31 +20671,6 @@
           "path": "licenses/npm/31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36.txt",
           "sha256": "31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36",
           "source": "npm:tree-sitter-rust@0.24.0/LICENSE"
-        }
-      ]
-    },
-    {
-      "name": "tree-sitter-typescript",
-      "version": "0.23.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": "https://github.com/tree-sitter/tree-sitter-typescript",
-      "metadataSource": "https://registry.npmjs.org/tree-sitter-typescript/0.23.2",
-      "integrity": "sha512-e04JUUKxTT53/x3Uq1zIL45DoYKVfHH4CZqwgZhPg5qYROl5nQjV+85ruFzFGZxu+QeFVbRTPDRnqL9UbU4VeA==",
-      "uses": [
-        {
-          "scope": "server",
-          "location": "node_modules/tree-sitter-typescript",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559.txt",
-          "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559",
-          "source": "npm:tree-sitter-typescript@0.23.2/LICENSE"
         }
       ]
     },
@@ -21624,6 +21549,35 @@
           "path": "licenses/npm/881d660c26831481b697e39724d4a35c9f86e07b67156d4aeb693a0b39910435.txt",
           "sha256": "881d660c26831481b697e39724d4a35c9f86e07b67156d4aeb693a0b39910435",
           "source": "npm:vitest@4.1.11/LICENSE.md"
+        }
+      ]
+    },
+    {
+      "name": "vscode-jsonrpc",
+      "version": "8.2.1",
+      "license": "MIT",
+      "additionalLicenses": [],
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/Microsoft/vscode-languageserver-node.git",
+        "directory": "jsonrpc"
+      },
+      "metadataSource": "https://registry.npmjs.org/vscode-jsonrpc/8.2.1",
+      "integrity": "sha512-kdjOSJ2lLIn7r1rtrMbbNCHjyMPfRnowdKjBQ+mGq6NAW5QY2bEZC/khaC5OR8svbbjvLEaIXkOq45e2X9BIbQ==",
+      "uses": [
+        {
+          "scope": "server",
+          "location": "node_modules/vscode-jsonrpc",
+          "dev": false,
+          "optional": false
+        }
+      ],
+      "noticeStatus": "notice-collected",
+      "notices": [
+        {
+          "path": "licenses/npm/ec9ee83580841e8eb687aca9867f221503809ba6426c7f876ede17d91b9fcfd0.txt",
+          "sha256": "ec9ee83580841e8eb687aca9867f221503809ba6426c7f876ede17d91b9fcfd0",
+          "source": "npm:vscode-jsonrpc@8.2.1/License.txt"
         }
       ]
     },

@@ -86,6 +86,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
       "get_project_overview",
       "list_value_points",
       "query_code_evidence",
+      "get_static_file_facts",
       "get_component_context",
       "read_source_excerpt",
       "get_learning_context",

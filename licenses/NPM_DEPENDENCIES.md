@@ -733,12 +733,9 @@ Generated from four lockfiles, including runtime, development and optional platf
 | tree-sitter-cpp@0.23.4 | MIT | server | [1](npm/2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1.txt) |
 | tree-sitter-go@0.25.0 | MIT | server | [1](npm/2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1.txt) |
 | tree-sitter-java@0.23.5 | MIT | server | [1](npm/52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7.txt) |
-| tree-sitter-javascript@0.23.1 | MIT | server | [1](npm/2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1.txt) |
-| tree-sitter-javascript@0.25.0 | MIT | server | [1](npm/2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1.txt) |
 | tree-sitter-php@0.23.12 | MIT | server | [1](npm/664764fabf40c0b318e06324a5a12379092a2df25b8cbf2415f71bc0bb352346.txt) |
 | tree-sitter-python@0.25.0 | MIT | server | [1](npm/d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f.txt) |
 | tree-sitter-rust@0.24.0 | MIT | server | [1](npm/31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36.txt) |
-| tree-sitter-typescript@0.23.2 | MIT | server | [1](npm/49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559.txt) |
 | trim-lines@3.0.1 | MIT | web | [1](npm/9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10.txt) |
 | trough@2.2.0 | MIT | web | [1](npm/6c03fd41cfd7c92d8aa8a2fa521b94b2683f059123281dcf921ddea9216b6254.txt) |
 | ts-algebra@2.0.0 | MIT | server, evolution/pi | [1](npm/18a2bfd070b08bd1cc538c90f59989a9523e070e72fe9a9068593c3e82f44fa7.txt) |
@@ -772,6 +769,7 @@ Generated from four lockfiles, including runtime, development and optional platf
 | vitest@4.1.11 | MIT | web (dev) | [1](npm/881d660c26831481b697e39724d4a35c9f86e07b67156d4aeb693a0b39910435.txt) |
 | w3c-xmlserializer@5.0.0 | MIT | web (dev) | [1](npm/ab654de803cdaa9e2819ab2e934bdf7f757e308649ec231d78e80e92425cdc34.txt) |
 | web-streams-polyfill@3.3.3 | MIT | server, evolution/pi | [1](npm/81008a3fb78f69f3c4a72a9e005c8582342ab62864371b3ab8e1b6af9041e080.txt) |
+| vscode-jsonrpc@8.2.1 | MIT | server | [1](npm/ec9ee83580841e8eb687aca9867f221503809ba6426c7f876ede17d91b9fcfd0.txt) |
 | web-tree-sitter@0.26.8 | MIT | server | [1](npm/c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78.txt) |
 | webidl-conversions@7.0.0 | BSD-2-Clause | web (dev) | [1](npm/a889cc4dbee2ae172c179856b25d75b0b7a5a136e1b97109b9b590b2ff1a879c.txt) |
 | whatwg-encoding@3.1.1 | MIT | web (dev) | [1](npm/528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa.txt) |

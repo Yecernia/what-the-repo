@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { PostgresStore } from './postgres-store.js';
 import { jsonBytes, snapshotObjectDigest, type SnapshotObjectStore } from './snapshot-object-store.js';
 import { createProject } from '../domain/conversation.js';
+import { prepareAnalysisPayload } from './analysis-payload.js';
 
 test('view/analysis readers avoid the other payload while preserving requested-object and manifest checks', async () => {
   const key='f'.repeat(64),snapshotId='parts-test',timestamp='2026-09-15T00:00:00Z';
@@ -56,5 +57,28 @@ test('view/analysis readers avoid the other payload while preserving requested-o
     row.view_sha256 = objects[0].sha256;
     assert.deepEqual(await store.loadSnapshot('project'), view);
 
+  } finally {await pool.end();}
+});
+
+test('PostgreSQL static-file reads hydrate only the indexed block and require the snapshot binding', async () => {
+  const key='c'.repeat(64),snapshotId='static-parts';
+  const files=Array.from({length:65},(_,i)=>({path:`src/${i}.ts`,calls:[{status:'unresolved'}]}));
+  const prepared=prepareAnalysisPayload({static_analysis:{files},fact_graph:{nodes:Array(3000).fill({id:'irrelevant'})}},
+    (path,index,digest)=>`analysis-chunks/${path}-${index}-${digest}.json`);
+  const bodies=new Map(prepared.chunks.map(chunk=>[chunk.descriptor.key,chunk.body]));
+  const reads:string[]=[];
+  const storage:SnapshotObjectStore={kind:'local',get:async key=>{reads.push(key);return bodies.get(key)??null;},put:async()=>{throw Error('unexpected write');},delete:async()=>{throw Error('unexpected delete');}};
+  const store=new PostgresStore({databaseUrl:'postgresql://unused',objectAdmissionStore:new LocalPermitStore(),root:tmpdir(),migrationsRoot:tmpdir(),encryptionSecret:'static-parts-test',objectStore:storage});
+  const pool=store.pool;
+  const project=createProject('guest:test','https://github.com/test/parts','parts');
+  project.analysis.snapshot_id=snapshotId;project.analysis.canonical_snapshot_key=key;
+  store.loadProject=async()=>project;
+  Object.assign(store,{pool:{query:async()=>({rows:[{analysis_snapshot_id:snapshotId,analysis_payload:prepared.value,view_payload:null}]})}});
+  try {
+    assert.deepEqual(await store.readStaticFile(project.project_id,snapshotId,'src/64.ts'),files[64]);
+    assert.equal(reads.length,1);
+    assert.match(reads[0]!,/static_analysis.files/);
+    await assert.rejects(store.readStaticFile(project.project_id,'wrong','src/64.ts'),/snapshot_not_bound/);
+    assert.equal(reads.length,1);
   } finally {await pool.end();}
 });

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ParsedFile } from "./facts.js";
-import { bindTypeScriptTexts, bindTypeScriptRelations } from "./typescript-relations.js";
+import { analyzeTypeScriptTexts as bindTypeScriptTexts, analyzeTypeScript as bindTypeScriptRelations } from "./typescript.js";
 import { TreeSitterAnalyzer } from "./tree-sitter.js";
 import { buildSnapshot } from "./graph.js";
 import { createAnalysisCache, readAnalysisCache } from "./incremental.js";
@@ -35,7 +35,8 @@ test("compiler binding distinguishes imports, aliases, namespace calls, receiver
   for (const name of ["probe", "/abc/.test", "value.run"]) assert.equal(main.calls.find((call) => call.callee === name)?.target, null, name);
   assert.equal(main.imports[0]!.resolvedPath, "src/launcher.ts");
   const snapshot = buildSnapshot({ snapshotId: "binding", repository: "example/binding", commitSha: "a".repeat(40), files, sourceRoot: "/unused" });
-  assert.equal(snapshot.summary.unresolved_syntax_call_count, 3);
+  assert.equal(snapshot.summary.unresolved_syntax_call_count, 2);
+  assert.equal(main.calls.find(call => call.callee === "/abc/.test")?.status, "standard_library");
   assert.ok(snapshot.fact_graph.edges.some((edge) => edge.relation_kind === "calls" && edge.certainty === "verified"));
   assert.ok(!snapshot.fact_graph.edges.some((edge) => edge.relation_kind === "calls" && edge.evidence[0]?.path === "src/other.ts"));
 });
@@ -83,6 +84,8 @@ test("documentation examples stay file evidence and cannot create call or import
     const snapshot = buildSnapshot({ snapshotId: "docs", repository: "example/docs", commitSha: "a".repeat(40), files: [doc, code], sourceRoot: root });
     assert.equal(snapshot.summary.file_count, 2);
     assert.equal(snapshot.summary.call_count, 0);
+    assert.equal(snapshot.static_analysis?.files.find(file => file.path === "README.md")?.syntax_completed, false);
+    assert.equal(snapshot.static_analysis?.coverage.syntax_files_completed, 1);
     assert.ok(snapshot.fact_graph.nodes.some((node) => node.attributes?.path === "README.md"));
   } finally { await rm(root, { recursive: true, force: true }); }
 });

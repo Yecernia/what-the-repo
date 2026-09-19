@@ -9,10 +9,9 @@ import {
   type LspRunResult,
   type ParsedFile,
   type SourceFileManifest,
-  unavailableLspResult,
 } from "./facts.js";
 
-export const ANALYSIS_CACHE_SCHEMA_VERSION = "analysis-cache-v2";
+export const ANALYSIS_CACHE_SCHEMA_VERSION = "analysis-cache-v3-project-facts";
 
 export type FileChangeKind = "added" | "modified" | "deleted" | "renamed";
 
@@ -28,6 +27,7 @@ export interface AnalysisCache {
   schema_version: typeof ANALYSIS_CACHE_SCHEMA_VERSION;
   manifest: SourceFileManifest[];
   parsed_files: ParsedFile[];
+  syntax_files: ParsedFile[];
   lsp_results: LspRunResult[];
 }
 
@@ -47,13 +47,17 @@ type FactGraph = NonNullable<EvidenceSnapshot["fact_graph"]>;
 export function createAnalysisCache(input: {
   manifest: SourceFileManifest[];
   parsedFiles: ParsedFile[];
+  syntaxFiles?: ParsedFile[];
   lspResults: LspRunResult[];
 }): AnalysisCache {
   return {
     schema_version: ANALYSIS_CACHE_SCHEMA_VERSION,
     manifest: input.manifest.map((item) => ({ ...item })),
-    parsed_files: input.parsedFiles.map(cloneParsedFile),
-    lsp_results: input.lspResults.map(cloneLspResult),
+    // Analysis outputs are immutable values. Serialization owns the persisted
+    // copy; duplicating every declaration/call here doubles peak stage memory.
+    parsed_files: input.parsedFiles,
+    syntax_files: input.syntaxFiles ?? [],
+    lsp_results: input.lspResults,
   };
 }
 
@@ -61,11 +65,18 @@ export function readAnalysisCache(value: unknown): AnalysisCache | null {
   if (!isRecord(value) || value.schema_version !== ANALYSIS_CACHE_SCHEMA_VERSION) return null;
   if (!Array.isArray(value.manifest) || !Array.isArray(value.parsed_files) || !Array.isArray(value.lsp_results)) return null;
   const manifest = value.manifest.filter(isManifestEntry).map((item) => ({ ...item }));
-  const parsedFiles = value.parsed_files.filter(isParsedFile).map(cloneParsedFile);
-  const lspResults = value.lsp_results.filter(isLspRunResult).map(cloneLspResult);
+  const parsedFiles = value.parsed_files.filter(isParsedFile);
+  const lspResults = value.lsp_results.filter(isLspRunResult);
   if (manifest.length !== value.manifest.length || parsedFiles.length !== value.parsed_files.length || lspResults.length !== value.lsp_results.length) return null;
   const manifestPaths = new Set(manifest.map((item) => item.path));
   const parsedByPath = new Map(parsedFiles.map((file) => [file.path, file]));
+  const syntaxFiles = Array.isArray(value.syntax_files) ? value.syntax_files.filter(isParsedFile) : [];
+  if (!Array.isArray(value.syntax_files) || syntaxFiles.length !== value.syntax_files.length
+    || new Set(syntaxFiles.map(file=>file.path)).size !== syntaxFiles.length
+    || syntaxFiles.some(file => {
+      const parsed=parsedByPath.get(file.path);
+      return !parsed || parsed.digest!==file.digest || parsed.bytes!==file.bytes;
+    })) return null;
   if (
     manifestPaths.size !== manifest.length
     || parsedByPath.size !== manifest.length
@@ -79,6 +90,7 @@ export function readAnalysisCache(value: unknown): AnalysisCache | null {
     schema_version: ANALYSIS_CACHE_SCHEMA_VERSION,
     manifest,
     parsed_files: parsedFiles,
+    syntax_files: syntaxFiles,
     lsp_results: lspResults,
   };
 }
@@ -173,8 +185,13 @@ export function buildIncrementalPlan(input: {
   previousCache: AnalysisCache;
   previousFactGraph: FactGraph;
   currentManifest: SourceFileManifest[];
+  currentCompleteness?: import("./facts.js").SourceCompleteness;
 }): IncrementalPlan {
-  const changes = classifyFileChanges(input.previousCache.manifest, input.currentManifest);
+  const omitted = new Set(input.currentCompleteness?.omitted.map(row=>row.path) ?? []);
+  const changes = classifyFileChanges(input.previousCache.manifest, input.currentManifest).filter(change =>
+    change.kind !== "deleted" || input.currentCompleteness?.inventoryComplete === true && !omitted.has(change.path)).map(change =>
+      change.kind === "renamed" && (input.currentCompleteness?.inventoryComplete !== true || omitted.has(change.renamed_from!))
+        ? { ...change, kind: "added" as const, renamed_from: null, previous_digest: null } : change);
   const changedPaths = new Set<string>();
   const tombstonePaths = new Set<string>();
   for (const change of changes) {
@@ -193,27 +210,19 @@ export function buildIncrementalPlan(input: {
       return path !== null && changedPaths.has(path);
     })
     .map((node) => node.id));
-  let frontier = new Set(affectedIds);
-  const traversable = new Set(["contains", "imports", "calls", "inherits", "implements"]);
-  while (frontier.size) {
-    const discovered = new Set<string>();
-    for (const edge of input.previousFactGraph.edges) {
-      if (!traversable.has(edge.relation_kind) || !frontier.has(edge.target)) continue;
-      if (!affectedIds.has(edge.source)) discovered.add(edge.source);
-    }
-    if (!discovered.size) break;
-    for (const stableId of discovered) affectedIds.add(stableId);
-    frontier = discovered;
-  }
-
+  // Semantics may change without an old successful edge (new files, failed lookups,
+  // declarations, package exports). Invalidate project domains, not just old edges.
   const affectedPaths = new Set(changedPaths);
-  for (const stableId of affectedIds) {
-    const path = nodePaths.get(stableId);
-    if (path) affectedPaths.add(path);
+  const changedLanguages = new Set(input.previousCache.parsed_files.filter(f => changedPaths.has(f.path)).map(f => f.language));
+  const structural = changes.some(c => c.kind !== 'modified' || /\.(json|toml|xml|mod|work|csproj|props|targets)$/.test(c.path));
+  const projects = new Set(input.previousCache.parsed_files.filter(f => changedPaths.has(f.path)).map(f => f.project?.id));
+  for (const file of input.previousCache.parsed_files) {
+    if (structural || projects.has(file.project?.id) || changedLanguages.has(file.language)) affectedPaths.add(file.path);
   }
+  for (const node of input.previousFactGraph.nodes) if (affectedPaths.has(nodePath(node) ?? '')) affectedIds.add(node.id);
   const currentPaths = new Set(input.currentManifest.map((item) => item.path));
-  const recomputePaths = [...affectedPaths].filter((path) => currentPaths.has(path)).sort();
-  const reusedPaths = [...currentPaths].filter((path) => !affectedPaths.has(path)).sort();
+  const recomputePaths = [...changedPaths].filter((path) => currentPaths.has(path)).sort();
+  const reusedPaths = [...currentPaths].filter((path) => !changedPaths.has(path)).sort();
   return {
     mode: "incremental",
     parentSnapshotId: input.parentSnapshotId,
@@ -223,91 +232,6 @@ export function buildIncrementalPlan(input: {
     recomputePaths,
     reusedPaths,
     tombstonePaths: [...tombstonePaths].sort(),
-  };
-}
-
-export function mergeParsedFiles(input: {
-  previous: ParsedFile[];
-  recomputed: ParsedFile[];
-  currentManifest: SourceFileManifest[];
-  plan: IncrementalPlan;
-}): ParsedFile[] {
-  if (input.plan.mode === "full") return input.recomputed.map(cloneParsedFile);
-  const previous = new Map(input.previous.map((file) => [file.path, file]));
-  const recomputed = new Map(input.recomputed.map((file) => [file.path, file]));
-  const reused = new Set(input.plan.reusedPaths);
-  return input.currentManifest.map((manifest) => {
-    const fresh = recomputed.get(manifest.path);
-    if (fresh) return cloneParsedFile(fresh);
-    const cached = previous.get(manifest.path);
-    if (!cached || !reused.has(manifest.path) || cached.digest !== manifest.digest || cached.bytes !== manifest.bytes) {
-      throw new Error(`incremental_cache_miss:${manifest.path}`);
-    }
-    return cloneParsedFile(cached);
-  });
-}
-
-export function lspTargetFiles(
-  files: ParsedFile[],
-  language: string,
-  plan: IncrementalPlan,
-): ParsedFile[] {
-  const languageFiles = files.filter((file) => file.language === language);
-  if (plan.mode === "full") return languageFiles;
-  const affected = new Set(plan.affectedPaths);
-  return languageFiles.filter((file) => affected.has(file.path));
-}
-
-export function mergeLspResult(input: {
-  language: string;
-  previous: LspRunResult | null;
-  fresh: LspRunResult | null;
-  invalidatedPaths: Set<string>;
-  currentPaths: Set<string>;
-}): LspRunResult {
-  if (!input.previous && !input.fresh) return unavailableLspResult(input.language, "lsp_unavailable");
-  const previousSymbols = input.previous?.symbols.filter((symbol) =>
-    input.currentPaths.has(symbol.path) && !input.invalidatedPaths.has(symbol.path)) ?? [];
-  const previousRelations = input.previous?.relations.filter((relation) =>
-    input.currentPaths.has(relation.sourcePath)
-    && input.currentPaths.has(relation.targetPath)
-    && !input.invalidatedPaths.has(relation.sourcePath)
-    && !input.invalidatedPaths.has(relation.targetPath)) ?? [];
-  const fresh = input.fresh;
-  const symbols = dedupeBy(
-    [...previousSymbols, ...(fresh?.symbols ?? [])],
-    (symbol) => [symbol.path, symbol.qualifiedName, symbol.startLine, symbol.startColumn].join("|"),
-  );
-  const relations = dedupeBy(
-    [...previousRelations, ...(fresh?.relations ?? [])],
-    (relation) => [
-      relation.kind,
-      relation.sourcePath,
-      relation.sourceName,
-      relation.sourceLine,
-      relation.sourceColumn,
-      relation.targetPath,
-      relation.targetName,
-      relation.targetLine,
-      relation.targetColumn,
-    ].join("|"),
-  );
-  return {
-    language: input.language,
-    completed: Boolean(fresh?.completed || input.previous?.completed || symbols.length),
-    truthVerified: fresh
-      ? fresh.truthVerified && (input.previous?.truthVerified ?? true)
-      : Boolean(input.previous?.truthVerified),
-    serverName: fresh?.serverName ?? input.previous?.serverName ?? null,
-    serverVersion: fresh?.serverVersion ?? input.previous?.serverVersion ?? null,
-    capabilities: [...new Set([...(input.previous?.capabilities ?? []), ...(fresh?.capabilities ?? [])])],
-    reasonCodes: [...new Set([
-      ...(input.previous?.reasonCodes ?? []).filter(code => code !== "incremental_reuse"),
-      ...(fresh?.reasonCodes ?? []).filter(code => code !== "incremental_reuse"),
-      ...(previousSymbols.length || previousRelations.length ? ["incremental_reuse"] : []),
-    ])],
-    symbols,
-    relations,
   };
 }
 
@@ -420,7 +344,9 @@ export function applyIncrementalProvenance(input: {
   for (const previous of previousNodes.values()) {
     if (activeNodeIds.has(previous.id)) continue;
     const path = nodePath(previous);
-    const extractionSucceeded = path ? parsedByPath.get(path)?.parseError === null : false;
+    const parsed = path ? parsedByPath.get(path) : undefined;
+    const fromLsp = previous.source_observations?.some(observation => observation.extractor === "lsp");
+    const extractionSucceeded = parsed?.parseError === null && (!fromLsp || parsed.semanticComplete === true);
     if (!path || (!tombstonePathSet.has(path) && !(affectedPaths.has(path) && extractionSucceeded))) continue;
     const change = changedByPath.get(path);
     nodes.push({
@@ -482,7 +408,10 @@ export function applyIncrementalProvenance(input: {
     if (activeEdgeIds.has(previous.id)) continue;
     const sourcePath = previousNodePaths.get(previous.source) ?? null;
     const targetPath = previousNodePaths.get(previous.target) ?? null;
-    const shouldTombstone = Boolean(
+    const lspEdge = previous.source_observations?.some(row=>row.extractor === "lsp");
+    const completed = [sourcePath, targetPath].filter((p): p is string => !!p).every(p => tombstonePathSet.has(p)
+      || parsedByPath.get(p)?.parseError === null && (!lspEdge || parsedByPath.get(p)?.semanticComplete === true));
+    const shouldTombstone = completed && Boolean(
       sourcePath && (tombstonePathSet.has(sourcePath) || affectedPaths.has(sourcePath))
       || targetPath && (tombstonePathSet.has(targetPath) || affectedPaths.has(targetPath)),
     );
@@ -550,29 +479,6 @@ export function incrementalSummary(plan: IncrementalPlan): Record<string, unknow
     files_recomputed: plan.recomputePaths.length,
     files_reused: plan.reusedPaths.length,
     cache_reuse_ratio: total ? plan.reusedPaths.length / total : 1,
-  };
-}
-
-function cloneParsedFile(file: ParsedFile): ParsedFile {
-  return {
-    ...file,
-    symbols: file.symbols.map((symbol) => ({
-      ...symbol,
-      bases: [...symbol.bases],
-      sources: [...symbol.sources],
-    })),
-    imports: file.imports.map((item) => ({ ...item })),
-    calls: file.calls.map((item) => ({ ...item, ...(item.target ? { target: { ...item.target } } : {}) })),
-  };
-}
-
-function cloneLspResult(result: LspRunResult): LspRunResult {
-  return {
-    ...result,
-    capabilities: [...result.capabilities],
-    reasonCodes: [...result.reasonCodes],
-    symbols: result.symbols.map((item) => ({ ...item })),
-    relations: result.relations.map((item) => ({ ...item })),
   };
 }
 
@@ -728,16 +634,13 @@ function boundedAffectedIds(values: string[]): string[] {
 function findRenamedReplacement(previous: SnapshotNode, current: SnapshotNode[], newPath: string): string | null {
   const qualifiedName = previous.attributes?.qualified_name;
   const kind = previous.attributes?.kind;
-  return current.find((candidate) =>
+  const matches = current.filter((candidate) =>
     nodePath(candidate) === newPath
     && candidate.attributes?.qualified_name === qualifiedName
-    && candidate.attributes?.kind === kind)?.id ?? null;
-}
-
-function dedupeBy<T>(items: T[], key: (item: T) => string): T[] {
-  const rows = new Map<string, T>();
-  for (const item of items) if (!rows.has(key(item))) rows.set(key(item), item);
-  return [...rows.values()];
+    && candidate.attributes?.kind === kind
+    && candidate.attributes?.tracking_key === previous.attributes?.tracking_key
+    && isActiveNode(candidate));
+  return matches.length === 1 ? matches[0]!.id : null;
 }
 
 function isManifestEntry(value: unknown): value is SourceFileManifest {
@@ -764,7 +667,7 @@ function isLspRunResult(value: unknown): value is LspRunResult {
   return isRecord(value)
     && typeof value.language === "string"
     && typeof value.completed === "boolean"
-    && typeof value.truthVerified === "boolean"
+    && typeof value.toolchainVerified === "boolean"
     && Array.isArray(value.capabilities)
     && Array.isArray(value.reasonCodes)
     && Array.isArray(value.symbols)
