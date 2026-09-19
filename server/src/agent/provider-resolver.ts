@@ -188,7 +188,8 @@ export interface CatalogModelsOptions {
 export function hasTrustedProviderModels(connection: ProviderConnectionSettings): boolean {
   return Boolean(
     (connection.models_source === "provider" || connection.models_source === "verified")
-      && filterLikelyConversationalModelIds(connection.custom_models).length > 0
+      // Eligibility can change after verification; never delete a user's key
+      // merely because all previously verified models have been retired.
       && !connection.verify_error
       && connection.last_verified_at
       && Number.isFinite(Date.parse(connection.last_verified_at)),
@@ -206,7 +207,7 @@ export function catalogModelsForConnection(
   const piCatalog = piModels(connection.provider);
   const piById = new Map(piCatalog.map((model) => [model.id, model]));
   const byId = new Map<string, CatalogModel>();
-  for (const modelId of filterLikelyConversationalModelIds(connection.custom_models)) {
+  for (const modelId of filterLikelyConversationalModelIds(connection.custom_models, connection)) {
     const id = modelId.trim();
     const known = piById.get(id);
     const capability = modelCapabilityFor(connection.provider, id, known);

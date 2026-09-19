@@ -4,6 +4,8 @@ import type { PiModelRuntime } from "../agent/types.js";
 import type { WorkerDiagnostics } from "../agent/worker-diagnostics.js";
 import type { SemanticBatch } from "../domain/semantic-batch.js";
 import { AnalysisLeaseLostError, type AnalysisLeaseFence, type ProductStore } from "../persistence/store.js";
+import type { ProviderCallGate } from '../agent/provider-gate.js';
+import { performance } from 'node:perf_hooks';
 
 export const DEFAULT_ANALYSIS_LIMITS = { batchCalls: DEFAULT_WORKER_MAX_REQUESTS, jobCalls: 120, attemptMs: 60 * 60_000 } as const;
 export interface AnalysisExecutionLimits { batchCalls: number; jobCalls: number; attemptMs: number }
@@ -24,7 +26,8 @@ export async function createAnalysisExecutionBudget(input: {
   fence: AnalysisLeaseFence;
   signal: AbortSignal;
   limits?: AnalysisExecutionLimits;
-}): Promise<{ beforeRequest: NonNullable<PiModelRuntime["beforeWorkerRequest"]>; signal: AbortSignal; dispose(): void }> {
+}): Promise<{ beforeRequest: NonNullable<PiModelRuntime["beforeWorkerRequest"]>; signal: AbortSignal;
+  wrapGate(gate?: ProviderCallGate): ProviderCallGate | undefined; dispose(): void }> {
   const limits = input.limits ?? DEFAULT_ANALYSIS_LIMITS;
   const batches = await input.store.listSemanticBatches(input.fence.jobId);
   const counts = new Map(batches.map(batch => [batch.batch_id, recordedRequests(batch)]));
@@ -32,8 +35,21 @@ export async function createAnalysisExecutionBudget(input: {
   const mutex = new KeyedMutex();
   const controller = new AbortController();
   const signal = AbortSignal.any([input.signal, controller.signal]);
-  const timer = setTimeout(() => controller.abort(new WorkerExecutionError("analysis_time_limit_exceeded")), limits.attemptMs);
-  timer.unref();
+  let waiting = 0, active = 0, elapsed = 0, since = performance.now(), paused = false, disposed = false;
+  let timer: ReturnType<typeof setTimeout>;
+  const arm = () => {
+    if (disposed) return;
+    const now = performance.now();
+    if (!paused) elapsed += now - since;
+    since = now;
+    paused = waiting > 0 && active === 0;
+    clearTimeout(timer);
+    if (!paused) {
+      timer = setTimeout(() => controller.abort(new WorkerExecutionError('analysis_time_limit_exceeded')), Math.max(0, limits.attemptMs - elapsed));
+      timer.unref();
+    }
+  };
+  arm();
   const stop = (code: ConstructorParameters<typeof WorkerExecutionError>[0]): never => {
     const error = new WorkerExecutionError(code);
     controller.abort(error);
@@ -41,7 +57,21 @@ export async function createAnalysisExecutionBudget(input: {
   };
   return {
     signal,
-    dispose: () => clearTimeout(timer),
+    dispose: () => { disposed = true; clearTimeout(timer); },
+    wrapGate: gate => gate && ({ acquire: async requestSignal => {
+      waiting++; arm();
+      let acquired = false;
+      try {
+        const permit = await gate.acquire(requestSignal);
+        acquired = true; waiting--; active++; arm();
+        let released = false;
+        return { ...permit, release: async () => {
+          if (released) return;
+          released = true;
+          try { await permit.release(); } finally { active--; arm(); }
+        } };
+      } finally { if (!acquired) { waiting--; arm(); } }
+    } }),
     beforeRequest: async (identity) => mutex.runExclusive("job", async () => {
       signal.throwIfAborted();
       if (!identity || identity.jobId !== input.fence.jobId || identity.jobAttempt !== input.fence.attempt) return stop("worker_internal_error");

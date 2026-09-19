@@ -60,6 +60,9 @@ import { EncryptedPostgresKeyVault } from "./encrypted-key-vault.js";
 import { FileStore } from "./file-store.js";
 import { insertSnapshotRows } from "./postgres-snapshot-rows.js";
 import { applyMigrations } from "./migrations.js";
+import { boundedObjectStore } from './bounded-object-store.js';
+import { ResourceScheduler } from '../scheduling/resources.js';
+import { PostgresPermitStore, type PermitStore } from '../scheduling/permits.js';
 import {
   analysisPayloadChunkKeys,
   assembleAnalysisPayload,
@@ -116,6 +119,8 @@ interface PostgresStoreOptions {
   idleTimeoutMs?: number;
   connectionTimeoutMs?: number;
   objectStore?: SnapshotObjectStore;
+  objectStoreConcurrency?: number;
+  objectAdmissionStore?: PermitStore;
 }
 
 export interface PostgresPoolSettings {
@@ -325,6 +330,7 @@ export class PostgresStore extends FileStore {
   private readonly migrationsRoot: string;
   private readonly limits: QuotaLimits;
   readonly snapshotObjects: SnapshotObjectStore;
+  private readonly objectAdmissionPool: Pool;
   private readonly sourceManifestCache = new Map<string, CachedSourceManifest>();
 
   constructor(options: PostgresStoreOptions) {
@@ -346,7 +352,14 @@ export class PostgresStore extends FileStore {
     this.pool = pool;
     this.migrationsRoot = options.migrationsRoot;
     this.limits = limits;
-    this.snapshotObjects = options.objectStore ?? new LocalSnapshotObjectStore(options.root);
+    // Object reads/purges may run while an application transaction holds the only
+    // ordinary pool connection. Admission must not nest a wait on that same pool.
+    this.objectAdmissionPool = new Pool({ connectionString: options.databaseUrl, max: 1,
+      application_name: postgresApplicationName('object-admission'), connectionTimeoutMillis: 5000,
+      idleTimeoutMillis: 10000 });
+    this.objectAdmissionPool.on('error', () => console.error('object_admission_database_unavailable'));
+    this.snapshotObjects = boundedObjectStore(options.objectStore ?? new LocalSnapshotObjectStore(options.root),
+      new ResourceScheduler(options.objectAdmissionStore ?? new PostgresPermitStore(this.objectAdmissionPool)), options.objectStoreConcurrency ?? 8);
   }
 
   override async init(): Promise<void> {
@@ -370,7 +383,7 @@ export class PostgresStore extends FileStore {
   }
 
   override async close(): Promise<void> {
-    await this.pool.end();
+    await Promise.all([this.pool.end(), this.objectAdmissionPool.end()]);
   }
 
   override async checkHealth(): Promise<void> {

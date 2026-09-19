@@ -55,3 +55,17 @@ test('model capacity is shared across keys but isolated by business; upstream id
   controller.abort(new Error('cancelled')); await rejection;
   await first.release(); await analysis.release();
 });
+
+test('account/model ceilings combine atomically and cannot be bypassed by renaming a connection', async () => {
+  const provider = { provider:'custom',connectionId:'one',baseUrl:'https://provider.example/v1',apiKey:'same-key',model:'m',modelId:'m',modelSelector:'m',api:'openai-completions',builtin:false };
+  const factory = createProviderGateFactory({ maxConcurrent: 4, analysisConcurrent: 4, upstreamCapacities: [
+    { account: 'shared-account', baseUrl: provider.baseUrl, credentialHashes: [providerGateKey(provider)], concurrency: 1 },
+  ] });
+  const first = await factory(provider, 'analysis', { ownerId: 'a', taskId: 'one' }).acquire();
+  const controller = new AbortController();
+  const denied = factory({ ...provider, connectionId: 'renamed' }, 'chat', { ownerId: 'b', taskId: 'two' }).acquire(controller.signal);
+  const rejection = assert.rejects(denied, /cancelled/);
+  const unrelated = await factory({ ...provider, apiKey: 'other-account' }, 'chat', { ownerId: 'c', taskId: 'three' }).acquire();
+  controller.abort(new Error('cancelled')); await rejection;
+  await unrelated.release(); await first.release();
+});

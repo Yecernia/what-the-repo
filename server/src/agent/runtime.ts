@@ -125,6 +125,7 @@ export class PiConversationRuntime {
   constructor(
     private readonly sessions: PiSessionStore,
     private readonly sessionLockWaitTimeoutMs = 10 * 60_000,
+    private readonly failFastSessions = false,
   ) {}
 
   prepareRun(runId: string): AbortSignal {
@@ -475,6 +476,7 @@ export class PiConversationRuntime {
       }, {
         signal: runSignal,
         waitTimeoutMs: this.sessionLockWaitTimeoutMs,
+        failFast: this.failFastSessions,
       });
     } catch (error) {
       if (error instanceof PiSessionWaitTimeoutError) {

@@ -316,7 +316,7 @@ async function modelSessionFactory(
     throw new Error("invalid WHAT_THE_REPO_EVOLUTION_THINKING_LEVEL");
   }
   return createPiSdkSessionFactory({
-    globalReservation: global && taskId ? global.forTask(taskId,configVersion,connectionId) : undefined,
+    globalReservation: global && taskId ? global.forTask(taskId,configVersion,connectionId, { baseUrl, apiKey, modelId }) : undefined,
     modelRuntime: runtime,
     model,
     thinkingLevel: thinkingLevel as "off" | "minimal" | "low" | "medium" | "high" | "xhigh",

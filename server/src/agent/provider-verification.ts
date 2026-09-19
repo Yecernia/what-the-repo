@@ -1,6 +1,6 @@
 import type { ProviderConnectionSettings } from "../domain/conversation.js";
 import { assertPublicHttpsUrl } from "../security/outbound-url.js";
-import { filterLikelyConversationalModelIds } from "./provider-catalog.js";
+import { connectionModelLifecycle, filterLikelyConversationalModelIds } from "./provider-catalog.js";
 import { catalogModelsForConnection, resolveDeploymentProvider } from "./provider-resolver.js";
 import { createModelRuntime, streamWithProviderPermit, type ModelRuntimeOptions } from "./model-runtime.js";
 import type { ProviderGateFactory } from "./provider-gate.js";
@@ -12,7 +12,10 @@ export async function verifyManualModel(
   model: string,
   options: ModelRuntimeOptions & { providerGateFactory?: ProviderGateFactory } = {},
 ): Promise<{ ok: boolean; message: string }> {
-  if (filterLikelyConversationalModelIds([model])[0] !== model) {
+  if (connectionModelLifecycle(model, connection)?.active) {
+    return { ok: false, message: "模型已下线或已被其他模型替换，请刷新列表后重新选择" };
+  }
+  if (filterLikelyConversationalModelIds([model], connection)[0] !== model) {
     return { ok: false, message: "模型名称无效或属于非对话模型" };
   }
   const config = resolveDeploymentProvider({
@@ -30,7 +33,8 @@ export async function verifyManualModel(
   try {
     await assertPublicHttpsUrl(config.baseUrl);
     const runtime = createModelRuntime(config, {
-      ...options, providerGate: options.providerGateFactory?.(config),
+      ...options, providerGate: options.providerGateFactory?.(config, 'chat', options.ownerId
+        ? { ownerId: options.ownerId, taskId: options.attribution?.taskId ?? 'verification' } : undefined),
     });
     const result = await streamWithProviderPermit(runtime, runtime.model, {
       messages: [{ role: "user", content: "Reply with OK only.", timestamp: Date.now() }],

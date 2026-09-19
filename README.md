@@ -90,6 +90,8 @@ docker compose --env-file .secrets/runtime.env -f compose.runtime.yaml up --buil
 
 PR 验证提供[运行配置检查](scripts/test-runtime-config.mjs)、[多副本与故障切换测试](scripts/test-runtime-compose.ps1)和[隔离 PostgreSQL 测试](scripts/test-postgres.mjs)，不依赖维护者的账号或部署文件。
 
+并发变量、个人限制、分析阶段资源和旧配置迁移见[运行容量说明](docs/runtime-capacity.md)。示例值未经容量压测。
+
 ## 反馈与贡献
 
 发现解释有误、证据缺失或操作不顺手，欢迎 [提交 Issue](https://github.com/Yecernia/what-the-repo/issues)。附上公开仓库链接、复现步骤和预期结果，会更容易定位问题；请不要附带密钥或私人数据。

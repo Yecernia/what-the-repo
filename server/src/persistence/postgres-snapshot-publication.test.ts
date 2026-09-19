@@ -1,3 +1,4 @@
+import { LocalPermitStore } from '../scheduling/permits.js';
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -62,7 +63,7 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
     release() { released = true; },
   };
   const store = new PostgresStore({
-    databaseUrl: "postgresql://unused",
+    databaseUrl: 'postgresql://unused', objectAdmissionStore: new LocalPermitStore(),
     root,
     migrationsRoot: join(root, "migrations"),
     encryptionSecret: "snapshot-test-secret",
@@ -231,7 +232,7 @@ test("PostgreSQL stores and reloads large analysis payload chunks", async () => 
     release() {},
   };
   const store = new PostgresStore({
-    databaseUrl: "postgresql://unused",
+    databaseUrl: 'postgresql://unused', objectAdmissionStore: new LocalPermitStore(),
     root,
     migrationsRoot: join(root, "migrations"),
     encryptionSecret: "snapshot-test-secret",
@@ -350,7 +351,7 @@ test("PostgreSQL rolls back snapshot metadata when query directory publication f
     release() { released = true; },
   };
   const store = new PostgresStore({
-    databaseUrl: "postgresql://unused",
+    databaseUrl: 'postgresql://unused', objectAdmissionStore: new LocalPermitStore(),
     root,
     migrationsRoot: join(root, "migrations"),
     encryptionSecret: "snapshot-test-secret",

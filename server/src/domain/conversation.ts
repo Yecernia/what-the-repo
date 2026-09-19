@@ -8,6 +8,7 @@ export type MessageRole = "user" | "assistant" | "system";
 export type RepoSourceKind = "github" | "local" | "fixture";
 export type AnalysisStage = "idle" | "fetching" | "scanning" | "extracting" | "clustering" | "interpreting" | "done" | "failed";
 export type AnalysisProgressKind =
+  | "waiting_resources"
   | "researching_project" | "parsing_source" | "resolving_relations" | "building_fact_graph"
   | "explaining_components" | "repairing_components" | "planning_architecture" | "discovering_values"
   | "assembling_architecture" | "merging_analysis" | "preparing_source" | "validating_analysis"

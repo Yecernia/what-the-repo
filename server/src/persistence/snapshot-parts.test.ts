@@ -1,3 +1,4 @@
+import { LocalPermitStore } from '../scheduling/permits.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -21,7 +22,7 @@ test('view/analysis readers avoid the other payload while preserving requested-o
     manifest_storage_key:'manifest',manifest_sha256:snapshotObjectDigest(manifest),manifest_bytes:String(manifest.byteLength),
     view_sha256:objects[0].sha256,view_bytes:String(objects[0].bytes),analysis_sha256:objects[1].sha256,analysis_bytes:String(objects[1].bytes),
     source_manifest_sha256:null,source_manifest_bytes:null,source_file_count:0,language_overlay_version:null,retired_at:null,purge_after:null,payload_purged_at:null};
-  const store=new PostgresStore({databaseUrl:'postgresql://unused',root:tmpdir(),migrationsRoot:tmpdir(),encryptionSecret:'parts-test-only-secret',objectStore:storage});
+  const store=new PostgresStore({databaseUrl:'postgresql://unused',objectAdmissionStore:new LocalPermitStore(),root:tmpdir(),migrationsRoot:tmpdir(),encryptionSecret:'parts-test-only-secret',objectStore:storage});
   const pool=store.pool;Object.assign(store,{pool:{query:async(sql:string)=>{sqls.push(sql);return{rows:sql.includes('FROM project_public_snapshot_bindings')?[{public_snapshot_key:key}]:[row]};}}});
   store.loadProject=async()=>createProject('guest:test','https://github.com/test/parts','parts');
   try {

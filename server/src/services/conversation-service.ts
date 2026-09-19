@@ -129,7 +129,7 @@ export class ConversationService {
       waitMs: config.chatWaitTimeoutMs ?? 30_000, ownerActive: config.chatOwnerConcurrency ?? 2,
       ownerWaiting: 1, exclusiveResource: true,
     });
-    this.runtime = new PiConversationRuntime(sessions, config.sessionLockWaitTimeoutMs ?? 10 * 60_000);
+    this.runtime = new PiConversationRuntime(sessions, 30_000, true);
     this.memoryMaintenance = new MemoryMaintenance(store, memories);
     this.feedbackWorker = new FeedbackAnalysisWorker(
       store,
@@ -313,7 +313,7 @@ export class ConversationService {
       profile,
       store: this.store,
       modelRuntime: createModelRuntime(provider, {
-        providerGate: this.providerGateFactory?.(provider),
+        providerGate: this.providerGateFactory?.(provider, 'chat', { ownerId: input.owner.owner_id, taskId: input.actionId }),
         providerBudget: this.providerBudget,
         ownerId: input.owner.owner_id,
         attribution: { business: "chat", payer: userPaid ? "user" : "platform", agentRole: "learning-route", configVersion: config.adminConfigVersion, taskId: input.actionId },
@@ -418,7 +418,7 @@ export class ConversationService {
     const attribution: UsageAttribution = { business: "chat", payer: userPaid ? "user" : "platform", agentRole: "primary-chat", configVersion: config.adminConfigVersion, taskId: runId };
     const runtimeOptions = {
       attribution,
-      providerGate: this.providerGateFactory?.(provider),
+      providerGate: this.providerGateFactory?.(provider, 'chat', { ownerId: input.owner.owner_id, taskId: runId }),
       providerBudget: this.providerBudget,
       ownerId: input.owner.owner_id,
       metrics: this.metrics,

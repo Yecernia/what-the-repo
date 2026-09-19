@@ -90,6 +90,8 @@ The composition initializes the database and starts PostgreSQL, Redis, API, anal
 
 PR verification includes [runtime configuration checks](scripts/test-runtime-config.mjs), [replica/failover smoke tests](scripts/test-runtime-compose.ps1) and [isolated PostgreSQL tests](scripts/test-postgres.mjs). These do not require the maintainer’s accounts or deployment files.
 
+See [runtime capacity](docs/runtime-capacity.md) for concurrency settings, personal limits, analysis stage resources and migration from old configuration. Example values are not load-tested capacity claims.
+
 ## Feedback and contributions
 
 Found an incorrect explanation, missing evidence or a confusing interaction? [Open an issue](https://github.com/Yecernia/what-the-repo/issues) with the public repository URL, steps to reproduce and expected behavior. Please leave out credentials and private data.

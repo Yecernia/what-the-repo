@@ -149,6 +149,25 @@ test("deadline interrupts an in-flight provider and remains a time limit instead
   } finally { budget.dispose(); }
 });
 
+test('analysis capacity wait does not consume execution time; running provider still has a deadline', async () => {
+  const f = fixture();
+  const budget = await createAnalysisExecutionBudget({ store: f.store, fence: f.fence, signal: new AbortController().signal,
+    limits: { batchCalls: 2, jobCalls: 3, attemptMs: 80 } });
+  let allow!: () => void;
+  const waiting = new Promise<void>(resolve => { allow = resolve; });
+  const gate = budget.wrapGate({ acquire: async () => { await waiting; return { release: async () => {} }; } })!;
+  try {
+    const pending = gate.acquire(budget.signal);
+    await delay(140);
+    assert.equal(budget.signal.aborted, false);
+    allow(); const permit = await pending;
+    await delay(120);
+    assert.equal(budget.signal.aborted, true);
+    assert.match(String(budget.signal.reason), /analysis_time_limit_exceeded/);
+    await permit.release();
+  } finally { budget.dispose(); }
+});
+
 test("submit validator bugs and shared spending rejection have distinct stable failure reasons", async () => {
   const w = worker("budget-error-attribution");
   w.faux.setResponses([fauxAssistantMessage(fauxToolCall("submit_result", { answer: "answer" }))]);

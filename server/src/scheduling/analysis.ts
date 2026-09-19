@@ -1,8 +1,8 @@
 import type { AnalysisJob } from '../domain/jobs.js';
 import { serviceError } from '../services/errors.js';
 
-export interface AnalysisLimits { running: number; ownerRunning: number; ownerWaiting: number; waiting: number }
-export const DEFAULT_ANALYSIS_LIMITS: AnalysisLimits = { running: 1, ownerRunning: 2, ownerWaiting: 4, waiting: 32 };
+export interface AnalysisLimits { running: number; pending?: number; ownerRunning: number; ownerWaiting: number; waiting: number }
+export const DEFAULT_ANALYSIS_LIMITS: AnalysisLimits = { running: 32, pending: 32, ownerRunning: 2, ownerWaiting: 4, waiting: 32 };
 export type ScheduledAnalysis = AnalysisJob & { owner_id: string; execution_scope?: string };
 export function analysisGroup(job: AnalysisJob): string {
   return job.language_overlay_key ? `overlay:${job.language_overlay_key}`
@@ -39,6 +39,9 @@ export function admitAnalysis(jobs: ScheduledAnalysis[], incoming: ScheduledAnal
   if (!joinsRunning && !ownWaiting.has(group) && ownWaiting.size >= limits.ownerWaiting)
     throw serviceError('analysis_owner_queue_full', '你的待分析任务已满，请等待已有任务完成后再试。', 429);
   const waiting = new Set(active.filter(job => job.execution_role !== 'waiter' && !running.has(analysisGroup(job))).map(analysisGroup));
+  if (!active.some(job => analysisGroup(job) === group)
+    && new Set(active.map(analysisGroup)).size >= (limits.pending ?? Infinity))
+    throw serviceError('analysis_queue_full', '分析任务已满，请稍后重试。', 503);
   if (!active.some(job => analysisGroup(job) === group) && !running.has(group) && waiting.size >= limits.waiting)
     throw serviceError('analysis_queue_full', '分析队列已满，请稍后重试。', 503);
   return joinsRunning ? 'running' : 'waiting';

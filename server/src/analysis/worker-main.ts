@@ -4,6 +4,8 @@ import { DEFAULT_BUDGET_POLICIES } from '../agent/provider-budget.js';
 import { loadConfig } from "../config.js";
 import { createProductStore } from "../persistence/factory.js";
 import { AnalysisCoordinator } from "./coordinator.js";
+import { isolatedStageExecutor } from './stage-executor.js';
+import { assertAnalysisContainerBudget } from './container-budget.js';
 import { configureProductSkillRegistry } from "../agent/skill-registry.js";
 import { createTaskQueue } from "../queue/task-queue.js";
 import { PostgresStore } from "../persistence/postgres-store.js";
@@ -14,6 +16,7 @@ import { DatabaseMetricsCollector } from "../observability/database-metrics.js";
 import { startMetricsServer } from "../observability/metrics-server.js";
 
 const config = loadConfig();
+await assertAnalysisContainerBudget(config.analysisMemoryMb ?? 6144);
 configureProductSkillRegistry(config.skillVersionsRoot ?? `${config.dataDir}/skill-versions`);
 const store = createProductStore(config, "analysis-worker");
 await store.init();
@@ -29,9 +32,10 @@ const databaseMetrics = store instanceof PostgresStore
   : null;
 const providerGateFactory = createProviderGateFactory({
   pool: store instanceof PostgresStore ? store.pool : null,
-  maxConcurrent: config.chatConcurrency ?? 8,
-  analysisConcurrent: config.analysisModelConcurrency ?? 4,
-  upstreamConcurrent: config.upstreamConcurrency,
+  maxConcurrent: config.chatModelConcurrency ?? 8,
+  ownerConcurrent: config.chatOwnerConcurrency ?? 2,
+  analysisConcurrent: config.analysisModelConcurrency ?? 8,
+  upstreamCapacities: config.upstreamCapacities,
 });
 const providerBudget = createProviderUsageBudget({
   loadPolicies: () => adminDocuments(store).read("budgets", DEFAULT_BUDGET_POLICIES),
@@ -43,13 +47,14 @@ const providerBudget = createProviderUsageBudget({
 const queue = createTaskQueue({
   redisUrl: config.redisUrl,
   prefix: config.redisPrefix,
-  concurrency: config.analysisQueueConcurrency,
+  concurrency: 1,
   metrics: defaultRuntimeMetrics,
 });
 const queueMetricsTimer = setInterval(() => { void queue.refreshMetrics?.(); }, 15_000);
 queueMetricsTimer.unref();
 void queue.refreshMetrics?.();
-const coordinator = new AnalysisCoordinator(store, config, providerGateFactory, defaultRuntimeMetrics, providerBudget);
+const coordinator = new AnalysisCoordinator(store, config, providerGateFactory, defaultRuntimeMetrics, providerBudget,
+  store instanceof PostgresStore ? isolatedStageExecutor(store, config) : undefined);
 await coordinator.start({ poll: false });
 await queue.startAnalysisConsumer(() => coordinator.runOnce());
 const metricsServer = await startMetricsServer({

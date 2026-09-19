@@ -32,7 +32,6 @@ function config(dataDir: string): ServerConfig {
     keyEncryptionSecret: "test-session-secret",
     quotaMaxProjects: 20,
     quotaCreationsPerHour: 30,
-    quotaActiveAnalysisJobs: 2,
     quotaStorageBytes: 4 * 1024 * 1024 * 1024,
     mcpTokens: [],
     mcpRequestsPerMinute: 60,

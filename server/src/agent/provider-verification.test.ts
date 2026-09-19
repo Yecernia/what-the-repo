@@ -3,6 +3,16 @@ import test from 'node:test';
 import dns from 'node:dns/promises';
 import { verifyManualModel } from './provider-verification.js';
 
+test('retired or translation models are rejected before any network or paid probe', async (t) => {
+  const fetchMock = t.mock.method(globalThis, 'fetch', () => { throw new Error('Unexpected network call'); });
+  const connection = { connection_id: 'probe', provider: 'hunyuan-tokenhub-api-cn' as const, label: 'Probe', base_url: null, custom_models: [], last_verified_at: null, verify_error: null };
+  for (const id of ['hy-mt2-pro', 'doubao-seed-translation-250915', 'qwen3.5-plus', 'kimi-k2.5']) {
+    assert.equal((await verifyManualModel(connection, 'fake-key', id)).ok, false, id);
+  }
+  assert.equal((await verifyManualModel({ ...connection, provider: 'deepseek' }, 'fake-key', 'deepseek-chat')).ok, false);
+  assert.equal(fetchMock.mock.calls.length, 0);
+});
+
 test('manual verification uses the Anthropic adapter and requires a text response', async (t) => {
   t.mock.method(dns, 'lookup', async () => [{ address: '93.184.216.34', family: 4 }]);
   let calls = 0;

@@ -37,7 +37,6 @@ function testConfig(dataDir: string): ServerConfig {
     keyEncryptionSecret: "test-session-secret",
     quotaMaxProjects: 20,
     quotaCreationsPerHour: 30,
-    quotaActiveAnalysisJobs: 2,
     quotaStorageBytes: 4 * 1024 * 1024 * 1024,
     mcpTokens: [{ token: TOKEN, ownerId: "github:test-owner" }],
     mcpRequestsPerMinute: 60,

@@ -38,7 +38,8 @@ import {
 } from "../agent/provider-resolver.js";
 import {
   filterLikelyConversationalModelIds,
-  providerModelIds,
+  discoverProviderModels,
+  mergeDiscoveredModelIds,
   providerPreset,
   type ProviderApi,
 } from "../agent/provider-catalog.js";
@@ -280,8 +281,8 @@ function decodeProviderVerificationTicket(
       base_url: parsed.base_url ?? null,
       key_digest: String(parsed.key_digest).toLowerCase(),
       issued_at: parsed.issued_at,
-      models: filterLikelyConversationalModelIds(parsed.models),
-      manual_models: filterLikelyConversationalModelIds(parsed.manual_models),
+      models: filterLikelyConversationalModelIds(parsed.models, parsed),
+      manual_models: filterLikelyConversationalModelIds(parsed.manual_models, parsed),
     };
   } catch {
     return null;
@@ -419,7 +420,7 @@ async function settingsResponse(config: ServerConfig, store: ProductStore, owner
     ...connection,
     base_url: connection.base_url ?? presetBaseUrl(connection.provider),
     custom_models: hasTrustedProviderModels(connection)
-      ? filterLikelyConversationalModelIds(connection.custom_models)
+      ? filterLikelyConversationalModelIds(connection.custom_models, connection)
       : [],
     models_source: hasTrustedProviderModels(connection) ? connection.models_source : null,
     retired: !CONFIGURABLE_PROVIDER_IDS.includes(connection.provider),
@@ -567,6 +568,7 @@ function matchingVerificationTicket(
   const ticket = token ? decodeProviderVerificationTicket(token, config) : null;
   return ticket && ticket.owner_id === owner.owner_id && ticket.provider === connection.provider
     && ticket.label === connection.label && ticket.base_url === connection.base_url
+    && (!connection.last_verified_at || ticket.issued_at >= Date.parse(connection.last_verified_at))
     && ticket.key_digest === providerKeyDigest(apiKey) ? ticket : null;
 }
 
@@ -582,8 +584,8 @@ function selectedVerifiedModels(raw: unknown, allowed: string[], allowEmpty = fa
 }
 
 function setConnectionModels(connection: ProviderConnectionSettings, models: string[], manual: string[]): void {
-  connection.custom_models = models;
-  connection.manually_verified_models = manual.filter(id => models.includes(id));
+  connection.custom_models = filterLikelyConversationalModelIds(models, connection);
+  connection.manually_verified_models = manual.filter(id => connection.custom_models.includes(id));
   connection.models_source = connection.manually_verified_models.length ? "verified" : "provider";
   connection.last_verified_at = nowIso();
   connection.verify_error = null;
@@ -594,6 +596,8 @@ interface ProviderVerificationResult {
   models: string[];
   supported: boolean;
   message: string;
+  /** Present only after a valid authenticated list response, including an empty list. */
+  excludedModels?: string[];
 }
 
 async function verifyProvider(
@@ -653,11 +657,14 @@ async function verifyProvider(
         message: "验证失败：Provider 模型列表格式不可用",
       };
     }
-    models = providerModelIds(payload, provider);
+    const discovered = discoverProviderModels(payload, { provider, base_url: baseUrl });
+    if (!discovered.valid) return { ok: false, models: [], supported: true, message: "验证失败：Provider 模型列表格式不可用" };
+    models = discovered.models;
     if (!models.length) {
       return {
         ok: false,
         models,
+        excludedModels: discovered.excludedModels,
         supported: true,
         message: "Provider 没有返回可对话模型",
       };
@@ -665,6 +672,7 @@ async function verifyProvider(
     return {
       ok: true,
       models,
+      excludedModels: discovered.excludedModels,
       supported: true,
       message: "已读取上游模型列表，正在验证连接",
     };
@@ -710,9 +718,14 @@ function applyVerificationResult(
   connection: ProviderConnectionSettings,
   result: ProviderVerificationResult,
 ): void {
-  // A temporary discovery failure must not erase a user's working configuration.
-  if (!result.ok) return;
-  result.models = filterLikelyConversationalModelIds([...(connection.manually_verified_models ?? []), ...result.models]);
+  // Network/format failures have no authoritative negative metadata. A valid
+  // all-retired response, however, must invalidate cached manual models too.
+  if (result.excludedModels === undefined) return;
+  const models = mergeDiscoveredModelIds(result, connection.manually_verified_models ?? [], connection);
+  result.models = models.length || result.ok ? models
+    : mergeDiscoveredModelIds(result, connection.custom_models, connection);
+  result.ok = result.models.length > 0;
+  if (result.ok) result.message = `验证成功，已读取 ${result.models.length} 个可对话模型`;
   setConnectionModels(connection, result.models, connection.manually_verified_models ?? []);
   settings.model = effectiveModelSelector(config, store, owner, settings, settings.model);
 }
@@ -1364,7 +1377,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     }
     const previous = matchingVerificationTicket(body, connection, apiKey, owner, config);
     const storedModels = existing && hasTrustedProviderModels(existing) ? existing.custom_models : [];
-    const allowed = filterLikelyConversationalModelIds([...storedModels, ...(previous?.models ?? [])]);
+    const allowed = filterLikelyConversationalModelIds(previous?.models ?? storedModels, connection);
     const modelId = typeof body.model_id === "string" ? body.model_id.trim() : "";
     if ("model_id" in body && !modelId) throw httpError(400, "请填写模型名称");
     // A fresh discovery can recover from an expired ticket. It never trusts
@@ -1378,9 +1391,27 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       ownerId: owner.owner_id, providerGateFactory: dependencies.providerGateFactory, providerBudget: dependencies.providerBudget, metrics,
     }) : null;
     const verification: ProviderVerificationResult = manualResult
-      ? { ...manualResult, models: manualResult.ok ? filterLikelyConversationalModelIds([modelId, ...selected]) : [], supported: false }
+      ? { ...manualResult, models: manualResult.ok ? filterLikelyConversationalModelIds([modelId, ...selected], connection) : [], supported: false }
       : await discoverConnectionModels(connection, apiKey);
-    if (verification.ok && !manualResult) verification.models = filterLikelyConversationalModelIds([...previousManual, ...verification.models]);
+    if (!manualResult && verification.excludedModels !== undefined) {
+      verification.models = mergeDiscoveredModelIds(verification, previousManual, connection);
+      verification.ok = verification.models.length > 0;
+      if (verification.ok) verification.message = `验证成功，已读取 ${verification.models.length} 个可对话模型`;
+      if (existing && verification.excludedModels.length) {
+        // Discovery edits a draft, but explicit upstream revocations must also
+        // invalidate the live cached choices, even if the draft becomes empty.
+        await connectionMutationMutex.runExclusive(owner.owner_id, async () => {
+          const currentSettings = await store.loadSettings(owner.owner_id);
+          const current = currentSettings.connections.find(item => item.connection_id === existing.connection_id);
+          if (!current || store.keys.get(owner.owner_id, current.connection_id) !== apiKey) return;
+          const retained = mergeDiscoveredModelIds({ models: [], excludedModels: verification.excludedModels }, current.custom_models, current);
+          if (retained.length === current.custom_models.length) return;
+          setConnectionModels(current, retained, current.manually_verified_models ?? []);
+          currentSettings.model = effectiveModelSelector(config, store, owner, currentSettings, currentSettings.model);
+          await store.saveSettings(owner.owner_id, currentSettings);
+        });
+      }
+    }
     const manual = manualResult?.ok ? [...new Set([modelId, ...previousManual])] : previousManual;
     const message = verification.ok
       ? verification.message
@@ -1457,9 +1488,10 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       if (!connection) throw httpError(404, "模型连接不存在");
       const apiKey = store.keys.get(owner.owner_id, connectionId) ?? "";
       const ticket = matchingVerificationTicket(body, connection, apiKey, owner, config);
-      const allowed = filterLikelyConversationalModelIds([
-        ...(hasTrustedProviderModels(connection) ? connection.custom_models : []), ...(ticket?.models ?? []),
-      ]);
+      // A fresh proof is the authoritative draft. Do not union excluded old
+      // models back into it via the stored list.
+      const allowed = filterLikelyConversationalModelIds(ticket?.models
+        ?? (hasTrustedProviderModels(connection) ? connection.custom_models : []), connection);
       const models = selectedVerifiedModels(body.models, allowed);
       setConnectionModels(connection, models, [...(connection.manually_verified_models ?? []), ...(ticket?.manual_models ?? [])]);
       settings.model = effectiveModelSelector(config, store, owner, settings, settings.model);

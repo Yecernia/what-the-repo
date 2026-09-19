@@ -1,6 +1,10 @@
-import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
+function hasInlineStaticCheckpoint(value: unknown): boolean {
+  return Boolean(value && typeof value === 'object' && ['parsed', 'lsp_results', 'previous_fact_graph']
+    .some(key => (value as Record<string, unknown>)[key] !== undefined));
+}
 import { join } from "node:path";
 import { KeyedMutex } from "../agent/mutex.js";
 import {
@@ -171,6 +175,9 @@ interface BinaryAnalysisCheckpointEnvelope {
   payload_file: string;
   bytes: number;
   sha256: string;
+  stage?: string;
+  source_bytes?: number;
+  static_payload?: { file: string; bytes: number; sha256: string };
 }
 
 function isBinaryAnalysisCheckpointEnvelope(value: unknown): value is BinaryAnalysisCheckpointEnvelope {
@@ -586,7 +593,21 @@ export class FileStore implements ProductStore {
    */
   async saveAnalysisCheckpoint(projectId: string, checkpoint: unknown, snapshot: unknown): Promise<void> {
     const checkpointPath = this.path("analysisCheckpoints", projectId);
-    const payload = serialize({ checkpoint, snapshot });
+    const fields = checkpoint as Record<string, unknown>;
+    const previous = await readJson<BinaryAnalysisCheckpointEnvelope>(checkpointPath);
+    let staticPayload = previous?.static_payload;
+    let savedCheckpoint = checkpoint;
+    if (fields && typeof fields === 'object') {
+      const { parsed, lsp_results, previous_fact_graph, ...light } = fields;
+      if (parsed !== undefined || lsp_results !== undefined || previous_fact_graph !== undefined) {
+        const bytes = serialize({ parsed, lsp_results, previous_fact_graph });
+        const file = `${safeId(projectId)}.${randomUUID()}.static.bin`;
+        await writeBytes(join(this.dirs.analysisCheckpoints, file), bytes);
+        staticPayload = { file, bytes: bytes.byteLength, sha256: bytesSha256(bytes) };
+      } else if (fields.stage === 'source') staticPayload = undefined;
+      savedCheckpoint = light;
+    }
+    const payload = serialize({ checkpoint: savedCheckpoint, snapshot });
     const payloadFile = `${safeId(projectId)}.${randomUUID()}.bin`;
     const payloadPath = join(this.dirs.analysisCheckpoints, payloadFile);
     await writeBytes(payloadPath, payload);
@@ -597,6 +618,9 @@ export class FileStore implements ProductStore {
         payload_file: payloadFile,
         bytes: payload.byteLength,
         sha256: bytesSha256(payload),
+        stage: typeof fields?.stage === 'string' ? fields.stage : undefined,
+        source_bytes: ((fields?.fetched as { manifest?: Array<{ bytes: number }> })?.manifest ?? []).reduce((sum, file) => sum + file.bytes, 0),
+        static_payload: staticPayload,
       } satisfies BinaryAnalysisCheckpointEnvelope);
     } catch (error) {
       await rm(payloadPath, { force: true }).catch(() => undefined);
@@ -606,11 +630,18 @@ export class FileStore implements ProductStore {
     // remove only after the new pointer has been committed.
     const prefix = `${safeId(projectId)}.`;
     await Promise.all((await readdir(this.dirs.analysisCheckpoints).catch(() => [] as string[]))
-      .filter((name) => name.startsWith(prefix) && name.endsWith(".bin") && name !== payloadFile)
+      .filter((name) => name.startsWith(prefix) && name.endsWith(".bin") && name !== payloadFile && name !== staticPayload?.file)
       .map((name) => rm(join(this.dirs.analysisCheckpoints, name), { force: true }).catch(() => undefined)));
   }
 
-  async loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string): Promise<{ checkpoint: T; snapshot: T | null } | null> {
+  async analysisCheckpointInfo(projectId: string): Promise<{ stage: string; bytes: number; sourceBytes: number; staticBytes: number } | null> {
+    const value = await readJson<BinaryAnalysisCheckpointEnvelope>(this.path('analysisCheckpoints', projectId));
+    if (!value) return null;
+    return { stage: value.stage ?? 'legacy', bytes: value.bytes ?? (await stat(this.path('analysisCheckpoints', projectId))).size,
+      sourceBytes: value.source_bytes ?? 0, staticBytes: value.static_payload?.bytes ?? 0 };
+  }
+
+  async loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string, options: { omitStatic?: boolean } = {}): Promise<{ checkpoint: T; snapshot: T | null } | null> {
     const checkpointPath = this.path("analysisCheckpoints", projectId);
     const value = await readJson<unknown>(checkpointPath);
     if (!value) return null;
@@ -639,11 +670,27 @@ export class FileStore implements ProductStore {
       }
       const row = decoded as { checkpoint?: T; snapshot?: T | null };
       if (!row.checkpoint) return null;
+      if (options.omitStatic && hasInlineStaticCheckpoint(row.checkpoint)) {
+        await this.saveAnalysisCheckpoint(projectId, row.checkpoint, row.snapshot ?? null);
+        return this.loadAnalysisCheckpoint<T>(projectId, options);
+      }
+      if (value.static_payload && !options.omitStatic) {
+        const part = value.static_payload;
+        if (part.file !== part.file.replaceAll('\\', '/').split('/').at(-1) || !part.file.startsWith(`${safeId(projectId)}.`))
+          throw new Error('analysis_checkpoint_payload_invalid');
+        const bytes = await readFile(join(this.dirs.analysisCheckpoints, part.file));
+        if (bytes.byteLength !== part.bytes || bytesSha256(bytes) !== part.sha256) throw new Error('analysis_checkpoint_integrity_mismatch');
+        Object.assign(row.checkpoint, deserialize(bytes));
+      }
       return { checkpoint: row.checkpoint, snapshot: row.snapshot ?? null };
     }
     // Legacy checkpoints written before the binary format.
     const legacy = value as { checkpoint?: T; snapshot?: T | null };
     if (!legacy.checkpoint) return null;
+    if (options.omitStatic && hasInlineStaticCheckpoint(legacy.checkpoint)) {
+      await this.saveAnalysisCheckpoint(projectId, legacy.checkpoint, legacy.snapshot ?? null);
+      return this.loadAnalysisCheckpoint<T>(projectId, options);
+    }
     return { checkpoint: legacy.checkpoint, snapshot: legacy.snapshot ?? null };
   }
 

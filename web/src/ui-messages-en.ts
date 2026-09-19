@@ -78,6 +78,7 @@ export const englishMessages: Record<string, string> = {
   '从上游获取模型，或手动添加并验证。至少保留一个模型才能保存。': 'Fetch models from your provider, or add and verify one manually. Keep at least one model to save.',
   '正在验证模型…': 'Verifying model…',
   '模型名称无效或属于非对话模型': 'The model name is invalid or identifies a non-chat model',
+  '模型已下线或已被其他模型替换，请刷新列表后重新选择': 'This model has been retired or replaced. Refresh the list and select another model.',
   '模型连接配置不可用': 'The model connection is unavailable',
   '模型验证失败，请检查名称、模型权限、额度或网络后重试': 'Verification failed. Check the model name, access, quota, or network and retry.',
   '模型验证成功，已收到对话回复': 'Model verified: a chat response was received',

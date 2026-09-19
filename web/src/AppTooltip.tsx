@@ -75,8 +75,11 @@ export function AppTooltip() {
       const right = left + (viewport?.width ?? window.innerWidth) - 20;
       const bottom = top + (viewport?.height ?? window.innerHeight) - 20;
       const below = rect.top - box.height - 9 < top;
-      el.style.left = `${Math.max(left, Math.min(right - box.width, rect.left + (rect.width - box.width) / 2))}px`;
-      el.style.top = `${Math.max(top, Math.min(bottom - box.height, below ? rect.bottom + 9 : rect.top - box.height - 9))}px`;
+      const beside = anchor.dataset.tooltipPlacement === 'right';
+      const x = beside ? rect.right + 6 : rect.left + (rect.width - box.width) / 2;
+      const y = beside ? rect.top + (rect.height - box.height) / 2 : below ? rect.bottom + 9 : rect.top - box.height - 9;
+      el.style.left = `${Math.max(left, Math.min(right - box.width, x))}px`;
+      el.style.top = `${Math.max(top, Math.min(bottom - box.height, y))}px`;
       el.style.visibility = 'visible';
     };
     place();
@@ -95,7 +98,7 @@ export function AppTooltip() {
   }, [hint, id]);
 
   return hint && createPortal(<div ref={tip} id={id} role="tooltip" popover="manual"
-    className="app-tooltip" data-reading={Boolean(hint.anchor.closest('.repository-workspace, .source-dialog'))}>
+    className="app-tooltip" data-reading={hint.anchor.dataset.tooltipReading === 'true' || Boolean(hint.anchor.closest('.repository-workspace, .source-dialog'))}>
     {hint.text}
   </div>, hint.anchor.closest('dialog[open]') ?? document.body);
 }

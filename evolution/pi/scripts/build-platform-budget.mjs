@@ -8,7 +8,7 @@ import ts from 'typescript';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const sourceRoot = join(root, 'server/src');
 const outputRoot = join(root, 'server/dist');
-const pending = ['agent/provider-budget.ts', 'agent/mutex.ts'];
+const pending = ['agent/provider-budget.ts', 'agent/mutex.ts', 'agent/provider-gate.ts', 'scheduling/config.ts'];
 const written = new Set();
 while (pending.length) {
   const name = pending.pop();

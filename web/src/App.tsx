@@ -1998,7 +1998,9 @@ function LoginScreen({
       <FieldScene className="auth-illustration" />
       <section className="auth-panel" aria-labelledby="auth-title">
         <div className="auth-copy">
-          <h1 id="auth-title">{t('从好奇开始。')}<SketchDoodle variant="underline" className="auth-heading-line" /></h1>
+          <h1 id="auth-title">{language === 'en'
+            ? <>Follow your <span className="auth-heading-accent">curiosity<SketchDoodle variant="underline" className="auth-heading-line" /></span>.</>
+            : <>从<span className="auth-heading-accent">好奇<SketchDoodle variant="underline" className="auth-heading-line" /></span>开始。</>}</h1>
           <p>{t("快速理解，深入学习陌生仓库")}</p>
         </div>
         <button className="btn btn-primary auth-action" type="button"
@@ -3410,7 +3412,7 @@ export default function App() {
                     return (
                       <button type="button" className="message-jump" key={message.message_id}
                         aria-label={t("跳转到你的消息：{0}", preview)}
-                        data-preview={preview}
+                        data-tooltip={preview} data-tooltip-placement="right" data-tooltip-reading="true"
                         onClick={() => jumpToMessage(message.message_id)}>
                         <span className="message-jump-line" />
                       </button>

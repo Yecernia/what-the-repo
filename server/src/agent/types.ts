@@ -120,6 +120,8 @@ export interface PiModelRuntime {
   fetch?: FetchFunction;
   networkTimeoutMs?: number;
   providerGate?: ProviderCallGate;
+  /** A producer bound; actual grants come from the shared model scheduler. */
+  analysisBatchConcurrency?: number;
   providerBudget?: ProviderUsageBudget;
   providerConnectionId?: string;
   attribution?: import('./provider-budget.js').UsageAttribution;

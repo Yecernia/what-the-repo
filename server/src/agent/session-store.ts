@@ -47,6 +47,7 @@ export interface PiSessionBackendOptions {
 }
 
 export interface PiSessionWaitOptions extends PiSessionBackendOptions {
+  failFast?: boolean;
   waitTimeoutMs?: number;
 }
 
@@ -199,6 +200,7 @@ export class PiSessionStore {
     task: (context: PiSessionContext) => Promise<T>,
     options: PiSessionWaitOptions = {},
   ): Promise<T> {
+    if (options.failFast && this.mutex.isLocked(identity.sessionId)) throw new PiSessionWaitTimeoutError();
     const waitController = new AbortController();
     let waiting = true;
     const abortFromCaller = (): void => {

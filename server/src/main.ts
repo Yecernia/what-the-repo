@@ -12,6 +12,8 @@ import { PostgresStore } from "./persistence/postgres-store.js";
 import { PostgresMemoryStore } from "./persistence/postgres-memory-store.js";
 import { PostgresPiSessionBackend } from "./persistence/postgres-session-backend.js";
 import { AnalysisCoordinator } from "./analysis/coordinator.js";
+import { isolatedStageExecutor } from './analysis/stage-executor.js';
+import { assertAnalysisContainerBudget } from './analysis/container-budget.js';
 import { configureProductSkillRegistry } from "./agent/skill-registry.js";
 import { runRetentionSweep } from "./services/lifecycle-service.js";
 import { RetentionScheduler } from "./services/retention-scheduler.js";
@@ -22,6 +24,7 @@ import { defaultRuntimeMetrics } from "./observability/metrics.js";
 import { DatabaseMetricsCollector } from "./observability/database-metrics.js";
 
 const config = loadConfig();
+if (config.databaseUrl && !config.redisUrl) await assertAnalysisContainerBudget(config.analysisMemoryMb ?? 6144);
 assertApiSessionSecret(config);
 configureProductSkillRegistry(config.skillVersionsRoot);
 const store = createProductStore(config, "api");
@@ -48,9 +51,10 @@ const memories = store instanceof PostgresStore
   : new PiMemoryStore(config.memoryDir);
 const providerGateFactory = createProviderGateFactory({
   pool: store instanceof PostgresStore ? store.pool : null,
-  maxConcurrent: config.chatConcurrency ?? 8,
-  analysisConcurrent: config.analysisModelConcurrency ?? 4,
-  upstreamConcurrent: config.upstreamConcurrency,
+  maxConcurrent: config.chatModelConcurrency ?? 8,
+  ownerConcurrent: config.chatOwnerConcurrency ?? 2,
+  analysisConcurrent: config.analysisModelConcurrency ?? 8,
+  upstreamCapacities: config.upstreamCapacities,
 });
 const providerBudget = createProviderUsageBudget({
   loadPolicies: () => adminDocuments(store).read("budgets", DEFAULT_BUDGET_POLICIES),
@@ -62,13 +66,14 @@ const providerBudget = createProviderUsageBudget({
 const taskQueue = createTaskQueue({
   redisUrl: config.redisUrl,
   prefix: config.redisPrefix,
-  concurrency: config.analysisQueueConcurrency,
+  concurrency: 1,
   metrics: defaultRuntimeMetrics,
 });
 const queueMetricsTimer = setInterval(() => { void taskQueue.refreshMetrics?.(); }, 15_000);
 queueMetricsTimer.unref();
 void taskQueue.refreshMetrics?.();
-const analysis = new AnalysisCoordinator(store, config, providerGateFactory, defaultRuntimeMetrics, providerBudget);
+const analysis = new AnalysisCoordinator(store, config, providerGateFactory, defaultRuntimeMetrics, providerBudget,
+  store instanceof PostgresStore ? isolatedStageExecutor(store, config) : undefined);
 // Redis mode delegates analysis to the dedicated worker process. A direct
 // local start without Redis keeps polling as a development/test fallback.
 if (!config.redisUrl) await analysis.start();

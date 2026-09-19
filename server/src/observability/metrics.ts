@@ -9,6 +9,10 @@ export const METRIC_NAMES = {
   analysisActive: "what_the_repo_analysis_runs_active",
   analysisJobs: "what_the_repo_analysis_jobs_total",
   analysisDuration: "what_the_repo_analysis_job_duration_ms",
+  analysisStageWait: "what_the_repo_analysis_stage_wait_ms",
+  analysisStageDuration: "what_the_repo_analysis_stage_duration_ms",
+  analysisStageActive: "what_the_repo_analysis_stage_active",
+  analysisMemoryReserved: "what_the_repo_analysis_memory_reserved_mb",
   providerCalls: "what_the_repo_provider_calls_total",
   providerActive: "what_the_repo_provider_calls_active",
   providerDuration: "what_the_repo_provider_call_duration_ms",
@@ -49,6 +53,7 @@ const DEFAULT_HISTOGRAM_BUCKETS = [
   10_000,
   30_000,
   60_000,
+  120_000, 300_000, 600_000, 900_000, 1_800_000, 3_600_000,
 ];
 
 interface LabelSet {
@@ -196,6 +201,30 @@ export class RuntimeMetrics {
       this.observe(name, elapsed, labels);
       return elapsed;
     };
+  }
+
+  /** Add deltas from one isolated child. Its last snapshot belongs to the caller;
+   * no process/task identifiers become metric labels or long-lived registry keys. */
+  mergeProcessSnapshot(snapshot: RuntimeMetricsSnapshot, previous?: RuntimeMetricsSnapshot): void {
+    const key = (row: { name: string; labels: Record<string, string> }) => row.name + normalizeLabels(row.labels).key;
+    const oldCounters = new Map(previous?.counters.map(row => [key(row), row]));
+    const oldGauges = new Map(previous?.gauges.map(row => [key(row), row]));
+    const oldHistograms = new Map(previous?.histograms.map(row => [key(row), row]));
+    for (const row of snapshot.counters)
+      this.increment(row.name, row.value - (oldCounters.get(key(row))?.value ?? 0), row.labels);
+    for (const row of snapshot.gauges) if (row.name === METRIC_NAMES.providerActive)
+      this.addGauge(row.name, row.value - (oldGauges.get(key(row))?.value ?? 0), row.labels);
+    for (const row of snapshot.histograms) {
+      if (this.histogramBuckets.some((le, i) => row.buckets[i]?.le !== le)) continue;
+      const normalized = normalizeLabels(row.labels), id = key(row), old = oldHistograms.get(id);
+      this.assertKind(row.name, 'histogram');
+      const series = this.histograms.get(id) ?? { name: row.name, ...normalized, count: 0, sum: 0,
+        buckets: this.histogramBuckets.map(() => 0) };
+      series.count += row.count - (old?.count ?? 0);
+      series.sum += row.sum - (old?.sum ?? 0);
+      series.buckets = series.buckets.map((value, i) => value + row.buckets[i]!.value - (old?.buckets[i]?.value ?? 0));
+      this.histograms.set(id, series);
+    }
   }
 
   snapshot(): RuntimeMetricsSnapshot {

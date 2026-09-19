@@ -86,6 +86,7 @@ import { generateSnapshotLanguageOverlay } from "./language-overlay-worker.js";
 import { defaultRuntimeMetrics, METRIC_NAMES, type RuntimeMetrics } from "../observability/metrics.js";
 import { performance } from "node:perf_hooks";
 import type { StoredSourceSnapshot } from "../persistence/snapshot-object-store.js";
+import { checkpointExecutionStage, type AnalysisExecutionStage, type AnalysisStageExecutor } from './stage-protocol.js';
 
 export { ANALYSIS_CONFIG_DIGEST, ANALYZER_BUNDLE_VERSION } from "./identity.js";
 
@@ -124,6 +125,7 @@ interface AnalysisCheckpoint {
   previous_fact_graph?: NonNullable<EvidenceSnapshot["fact_graph"]> | null;
   redirects?: RevisionRedirect[];
   prepared_source?: StoredSourceSnapshot;
+  from_public_key?: string | null;
 }
 
 function semanticFailureCode(error: unknown): string {
@@ -178,7 +180,7 @@ function isAnalysisLeaseLost(error: unknown): boolean {
 export function isRetryableAnalysisError(message: string): boolean {
   const normalized = message.trim().toLowerCase();
   if (!normalized || normalized === "analysis_lease_lost") return false;
-  if (["provider_transient_error", "provider_rate_limited", "provider_busy", "provider_connection_failed"].includes(normalized)) return true;
+  if (["provider_transient_error", "provider_rate_limited", "provider_busy", "provider_connection_failed", "analysis_stage_process_failed"].includes(normalized)) return true;
   if (normalized.includes("timeout") || normalized.includes("timed out")) return true;
   if (normalized.includes("econn") || normalized.includes("network") || normalized.includes("fetch failed")) return true;
   if (normalized.includes("provider_unavailable") || normalized.includes("provider_timeout")) return true;
@@ -296,6 +298,9 @@ export class AnalysisCoordinator {
   private readonly parser = new TreeSitterAnalyzer();
   private lspRunner: LspRunner | null = null;
   private readonly workerId = `ts-analysis-${process.pid}-${randomUUID()}`;
+  private executionStage?: AnalysisExecutionStage;
+  private nextStage: AnalysisExecutionStage | null = null;
+  private dispatching = false;
 
   constructor(
     private readonly store: ProductStore,
@@ -303,14 +308,15 @@ export class AnalysisCoordinator {
     private readonly providerGateFactory?: ProviderGateFactory,
     private readonly metrics: RuntimeMetrics = defaultRuntimeMetrics,
     private readonly providerBudget?: ProviderUsageBudget,
+    private readonly stageExecutor?: AnalysisStageExecutor,
   ) {
-    this.concurrency = Math.max(1, Math.min(16, config.analysisQueueConcurrency ?? 1));
+    // Lightweight orchestration is bounded by accepted work, not a whole-job CPU lane.
+    this.concurrency = store.kind === 'file' && !stageExecutor ? 1 : config.analysisPendingLimit ?? 32;
   }
 
   async start(options: { poll?: boolean } = {}): Promise<void> {
     this.stopping = false;
-    await this.parser.init();
-    this.lspRunner = await createLspRunner();
+    if (!this.stageExecutor) { await this.parser.init(); this.lspRunner = await createLspRunner(); }
     if (options.poll === false) return;
     if (this.timer) return;
     this.timer = setInterval(() => { void this.runOnce(); }, 500);
@@ -337,12 +343,17 @@ export class AnalysisCoordinator {
   }
 
   async runOnce(): Promise<void> {
-    if (this.stopping || this.activeRuns >= this.concurrency) return;
+    if (this.stopping || this.dispatching || this.activeRuns >= this.concurrency) return;
+    this.dispatching = true;
     const lanes: Promise<void>[] = [];
+    try {
     while (!this.stopping && this.activeRuns < this.concurrency) {
+      const candidate = await this.store.claimAnalysisJob(this.workerId, JOB_LEASE_SECONDS);
+      if (!candidate) break;
       this.activeRuns += 1;
       this.metrics.setGauge(METRIC_NAMES.analysisActive, this.activeRuns, { worker: "analysis" });
       const execution = (async () => {
+        await this.processCandidate(candidate);
         while (!this.stopping && await this.claimAndProcess()) { /* Drain durable work whenever a slot becomes free. */ }
       })().finally(() => {
         this.activeRuns -= 1;
@@ -352,12 +363,18 @@ export class AnalysisCoordinator {
       this.inFlight.add(execution);
       lanes.push(execution);
     }
+    } finally { this.dispatching = false; }
     await Promise.all(lanes);
   }
 
   private async claimAndProcess(): Promise<boolean> {
     const candidate = await this.store.claimAnalysisJob(this.workerId, JOB_LEASE_SECONDS);
     if (!candidate) return false;
+    await this.processCandidate(candidate);
+    return true;
+  }
+
+  private async processCandidate(candidate: AnalysisJob): Promise<void> {
     const startedAt = performance.now();
     const role = candidate.execution_role ?? "standalone";
     this.metrics.increment(METRIC_NAMES.analysisJobs, 1, { role, phase: "claimed" });
@@ -371,7 +388,6 @@ export class AnalysisCoordinator {
     if (status === "queued" && (finalJob?.attempt ?? candidate.attempt) > candidate.attempt) {
       this.metrics.increment(METRIC_NAMES.analysisJobs, 1, { role, outcome: "retry" });
     }
-    return true;
   }
 
   private async requeueAfterTransientFailure(
@@ -460,10 +476,44 @@ export class AnalysisCoordinator {
     const cancellationTimer = setInterval(() => { void pollCancellation(); }, 1_000);
     cancellationTimer.unref?.();
     void pollCancellation();
+    let renewing = false;
+    const heartbeat = this.stageExecutor ? setInterval(() => {
+      if (renewing || controller.signal.aborted) return;
+      renewing = true;
+      void this.store.heartbeatAnalysisJob(job.job_id, job.lease_owner!, job.attempt, JOB_LEASE_SECONDS)
+        .then(ok => { if (!ok) controller.abort(new Error('analysis_lease_lost')); })
+        .catch(() => controller.abort(new Error('analysis_lease_lost'))).finally(() => { renewing = false; });
+    }, JOB_HEARTBEAT_MS) : undefined;
     try {
-      await this.processClaimedJob(job, controller.signal);
+      if (this.stageExecutor) {
+        try { await this.stageExecutor.run(job, controller.signal); }
+        catch (error) {
+          if (!controller.signal.aborted) {
+            const message = error instanceof Error ? error.message : 'analysis_stage_failed';
+            const fence = { jobId: job.job_id, workerId: job.lease_owner!, attempt: job.attempt, projectId: job.project_id };
+            if (await this.requeueAfterTransientFailure(job, job.lease_owner!, message)) return;
+            if (job.repository_update_id) await this.store.failRepositoryUpdate(job.repository_update_id, message, fence);
+            else if (job.execution_role === 'overlay') {
+              const project = await this.store.loadProject(job.project_id);
+              if (project?.analysis.canonical_snapshot_key) await this.store.failSnapshotLanguageOverlay(
+                project.analysis.canonical_snapshot_key, normalizeDisplayLanguage(project.display_language), message, fence);
+              else await this.store.finishAnalysisJob({ ...job, status: 'failed', lease_owner: null, lease_expires_at: null,
+                error: message, error_code: 'analysis_stage_failed', completed_at: nowIso(), updated_at: nowIso() }, job.lease_owner!, job.attempt);
+            }
+            else {
+              await this.updateAnalysisProjects(job, fence, row => {
+                row.analysis.stage = 'failed'; row.analysis.error = message; row.analysis.completed_at = nowIso();
+                recordAnalysisProgress(row.analysis, 'failed', 'failed', nowIso());
+              });
+              await this.store.finishAnalysisJob({ ...job, status: 'failed', lease_owner: null, lease_expires_at: null,
+                error: message, error_code: 'analysis_stage_failed', completed_at: nowIso(), updated_at: nowIso() }, job.lease_owner!, job.attempt);
+            }
+          }
+        }
+      } else await this.processClaimedJob(job, controller.signal);
     } finally {
       clearInterval(cancellationTimer);
+      clearInterval(heartbeat);
       this.activeControllers.delete(job.job_id);
       if (
         controller.signal.aborted
@@ -474,6 +524,15 @@ export class AnalysisCoordinator {
         await this.store.releaseAnalysisJobForResume(job.job_id, job.lease_owner, job.attempt);
       }
     }
+  }
+
+  /** Called only by the isolated stage entry point, with an already fenced job. */
+  async runAssignedStage(job: AnalysisJob, stage: AnalysisExecutionStage, signal: AbortSignal): Promise<AnalysisExecutionStage | null> {
+    this.executionStage = stage;
+    this.nextStage = null;
+    if (stage === 'cpu') { await this.parser.init(); this.lspRunner = await createLspRunner(); }
+    await this.processClaimedJob(job, signal);
+    return this.nextStage;
   }
 
   private async processClaimedJob(job: AnalysisJob, signal: AbortSignal): Promise<void> {
@@ -603,10 +662,14 @@ export class AnalysisCoordinator {
     try {
       // Missing checkpoints return null. Corruption or read errors must stop
       // recovery instead of silently discarding completed work and model cost.
-      checkpoint = await this.store.loadAnalysisCheckpoint<AnalysisCheckpoint>(project.project_id);
+      checkpoint = await this.store.loadAnalysisCheckpoint<AnalysisCheckpoint>(project.project_id, { omitStatic: this.executionStage === 'semantic' });
       checkpointPersisted = Boolean(checkpoint);
       if (checkpoint?.checkpoint.source_root) temporary = checkpoint.checkpoint.source_root;
       const checkpointStage = checkpoint?.checkpoint.stage ?? "fetching";
+      if (this.executionStage && checkpointExecutionStage(checkpoint?.checkpoint.stage) !== this.executionStage) {
+        this.nextStage = checkpointExecutionStage(checkpoint?.checkpoint.stage);
+        return;
+      }
       if (checkpoint?.snapshot && checkpointStage === "assembly") {
         await this.resumeAssemblyFromCheckpoint({
           job: runningJob,
@@ -622,6 +685,7 @@ export class AnalysisCoordinator {
       const analysisConfigDigest = execution.digest;
       const webResearch = createWebResearchClient(config.webSearchApiKey);
       const startResearch = async ({ owner, repo, commitSha }: { owner: string; repo: string; commitSha: string }) => {
+        if (this.executionStage && this.executionStage !== 'semantic') return;
         if (!execution.runtime || initialWebResearch) return;
         const repository = `${owner}/${repo}`;
         const key = canonicalPublicSnapshotKey(repository, commitSha, ANALYZER_BUNDLE_VERSION, analysisConfigDigest);
@@ -638,7 +702,7 @@ export class AnalysisCoordinator {
         void initialWebResearch.catch(() => undefined);
       };
       const resumingStatic = checkpointStage === "source";
-      const resumingSemantic = checkpointStage === "semantic" && Boolean(checkpoint?.snapshot && checkpoint.checkpoint.parsed && checkpoint.checkpoint.lsp_results);
+      const resumingSemantic = checkpointStage === "semantic" && Boolean(checkpoint?.snapshot);
       await this.recordAnalysisPhase(job, fence, "fetching_source", resumingStatic || resumingSemantic ? "reused" : "running", {
         stage: resumingStatic || resumingSemantic ? "scanning" : "fetching",
         startedAt: started,
@@ -694,8 +758,9 @@ export class AnalysisCoordinator {
         checkpointPersisted = true;
       }
       await this.recordAnalysisPhase(job, fence, "fetching_source", resumingStatic || resumingSemantic ? "reused" : "completed");
+      if (this.executionStage === 'fetch') { this.nextStage = 'cpu'; return; }
       await this.recordAnalysisPhase(job, fence, "comparing_versions", "running");
-      const existing = await this.store.loadPublicSnapshot(publicKey);
+      const existing = resumingSemantic ? null : await this.store.loadPublicSnapshot(publicKey);
       if (!(await refreshLease())) throw new Error("analysis_lease_lost");
       if (existing && String(existing.metadata.analysis_snapshot_id ?? "") === snapshotId) {
         await this.recordAnalysisPhase(job, fence, "comparing_versions", "completed", { strategy: "reuse" });
@@ -718,7 +783,7 @@ export class AnalysisCoordinator {
         await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
         return;
       }
-      const previous = await this.store.loadLatestPublicSnapshot({
+      const previous = resumingSemantic ? null : await this.store.loadLatestPublicSnapshot({
         repository,
         analyzerBundleVersion: ANALYZER_BUNDLE_VERSION,
         analysisConfigDigest,
@@ -744,12 +809,17 @@ export class AnalysisCoordinator {
       let parsed: ParsedFile[];
       let lspResults: LspRunResult[];
       let structuralSnapshot: BuiltSnapshot;
-      if (resumingSemantic && checkpoint?.snapshot && checkpoint.checkpoint.parsed && checkpoint.checkpoint.lsp_results) {
+      if (resumingSemantic && checkpoint?.snapshot) {
+        if (checkpoint.checkpoint.snapshot_id !== snapshotId && this.executionStage) {
+          const { parsed: _parsed, lsp_results: _lsp, previous_fact_graph: _previous, ...sourceCheckpoint } = checkpoint.checkpoint;
+          await this.store.saveAnalysisCheckpoint(project.project_id, { ...sourceCheckpoint, stage: 'source' }, null);
+          this.nextStage = 'cpu'; return;
+        }
         for (const kind of ["parsing_source", "resolving_relations", "building_fact_graph"] as const) {
           await this.recordAnalysisPhase(job, fence, kind, "reused");
         }
-        parsed = checkpoint.checkpoint.parsed;
-        lspResults = checkpoint.checkpoint.lsp_results;
+        parsed = checkpoint.checkpoint.parsed ?? [];
+        lspResults = checkpoint.checkpoint.lsp_results ?? [];
         structuralSnapshot = checkpoint.checkpoint.snapshot_id === snapshotId
           ? checkpoint.snapshot as unknown as BuiltSnapshot
           : buildSnapshot({ snapshotId, repository, commitSha: fetched.commitSha, files: parsed,
@@ -810,12 +880,14 @@ export class AnalysisCoordinator {
           parsed,
           lsp_results: lspResults,
           previous_fact_graph: previousFactGraph,
+          from_public_key: typeof previous?.metadata.public_snapshot_key === 'string' ? previous.metadata.public_snapshot_key : null,
         } satisfies AnalysisCheckpoint, structuralSnapshot);
         checkpointPersisted = true;
       }
       signal.throwIfAborted();
       await this.recordAnalysisPhase(job, fence, analysisKind, "completed", { strategy: plan.mode });
-      if (this.store.kind === "postgres") {
+      if (this.executionStage === 'cpu') { this.nextStage = 'semantic'; return; }
+      if (this.store.kind === "postgres" && !this.executionStage) {
         const sourceStarted = performance.now();
         const sourceSignal = AbortSignal.any([signal, backgroundController.signal]);
         sourcePreparation = trackAnalysisStage("preparing_source", semanticBatchContext,
@@ -847,7 +919,10 @@ export class AnalysisCoordinator {
           semantic = await enrichSnapshotSafely(
             structuralSnapshot,
             { ...execution.runtime,
-              providerGate: this.providerGateFactory?.(semanticProvider, 'analysis'),
+              analysisBatchConcurrency: Math.min(config.analysisModelConcurrency ?? 8, 16),
+              providerGate: executionBudget.wrapGate(this.providerGateFactory?.(semanticProvider, 'analysis')),
+              roleRuntimes: Object.fromEntries(Object.entries(execution.runtime.roleRuntimes ?? {}).map(([role, runtime]) =>
+                [role, { ...runtime, providerGate: executionBudget!.wrapGate(runtime.providerGate) }])),
               providerBudget: this.providerBudget,
               ownerId: REPOSITORY_ANALYSIS_OWNER_ID,
               attribution: { business: "analysis", payer: "platform", agentRole: "repository-analysis", connectionId: semanticProvider.connectionId, configVersion: config.adminConfigVersion, taskId: job.job_id },
@@ -925,9 +1000,9 @@ export class AnalysisCoordinator {
       signal.throwIfAborted();
       const redirects = revisionRedirects({
         repository,
-        fromPublicKey: typeof previous?.metadata.public_snapshot_key === "string"
+        fromPublicKey: checkpoint?.checkpoint.from_public_key ?? (typeof previous?.metadata.public_snapshot_key === "string"
           ? previous.metadata.public_snapshot_key
-          : null,
+          : null),
         toPublicKey: publicKey,
         plan,
       });
@@ -937,7 +1012,7 @@ export class AnalysisCoordinator {
       const sourceWaitStarted = performance.now();
       const preparedSource = await sourcePreparation ?? undefined;
       const sourceWaitMs = performance.now() - sourceWaitStarted;
-      await this.recordAnalysisPhase(job, fence, "validating_analysis", "running");
+      if (this.executionStage !== 'semantic') await this.recordAnalysisPhase(job, fence, "validating_analysis", "running");
       await this.store.saveAnalysisCheckpoint(project.project_id, {
         schema_version: 1,
         analysis_config_digest: analysisConfigDigest,
@@ -951,13 +1026,19 @@ export class AnalysisCoordinator {
         repository,
         commit_sha: fetched.commitSha,
         plan,
-        parsed,
-        lsp_results: lspResults,
+        ...(this.executionStage === 'semantic' ? {} : { parsed, lsp_results: lspResults, previous_fact_graph: previousFactGraph }),
         display_language: displayLanguage,
         provenance_applied: false,
-        previous_fact_graph: previousFactGraph,
         redirects,
       } satisfies AnalysisCheckpoint, semantic.snapshot);
+      if (this.executionStage === 'semantic') {
+        await this.store.saveTrace('analysis-semantic-' + job.job_id, {
+          trace_id: 'analysis-semantic-' + job.job_id, project_id: project.project_id, snapshot_id: snapshotId,
+          worker: 'semantic-snapshot', worker_runs: semantic.workerRuns, stop_reason: semantic.stopReason,
+          models_by_role: execution.modelsByRole,
+        }, fence);
+        this.nextStage = 'publish'; return;
+      }
       checkpointPersisted = true;
       const localizedSnapshot = applyIncrementalProvenance({
         snapshot: semantic.snapshot,
@@ -1396,7 +1477,7 @@ export class AnalysisCoordinator {
         source,
         targetLanguage,
         modelRuntime: { ...createModelRuntime(provider, {
-          providerGate: this.providerGateFactory?.(provider, 'analysis'),
+          providerGate: budget.wrapGate(this.providerGateFactory?.(provider, 'analysis')),
           providerBudget: this.providerBudget,
           ownerId: REPOSITORY_ANALYSIS_OWNER_ID,
         }), beforeWorkerRequest: budget.beforeRequest },

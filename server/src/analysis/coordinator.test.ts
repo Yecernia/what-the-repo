@@ -78,7 +78,7 @@ function job(id: string): AnalysisJob {
 }
 
 function config(concurrency: number): ServerConfig {
-  return { analysisQueueConcurrency: concurrency } as ServerConfig;
+  return { analysisPendingLimit: concurrency } as ServerConfig;
 }
 
 test("Worker starts research before source download, skips reusable snapshots, and cancels early work on source failure", { timeout: 10_000 }, async () => {

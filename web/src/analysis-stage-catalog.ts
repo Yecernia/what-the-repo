@@ -3,10 +3,14 @@ import type { ActivityIconName } from './ActivityIcon';
 // Display contract prepared for future backend progress events. These entries do
 // not emit events or infer progress from timers.
 export const detailedAnalysisStages = [
+  { id: 'waiting_resources', reviewId: 'F19', title: '等待处理资源', icon: 'wait',
+    running: '任务已接收，正在等待可用处理资源', completed: '已轮到此任务，继续分析',
+    runningEn: 'Task accepted; waiting for available processing resources', completedEn: 'Resources available; analysis continuing',
+    description: '任务在阶段之间等待资源；保留已完成的结果，获得资源后继续。' },
   { id: 'researching_project', reviewId: 'F01', title: '查找项目资料', icon: 'research',
     running: '正在查找项目资料', completed: '项目资料查询完成',
     runningEn: 'Looking up project background', completedEn: 'Project background lookup complete',
-    description: '查询项目的架构和设计资料，供后续价值点分析参考。确认仓库版本后即可开始，与源码获取和静态分析重叠；资料不可用时应显示跳过，不能声称已经找到。' },
+    description: '查询项目的架构和设计资料，供后续价值点分析参考。分阶段运行时在语义阶段查询；资料不可用时应显示跳过，不能声称已经找到。' },
   { id: 'parsing_source', reviewId: 'F02', title: '静态解析源码', icon: 'inspect',
     running: '正在解析源码结构', completed: '源码结构解析完成',
     runningEn: 'Parsing source structure', completedEn: 'Source structure parsed',
@@ -46,7 +50,7 @@ export const detailedAnalysisStages = [
   { id: 'preparing_source', reviewId: 'F11', title: '准备源码阅读材料', icon: 'files',
     running: '正在准备源码阅读材料', completed: '源码阅读材料已准备',
     runningEn: 'Preparing source files for reading', completedEn: 'Source files ready for reading',
-    description: '正式存储模式会在静态分析后准备受控源码对象，与模型分析并行。最终整合需要等待它结束；本地存储不一定有此独立步骤。' },
+    description: '将源码准备为受控阅读对象。分阶段运行时在发布阶段处理，本地存储不一定有此独立步骤。' },
   { id: 'validating_analysis', reviewId: 'F12', title: '校验证据与结果', icon: 'verify',
     running: '正在核对分析结果与证据', completed: '分析结果与证据核对完成',
     runningEn: 'Checking analysis results against evidence', completedEn: 'Analysis results and evidence checked',

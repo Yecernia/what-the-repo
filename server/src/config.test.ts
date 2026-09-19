@@ -25,7 +25,7 @@ test("provider deployment budget has independent defaults and overrides", () => 
   assert.equal(defaults.quotaProviderDeploymentCallsPerMinute, 240);
   assert.equal(defaults.quotaProviderDeploymentCostUsdPerDay, null);
   assert.equal(defaults.databaseConnectionReserve, 10);
-  assert.equal(defaults.sessionLockWaitTimeoutMs, 600_000);
+  assert.equal(defaults.chatModelConcurrency, 8);
   assert.equal(defaults.metricsHost, "127.0.0.1");
   assert.equal(defaults.metricsPort, 9464);
   assert.equal(defaults.analysisProviderId, "deepseek");
@@ -40,7 +40,7 @@ test("provider deployment budget has independent defaults and overrides", () => 
     WHAT_THE_REPO_QUOTA_PROVIDER_DEPLOYMENT_CALLS_PER_MINUTE: "80",
     WHAT_THE_REPO_QUOTA_PROVIDER_DEPLOYMENT_COST_USD_PER_DAY: "7.25",
     WHAT_THE_REPO_DB_CONNECTION_RESERVE: "12",
-    WHAT_THE_REPO_SESSION_LOCK_WAIT_TIMEOUT_MS: "123456",
+    WHAT_THE_REPO_CHAT_MODEL_CONCURRENCY: "12",
     WHAT_THE_REPO_METRICS_HOST: "0.0.0.0",
     WHAT_THE_REPO_METRICS_PORT: "19464",
   });
@@ -49,7 +49,7 @@ test("provider deployment budget has independent defaults and overrides", () => 
   assert.equal(configured.quotaProviderDeploymentCallsPerMinute, 80);
   assert.equal(configured.quotaProviderDeploymentCostUsdPerDay, null);
   assert.equal(configured.databaseConnectionReserve, 12);
-  assert.equal(configured.sessionLockWaitTimeoutMs, 123456);
+  assert.equal(configured.chatModelConcurrency, 12);
   assert.equal(configured.metricsHost, "0.0.0.0");
   assert.equal(configured.metricsPort, 19464);
 

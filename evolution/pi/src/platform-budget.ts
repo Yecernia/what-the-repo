@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto';
 import type { ProductionEvolutionRuntime } from './composition.js';
 
 interface Permit {
+  signal?: AbortSignal;
   release(report?: {
     usageKnown: boolean;
     inputTokens: number;
@@ -18,6 +19,7 @@ interface Permit {
 export type GlobalReservation = (input: {
   model: Record<string, unknown>;
   estimatedCostUsd: number;
+  signal?: AbortSignal;
 }) => Promise<Permit>;
 
 /** Reuse the API/analysis ledger implementation; the worker image ships this small compiled module. */
@@ -32,12 +34,17 @@ export async function createPlatformBudget(
     pathToFileURL(join(root, 'server', 'dist', 'agent', 'provider-budget.js'))
       .href
   );
+  const { createProviderGateFactory } = await import(pathToFileURL(join(root, 'server/dist/agent/provider-gate.js')).href);
+  const { concurrencyConfig } = await import(pathToFileURL(join(root, 'server/dist/scheduling/config.js')).href);
+  const capacity = concurrencyConfig(process.env);
   const pool = new Pool({
     connectionString: databaseUrl,
     max: 2,
     application_name: 'what-the-repo:evolution-budget',
   });
   pool.on('error',()=>{console.error('evolution_budget_database_unavailable');});
+  const gates = createProviderGateFactory({ pool, maxConcurrent: capacity.chatModelConcurrency,
+    upstreamCapacities: capacity.upstreamCapacities });
   const budget = new PostgresProviderUsageBudget(pool, {
     maxCallsPerMinute: Number(
       process.env.WHAT_THE_REPO_QUOTA_PROVIDER_CALLS_PER_MINUTE ?? 60,
@@ -62,9 +69,12 @@ export async function createPlatformBudget(
         taskId: string,
         configVersion: number,
         connectionId: string,
+        providerConfig: { baseUrl: string; apiKey?: string; modelId: string },
       ): GlobalReservation =>
-      (input) =>
-        budget.acquire({
+      async (input) => {
+        const execution = await gates(providerConfig, 'evolution', { ownerId: 'system:evolution', taskId }).acquire(input.signal);
+        try {
+        const reservation = await budget.acquire({
           ownerId: 'system:runtime',
           provider: String(input.model.provider),
           model: String(input.model.id),
@@ -78,7 +88,12 @@ export async function createPlatformBudget(
             connectionId,
             configVersion,
           },
-        }),
+        });
+        return { signal: execution.signal, release: async (report) => {
+          try { await reservation.release(report); } finally { await execution.release(); }
+        } };
+        } catch (error) { await execution.release(); throw error; }
+      },
   };
 }
 
@@ -188,8 +203,14 @@ export function globalBudgetRuntime(
           permit = await reserve({
             model: args[0] as Record<string, unknown>,
             estimatedCostUsd: estimate(args[0], args[1], args[2]),
+            signal: (args[2] as { signal?: AbortSignal } | undefined)?.signal,
           });
           try {
+            permit.signal?.throwIfAborted();
+            if (permit.signal) {
+              const options = (args[2] ?? {}) as { signal?: AbortSignal };
+              args[2] = { ...options, signal: options.signal ? AbortSignal.any([options.signal, permit.signal]) : permit.signal };
+            }
             return Reflect.apply(method, target, args);
           } catch (error) {
             await finish();

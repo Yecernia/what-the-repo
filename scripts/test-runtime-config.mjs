@@ -12,7 +12,8 @@ Object.assign(env, {
   WHAT_THE_REPO_SESSION_SECRET: 'runtime-check-only-session-secret-0123456789',
   WHAT_THE_REPO_KEY_ENCRYPTION_SECRET: 'runtime-check-only-encryption-secret-012345',
   WHAT_THE_REPO_CHAT_CONCURRENCY: '3',
-  WHAT_THE_REPO_ANALYSIS_CONCURRENCY: '2',
+  WHAT_THE_REPO_ANALYSIS_CPU_CONCURRENCY: '2',
+  WHAT_THE_REPO_ANALYSIS_MEMORY_MB: '6144',
   WTR_SECRET_ROOT: join(root, '.tmp', 'runtime-config-test-secrets'),
 });
 const docker = process.platform === 'win32' ? 'docker.exe' : 'docker';
@@ -46,7 +47,13 @@ assert.equal(hardened.services.api.read_only, true);
 assert.equal(hardened.services.api.environment.DATABASE_URL, '');
 assert.equal(hardened.services.api.environment.DATABASE_URL_FILE, '/run/secrets/postgres_runtime_database_url');
 assert.equal(base.services.api.environment.WHAT_THE_REPO_CHAT_CONCURRENCY, '3');
-assert.equal(base.services['analysis-worker'].environment.WHAT_THE_REPO_ANALYSIS_CONCURRENCY, '2');
+assert.equal(base.services['analysis-worker'].environment.WHAT_THE_REPO_ANALYSIS_CPU_CONCURRENCY, '2');
+assert.equal(base.services['analysis-worker'].environment.WHAT_THE_REPO_ANALYSIS_MEMORY_MB, '6144');
+assert.equal(Number(base.services['analysis-worker'].mem_limit), 8 * 1024 ** 3);
+for (const service of [base.services.api, base.services['analysis-worker']]) {
+  for (const suffix of ['ANALYSIS_CONCURRENCY', 'ANALYSIS_QUEUE_CONCURRENCY', 'PROVIDER_CONCURRENCY', 'UPSTREAM_CONCURRENCY'])
+    assert.equal(service.environment['WHAT_THE_REPO_' + suffix], undefined);
+}
 assert.equal(hardened.services['evolution-worker'].environment.WHAT_THE_REPO_KEY_ENCRYPTION_SECRET_FILE, '/run/secrets/key_encryption_secret');
 for (const file of ['compose.runtime.yaml', 'compose.runtime-secrets.yaml']) {
   const text = readFileSync(join(root, file), 'utf8');

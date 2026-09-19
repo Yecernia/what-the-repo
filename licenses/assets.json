@@ -463,6 +463,16 @@
       ]
     },
     {
+      "path": "web/public/fonts/JasonHandwriting9p.ttf",
+      "sha256": "e0ea1e62955008e065e1e5fc7186dd8f0ba87303987038f34fbffe5600c06c55",
+      "source": "https://github.com/jasonhandwriting/JasonHandwriting/blob/master/JasonHandwriting9p.ttf",
+      "license": "OFL-1.1",
+      "evidence": "Unmodified official proportional JasonHandwriting9p font.",
+      "notices": [
+        "licenses/upstream/jason-handwriting.txt"
+      ]
+    },
+    {
       "path": "web/public/github.svg",
       "sha256": "3bf8cceead820aec50d4ee825a3fd02c5a1cd6665cc9cf4cbf3d9c8861a204bb",
       "source": "https://github.com/simple-icons/simple-icons/tree/16.28.0",

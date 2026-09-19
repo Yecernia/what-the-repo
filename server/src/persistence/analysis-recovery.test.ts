@@ -32,7 +32,7 @@ for (const backend of ['file', 'postgres'] as const) {
       assert.equal(claimed?.job_id, leader.job.job_id);
       await store.saveJob({ ...claimed!, lease_expires_at: new Date(Date.now() - 1000).toISOString() });
       let modelCalls = 0;
-      const config = { root, dataDir: root, nodeEnv: 'test', analysisQueueConcurrency: 1 } as ServerConfig;
+      const config = { root, dataDir: root, nodeEnv: 'test', analysisPendingLimit: 1 } as ServerConfig;
       const coordinator = new AnalysisCoordinator(store, config, () => ({ acquire: async () => {
         modelCalls++; throw new Error('recovery must not call a model');
       } }));

@@ -2,6 +2,8 @@ import type { ProviderConfig } from "./provider-types.js";
 import { createHash } from 'node:crypto';
 import type { Pool } from 'pg';
 import { CapacityScheduler, LocalPermitStore, PostgresPermitStore } from '../scheduling/permits.js';
+import { ResourceScheduler, type ResourceDemands } from '../scheduling/resources.js';
+import type { UpstreamCapacityRule } from '../scheduling/config.js';
 
 export interface ProviderDbClient {
   query<T extends Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
@@ -101,7 +103,7 @@ export class PostgresProviderCallGate implements ProviderCallGate {
   acquire(signal?: AbortSignal): Promise<ProviderPermit> { return this.scheduler.acquire('', '', signal); }
 }
 
-export type ProviderGateFactory = (provider: ProviderConfig, business?: string) => ProviderCallGate;
+export type ProviderGateFactory = (provider: ProviderConfig, business?: string, identity?: { ownerId: string; taskId: string }) => ProviderCallGate;
 
 export function providerGateKey(provider: ProviderConfig): string {
   // Connection labels do not identify upstream accounts; never persist raw keys.
@@ -111,28 +113,26 @@ export function providerGateKey(provider: ProviderConfig): string {
 export function createProviderGateFactory(input: {
   pool?: ProviderDbPool | null;
   maxConcurrent: number;
-  pollMs?: number;
   analysisConcurrent?: number;
-  upstreamConcurrent?: number;
+  ownerConcurrent?: number;
+  upstreamCapacities?: UpstreamCapacityRule[];
 }): ProviderGateFactory {
   const store = input.pool ? new PostgresPermitStore(input.pool as Pool) : new LocalPermitStore();
-  return (provider, business = 'chat') => {
+  const scheduler = new ResourceScheduler(store);
+  return (provider, business = 'chat', identity) => {
     const category = business === 'analysis' ? 'analysis' : business === 'evolution' ? 'evolution' : 'chat';
-    const scheduler = new CapacityScheduler(store, `model:${category}`, {
-      running: category === 'analysis' ? input.analysisConcurrent ?? 4 : category === 'evolution' ? 1 : input.maxConcurrent,
-      waiting: 128, waitMs: 60_000, fullError: 'model_capacity_busy', timeoutError: 'model_capacity_timeout',
-    });
-    return { acquire: async signal => {
-      const permit = await scheduler.acquire('', '', signal);
-      try {
-        const upstream = input.upstreamConcurrent ? await new CapacityScheduler(store, `upstream:${providerGateKey(provider)}`, {
-          running: input.upstreamConcurrent, waiting: 128, waitMs: 60_000,
-          fullError: 'upstream_capacity_busy', timeoutError: 'upstream_capacity_timeout',
-        }).acquire('', '', permit.signal) : undefined;
-        return { signal: upstream?.signal ?? permit.signal, release: async () => {
-          try { await upstream?.release(); } finally { await permit.release(); }
-        } };
-      } catch (error) { await permit.release(); throw error; }
-    } };
+    const demands: ResourceDemands = { [`model:${category}`]: { units: 1,
+      limit: category === 'analysis' ? input.analysisConcurrent ?? 8 : category === 'evolution' ? 1 : input.maxConcurrent } };
+    if (category === 'chat' && identity?.ownerId)
+      demands[`model-owner:${identity.ownerId}`] = { units: 1, limit: input.ownerConcurrent ?? 2 };
+    for (const rule of input.upstreamCapacities ?? []) {
+      if (rule.baseUrl.replace(/\/+$/, '').toLowerCase() !== provider.baseUrl.replace(/\/+$/, '').toLowerCase()
+        || !rule.credentialHashes.includes(providerGateKey(provider)) || (rule.model && rule.model !== provider.modelId)) continue;
+      demands[`upstream:${rule.account}:${rule.model ?? '*'}`] = { units: 1, limit: rule.concurrency };
+    }
+    return { acquire: signal => scheduler.acquire({ owner: identity?.ownerId ?? providerGateKey(provider),
+      task: identity?.taskId ?? '', demands, signal,
+      // Accepted analysis waits until scheduled or its job is stopped. Queuing is not provider failure.
+      ...(category === 'chat' ? { waitMs: 30_000 } : {}) }) };
   };
 }

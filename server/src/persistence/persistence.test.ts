@@ -91,7 +91,6 @@ test("file development store enforces creation quotas and lease ownership", asyn
     const store = new FileStore(root, {
       maxProjects: 1,
       maxCreationsPerHour: 5,
-      maxActiveAnalysisJobs: 2,
       maxStorageBytes: 1024 * 1024,
     });
     await store.init();

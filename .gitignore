@@ -141,7 +141,8 @@ Thumbs.db
 /.github/prompts/
 /.github/agents/
 /CONTEXT.md
-/docs/
+/docs/*
+!/docs/runtime-capacity.md
 .agents/
 .claude/
 .codex/

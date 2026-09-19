@@ -43,7 +43,6 @@ function config(dataDir: string): ServerConfig {
     keyEncryptionSecret: "test-session-secret",
     quotaMaxProjects: 20,
     quotaCreationsPerHour: 30,
-    quotaActiveAnalysisJobs: 2,
     quotaStorageBytes: 4 * 1024 * 1024 * 1024,
     mcpTokens: [],
     mcpRequestsPerMinute: 60,
@@ -314,7 +313,7 @@ test("conversation requests report session_busy when the previous turn still own
         freeProviderBaseUrl: "https://api.deepseek.com",
         freeProviderModel: "deepseek-chat",
         freeProviderApiKey: "test-provider-key",
-        sessionLockWaitTimeoutMs: 25,
+        chatWaitTimeoutMs: 25,
       },
       store,
       sessions,
@@ -1083,7 +1082,7 @@ test("manual model proof supports unlisted models, rejects unverified changes an
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     if (String(input).endsWith('/models')) {
       return discoveryFails ? new Response(null, { status: 503 })
-        : Response.json({ data: [{ id: 'deepseek-chat' }, { id: 'old-chat', status: 'Shutdown' }] });
+        : Response.json({ data: [{ id: 'deepseek-v4-flash' }, { id: 'old-chat', status: 'Shutdown' }] });
     }
     calls++;
     const body = JSON.parse(String(init?.body));
@@ -1127,7 +1126,7 @@ test("manual model proof supports unlisted models, rejects unverified changes an
     const id = connection.connection_id;
     const refreshed = await app.inject({ method: 'POST', url: `/api/settings/connections/${id}/verify`, headers });
     assert.equal(refreshed.json().ok, true);
-    assert.deepEqual(refreshed.json().models, ['deepseek-unlisted-preview', 'deepseek-chat']);
+    assert.deepEqual(refreshed.json().models, ['deepseek-unlisted-preview', 'deepseek-v4-flash']);
     const update = (models: string[]) => app.inject({ method: 'PATCH', url: `/api/settings/connections/${id}`, headers, payload: { models } });
     assert.equal((await update(['never-verified'])).statusCode, 409);
     assert.equal((await update([])).statusCode, 400);
@@ -1138,6 +1137,66 @@ test("manual model proof supports unlisted models, rejects unverified changes an
     const settings = await app.inject({ method: 'GET', url: '/api/settings', headers });
     assert.deepEqual(settings.json().providers[0].custom_models, ['deepseek-unlisted-preview']);
     assert.equal(calls, 2);
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("refresh revokes stopped cached models without deleting keys or restoring them from draft proofs", async (t) => {
+  t.mock.method(dns, "lookup", async () => [{ address: "93.184.216.34", family: 4 }]);
+  let rows = [{ id: "active", status: "online" }, { id: "removed", status: "Shutdown" }];
+  let fail = false;
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    assert.equal(String(input), "https://relay.example/v1/models");
+    assert.ok(!init?.method || init.method === "GET", "No inference requests");
+    return fail ? new Response(null, { status: 503 }) : Response.json({ data: rows });
+  });
+  const root = await mkdtemp(join(tmpdir(), "what-the-repo-retired-models-"));
+  const store = new FileStore(root);
+  await store.init();
+  const app = buildApp({ config: config(root), store, sessions: new PiSessionStore(join(root, "sessions")), memories: new PiMemoryStore(join(root, "memory")) });
+  try {
+    await app.ready();
+    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const owner = guest.json();
+    await store.saveUser(owner.owner_id, { ...owner, kind: "github" });
+    const headers = { cookie: `what_the_repo_identity=${cookieValue(guest.headers["set-cookie"], "what_the_repo_identity")}` };
+    const saved = await store.loadSettings(owner.owner_id);
+    const connection = { connection_id: "live", provider: "custom" as const, label: "Live", base_url: "https://relay.example/v1",
+      custom_models: ["active", "removed", "unlisted-manual"], manually_verified_models: ["removed", "unlisted-manual"],
+      models_source: "verified" as const, last_verified_at: "2026-09-01T00:00:00Z", verify_error: null };
+    saved.connections = [connection, { ...connection, connection_id: "retired", provider: "hunyuan-tokenhub-api-cn", base_url: null, custom_models: ["qwen3.5-plus", "hy-mt2-pro"] }];
+    await store.saveSettings(owner.owner_id, saved);
+    await store.keys.set(owner.owner_id, "fake-key", "live");
+    await store.keys.set(owner.owner_id, "fake-key", "retired");
+    const settings = () => app.inject({ method: "GET", url: "/api/settings", headers });
+    const initial = (await settings()).json();
+    assert.equal(initial.providers.length, 2);
+    assert.deepEqual(initial.providers.find((item: { connection_id: string }) => item.connection_id === "retired").custom_models, []);
+    assert.equal(store.keys.get(owner.owner_id, "retired"), "fake-key");
+    const refreshed = await app.inject({ method: "POST", url: "/api/settings/connections/live/verify", headers });
+    assert.deepEqual(refreshed.json().models, ["unlisted-manual", "active"]);
+    const select = await app.inject({ method: "PUT", url: "/api/settings/selection", headers, payload: { model: "provider:live:removed" } });
+    assert.equal(select.statusCode, 409);
+    rows = [{ id: "active", status: "online" }, { id: "unlisted-manual", status: "discontinued" }];
+    const draft = await app.inject({ method: "POST", url: "/api/settings/connections/verify", headers, payload: { existing_connection_id: "live" } });
+    assert.deepEqual(draft.json().models, ["active"]);
+    const proof = draft.json().verification_token;
+    const patch = (models: string[]) => app.inject({ method: "PATCH", url: "/api/settings/connections/live", headers, payload: { models, verification_token: proof } });
+    assert.equal((await patch(["active", "unlisted-manual"])).statusCode, 409);
+    assert.equal((await patch(["active"])).statusCode, 200);
+    fail = true;
+    assert.equal((await app.inject({ method: "POST", url: "/api/settings/connections/live/verify", headers })).json().ok, false);
+    assert.deepEqual((await store.loadSettings(owner.owner_id)).connections.find(item => item.connection_id === "live")?.custom_models, ["active"]);
+    fail = false;
+    rows = [{ id: "active", status: "discontinued" }];
+    assert.equal((await app.inject({ method: "POST", url: "/api/settings/connections/verify", headers, payload: { existing_connection_id: "live" } })).json().ok, false);
+    const final = (await settings()).json();
+    assert.equal(final.providers.length, 2);
+    assert.deepEqual(final.providers.find((item: { connection_id: string }) => item.connection_id === "live").custom_models, []);
+    assert.equal(store.keys.get(owner.owner_id, "live"), "fake-key");
+    assert.equal((await patch(["active"])).statusCode, 409, "A proof issued before revocation must not revive a stopped model");
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

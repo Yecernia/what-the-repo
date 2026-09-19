@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { readAgentModelOverrides, type AgentModelOverrides } from "./agent-model-config.js";
+import { concurrencyConfig, integerSetting, type ConcurrencyConfig } from './scheduling/config.js';
 
-export interface ServerConfig {
+export interface ServerConfig extends ConcurrencyConfig {
   adminGithubId?: string;
   adminWebUrl?: string;
   adminBootstrapHash?: string;
@@ -45,27 +46,20 @@ export interface ServerConfig {
   databaseUrl: string | null;
   redisUrl?: string | null;
   redisPrefix?: string;
-  analysisQueueConcurrency?: number;
   chatConcurrency?: number;
   chatOwnerConcurrency?: number;
   chatQueueLimit?: number;
   chatWaitTimeoutMs?: number;
   chatDisconnectGraceMs?: number;
-  analysisConcurrency?: number;
   analysisOwnerConcurrency?: number;
   analysisOwnerQueueLimit?: number;
   analysisQueueLimit?: number;
   analysisModelConcurrency?: number;
-  upstreamConcurrency?: number;
-  providerConcurrency?: number;
-  providerGatePollMs?: number;
   retentionEnabled: boolean;
   databasePoolMax?: number;
   databaseConnectionReserve?: number;
   databaseIdleTimeoutMs?: number;
   databaseConnectionTimeoutMs?: number;
-  /** Maximum time a new conversation waits to acquire its Session lock. */
-  sessionLockWaitTimeoutMs?: number;
   /** Per-project admission limits; an answer already in progress is retained. */
   chatMaxRounds?: number;
   chatMaxContentBytes?: number;
@@ -79,7 +73,6 @@ export interface ServerConfig {
   keyEncryptionSecret: string;
   quotaMaxProjects: number;
   quotaCreationsPerHour: number;
-  quotaActiveAnalysisJobs: number;
   quotaStorageBytes: number;
   quotaProviderCallsPerMinute?: number;
   quotaProviderCostUsdPerDay?: number | null;
@@ -238,26 +231,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     databaseUrl: secretValue(env, root, "DATABASE_URL", "DATABASE_URL_FILE"),
     redisUrl: optionalSecret(env.WHAT_THE_REPO_REDIS_URL),
     redisPrefix: optionalSecret(env.WHAT_THE_REPO_REDIS_PREFIX) ?? "what-the-repo",
-    analysisQueueConcurrency: positiveInt(env.WHAT_THE_REPO_ANALYSIS_QUEUE_CONCURRENCY, 1),
-    chatConcurrency: positiveInt(env.WHAT_THE_REPO_CHAT_CONCURRENCY, 8),
-    chatOwnerConcurrency: positiveInt(env.WHAT_THE_REPO_CHAT_OWNER_CONCURRENCY, 2),
-    chatQueueLimit: positiveInt(env.WHAT_THE_REPO_CHAT_QUEUE_LIMIT, 16),
-    chatWaitTimeoutMs: positiveInt(env.WHAT_THE_REPO_CHAT_WAIT_TIMEOUT_MS, 30_000),
-    chatDisconnectGraceMs: positiveInt(env.WHAT_THE_REPO_CHAT_DISCONNECT_GRACE_MS, 30_000),
-    analysisConcurrency: positiveInt(env.WHAT_THE_REPO_ANALYSIS_CONCURRENCY, 1),
-    analysisOwnerConcurrency: positiveInt(env.WHAT_THE_REPO_ANALYSIS_OWNER_CONCURRENCY, 2),
-    analysisOwnerQueueLimit: positiveInt(env.WHAT_THE_REPO_ANALYSIS_OWNER_QUEUE_LIMIT, 4),
-    analysisQueueLimit: positiveInt(env.WHAT_THE_REPO_ANALYSIS_QUEUE_LIMIT, 32),
-    analysisModelConcurrency: positiveInt(env.WHAT_THE_REPO_ANALYSIS_MODEL_CONCURRENCY, 4),
-    upstreamConcurrency: env.WHAT_THE_REPO_UPSTREAM_CONCURRENCY ? positiveInt(env.WHAT_THE_REPO_UPSTREAM_CONCURRENCY, 1) : undefined,
-    providerConcurrency: positiveInt(env.WHAT_THE_REPO_PROVIDER_CONCURRENCY, 4),
-    providerGatePollMs: positiveInt(env.WHAT_THE_REPO_PROVIDER_GATE_POLL_MS, 100),
+    ...concurrencyConfig(env),
+    chatConcurrency: integerSetting(env, 'CHAT_CONCURRENCY', 8, 1, 256),
+    chatOwnerConcurrency: integerSetting(env, 'CHAT_OWNER_CONCURRENCY', 2, 1, 16),
+    chatQueueLimit: integerSetting(env, 'CHAT_QUEUE_LIMIT', 16, 0, 256),
+    chatWaitTimeoutMs: integerSetting(env, 'CHAT_WAIT_TIMEOUT_MS', 30_000, 1, 120_000),
+    chatDisconnectGraceMs: integerSetting(env, 'CHAT_DISCONNECT_GRACE_MS', 30_000, 0, 120_000),
+    analysisOwnerConcurrency: integerSetting(env, 'ANALYSIS_OWNER_CONCURRENCY', 2, 1, 16),
+    analysisOwnerQueueLimit: integerSetting(env, 'ANALYSIS_OWNER_QUEUE_LIMIT', 4, 1, 64),
+    analysisQueueLimit: integerSetting(env, 'ANALYSIS_QUEUE_LIMIT', 32, 1, 256),
+    analysisModelConcurrency: integerSetting(env, 'ANALYSIS_MODEL_CONCURRENCY', 8, 1, 256),
     retentionEnabled: booleanValue(env.WHAT_THE_REPO_RETENTION_ENABLED, true),
     databasePoolMax: positiveInt(env.WHAT_THE_REPO_DB_POOL_MAX, 10),
     databaseConnectionReserve: nonNegativeInt(env.WHAT_THE_REPO_DB_CONNECTION_RESERVE, 10),
     databaseIdleTimeoutMs: positiveInt(env.WHAT_THE_REPO_DB_IDLE_TIMEOUT_MS, 30_000),
     databaseConnectionTimeoutMs: positiveInt(env.WHAT_THE_REPO_DB_CONNECTION_TIMEOUT_MS, 10_000),
-    sessionLockWaitTimeoutMs: positiveInt(env.WHAT_THE_REPO_SESSION_LOCK_WAIT_TIMEOUT_MS, 10 * 60_000),
     chatMaxRounds: positiveInt(env.WHAT_THE_REPO_CHAT_MAX_ROUNDS, 10_000),
     chatMaxContentBytes: positiveInt(env.WHAT_THE_REPO_CHAT_MAX_CONTENT_BYTES, 100 * 1024 * 1024),
     cosBucket: optionalSecret(env.WHAT_THE_REPO_COS_BUCKET),
@@ -290,7 +278,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     ) ?? sessionSecret,
     quotaMaxProjects: positiveInt(env.WHAT_THE_REPO_QUOTA_MAX_PROJECTS, 20),
     quotaCreationsPerHour: positiveInt(env.WHAT_THE_REPO_QUOTA_CREATIONS_PER_HOUR, 30),
-    quotaActiveAnalysisJobs: positiveInt(env.WHAT_THE_REPO_QUOTA_ACTIVE_ANALYSIS_JOBS, 2),
     // Retained for configuration compatibility only. Storage admission is global.
     quotaStorageBytes: 0,
     adminGithubId: optionalSecret(env.WHAT_THE_REPO_ADMIN_GITHUB_ID) ?? undefined,

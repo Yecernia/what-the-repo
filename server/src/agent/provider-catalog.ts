@@ -2,6 +2,7 @@ import type {
   AnthropicMessagesCompat,
   OpenAICompletionsCompat,
 } from "@earendil-works/pi-ai";
+import { modelLifecycle } from "./model-lifecycle.js";
 
 export type ProviderCompat = OpenAICompletionsCompat | AnthropicMessagesCompat;
 
@@ -118,6 +119,8 @@ export interface ProviderPresetDefinition {
 // vision/vl/multimodal names remain eligible because they can still answer
 // conversational requests; only explicit generation/utility naming is removed.
 const ALWAYS_NON_CONVERSATIONAL_MODEL_ID_PATTERNS: readonly RegExp[] = [
+  /^(?:hy|hunyuan)[-_.]mt\d*(?:[-_.]|$)/i,
+  /^doubao[-_.]seed[-_.]translation(?:[-_.]|$)/i,
   /(?:^|[-_.])(?:seededit|seed3d|seaweed|tripo|hi3d|hitem3d|hyper3d|indextts)(?:[-_.]|$)/i,
   /(?:^|[-_.])(?:kl|vd|pixverse)[-_.]video(?:[-_.]|$)/i,
   /(?:^|[-_.])wand[-_.](?:dubbing|vega[-_.]image)(?:\d|[-_.]|$)/i,
@@ -157,12 +160,24 @@ export function isLikelyConversationalModelId(modelId: string): boolean {
   return !NON_CONVERSATIONAL_MODEL_ID_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-export function filterLikelyConversationalModelIds(modelIds: readonly string[]): string[] {
+export interface ProviderModelContext {
+  provider?: string;
+  base_url?: string | null;
+  now?: number;
+}
+
+export function connectionModelLifecycle(modelId: string, context: ProviderModelContext) {
+  const baseUrl = context.provider === "custom" ? context.base_url
+    : providerPreset(context.provider ?? "")?.base_url || context.base_url;
+  return modelLifecycle(modelId, baseUrl, context.now);
+}
+
+export function filterLikelyConversationalModelIds(modelIds: readonly string[], context: ProviderModelContext = {}): string[] {
   const unique = new Set<string>();
   for (const candidate of modelIds) {
     const id = candidate.trim();
     if (id.length > 500 || /[\s\u0000-\u001f\u007f]/u.test(id)) continue;
-    if (!isLikelyConversationalModelId(id) || unique.has(id)) continue;
+    if (!isLikelyConversationalModelId(id) || connectionModelLifecycle(id, context)?.active || unique.has(id)) continue;
     unique.add(id);
     if (unique.size >= 100) break;
   }
@@ -170,37 +185,59 @@ export function filterLikelyConversationalModelIds(modelIds: readonly string[]):
 }
 
 /** Read capability metadata before applying the ID fallback or the list limit. */
-export function providerModelIds(payload: unknown, provider?: string): string[] {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+export function discoverProviderModels(payload: unknown, context: ProviderModelContext = {}): {
+  models: string[]; excludedModels: string[]; valid: boolean;
+} {
+  const invalid = { models: [], excludedModels: [], valid: false };
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return invalid;
   const row = payload as Record<string, unknown>;
-  const source = [row.data, row.models, row.items].find(Array.isArray) ?? [];
+  const source = [row.data, row.models, row.items].find(Array.isArray);
+  if (!source) return invalid;
+  const excluded = new Set<string>();
   const record = (value: unknown): Record<string, unknown> =>
     value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   const strings = (value: unknown): string[] =>
-    Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").map(item => item.toLowerCase()) : [];
-  return filterLikelyConversationalModelIds(source.flatMap((candidate: unknown): string[] => {
-    if (typeof candidate === "string") return [candidate];
-    const item = record(candidate);
-    const id = typeof item.id === "string" ? item.id : typeof item.model === "string" ? item.model : typeof item.name === "string" ? item.name : "";
-    if (/^(shutdown|offline|disabled|deleted|unavailable|retired)$/i.test(String(item.status ?? ""))) return [];
+    (Array.isArray(value) ? value : typeof value === "string" ? [value] : [])
+      .filter((item): item is string => typeof item === "string").map(item => item.trim().toLowerCase());
+  const ids = source.flatMap((candidate: unknown): string[] => {
+    const item = typeof candidate === "string" ? { id: candidate } : record(candidate);
+    const id = (typeof item.id === "string" ? item.id : typeof item.model === "string" ? item.model : typeof item.name === "string" ? item.name : "").trim();
+    const reject = (): string[] => { if (id) excluded.add(id); return []; };
+    const status = String(item.status ?? "").toLowerCase().replace(/[-_\s]/g, "");
+    if (/^(shutdown|offline|disabled|deleted|unavailable|retired|discontinued|decommissioned)$/.test(status)) return reject();
     // Retiring / pre-offline still accept calls; do not silently treat them as offline.
-    const task = String(item.task_type ?? item.model_type ?? "").toLowerCase().replace(/[-_ ]/g, "");
-    if (/^(embedding|embeddings|rerank|reranker|texttoimage|texttovideo|imagetovideo|imagegeneration|videogeneration|speechsynthesis|speechrecognition|tts|asr|3dgeneration)$/.test(task)) return [];
+    const tasks = [...strings(item.task_type), ...strings(item.model_type)].map(task => task.replace(/[-_\s]/g, ""));
+    if (tasks.some(task => /^(embedding|embeddings|rerank|reranker|texttoimage|texttovideo|imagetovideo|imagegeneration|videogeneration|speechsynthesis|speechrecognition|tts|asr|3dgeneration|translation|machinetranslation|texttranslation)$/.test(task))) return reject();
     const modalities = record(item.modalities);
     const input = strings(item.input_modalities ?? modalities.input_modalities);
     const output = strings(item.output_modalities ?? modalities.output_modalities ?? record(item.architecture).output_modalities);
-    if ((input.length && !input.includes("text")) || (output.length && !output.includes("text"))) return [];
+    if ((input.length && !input.includes("text")) || (output.length && !output.includes("text"))) return reject();
     // Some endpoints include a readable generation family even when the ID is opaque.
-    if (typeof item.name === "string" && !isLikelyConversationalModelId(item.name)) return [];
+    if (!filterLikelyConversationalModelIds([id], context).length
+      || (typeof item.name === "string" && !isLikelyConversationalModelId(item.name))) return reject();
     // TokenHub lists opaque task IDs without capability metadata. Only infer
     // chat for recognized language-model families; unknown IDs can be added
     // through the real chat probe instead of being silently called "verified".
-    if (provider?.startsWith("hunyuan-tokenhub") && !output.includes("text")) {
+    if (context.provider?.startsWith("hunyuan-tokenhub") && !output.includes("text")) {
       const name = id.split("/").at(-1) ?? "";
-      if (!/^(?:hy\d|hy[-_.](?:vision|mt\d*|role)|hunyuan[-_.]|youtu[-_.]vita|deepseek[-_.]|glm[-_.]|kimi[-_.]|moonshot[-_.]|qwen|qwq|qvq|mimo[-_.]|minimax[-_.](?:m\d|text)|doubao[-_.]|gpt[-_.]|o[134](?:[-_.]|$)|claude[-_.]|gemini[-_.]|llama|mistral|mixtral)/i.test(name)) return [];
+      if (!/^(?:hy\d|hy[-_.](?:vision|role)|hunyuan[-_.]|youtu[-_.]vita|deepseek[-_.]|glm[-_.]|kimi[-_.]|moonshot[-_.]|qwen|qwq|qvq|mimo[-_.]|minimax[-_.](?:m\d|text)|doubao[-_.]|gpt[-_.]|o[134](?:[-_.]|$)|claude[-_.]|gemini[-_.]|llama|mistral|mixtral)/i.test(name)) return [];
     }
     return [id];
-  }));
+  });
+  // A duplicate online row must not override explicit negative metadata.
+  return { models: filterLikelyConversationalModelIds(ids.filter(id => !excluded.has(id)), context), excludedModels: [...excluded], valid: true };
+}
+
+export function providerModelIds(payload: unknown, provider?: string): string[] {
+  return discoverProviderModels(payload, { provider }).models;
+}
+
+/** Absence or unknown capabilities are not evidence that a manual model died. */
+export function mergeDiscoveredModelIds(
+  discovered: { models: string[]; excludedModels?: string[] }, manual: readonly string[], context: ProviderModelContext,
+): string[] {
+  const excluded = new Set(discovered.excludedModels);
+  return filterLikelyConversationalModelIds([...manual, ...discovered.models].filter(id => !excluded.has(id)), context);
 }
 
 const synthetic = (

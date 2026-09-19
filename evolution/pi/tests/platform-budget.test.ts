@@ -24,6 +24,19 @@ test('shared budget rejection happens before any model transport', async () => {
   assert.equal(called, false);
 });
 
+test('a lost shared model permit aborts the evolution transport and releases it once', async () => {
+  const lease = new AbortController();
+  let released = 0;
+  const runtime = globalBudgetRuntime({ completeSimple: async (_model: unknown, _context: unknown, options: { signal: AbortSignal }) => {
+    lease.abort(new Error('runtime_lease_lost'));
+    options.signal.throwIfAborted();
+  } }, async () => ({ signal: lease.signal, release: async () => { released++; } }), () => 0.01) as {
+    completeSimple(...args: unknown[]): Promise<unknown>;
+  };
+  await assert.rejects(runtime.completeSimple({}, {}), /runtime_lease_lost/);
+  assert.equal(released, 1);
+});
+
 test('admin review commands call the existing reviewer/rollback contract and reject changed candidates',async()=>{
   for(const action of ['approve','reject','rollback','stale']){
     const calls:unknown[]=[],writes:unknown[][]=[];let claimed=false;

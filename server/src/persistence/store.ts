@@ -31,14 +31,12 @@ import type {
 export interface QuotaLimits {
   maxProjects: number;
   maxCreationsPerHour: number;
-  maxActiveAnalysisJobs: number;
   maxStorageBytes: number;
 }
 
 export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
   maxProjects: 20,
   maxCreationsPerHour: 30,
-  maxActiveAnalysisJobs: 2,
   maxStorageBytes: 0,
 };
 
@@ -144,7 +142,8 @@ export interface ProductStore {
   loadAnalysisResult<T = Record<string, unknown>>(projectId: string): Promise<T | null>;
   /** Persist an analysis-stage checkpoint independently of any published snapshot binding. */
   saveAnalysisCheckpoint(projectId: string, checkpoint: unknown, snapshot: unknown): Promise<void>;
-  loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string): Promise<{ checkpoint: T; snapshot: T | null } | null>;
+  loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string, options?: { omitStatic?: boolean }): Promise<{ checkpoint: T; snapshot: T | null } | null>;
+  analysisCheckpointInfo(projectId: string): Promise<{ stage: string; bytes: number; sourceBytes: number; staticBytes?: number } | null>;
   clearAnalysisCheckpoint(projectId: string): Promise<void>;
   queryPublicSnapshot(input: {
     publicKey: string;

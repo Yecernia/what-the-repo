@@ -8,7 +8,6 @@ import { componentLayerCandidates, consolidateLayers, globalLayerInputBudget, la
 import { type BuiltSnapshot } from "./graph.js";
 import { chunks } from "./semantic-batch-runner.js";
 import {
-  ARCHITECTURE_BATCH_CONCURRENCY,
   ARCHITECTURE_REPAIR_BATCH_SIZE,
   type ComponentPatch,
   type SemanticBatchContext,
@@ -85,7 +84,7 @@ async function explainArchitectureComponents(
   const componentBatches = architectureComponentBatches(snapshot);
   const componentResults = await trackAnalysisStage("explaining_components", batchContext, scoped => mapWithConcurrency(
     componentBatches,
-    ARCHITECTURE_BATCH_CONCURRENCY,
+    modelRuntime.analysisBatchConcurrency ?? 3,
     (batch, batchIndex) => runComponentBatch({
       snapshot,
       componentIds: batch,
@@ -115,7 +114,7 @@ async function explainArchitectureComponents(
     : chunks(repairComponentIds, ARCHITECTURE_REPAIR_BATCH_SIZE);
   const repairResults = repairBatches.length ? await trackAnalysisStage("repairing_components", batchContext, scoped => mapWithConcurrency(
     repairBatches,
-    ARCHITECTURE_BATCH_CONCURRENCY,
+    modelRuntime.analysisBatchConcurrency ?? 3,
     (batch, repairIndex) => runComponentBatch({
       snapshot,
       componentIds: batch,

@@ -9,13 +9,12 @@ function quotas(config: ServerConfig): QuotaLimits {
   return {
     maxProjects: config.quotaMaxProjects,
     maxCreationsPerHour: config.quotaCreationsPerHour,
-    maxActiveAnalysisJobs: config.quotaActiveAnalysisJobs,
     maxStorageBytes: config.quotaStorageBytes,
   };
 }
 
 function analysisLimits(config: ServerConfig) {
-  return { running: config.analysisConcurrency ?? 1, ownerRunning: config.analysisOwnerConcurrency ?? 2,
+  return { running: config.analysisPendingLimit ?? 32, pending: config.analysisPendingLimit ?? 32, ownerRunning: config.analysisOwnerConcurrency ?? 2,
     ownerWaiting: config.analysisOwnerQueueLimit ?? 4, waiting: config.analysisQueueLimit ?? 32 };
 }
 
@@ -36,6 +35,7 @@ export function createProductStore(config: ServerConfig, applicationRole = "api"
     idleTimeoutMs: config.databaseIdleTimeoutMs,
     connectionTimeoutMs: config.databaseConnectionTimeoutMs,
     objectStore: createSnapshotObjectStore(config),
+    objectStoreConcurrency: config.objectStoreConcurrency,
   });
 }
 

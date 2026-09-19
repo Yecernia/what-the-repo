@@ -50,3 +50,21 @@ test("provider metric names remain stable for future exporters", () => {
   assert.equal(METRIC_NAMES.databaseConnections, "what_the_repo_database_connections");
   assert.equal(METRIC_NAMES.databaseConnectionLimit, "what_the_repo_database_connection_limit");
 });
+
+test('isolated child metrics merge incrementally without counting repeated reports twice', () => {
+  const parent = new RuntimeMetrics(), child = new RuntimeMetrics();
+  child.increment(METRIC_NAMES.providerCalls);
+  child.observe(METRIC_NAMES.providerDuration, 180_000);
+  child.addGauge(METRIC_NAMES.providerActive, 1);
+  const first = child.snapshot();
+  parent.mergeProcessSnapshot(first);
+  parent.mergeProcessSnapshot(first, first);
+  child.increment(METRIC_NAMES.providerCalls);
+  child.observe(METRIC_NAMES.providerDuration, 1_000);
+  child.addGauge(METRIC_NAMES.providerActive, -1);
+  parent.mergeProcessSnapshot(child.snapshot(), first);
+  assert.equal(parent.snapshot().counters[0]?.value, 2);
+  assert.equal(parent.snapshot().histograms[0]?.sum, 181_000);
+  assert.equal(parent.snapshot().histograms[0]?.count, 2);
+  assert.equal(parent.snapshot().gauges.find(row => row.name === METRIC_NAMES.providerActive)?.value, 0);
+});

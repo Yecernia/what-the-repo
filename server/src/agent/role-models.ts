@@ -39,7 +39,8 @@ export function withAgentModels(config: ServerConfig, runtime: PiModelRuntime, f
   for (const role of roles) {
     if (!config.agentModels?.[role]) continue;
     const provider = resolveAgentProvider(config, role, fallback)!;
-    roleRuntimes[role] = createModelRuntime(provider, { ...options, providerGate: options.providerGateFactory?.(provider, options.business ?? options.attribution?.business) });
+    roleRuntimes[role] = createModelRuntime(provider, { ...options, providerGate: options.providerGateFactory?.(provider,
+      options.business ?? options.attribution?.business, options.ownerId ? { ownerId: options.ownerId, taskId: options.attribution?.taskId ?? '' } : undefined) });
   }
   return { ...runtime, roleRuntimes };
 }
