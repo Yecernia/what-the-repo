@@ -11,11 +11,12 @@ import { ResourceScheduler, type ResourceDemands } from '../scheduling/resources
 import { checkpointExecutionStage, type AnalysisExecutionStage, type AnalysisStageExecutor } from './stage-protocol.js';
 
 export function stageMemoryMb(stage: AnalysisExecutionStage, info: { bytes: number; sourceBytes: number; staticBytes?: number } | null,
-  cpuMemoryExpansion = 80, budgetMb = Number.POSITIVE_INFINITY): number {
+  cpuMemoryExpansion = 80, budgetMb = Number.POSITIVE_INFINITY, checkpointMemoryExpansion = 6): number {
   const bytes = (info?.bytes ?? 0) + (stage === 'semantic' ? 0 : info?.staticBytes ?? 0), source = info?.sourceBytes ?? 0;
-  // Admission estimates are deliberately separate from the measured RSS guard.
-  const working = stage === 'fetch' ? 1024 : stage === 'cpu' ? 768 + Math.max(source * cpuMemoryExpansion, bytes * 10) / 1048576
-    : 512 + bytes / 1048576 * (stage === 'publish' ? 10 : 6);
+  // Source/compiler working sets and already serialized graphs have different expansion.
+  // Semantic execution omits the static cache; publication includes it exactly once.
+  const working = stage === 'fetch' ? 1024 : stage === 'cpu' ? 768 + Math.max(source * cpuMemoryExpansion, bytes * checkpointMemoryExpansion) / 1048576
+    : 512 + bytes / 1048576 * checkpointMemoryExpansion;
   // A conservative expansion estimate is not proof that execution cannot fit.
   // Let the isolated process try within the available budget; its RSS guard
   // and V8 heap ceiling remain in force.
@@ -33,7 +34,7 @@ export function isolatedStageExecutor(store: ProductStore, config: ServerConfig)
       signal.throwIfAborted();
       const info = await store.analysisCheckpointInfo(job.project_id);
       const budget = config.analysisMemoryMb ?? 6144;
-      const memory = stageMemoryMb(stage, info, config.analysisCpuMemoryExpansion, budget);
+      const memory = stageMemoryMb(stage, info, config.analysisCpuMemoryExpansion, budget, config.analysisCheckpointMemoryExpansion);
       const demands: ResourceDemands = { 'analysis:memory-mb': { units: memory, limit: budget } };
       if (stage === 'fetch') demands['analysis:fetch'] = { units: 1, limit: config.analysisFetchConcurrency ?? 2 };
       if (stage === 'cpu') demands['analysis:cpu'] = { units: 1, limit: config.analysisCpuConcurrency ?? 2 };
@@ -88,7 +89,9 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
   const entry = new URL(import.meta.url.endsWith('.ts') ? './stage-main.ts' : './stage-main.js', import.meta.url);
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [...(entry.pathname.endsWith('.ts') ? ['--import', 'tsx'] : []),
-      `--max-old-space-size=${Math.max(256, Math.floor(memoryMb * 0.65))}`, fileURLToPath(entry)], {
+      // RSS already bounds the whole process tree. Avoid imposing an unnecessarily
+      // small JS heap in addition to that bound when most memory is JS graph data.
+      `--max-old-space-size=${Math.max(256, Math.floor(memoryMb * 0.8))}`, fileURLToPath(entry)], {
       windowsHide: true,
       detached: process.platform !== 'win32',
       // Inherit tsx's loader in development, but never the parent's test runner flags.

@@ -49,6 +49,7 @@ accepted range fail startup instead of being silently clamped.
 | ANALYSIS_PENDING_LIMIT | 32 | 1–256 | Total accepted unfinished physical jobs, including running |
 | ANALYSIS_MEMORY_MB | 6144 | 1024–1048576 | Shared stage working-memory reservation budget |
 | ANALYSIS_CPU_MEMORY_EXPANSION | 80 | 8–128 | Static-stage memory estimate per byte of source; larger values also increase its V8 heap allowance |
+| ANALYSIS_CHECKPOINT_MEMORY_EXPANSION | 6 | 2–16 | Working-memory estimate per serialized checkpoint byte; semantic work excludes the static-cache part |
 | OBJECT_STORE_CONCURRENCY | 8 | 1–64 | Shared snapshot object I/O requests |
 
 The two analysis backlog limits count different things. Setting both to 32 means
@@ -72,7 +73,8 @@ load them. Legacy inline checkpoints can be converted when resumed. Publication
 loads both parts. Checkpoint hashes are checked before use.
 
 Static stages reserve 768 MiB plus the larger of source bytes times
-`ANALYSIS_CPU_MEMORY_EXPANSION` and checkpoint bytes times 10, rounded up to
+`ANALYSIS_CPU_MEMORY_EXPANSION` and checkpoint bytes times
+`ANALYSIS_CHECKPOINT_MEMORY_EXPANSION`, rounded up to
 64 MiB. This estimate is distinct from the total memory pool: increasing only
 `ANALYSIS_MEMORY_MB` does not increase an individual process's heap limit.
 The native project compiler retains more syntax and semantic state than the old
@@ -82,9 +84,18 @@ Tune the expansion estimate using representative large repositories and leave
 room in the pool for other work. A recognized V8 heap exhaustion is a memory-limit
 failure, not a transient error to retry unchanged.
 
-Each stage gets a V8 heap limit and an RSS guard. On Linux the supervisor also
-samples the process tree, including native tools. Oversized jobs fail explicitly;
-they are not allowed to wait forever for more memory than the whole budget.
+Semantic and publication stages reserve 512 MiB plus their loaded checkpoint
+bytes times `ANALYSIS_CHECKPOINT_MEMORY_EXPANSION`, rounded up to 64 MiB.
+Publication includes both checkpoint parts; semantic execution excludes static
+caches. Overlay execution reserves at least 2048 MiB and fetch reserves 1024 MiB.
+Tune source and checkpoint expansion independently; serialized graph size is not
+the same as source/compiler expansion. Estimates cap at the shared pool so an
+overestimate alone cannot reject a task before bounded execution.
+
+Each stage gets a V8 heap ceiling of 80% of its reservation and an RSS guard for
+the whole reservation. The heap ceiling is an upper bound, not allocated memory.
+On Linux the supervisor also samples the process tree, including native tools.
+Jobs exceeding their actual memory allowance fail explicitly.
 RSS sampling is a guard, not a kernel hard limit: the worker container memory limit
 remains the final protection against bursts. The memory budget must leave at least
 512 MB or 15% (whichever is larger) inside that container for supervision/overhead.

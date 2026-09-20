@@ -41,7 +41,8 @@ test('stage resource estimates distinguish source expansion and graph publicatio
   const small = { bytes: 1048576, sourceBytes: 1048576 };
   const large = { bytes: 100 * 1048576, sourceBytes: 100 * 1048576 };
   assert.ok(stageMemoryMb('cpu', large) > stageMemoryMb('cpu', small));
-  assert.ok(stageMemoryMb('publish', large) > stageMemoryMb('semantic', large));
+  const graph = { ...large, staticBytes: 50 * 1048576 };
+  assert.ok(stageMemoryMb('publish', graph) > stageMemoryMb('semantic', graph));
 });
 
 test('large static stages can raise heap allowance without inflating semantic reservations', () => {
@@ -57,12 +58,23 @@ test('large static stages can raise heap allowance without inflating semantic re
 test('large publication estimates do not reject a checkpoint before bounded execution', () => {
   // A real 11,941-file checkpoint was rejected after all model work completed.
   const info = { bytes: 577078888, sourceBytes: 96806438, staticBytes: 500990953 };
-  assert.equal(stageMemoryMb('publish', info), 10816);
-  assert.equal(stageMemoryMb('publish', info, 80, 8192), 8192);
-  assert.equal(stageMemoryMb('cpu', info, 80, 8192), 8192);
+  assert.equal(stageMemoryMb('publish', info, 80, Infinity, 10), 10816);
+  assert.equal(stageMemoryMb('publish', info, 80, 8192, 10), 8192);
+  assert.equal(stageMemoryMb('cpu', info, 80, 8192, 10), 8192);
   assert.equal(stageMemoryMb('fetch', null, 80, 8192), 1024);
   const small = { bytes: 1048576, sourceBytes: 1048576 };
   assert.equal(stageMemoryMb('publish', small, 80, 8192), stageMemoryMb('publish', small));
+});
+
+test('checkpoint expansion is independently configurable and excludes static caches during semantic work', () => {
+  const tuned = concurrencyConfig({ WHAT_THE_REPO_ANALYSIS_CHECKPOINT_MEMORY_EXPANSION: '4' });
+  const info = { bytes: 100 * 1048576, sourceBytes: 20 * 1048576, staticBytes: 200 * 1048576 };
+  assert.equal(stageMemoryMb('semantic', info, 60, 8192, tuned.analysisCheckpointMemoryExpansion), 960);
+  assert.equal(stageMemoryMb('publish', info, 60, 8192, tuned.analysisCheckpointMemoryExpansion), 1728);
+  assert.equal(stageMemoryMb('cpu', info, 60, 8192, tuned.analysisCheckpointMemoryExpansion), 1984);
+  for (const value of ['1', '17', '2.5', 'NaN']) {
+    assert.throws(() => concurrencyConfig({ WHAT_THE_REPO_ANALYSIS_CHECKPOINT_MEMORY_EXPANSION: value }), /ANALYSIS_CHECKPOINT_MEMORY_EXPANSION/);
+  }
 });
 
 test('fragmented fatal V8 diagnostics classify memory exhaustion without retrying it', () => {
