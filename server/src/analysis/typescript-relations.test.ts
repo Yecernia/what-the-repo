@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ParsedFile } from "./facts.js";
-import { analyzeTypeScriptTexts as bindTypeScriptTexts, analyzeTypeScript as bindTypeScriptRelations } from "./typescript.js";
+import { analyzeTypeScriptTexts as bindTypeScriptTexts, analyzeTypeScript as bindTypeScriptRelations, createCompilerWorkspace } from "./typescript.js";
 import { TreeSitterAnalyzer } from "./tree-sitter.js";
 import { buildSnapshot } from "./graph.js";
 import { createAnalysisCache, readAnalysisCache } from "./incremental.js";
@@ -20,6 +20,44 @@ function filesFor(sources: Record<string, string>): ParsedFile[] {
 async function bind(sources: Record<string, string>) {
   return bindTypeScriptTexts(filesFor(sources), new Map(Object.entries(sources).map(([path, content]) => ["/repository/" + path, content])));
 }
+
+test("compiler directory lookup retains virtual outputs and snapshot-only config resolution", () => {
+  const texts = new Map([
+    ["/repository/pkg/package.json", JSON.stringify({ name: "@example/pkg" })],
+    ["/repository/pkg/tsconfig.json", JSON.stringify({ compilerOptions: { rootDir: "src", outDir: "lib", declarationDir: "types" } })],
+    ["/repository/pkg/src/index.ts", "export const value = 1;"],
+  ]);
+  const workspace = createCompilerWorkspace(texts);
+  for (const path of ["/repository/pkg/src", "/repository/pkg/lib", "/repository/pkg/types", "/repository/node_modules/@example/pkg/src", "/repository/node_modules/@missing"])
+    assert.equal(workspace.directoryExists(path), true, path);
+  for (const path of ["/repository/pkg/missing", "/repository/pkg/lib/missing", "/outside/private"])
+    assert.equal(workspace.directoryExists(path), false, path);
+  assert.equal(workspace.getParsedCommandLine("/repository/pkg/src/../tsconfig.json"), workspace.projects.find(p => p.context.configPath === "pkg/tsconfig.json")?.parsed);
+  assert.equal(workspace.getParsedCommandLine("/outside/tsconfig.json"), undefined);
+  texts.set("/repository/pkg/tsconfig.json", JSON.stringify({ compilerOptions: { rootDir: "src", outDir: "dist" } }));
+  const next = createCompilerWorkspace(texts);
+  assert.equal(next.directoryExists("/repository/pkg/lib"), false);
+  assert.equal(next.directoryExists("/repository/pkg/dist"), true);
+});
+
+test("output prefix lookup checks every ancestor and preserves ambiguous mappings", () => {
+  const texts = new Map([
+    ["/repository/a/tsconfig.json", JSON.stringify({ compilerOptions: { rootDir: "src", outDir: "../build" } })],
+    ["/repository/b/tsconfig.json", JSON.stringify({ compilerOptions: { rootDir: "src", outDir: "../build/nested", declarationDir: "../build" } })],
+    ["/repository/a/src/nested/index.ts", "export const a = 1;"],
+    ["/repository/a/src/shared.ts", "export const a = 1;"],
+    ["/repository/b/src/index.ts", "export const b = 2;"],
+    ["/repository/b/src/shared.ts", "export const b = 2;"],
+    ["/repository/a/src/unique.ts", "export const unique = 3;"],
+    ["/repository/build/actual.js", "export const actual = 4;"],
+  ]);
+  const { canonical } = createCompilerWorkspace(texts);
+  assert.equal(canonical("/repository/build/nested/index.js"), "/repository/build/nested/index.js");
+  assert.equal(canonical("/repository/build/shared.d.ts"), "/repository/build/shared.d.ts");
+  assert.equal(canonical("/repository/build/unique.d.ts"), "/repository/a/src/unique.ts");
+  assert.equal(canonical("/repository/build/actual.js"), "/repository/build/actual.js");
+  assert.equal(canonical("/repository/build/missing.js"), "/repository/build/missing.js");
+});
 
 test("compiler binding distinguishes imports, aliases, namespace calls, receivers and parameter shadowing", async () => {
   const files = await bind({

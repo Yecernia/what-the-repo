@@ -293,7 +293,7 @@ export function createCompilerWorkspace(texts: ReadonlyMap<string, string>) {
           packages.has(json.name) ? null : posix.dirname(path),
         );
     }
-  const outputMaps: Array<{ source: string; output: string }> = [];
+  const outputMaps = new Map<string, Set<string>>();
   const canonical = (input: string): string => {
     const path = normalize(input);
     if (!inside(path)) return path;
@@ -302,11 +302,13 @@ export function createCompilerWorkspace(texts: ReadonlyMap<string, string>) {
     );
     const packageRoot = dependency && packages.get(dependency[1]!);
     const mapped = packageRoot ? packageRoot + (dependency![2] ?? "") : path;
-    if (all.has(mapped)) return mapped;
+    if (all.has(mapped) || !outputMaps.size) return mapped;
     const candidates = new Set<string>();
-    for (const entry of outputMaps)
-      if (mapped.startsWith(entry.output + "/")) {
-        const stem = (entry.source + mapped.slice(entry.output.length)).replace(
+    // Only ancestor directories can be output prefixes. Keep all matching
+    // roots: nested or shared outputs must still reject ambiguous sources.
+    for (let output = posix.dirname(mapped); output !== "/" && output !== "."; output = posix.dirname(output))
+      for (const source of outputMaps.get(output) ?? []) {
+        const stem = (source + mapped.slice(output.length)).replace(
           /(?:\.d)?\.[cm]?[jt]sx?$/,
           "",
         );
@@ -434,8 +436,11 @@ export function createCompilerWorkspace(texts: ReadonlyMap<string, string>) {
     const options = project.parsed.options;
     if (options.rootDir && inside(options.rootDir))
       for (const output of [options.outDir, options.declarationDir])
-        if (output && inside(output) && output !== options.rootDir)
-          outputMaps.push({ source: options.rootDir, output });
+        if (output && inside(output) && output !== options.rootDir) {
+          const sources = outputMaps.get(output) ?? new Set<string>();
+          sources.add(options.rootDir);
+          outputMaps.set(output, sources);
+        }
   }
   // A file belongs to the closest including config. Solution configs retain project references.
   const owners = new Map<string, CompilerProject>();
@@ -483,7 +488,22 @@ export function createCompilerWorkspace(texts: ReadonlyMap<string, string>) {
     projects.push(project);
     for (const file of fileNames) owners.set(file, project);
   }
-  return { all, canonical, directories, configHost, projects, owners };
+  // Module resolution probes missing directories repeatedly. Index these once
+  // so each probe canonicalizes its path once, instead of once per project.
+  const outputDirectories = new Set<string>();
+  const parsedConfigs = new Map<string, ts.ParsedCommandLine>();
+  for (const project of projects) {
+    for (const output of [project.parsed.options.outDir, project.parsed.options.declarationDir])
+      if (output !== undefined) outputDirectories.add(output);
+    const path = `${ROOT}/${project.context.configPath}`;
+    if (!parsedConfigs.has(path)) parsedConfigs.set(path, project.parsed);
+  }
+  const directoryExists = (name: string): boolean => {
+    const path = canonical(name);
+    return directories.has(path) || outputDirectories.has(path) || /\/node_modules(?:\/[^/]+)?$/.test(name);
+  };
+  const getParsedCommandLine = (path: string) => parsedConfigs.get(canonical(path));
+  return { all, canonical, directories, configHost, projects, owners, directoryExists, getParsedCommandLine };
 }
 export async function analyzeTypeScript(
   files: ParsedFile[],
@@ -597,11 +617,7 @@ export async function analyzeTypeScriptTexts(
       getDefaultLibFileName: () =>
         `/toolchain/${ts.getDefaultLibFileName(options)}`,
       getDefaultLibLocation: () => "/toolchain",
-      getParsedCommandLine: (path) =>
-        workspace.projects.find(
-          (project) =>
-            `${ROOT}/${project.context.configPath}` === canonical(path),
-        )?.parsed,
+      getParsedCommandLine: workspace.getParsedCommandLine,
       getCurrentDirectory: () => ROOT,
       getCanonicalFileName: canonical,
       useCaseSensitiveFileNames: () => true,
@@ -610,14 +626,7 @@ export async function analyzeTypeScriptTexts(
         throw new Error("typescript_emit_forbidden");
       },
       realpath: canonical,
-      directoryExists: (name) =>
-        directories.has(canonical(name)) ||
-        workspace.projects.some((p) =>
-          [p.parsed.options.outDir, p.parsed.options.declarationDir].includes(
-            canonical(name),
-          ),
-        ) ||
-        /\/node_modules(?:\/[^/]+)?$/.test(name),
+      directoryExists: workspace.directoryExists,
       getDirectories: (name) => [
         ...(directories.get(canonical(name))?.directories ?? []),
       ],
