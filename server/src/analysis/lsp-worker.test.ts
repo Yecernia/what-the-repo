@@ -5,13 +5,23 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { analyzeLspRequest, type WorkerRequest } from "./lsp-worker.js";
 const server = String.raw`
-const fs=require('fs');const mode=process.argv[2];let buffer=Buffer.alloc(0),sequence=Promise.resolve();
+const fs=require('fs');const mode=process.argv[2];let buffer=Buffer.alloc(0),sequence=Promise.resolve(),workspaceReady=!['ready','java-ready'].includes(mode);
 function send(value){const body=Buffer.from(JSON.stringify(value));const frame=Buffer.concat([Buffer.from('Content-Length: '+body.length+'\r\n\r\n'),body]);sequence=sequence.then(()=>new Promise(done=>{process.stdout.write(frame.subarray(0,7));setImmediate(()=>{process.stdout.write(frame.subarray(7,23));setImmediate(()=>{process.stdout.write(frame.subarray(23));done();});});}));}
 const range=(s,e)=>({start:{line:0,character:s},end:{line:0,character:e}});
 const item=(uri,name,s,e,data)=>({uri,name,kind:12,range:range(s,e),selectionRange:range(s,s+name.length),data});
 function handle(m){let result=null;
- if(m.method==='initialize')result={serverInfo:{name:'controlled-lsp',version:'1'},capabilities:{positionEncoding:mode==='encoding'?'utf-8':'utf-16',documentSymbolProvider:mode!=='unsupported',callHierarchyProvider:mode!=='unsupported'}};
+ if((m.method==='shutdown'||m.method==='exit')&&m.params!=null){send({jsonrpc:'2.0',id:m.id,error:{code:-32602,message:'expected no parameters'}});return;}
+ if(m.method==='initialize')result={serverInfo:{name:'controlled-lsp',version:mode==='version'?'v'.repeat(500):'1'},capabilities:{positionEncoding:mode==='encoding'?'utf-8':'utf-16',documentSymbolProvider:mode!=='unsupported',callHierarchyProvider:mode!=='unsupported'}};
+ else if(m.method==='initialized'&&mode==='ready'){
+  send({jsonrpc:'2.0',method:'experimental/serverStatus',params:{quiescent:false,health:'ok'}});
+  setTimeout(()=>{workspaceReady=true;send({jsonrpc:'2.0',method:'experimental/serverStatus',params:{quiescent:true,health:'ok'}})},80);
+ }
+ else if(m.method==='initialized'&&mode==='java-ready'){
+  send({jsonrpc:'2.0',method:'language/status',params:{type:'Starting'}});
+  setTimeout(()=>{workspaceReady=true;send({jsonrpc:'2.0',method:'language/status',params:{type:'ServiceReady'}})},80);
+ }
  else if(m.method==='textDocument/documentSymbol'){
+  if(!workspaceReady)throw Error('queried before workspace was ready');
   if(mode==='empty')result=[];
   else if(mode==='null')result=null;
   else if(mode==='flat')result=[{name:'run',kind:12,containerName:'display-only',location:{uri:m.params.textDocument.uri,range:range(4,20)}}];
@@ -27,6 +37,7 @@ function handle(m){let result=null;
   const base=m.params.item.data.index===1?8:14;
   result=[{to:item(m.params.item.uri,'target',25,50,null),fromRanges:[range(base,base+2),range(base+3,base+5)]}];
  }
+ else if(m.method==='shutdown'&&mode==='shutdown-error')send({jsonrpc:'2.0',method:'window/logMessage',params:{type:1,message:'session is shut down'}});
  else if(m.method==='exit'){process.exit(0);return;}
  if(m.id!==undefined)send({jsonrpc:'2.0',id:m.id,result});
 }
@@ -64,6 +75,7 @@ test("LSP fragmented transport keeps every prepared item, opaque data, call site
     const result = await analyzeLspRequest(request);
     assert.equal(result.completed, true);
     assert.equal(result.toolchainVerified, false);
+    assert.ok(!result.reasonCodes.includes('lsp_shutdown_failed'));
     assert.deepEqual(
       result.symbols.map((s) => s.name),
       ["run", "target"],
@@ -84,6 +96,35 @@ test("LSP fragmented transport keeps every prepared item, opaque data, call site
       ),
     );
     assert.equal(result.coverage?.targetsCompleted, 2);
+  }));
+test('Rust waits for the explicit quiescent workspace notification before querying', async () =>
+  fixture('ready', async request => {
+    request.language = 'rust';
+    const result = await analyzeLspRequest(request);
+    assert.equal(result.completed, true);
+    assert.equal(result.relations.length, 4);
+    assert.ok(!result.reasonCodes.includes('workspace_readiness_not_observable'));
+  }));
+test('LSP preserves long server build identity instead of truncating it as display text', async () =>
+  fixture('version', async request => {
+    const result = await analyzeLspRequest(request);
+    assert.equal(result.completed, true);
+    assert.equal(result.serverVersion, 'v'.repeat(500));
+  }));
+test('Java waits for service readiness before querying project facts', async () =>
+  fixture('java-ready', async request => {
+    request.language = 'java';
+    const result = await analyzeLspRequest(request);
+    assert.equal(result.completed, true);
+    assert.equal(result.relations.length, 4);
+    assert.ok(!result.reasonCodes.includes('workspace_readiness_not_observable'));
+  }));
+test('shutdown diagnostics report cleanup failure without invalidating completed queries', async () =>
+  fixture('shutdown-error', async request => {
+    const result = await analyzeLspRequest(request);
+    assert.equal(result.completed, true);
+    assert.ok(result.reasonCodes.includes('lsp_shutdown_failed'));
+    assert.deepEqual(result.workspaceDiagnostics, []);
   }));
 test("LSP empty is complete; unsupported is distinct and sends no symbol request", async () => {
   await fixture("empty", async (request) => {

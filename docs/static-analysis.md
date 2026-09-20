@@ -113,6 +113,27 @@ The sandbox probe must establish network isolation, hidden host/target paths,
 bounded writes/processes/memory and process-tree cleanup. A direct local protocol
 test is not a substitute for this deployment probe.
 
+Language initialization and subsequent configuration requests share an
+operator-owned untrusted-source policy. Rust build scripts, procedural macros
+and checks-on-save are disabled; Java automatic builds and Maven/Gradle imports
+are disabled; Go uses an offline, local toolchain with CGO disabled. Cargo
+executable overrides and clangd project compiler/plugin flags decline LSP
+enrichment explicitly. Generic C# servers using MSBuild are not started on
+untrusted input. AST analysis remains available in these cases. Truth artifacts
+must bind the execution policy, and LSP cache identity includes configuration
+and attestation identity. A runtime version/capability mismatch cannot claim
+verified or completed enrichment.
+Rust analysis waits for its explicit quiescent workspace notification and Java
+for `ServiceReady`, within the request/deadline budget. Cargo discovery remains enabled while
+build scripts and procedural macros remain disabled. Servers may omit the LSP
+version field; executable and runtime inventories still bind their identity.
+Reported build metadata is preserved in full for comparison, never shortened
+as display text.
+
+The [local Linux container suite](../infra/lsp/README.md) exercises real
+toolchains and kernel resource boundaries. Its reports do not enable production
+attestation or establish behavior for a different host/wrapper configuration.
+
 Toolchain attestation, advertised capability, request completion and fact
 certainty remain separate fields. Shutdown failures are reported separately
 from completed analysis requests.

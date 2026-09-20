@@ -250,6 +250,15 @@ export function symbolStableId(
   return `fact:symbol:${stableDigest(`${path}:${qualifiedName}:${kind}:${discriminator}`)}`;
 }
 
+/** Identity fields must never be shortened like display text. Some servers
+ * (including distribution builds of gopls) report structured build metadata. */
+export function lspServerVersion(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string' || !value.length || value.length > 8192)
+    throw new Error('invalid_lsp_server_version');
+  return value;
+}
+
 export function unavailableLspResult(
   language: string,
   ...reasonCodes: string[]

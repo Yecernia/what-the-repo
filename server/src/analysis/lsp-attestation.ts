@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { languageById } from "./languages.js";
+import { LSP_POLICY_VERSION } from './lsp-policy.js';
 
 const MAX_ATTESTATION_BYTES = 1024 * 1024;
 const MAX_EXECUTABLE_BYTES = 512 * 1024 * 1024;
@@ -319,6 +320,7 @@ export async function loadLspAttestation(
     if (
       truth.schema_version !== "lsp-language-truth-v1" ||
       truth.passed !== true ||
+      truth.execution_policy !== LSP_POLICY_VERSION ||
       truth.language !== language
     ) {
       throw new LspAttestationError(`${language} LSP truth suite did not pass`);

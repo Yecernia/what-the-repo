@@ -3,6 +3,7 @@ import { lstat, readFile, realpath, writeFile, rename } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Transform } from "node:stream";
+import { lspConfiguration, lspInitializationOptions, lspSafeCommand, lspSettings, unsafeLspWorkspaceConfiguration } from './lsp-policy.js';
 import { setTimeout as delay } from "node:timers/promises";
 import {
   createMessageConnection,
@@ -18,6 +19,7 @@ import {
   type LspRunResult,
   type LspSymbolFact,
   unavailableLspResult,
+  lspServerVersion,
 } from "./facts.js";
 const MAX_SOURCE_FILE_BYTES = 4 * 1024 * 1024;
 export interface WorkerRequest {
@@ -68,11 +70,15 @@ export class LspSession {
   failures: Record<string, number> = {};
   workspaceDiagnostics: NonNullable<LspRunResult["workspaceDiagnostics"]> = [];
   shutdownFailure: string | null = null;
+  private closing = false;
+  private workspaceStatus: { quiescent: boolean; health: string; message?: string } | null = null;
+  private readonly statusListeners = new Set<() => void>();
   constructor(
     private readonly command: string[],
     private readonly root: string,
     private readonly timeoutMs: number,
     private readonly signal?: AbortSignal,
+    private readonly language = 'unknown',
   ) {}
   async start(): Promise<void> {
     if (!this.command.length || !isAbsolute(this.command[0]!))
@@ -108,6 +114,18 @@ export class LspSession {
     child.once("error", () => connection.dispose());
     child.once("exit", () => connection.dispose());
     connection.onNotification((method, params) => {
+      if (this.language === 'java' && method === 'language/status' && isRecord(params) &&
+          ['Starting', 'Started', 'ServiceReady', 'Error'].includes(String(params.type))) {
+        this.workspaceStatus = { quiescent: params.type === 'ServiceReady',
+          health: params.type === 'Error' ? 'error' : 'ok',
+          ...(typeof params.message === 'string' ? { message: params.message.slice(0, 2000) } : {}) };
+        for (const listener of this.statusListeners) listener();
+      }
+      if (method === 'experimental/serverStatus' && isRecord(params) && typeof params.quiescent === 'boolean') {
+        this.workspaceStatus = { quiescent: params.quiescent, health: String(params.health),
+          ...(typeof params.message === 'string' ? { message: params.message.slice(0, 2000) } : {}) };
+        for (const listener of this.statusListeners) listener();
+      }
       if (
         (method === "window/logMessage" || method === "window/showMessage") &&
         isRecord(params) &&
@@ -115,6 +133,12 @@ export class LspSession {
         typeof params.message === "string" &&
         this.workspaceDiagnostics.length < 100
       ) {
+        // Several real servers finish background diagnostics while shutting
+        // down. Preserve cleanup failure separately from completed queries.
+        if (this.closing) {
+          if (params.type === 1) this.shutdownFailure ??= 'lsp_shutdown_reported_error';
+          return;
+        }
         this.workspaceDiagnostics.push({
           severity: params.type === 1 ? "error" : "warning",
           message: params.message.slice(0, 2000),
@@ -127,7 +151,7 @@ export class LspSession {
         isRecord(params) &&
         Array.isArray(params.items)
       )
-        return params.items.map(() => null);
+        return params.items.map((item: unknown) => lspConfiguration(this.language, isRecord(item) ? item.section : undefined));
       if (method === "workspace/workspaceFolders")
         return [{ uri: pathToFileURL(this.root).href, name: "source" }];
       if (method === "window/workDoneProgress/create") return null;
@@ -142,6 +166,7 @@ export class LspSession {
       ],
       capabilities: {
         general: { positionEncodings: ["utf-16"] },
+        ...(this.language === 'rust' ? { experimental: { serverStatusNotification: true } } : {}),
         window: { workDoneProgress: true },
         workspace: { configuration: true },
         textDocument: {
@@ -153,7 +178,7 @@ export class LspSession {
           typeHierarchy: { dynamicRegistration: false },
         },
       },
-      initializationOptions: {},
+      initializationOptions: lspInitializationOptions(this.language),
     });
     if (isRecord(initialized)) {
       if (isRecord(initialized.serverInfo))
@@ -167,6 +192,35 @@ export class LspSession {
     )
       throw new Error("lsp_position_encoding_unsupported");
     this.notify("initialized", {});
+    // JDT LS already consumed these settings in initialize; a duplicate change
+    // can start another project refresh while initial import is still running.
+    if (this.language !== 'java')
+      this.notify('workspace/didChangeConfiguration', { settings: lspSettings(this.language) });
+  }
+  async waitForWorkspace(): Promise<boolean> {
+    if (this.language !== 'rust' && this.language !== 'java') return false;
+    this.signal?.throwIfAborted();
+    await new Promise<void>((resolve, reject) => {
+      const finish = (error?: Error) => {
+        clearTimeout(timer); this.statusListeners.delete(changed);
+        this.signal?.removeEventListener('abort', abort);
+        error ? reject(error) : resolve();
+      };
+      const changed = () => {
+        if (this.workspaceStatus?.quiescent) finish();
+      };
+      const abort = () => finish(new Error('lsp_workspace_cancelled'));
+      const timer = setTimeout(() => finish(new Error('lsp_workspace_readiness_timeout')), this.timeoutMs);
+      this.statusListeners.add(changed);
+      this.signal?.addEventListener('abort', abort, { once: true });
+      changed();
+      if (this.signal?.aborted) abort();
+    });
+    if (this.workspaceStatus && this.workspaceStatus.health !== 'ok') {
+      this.workspaceDiagnostics.push({ severity: this.workspaceStatus.health === 'error' ? 'error' : 'warning',
+        message: this.workspaceStatus.message ?? 'Language server workspace is incomplete' });
+    }
+    return true;
   }
   supports(capability: string): boolean {
     return !!this.capabilities[capability];
@@ -174,6 +228,7 @@ export class LspSession {
   async close(): Promise<void> {
     const child = this.process;
     if (!child) return;
+    this.closing = true;
     try {
       if (!this.signal?.aborted && child.exitCode === null) {
         await this.request("shutdown", null, 1000);
@@ -201,9 +256,12 @@ export class LspSession {
     });
   }
   notify(method: string, params: unknown): void {
-    void this.connection
-      ?.sendNotification(method, params)
-      .catch(() => undefined);
+    if (!this.connection) return;
+    // The string-method overload treats null as a positional [null] argument.
+    // LSP shutdown/exit have no parameters.
+    void (params === null
+      ? this.connection.sendNotification(method)
+      : this.connection.sendNotification(method, params)).catch(() => undefined);
   }
   async request(
     method: string,
@@ -218,7 +276,9 @@ export class LspSession {
     let abort: () => void = () => {};
     try {
       return await Promise.race([
-        this.connection.sendRequest(method, params, token.token),
+        params === null
+          ? this.connection.sendRequest(method, token.token)
+          : this.connection.sendRequest(method, params, token.token),
         new Promise<never>((_, reject) => {
           abort = () => {
             token.cancel();
@@ -281,6 +341,8 @@ export async function analyzeLspRequest(
   checkpoint?: (result: LspRunResult) => Promise<void>,
 ): Promise<LspRunResult> {
   validateWorkerRequest(request);
+  const unsafeConfiguration = unsafeLspWorkspaceConfiguration(request.language, request.workspaceFiles);
+  if (unsafeConfiguration) return unavailableLspResult(request.language, unsafeConfiguration);
   const sourceRoot = await realpath(request.sourceRoot),
     allowedPaths = new Set(request.workspaceFiles);
   const deadline = AbortSignal.timeout(request.totalBudgetMs ?? 100000),
@@ -288,10 +350,11 @@ export async function analyzeLspRequest(
   const projectRoot = resolve(sourceRoot, request.projectRoot ?? ".");
   if (!isInside(projectRoot, sourceRoot)) throw new Error("lsp_project_escape");
   const session = new LspSession(
-    request.serverCommand,
+    lspSafeCommand(request.language, request.serverCommand),
     projectRoot,
     request.requestTimeoutMs,
     combined,
+    request.language,
   );
   const result: LspRunResult = {
     ...unavailableLspResult(request.language),
@@ -309,8 +372,9 @@ export async function analyzeLspRequest(
   let exceeded = false;
   try {
     await session.start();
+    if (await session.waitForWorkspace()) result.reasonCodes = [];
     result.serverName = optionalText(session.serverInfo.name);
-    result.serverVersion = optionalText(session.serverInfo.version);
+    result.serverVersion = lspServerVersion(session.serverInfo.version);
     for (const [capability, label] of [
       ["documentSymbolProvider", "document_symbols"],
       ["callHierarchyProvider", "call_hierarchy"],

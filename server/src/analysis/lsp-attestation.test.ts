@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { LSP_POLICY_VERSION } from './lsp-policy.js';
 import {
   LSP_TRUTH_FIXTURE_DIGESTS,
   runtimeBundleDigest,
@@ -71,6 +72,7 @@ test("LSP attestation binds sandbox, server and the fixed truth suite", async ()
     const truthPath = join(root, "truth.json");
     const truth = {
       schema_version: "lsp-language-truth-v1",
+      execution_policy: LSP_POLICY_VERSION,
       language: "typescript",
       server_sha256: serverSha,
       runtime_digest: runtimeBundleDigest(undefined),

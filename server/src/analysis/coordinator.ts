@@ -1211,7 +1211,7 @@ export class AnalysisCoordinator {
       signal?.throwIfAborted();
       const language = group[0]!.language;
       const inputIdentity = createHash('sha256').update(JSON.stringify([
-        workspaceIdentity, projectId, group[0]!.project?.configDigest,
+        workspaceIdentity, projectId, group[0]!.project?.configDigest, ANALYSIS_CONFIG_DIGEST,
       ])).digest('hex');
       const cached = previous.get(projectId);
       const reuse = plan.mode !== 'full' && cached?.completed && cached.inputIdentity === inputIdentity;

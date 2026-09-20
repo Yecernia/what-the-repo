@@ -13,8 +13,9 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ParsedFile, LspRunResult } from "./facts.js";
 import { terminateProcessTree } from "./lsp-worker.js";
-import { unavailableLspResult } from "./facts.js";
+import { unavailableLspResult, lspServerVersion } from "./facts.js";
 import { readSnapshotFile } from "./source-input.js";
+import { unsafeLspWorkspaceConfiguration } from './lsp-policy.js';
 import {
   loadLspAttestationFromEnvironment,
   type VerifiedLspAttestation,
@@ -53,6 +54,8 @@ export class SandboxedLspRunner implements LspRunner {
       return unavailableLspResult(input.language, "lsp_language_not_attested");
     if (!input.files.length)
       return unavailableLspResult(input.language, "lsp_no_files");
+    const unsafeConfiguration = unsafeLspWorkspaceConfiguration(input.language, (input.workspaceFiles ?? input.files).map(file => file.path));
+    if (unsafeConfiguration) return unavailableLspResult(input.language, unsafeConfiguration);
 
     const sourceRoot = await realpath(input.sourceRoot);
     const runtimeRoot = resolve(input.runtimeRoot);
@@ -174,16 +177,19 @@ export class SandboxedLspRunner implements LspRunner {
         ...(workerFailure ? [workerFailure] : []),
         ...(exitCode !== 0 ? ["lsp_partial_recovery"] : []),
       ];
-      const versionMatches = parsed.serverVersion === binding.serverVersion;
+      // serverInfo.version is optional in LSP. Executable/runtime hashes still
+      // bind servers that omit it; an explicitly conflicting version is a failure.
+      const versionMatches = parsed.serverVersion === null || parsed.serverVersion === binding.serverVersion;
       const capabilitiesMatch = binding.capabilities.every((capability) =>
         parsed.capabilities.includes(capability),
       );
       if (!versionMatches) reasons.push("lsp_server_version_mismatch");
+      if (parsed.serverVersion === null) reasons.push('lsp_server_version_not_reported');
       if (!capabilitiesMatch) reasons.push("lsp_truth_capability_mismatch");
       return {
         ...parsed,
-        completed: parsed.completed && exitCode === 0,
-        toolchainVerified: true,
+        completed: parsed.completed && exitCode === 0 && versionMatches && capabilitiesMatch,
+        toolchainVerified: versionMatches && capabilitiesMatch,
         reasonCodes: [...new Set(reasons)],
       };
     } catch (error) {
@@ -221,6 +227,13 @@ export function safeLspEnvironment(runtimeRoot: string): NodeJS.ProcessEnv {
   environment.GIT_TERMINAL_PROMPT = "0";
   environment.GIT_ASKPASS = "";
   environment.GOPROXY = "off";
+  environment.GOSUMDB = 'off';
+  environment.GOTOOLCHAIN = 'local';
+  environment.GOENV = 'off';
+  environment.CGO_ENABLED = '0';
+  environment.GOFLAGS = '-mod=readonly -buildvcs=false';
+  environment.PYTHONNOUSERSITE = '1';
+  environment.PYTHONSAFEPATH = '1';
   environment.GONOSUMDB = "*";
   environment.CARGO_NET_OFFLINE = "true";
   environment.npm_config_ignore_scripts = "true";
@@ -307,7 +320,7 @@ function parseLspRunResult(value: unknown): LspRunResult {
     toolchainVerified: false,
     coverage: parseCoverage(value.coverage),
     serverName: optionalText(value.serverName),
-    serverVersion: optionalText(value.serverVersion),
+    serverVersion: lspServerVersion(value.serverVersion),
     capabilities: textArray(value.capabilities),
     reasonCodes: textArray(value.reasonCodes),
     workspaceDiagnostics: Array.isArray(value.workspaceDiagnostics)
