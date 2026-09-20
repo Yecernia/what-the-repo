@@ -51,8 +51,10 @@ test('checkpoint publication persists and reloads facts, cache, sources and atom
     const prepared = preparePublicationSnapshot({ snapshot: loadedCheckpoint.snapshot, plan: loadedCheckpoint.plan,
       currentParsedFiles: loadedCheckpoint.files, previousFactGraph: null, displayLanguage: 'en' });
     const analysis = { ...prepared.analysis, analysis_cache: createAnalysisCache({ manifest, parsedFiles: [file], lspResults: [] }) };
+    const preparedCache = await store.preparePublicSnapshotAnalysisCache({publicKey,snapshotId:snapshot.snapshot_id,cache:analysis.analysis_cache});
+    assert.equal(await store.loadPublicSnapshot(publicKey),null,'cache upload alone must not publish the snapshot');
     const input = { publicKey, repository, commitSha: 'b'.repeat(40),
-      snapshotId: snapshot.snapshot_id, sourceRoot, view: prepared.view, analysis };
+      snapshotId: snapshot.snapshot_id, sourceRoot, view: prepared.view, analysis:prepared.analysis, preparedAnalysisCache:preparedCache };
     await store.savePublicSnapshot(input);
     const expected = JSON.parse(JSON.stringify(analysis)) as typeof analysis;
     const bundle = await store.loadPublicSnapshot<typeof analysis>(publicKey);

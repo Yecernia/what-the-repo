@@ -8,6 +8,7 @@ import type { SemanticBatch } from "../domain/semantic-batch.js";
 import type { SnapshotEvidence } from "../domain/snapshot.js";
 import type { SnapshotEvidenceRequest } from "./snapshot-evidence.js";
 import type { StoredSourceSnapshot } from "./snapshot-object-store.js";
+import type { PreparedAnalysisCache } from './analysis-payload.js';
 import type {
   EvolutionFeedbackRequest,
   EvolutionFeedbackRequestStatus,
@@ -178,6 +179,7 @@ export interface ProductStore {
     snapshotId: string;
     sourceRoot?: string;
     preparedSource?: StoredSourceSnapshot;
+    preparedAnalysisCache?: PreparedAnalysisCache;
     view: unknown;
     analysis: unknown;
     analyzerBundleVersion?: string;
@@ -188,6 +190,9 @@ export interface ProductStore {
   preparePublicSnapshotSource(input: {
     publicKey: string; snapshotId: string; sourceRoot: string; fence?: AnalysisLeaseFence; signal?: AbortSignal;
   }): Promise<StoredSourceSnapshot | null>;
+  preparePublicSnapshotAnalysisCache(input: {
+    publicKey: string; snapshotId: string; cache: unknown; fence?: AnalysisLeaseFence;
+  }): Promise<PreparedAnalysisCache>;
   loadRepositoryHead(input: RepositoryIdentityInput): Promise<RepositoryHead | null>;
   saveRepositoryHead(head: RepositoryHead): Promise<void>;
   createOrJoinRepositoryUpdate(input: {

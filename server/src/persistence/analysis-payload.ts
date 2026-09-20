@@ -71,6 +71,32 @@ export interface StoredPreparedAnalysisPayload {
   chunks: AnalysisPayloadStoredChunk[];
 }
 
+/** Cache objects are immutable and become reachable only with the final snapshot. */
+export interface PreparedAnalysisCache {
+  publicKey: string;
+  snapshotId: string;
+  payload: StoredPreparedAnalysisPayload;
+}
+
+export function mergePreparedAnalysisCache(
+  analysis: StoredPreparedAnalysisPayload, cache: PreparedAnalysisCache | undefined,
+  publicKey: string, snapshotId: string,
+): StoredPreparedAnalysisPayload {
+  if (!cache) return analysis;
+  if (cache.publicKey !== publicKey || cache.snapshotId !== snapshotId) throw new Error('prepared_analysis_cache_identity_mismatch');
+  const extra = cache.payload;
+  const cacheValue = record(extra.envelope?.payload ?? extra.value);
+  const value = record(analysis.envelope?.payload ?? analysis.value);
+  if (!value || !cacheValue || Object.keys(cacheValue).some(key => key !== 'analysis_cache')
+    || 'analysis_cache' in value || extra.envelope?.chunks.some(chunk => !chunk.path.startsWith('analysis_cache.')))
+    throw new Error('prepared_analysis_cache_invalid');
+  const payload = { ...value, ...cacheValue };
+  const chunks = [...(analysis.envelope?.chunks ?? []), ...(extra.envelope?.chunks ?? [])]
+    .sort((a,b) => CHUNK_PATHS.indexOf(a.path) - CHUNK_PATHS.indexOf(b.path) || a.index - b.index);
+  const envelope = chunks.length ? { schema_version: CHUNKED_ANALYSIS_PAYLOAD_SCHEMA, payload, chunks } : null;
+  return { value: envelope ?? payload, envelope, chunks: [...analysis.chunks, ...extra.chunks] };
+}
+
 export interface AnalysisPayloadStoredChunk {
   key: string;
   bytes: number;

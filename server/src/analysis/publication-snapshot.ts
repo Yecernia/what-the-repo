@@ -4,13 +4,26 @@ import { applyIncrementalProvenance, incrementalSummary, type IncrementalPlan } 
 import { extractSnapshotLanguageOverlay, snapshotMatchesDisplayLanguage, stripOwnedSnapshotLanguage } from '../domain/snapshot-language.js';
 import { assertValidEvidenceSnapshot } from '../domain/snapshot-validation.js';
 import { snapshotPublicView } from '../domain/snapshot-public-view.js';
+import type { AnalysisCache } from './incremental.js';
+import type { PreparedAnalysisCache } from '../persistence/analysis-payload.js';
+
+/** Upload the bulky compiler cache before allocating publication intermediates. */
+export async function preparePublicationCache(cache: AnalysisCache | undefined,
+  write: (cache: AnalysisCache) => Promise<PreparedAnalysisCache>) {
+  const start = performance.now();
+  const files = (cache?.parsed_files ?? []).map(({ path, digest, parseError, semanticComplete }) =>
+    ({ path, digest, parseError, semanticComplete }));
+  const prepared = cache ? await write(cache) : undefined;
+  return { files, prepared, timings: { preparation_cache_ms: performance.now() - start,
+    preparation_cache_rss_bytes: process.memoryUsage().rss } };
+}
 
 /** The caller transfers ownership of current fact rows; previous snapshots stay immutable. */
 export function preparePublicationSnapshot(input: {
   snapshot: BuiltSnapshot;
   previousFactGraph: BuiltSnapshot['fact_graph'] | null;
   plan?: IncrementalPlan;
-  currentParsedFiles: ParsedFile[];
+  currentParsedFiles: Pick<ParsedFile, 'path' | 'digest' | 'parseError' | 'semanticComplete'>[];
   displayLanguage: string;
   provenanceApplied?: boolean;
 }) {

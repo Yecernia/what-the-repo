@@ -1,5 +1,5 @@
 import { runtimeConfig } from '../admin/runtime-config.js';
-import { preparePublicationSnapshot } from './publication-snapshot.js';
+import { preparePublicationCache, preparePublicationSnapshot } from './publication-snapshot.js';
 import { randomUUID, createHash } from "node:crypto";
 import { analysisFailureCode } from "../agent/provider-error.js";
 import { access, rm } from "node:fs/promises";
@@ -1040,9 +1040,17 @@ export class AnalysisCoordinator {
         this.nextStage = 'publish'; return;
       }
       checkpointPersisted = true;
+      const preparedCache = await preparePublicationCache(
+        createAnalysisCache({ manifest: fetched.manifest, parsedFiles: parsed, syntaxFiles, lspResults }),
+        cache => this.store.preparePublicSnapshotAnalysisCache({ publicKey, snapshotId, cache, fence }));
+      parsed = []; syntaxFiles = []; lspResults = [];
+      if (checkpoint) {
+        delete checkpoint.checkpoint.parsed; delete checkpoint.checkpoint.syntax_files;
+        delete checkpoint.checkpoint.lsp_results;
+      }
       const preparation = preparePublicationSnapshot({
         snapshot: semantic.snapshot, previousFactGraph, plan,
-        currentParsedFiles: parsed, displayLanguage,
+        currentParsedFiles: preparedCache.files, displayLanguage,
       });
       const { view, languageOverlay, overlayStatus } = preparation;
       await this.recordAnalysisPhase(job, fence, "validating_analysis", "completed");
@@ -1054,17 +1062,15 @@ export class AnalysisCoordinator {
         snapshotId,
         sourceRoot: temporary,
         preparedSource,
+        preparedAnalysisCache: preparedCache.prepared,
         view,
-        analysis: {
-          ...preparation.analysis,
-          analysis_cache: createAnalysisCache({ manifest: fetched.manifest, parsedFiles: parsed, syntaxFiles, lspResults }),
-        },
+        analysis: preparation.analysis,
         analyzerBundleVersion: ANALYZER_BUNDLE_VERSION,
         analysisConfigDigest,
         languageOverlayVersion: SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
         fence,
       });
-      const publicationTimings = { ...(storageTimings ?? {}), ...preparation.timings };
+      const publicationTimings = { ...(storageTimings ?? {}), ...preparedCache.timings, ...preparation.timings };
       await this.store.saveSnapshotLanguageOverlay({
         publicKey,
         language: displayLanguage,
@@ -1254,11 +1260,15 @@ export class AnalysisCoordinator {
     }
     await this.recordAnalysisPhase(input.job, input.fence, "validating_analysis", "running", { stage: "interpreting" });
     const displayLanguage = input.checkpoint.display_language ?? normalizeDisplayLanguage(input.project.display_language);
+    const previousFactGraph = input.checkpoint.previous_fact_graph ?? null;
+    const preparedCache = await preparePublicationCache(takeCheckpointAnalysisCache(input.checkpoint),
+      cache => this.store.preparePublicSnapshotAnalysisCache({ publicKey: input.checkpoint.public_key,
+        snapshotId: input.checkpoint.snapshot_id, cache, fence: input.fence }));
     const preparation = preparePublicationSnapshot({
       snapshot: input.snapshot,
-      previousFactGraph: input.checkpoint.previous_fact_graph ?? null,
+      previousFactGraph,
       plan: input.checkpoint.plan ?? (input.checkpoint.provenance_applied ? undefined : buildFullPlan(input.checkpoint.fetched.manifest)),
-      currentParsedFiles: input.checkpoint.parsed ?? [],
+      currentParsedFiles: preparedCache.files,
       provenanceApplied: input.checkpoint.provenance_applied,
       displayLanguage,
     });
@@ -1272,14 +1282,15 @@ export class AnalysisCoordinator {
       snapshotId: input.checkpoint.snapshot_id,
       sourceRoot: input.checkpoint.source_root,
       preparedSource: input.checkpoint.prepared_source,
+      preparedAnalysisCache: preparedCache.prepared,
       view,
-      analysis: { ...preparation.analysis, analysis_cache: takeCheckpointAnalysisCache(input.checkpoint) },
+      analysis: preparation.analysis,
       analyzerBundleVersion,
       analysisConfigDigest,
       languageOverlayVersion: SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
       fence: input.fence,
     });
-    const publicationTimings = { ...(storageTimings ?? {}), ...preparation.timings };
+    const publicationTimings = { ...(storageTimings ?? {}), ...preparedCache.timings, ...preparation.timings };
     await this.store.saveTrace("analysis-publication-" + input.job.job_id, {
       trace_id: "analysis-publication-" + input.job.job_id, job_id: input.job.job_id, job_attempt: input.job.attempt,
       project_id: input.project.project_id, snapshot_id: input.checkpoint.snapshot_id,

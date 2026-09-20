@@ -72,6 +72,8 @@ import {
   assembleAnalysisPayload,
   defaultAnalysisChunkKey,
   prepareStoredAnalysisPayload,
+  mergePreparedAnalysisCache,
+  type PreparedAnalysisCache,
   readStaticFileFacts,
   type StaticFileFacts,
 } from "./analysis-payload.js";
@@ -1067,6 +1069,17 @@ export class PostgresStore extends FileStore {
     return putSourceSnapshot({ ...input, objectStore: this.snapshotObjects });
   }
 
+  override async preparePublicSnapshotAnalysisCache(input: {
+    publicKey: string; snapshotId: string; cache: unknown; fence?: AnalysisLeaseFence;
+  }): Promise<PreparedAnalysisCache> {
+    if (input.fence) await this.withAnalysisLeaseTransaction(input.fence, async () => undefined);
+    const payload = await prepareStoredAnalysisPayload({ analysis_cache: input.cache },
+      (path, index, sha256) => defaultAnalysisChunkKey(`public-repository-snapshots/${input.publicKey}`, path, index, sha256),
+      (key, body) => this.snapshotObjects.put(key, body, 'application/json'));
+    if (input.fence) await this.withAnalysisLeaseTransaction(input.fence, async () => undefined);
+    return { publicKey: input.publicKey, snapshotId: input.snapshotId, payload };
+  }
+
   override async savePublicSnapshot({ analysis, ...input }: {
     publicKey: string;
     repository: string;
@@ -1074,6 +1087,7 @@ export class PostgresStore extends FileStore {
     snapshotId: string;
     sourceRoot?: string;
     preparedSource?: StoredSourceSnapshot;
+    preparedAnalysisCache?: PreparedAnalysisCache;
     view: unknown;
     analysis: unknown;
     analyzerBundleVersion?: string;
@@ -1113,7 +1127,7 @@ export class PostgresStore extends FileStore {
     timings.view_serialization_ms = performance.now() - viewStart;
     const uploads = [
       measure("view_upload_ms", () => this.snapshotObjects.put(viewKey, viewBody, "application/json")),
-      measure("analysis_prepare_ms", () => prepareStoredAnalysisPayload(
+      measure("analysis_prepare_ms", async () => mergePreparedAnalysisCache(await prepareStoredAnalysisPayload(
         analysis,
         (path, index, sha256) => defaultAnalysisChunkKey(
           `public-repository-snapshots/${input.publicKey}`,
@@ -1122,7 +1136,7 @@ export class PostgresStore extends FileStore {
           sha256,
         ),
         (key, body) => this.snapshotObjects.put(key, body, "application/json"),
-      )),
+      ), input.preparedAnalysisCache, input.publicKey, input.snapshotId)),
       measure("source_upload_ms", async () => input.preparedSource ?? putSourceSnapshot({
         objectStore: this.snapshotObjects,
         sourceRoot,

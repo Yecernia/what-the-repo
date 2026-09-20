@@ -7,8 +7,30 @@ import {
   parseAnalysisPayloadEnvelope,
   prepareAnalysisPayload,
   prepareStoredAnalysisPayload,
+  mergePreparedAnalysisCache,
   readStaticFileFacts,
 } from "./analysis-payload.js";
+import { snapshotObjectDigest } from './snapshot-object-store.js';
+
+test('preuploaded compiler cache composes the same payload and rejects cross-snapshot binding', async () => {
+  const bodies = new Map<string, Uint8Array>();
+  const put = async (key: string, body: Uint8Array) => {
+    bodies.set(key, body); return { key, bytes: body.byteLength, sha256: snapshotObjectDigest(body) };
+  };
+  const key = (path: string, index: number, sha: string) => `chunks/${path}-${index}-${sha}`;
+  for (const count of [2, 2050]) {
+    const cache = { parsed_files: Array.from({length:count},(_,i)=>({path:`${i}.ts`,digest:String(i)})) };
+    const graph = { fact_graph: { nodes: Array.from({length:2050},(_,i)=>({id:String(i)})) } };
+    const preparedCache = {publicKey:'public',snapshotId:'snapshot',payload:await prepareStoredAnalysisPayload({analysis_cache:cache},key,put)};
+    const prepared = await prepareStoredAnalysisPayload(graph,key,put);
+    const merged = mergePreparedAnalysisCache(prepared,preparedCache,'public','snapshot');
+    const all = await prepareStoredAnalysisPayload({...graph,analysis_cache:cache},key,put);
+    assert.deepEqual(merged.value,all.value);
+    assert.deepEqual(await assembleAnalysisPayload(merged.value,async key=>bodies.get(key)??null),{...graph,analysis_cache:cache});
+    assert.throws(()=>mergePreparedAnalysisCache(prepared,preparedCache,'other','snapshot'),/identity_mismatch/);
+    assert.throws(()=>mergePreparedAnalysisCache(prepared,preparedCache,'public','other'),/identity_mismatch/);
+  }
+});
 
 test('stored chunks bound UTF-8 bytes, preserve order and allow one indivisible large record', async () => {
   const values = Array.from({length:ANALYSIS_PAYLOAD_CHUNK_SIZE+1},(_,i)=>({id:i,text:'中'.repeat(1500)}));

@@ -260,7 +260,7 @@ export function applyIncrementalProvenance(input: {
   snapshot: BuiltSnapshot;
   previousFactGraph: FactGraph | null;
   plan: IncrementalPlan;
-  currentParsedFiles: ParsedFile[];
+  currentParsedFiles: Pick<ParsedFile, 'path' | 'digest' | 'parseError' | 'semanticComplete'>[];
   /** Current rows are exclusively owned by publication, never the previous graph. */
   takeOwnership?: boolean;
 }): BuiltSnapshot {

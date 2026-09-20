@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildSnapshot } from './graph.js';
 import type { ParsedFile } from './facts.js';
 import { applyIncrementalProvenance, buildFullPlan, buildIncrementalPlan, createAnalysisCache } from './incremental.js';
-import { preparePublicationSnapshot } from './publication-snapshot.js';
+import { preparePublicationCache, preparePublicationSnapshot } from './publication-snapshot.js';
 import { extractSnapshotLanguageOverlay, stripSnapshotLanguage } from '../domain/snapshot-language.js';
 import { assertValidEvidenceSnapshot } from '../domain/snapshot-validation.js';
 import { snapshotPublicView } from '../domain/snapshot-public-view.js';
@@ -19,6 +19,18 @@ function fixture() {
     description: 'The function calls itself.', certainty: 'verified', evidence: [], weight: 1 });
   return { file, manifest, snapshot, plan: buildFullPlan(manifest) };
 }
+
+test('cache preparation retains only the facts needed for provenance and propagates upload failure', async () => {
+  const {snapshot,plan,file,manifest}=fixture();
+  const cache=createAnalysisCache({manifest,parsedFiles:[file],lspResults:[]});
+  const prepared=await preparePublicationCache(cache,async () => ({publicKey:'public',snapshotId:snapshot.snapshot_id,
+    payload:{value:{analysis_cache:{schema_version:'test'}},envelope:null,chunks:[]}}));
+  assert.deepEqual(Object.keys(prepared.files[0]!).sort(),['digest','parseError','path','semanticComplete']);
+  const full=preparePublicationSnapshot({snapshot:structuredClone(snapshot),plan,currentParsedFiles:[file],previousFactGraph:null,displayLanguage:'en'});
+  const lean=preparePublicationSnapshot({snapshot:structuredClone(snapshot),plan,currentParsedFiles:prepared.files,previousFactGraph:null,displayLanguage:'en'});
+  assert.deepEqual(full.analysis,lean.analysis);
+  await assert.rejects(preparePublicationCache(cache,async()=>{throw new Error('cache_upload_failed')}),/cache_upload_failed/);
+});
 
 test('shared publication preparation preserves output without copying owned fact edges', () => {
   const { snapshot, plan, file } = fixture();

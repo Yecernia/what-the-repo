@@ -61,6 +61,8 @@ import {
   assembleAnalysisPayload,
   defaultAnalysisChunkKey,
   prepareStoredAnalysisPayload,
+  mergePreparedAnalysisCache,
+  type PreparedAnalysisCache,
   readStaticFileFacts,
   type StaticFileFacts,
 } from "./analysis-payload.js";
@@ -904,6 +906,18 @@ export class FileStore implements ProductStore {
     publicKey: string; snapshotId: string; sourceRoot: string; fence?: AnalysisLeaseFence; signal?: AbortSignal;
   }): Promise<StoredSourceSnapshot | null> { return null; }
 
+  async preparePublicSnapshotAnalysisCache(input: {
+    publicKey: string; snapshotId: string; cache: unknown; fence?: AnalysisLeaseFence;
+  }): Promise<PreparedAnalysisCache> {
+    const directory = join(this.dirs.publicSnapshots, safePublicKey(input.publicKey));
+    const payload = await prepareStoredAnalysisPayload({ analysis_cache: input.cache },
+      (path, index, sha256) => defaultAnalysisChunkKey('', path, index, sha256), async (key, body) => {
+        await this.writeBytesWithAnalysisLease(this.analysisChunkPath(directory, key), body, input.fence);
+        return { key, bytes: body.byteLength, sha256: createHash('sha256').update(body).digest('hex') };
+      });
+    return { publicKey: input.publicKey, snapshotId: input.snapshotId, payload };
+  }
+
   async savePublicSnapshot(input: {
     publicKey: string;
     repository: string;
@@ -911,6 +925,7 @@ export class FileStore implements ProductStore {
     snapshotId: string;
     sourceRoot?: string;
     preparedSource?: StoredSourceSnapshot;
+    preparedAnalysisCache?: PreparedAnalysisCache;
     view: unknown;
     analysis: unknown;
     analyzerBundleVersion?: string;
@@ -926,7 +941,7 @@ export class FileStore implements ProductStore {
           await this.replaceSourceSnapshotWithAnalysisLease(input.sourceRoot, publishedRoot, input.fence);
         }
       }
-      const preparedAnalysis = await prepareStoredAnalysisPayload(
+      const preparedAnalysis = mergePreparedAnalysisCache(await prepareStoredAnalysisPayload(
         input.analysis,
         (path, index, sha256) => defaultAnalysisChunkKey("", path, index, sha256),
         async (key, body) => {
@@ -941,7 +956,7 @@ export class FileStore implements ProductStore {
             sha256: createHash("sha256").update(body).digest("hex"),
           };
         },
-      );
+      ), input.preparedAnalysisCache, input.publicKey, input.snapshotId);
       await Promise.all([
         this.writeJsonWithAnalysisLease(join(directory, "view.json"), input.view, input.fence),
         this.writeJsonWithAnalysisLease(join(directory, "analysis.json"), preparedAnalysis.value, input.fence),
