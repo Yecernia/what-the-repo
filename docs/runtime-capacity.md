@@ -35,6 +35,7 @@ accepted range fail startup instead of being silently clamped.
 | --- | ---: | --- | --- |
 | CHAT_CONCURRENCY | 8 | 1–256 | Whole executing chat turns, including their tools |
 | CHAT_MODEL_CONCURRENCY | 8 | 1–256 | Concurrent chat/verification model requests |
+| FREE_CHAT_MAX_OUTPUT_TOKENS | 32768 | 1024–1048576 | Free chat's per-request output ceiling, including reasoning, capped by the model's limit; analysis and user-funded connections keep their existing limits |
 | ANALYSIS_FETCH_CONCURRENCY | 2 | 1–32 | Repository download stages |
 | ANALYSIS_CPU_CONCURRENCY | 2 | 1–32 | Static parsing and graph construction stages |
 | ANALYSIS_MODEL_CONCURRENCY | 8 | 1–256 | Model requests across all repository analyses/overlays |
@@ -153,6 +154,10 @@ with conservative byte-based headroom; images, custom payload rewrites and calls
 without context retain the full context-window allowance. The full configured
 output allowance is always reserved, including reasoning. This is an estimate,
 not a provider invoice, and increasing concurrency never increases the money budget.
+For free chat, `FREE_CHAT_MAX_OUTPUT_TOKENS` bounds both the actual model request
+and its output reservation. It applies to chat helpers and learning routes, not
+to repository analysis. It is per model request, not a conversation length limit;
+watch truncated responses when tuning it.
 
 Active reservations can wait for up to 30 seconds, without holding a database
 connection while sleeping. Settled unknown usage remains charged conservatively.

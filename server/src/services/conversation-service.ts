@@ -64,7 +64,7 @@ import {
   effectiveModelSelector,
   FREE_SELECTOR,
   resolveDeploymentProvider,
-  resolveProvider,
+  resolveChatProvider,
 } from "../agent/provider-resolver.js";
 import { assertProductSkillRun, loadProductSkill } from "../agent/skill-registry.js";
 import type { ProductStore } from "../persistence/store.js";
@@ -295,7 +295,7 @@ export class ConversationService {
     const config = await runtimeConfig(this.config, this.store);
     const settings = await this.store.loadSettings(input.owner.owner_id);
     const selectedModel = reserved.model_override || effectiveModelSelector(config, this.store, input.owner, settings);
-    const selectedProvider = resolveProvider({
+    const selectedProvider = resolveChatProvider({
       config: config,
       store: this.store,
       owner: input.owner,
@@ -403,7 +403,7 @@ export class ConversationService {
     const config = await runtimeConfig(this.config, this.store);
     const settings = await this.store.loadSettings(input.owner.owner_id);
     const selectedModel = project.model_override || effectiveModelSelector(config, this.store, input.owner, settings);
-    const provider = resolveProvider({
+    const provider = resolveChatProvider({
       config: config,
       store: this.store,
       owner: input.owner,

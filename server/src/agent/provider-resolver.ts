@@ -430,6 +430,15 @@ export function resolveProvider(input: {
   };
 }
 
+/** Bound the actual free-chat request, so cost reservations use the same ceiling.
+ * Analysis and user-funded connections retain their selected model's allowance. */
+export function resolveChatProvider(input: Parameters<typeof resolveProvider>[0]): ProviderConfig | null {
+  const provider = resolveProvider(input);
+  if (!provider || provider.modelSelector !== FREE_SELECTOR) return provider;
+  return { ...provider, maxOutputTokens: Math.min(provider.maxOutputTokens ?? 16_384,
+    input.config.freeChatMaxOutputTokens ?? 32_768) };
+}
+
 export async function resolveProjectProvider(
   config: ServerConfig,
   store: ProductStore,

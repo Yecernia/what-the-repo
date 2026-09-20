@@ -26,6 +26,7 @@ export interface ServerConfig extends ConcurrencyConfig {
   freeProviderBaseUrl: string | null;
   freeProviderModel: string | null;
   freeProviderApiKey: string | null;
+  freeChatMaxOutputTokens?: number;
   /** Deployment-owned model used only for repository semantic analysis. */
   analysisProviderId?: string | null;
   analysisProviderBaseUrl?: string | null;
@@ -190,6 +191,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     freeProviderBaseUrl,
     freeProviderModel,
     freeProviderApiKey,
+    freeChatMaxOutputTokens: integerSetting(env, 'FREE_CHAT_MAX_OUTPUT_TOKENS', 32768, 1024, 1048576),
     agentModels: readAgentModelOverrides(root, env),
     webSearchApiKey: secretValue(env, root, "WHAT_THE_REPO_WEB_SEARCH_API_KEY", "WHAT_THE_REPO_WEB_SEARCH_API_KEY_FILE"),
     analysisProviderId: optionalSecret(env.WHAT_THE_REPO_ANALYSIS_PROVIDER_ID) ?? "deepseek",
