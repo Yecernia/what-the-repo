@@ -71,6 +71,10 @@ Memory estimates include source expansion and checkpoint sizes. Parsed caches an
 previous graph data live in a separate checkpoint part; semantic work does not
 load them. Legacy inline checkpoints can be converted when resumed. Publication
 loads both parts. Checkpoint hashes are checked before use.
+Large checkpoint arrays are written and restored as framed records to avoid a
+repository-sized binary buffer alongside the decoded graph. Readers still accept
+older binary and JSON checkpoints. Drain active analyses before rolling back to
+a version that cannot read the framed format.
 
 Static stages reserve 768 MiB plus the larger of source bytes times
 `ANALYSIS_CPU_MEMORY_EXPANSION` and checkpoint bytes times
@@ -83,6 +87,15 @@ environment overrides retain their value and need revalidation before rollout.
 Tune the expansion estimate using representative large repositories and leave
 room in the pool for other work. A recognized V8 heap exhaustion is a memory-limit
 failure, not a transient error to retry unchanged.
+
+If the isolated child hits its memory allowance, the supervisor first releases
+all stage resources. A newly committed next-stage checkpoint continues without
+repeating completed work. Otherwise, that stage may reacquire up to 1.5 times its
+original allowance, capped by the shared pool, and retry once. Cancellation and
+job/permit lease loss prohibit recovery. A second memory failure stops the job;
+other repositories retain their normal estimates and personal limits. Recovery
+events are counted by stage and action in
+`what_the_repo_analysis_memory_recoveries_total`.
 
 Semantic and publication stages reserve 512 MiB plus their loaded checkpoint
 bytes times `ANALYSIS_CHECKPOINT_MEMORY_EXPANSION`, rounded up to 64 MiB.

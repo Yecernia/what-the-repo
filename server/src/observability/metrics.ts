@@ -13,6 +13,7 @@ export const METRIC_NAMES = {
   analysisStageDuration: "what_the_repo_analysis_stage_duration_ms",
   analysisStageActive: "what_the_repo_analysis_stage_active",
   analysisMemoryReserved: "what_the_repo_analysis_memory_reserved_mb",
+  analysisMemoryRecovery: "what_the_repo_analysis_memory_recoveries_total",
   providerCalls: "what_the_repo_provider_calls_total",
   providerActive: "what_the_repo_provider_calls_active",
   providerDuration: "what_the_repo_provider_call_duration_ms",

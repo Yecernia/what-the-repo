@@ -23,18 +23,21 @@ export function stageMemoryMb(stage: AnalysisExecutionStage, info: { bytes: numb
   return Math.min(budgetMb, Math.ceil(Math.max(working, stage === 'overlay' ? 2048 : 0) / 64) * 64);
 }
 
-export function isolatedStageExecutor(store: ProductStore, config: ServerConfig): AnalysisStageExecutor {
+export function isolatedStageExecutor(store: ProductStore, config: ServerConfig,
+  execute: typeof executeStageProcess = executeStageProcess): AnalysisStageExecutor {
   const scheduler = new ResourceScheduler(permitStoreFor(store));
   return { async run(job, signal) {
     const project = await store.loadProject(job.project_id);
     if (!project) throw new Error('project_not_found');
     let stage: AnalysisExecutionStage | null = job.execution_role === 'overlay' ? 'overlay'
       : checkpointExecutionStage((await store.analysisCheckpointInfo(job.project_id))?.stage);
+    const raisedAllowances = new Map<AnalysisExecutionStage, number>();
     while (stage) {
       signal.throwIfAborted();
       const info = await store.analysisCheckpointInfo(job.project_id);
       const budget = config.analysisMemoryMb ?? 6144;
-      const memory = stageMemoryMb(stage, info, config.analysisCpuMemoryExpansion, budget, config.analysisCheckpointMemoryExpansion);
+      const memory = raisedAllowances.get(stage)
+        ?? stageMemoryMb(stage, info, config.analysisCpuMemoryExpansion, budget, config.analysisCheckpointMemoryExpansion);
       const demands: ResourceDemands = { 'analysis:memory-mb': { units: memory, limit: budget } };
       if (stage === 'fetch') demands['analysis:fetch'] = { units: 1, limit: config.analysisFetchConcurrency ?? 2 };
       if (stage === 'cpu') demands['analysis:cpu'] = { units: 1, limit: config.analysisCpuConcurrency ?? 2 };
@@ -56,9 +59,14 @@ export function isolatedStageExecutor(store: ProductStore, config: ServerConfig)
       const endRun = defaultRuntimeMetrics.time(METRIC_NAMES.analysisStageDuration, labels);
       defaultRuntimeMetrics.addGauge(METRIC_NAMES.analysisStageActive, 1, labels);
       defaultRuntimeMetrics.addGauge(METRIC_NAMES.analysisMemoryReserved, memory);
+      let memoryFailure: unknown;
       try {
         if (waiting) await reportWait('completed');
-        stage = await executeStageProcess(job, stage, config, memory, permit.signal);
+        stage = await execute(job, stage, config, memory, permit.signal);
+      } catch (error) {
+        permit.signal.throwIfAborted();
+        if (!(error instanceof Error) || error.message !== 'analysis_stage_memory_limit_exceeded') throw error;
+        memoryFailure = error;
       } finally {
         endRun();
         defaultRuntimeMetrics.addGauge(METRIC_NAMES.analysisStageActive, -1, labels);
@@ -67,6 +75,24 @@ export function isolatedStageExecutor(store: ProductStore, config: ServerConfig)
       }
       const current = await store.loadJob(job.job_id);
       if (!current || current.status !== 'running' || current.attempt !== job.attempt || current.lease_owner !== job.lease_owner) return;
+      signal.throwIfAborted();
+      if (memoryFailure && stage) {
+        // The child has exited and every old grant has been released. Never
+        // wait for extra memory while retaining a CPU slot or an old allowance.
+        const saved = await store.analysisCheckpointInfo(job.project_id);
+        const next: AnalysisExecutionStage | null = stage === 'fetch' && saved?.stage === 'source' ? 'cpu'
+          : stage === 'cpu' && saved?.stage === 'semantic' ? 'semantic'
+          : stage === 'semantic' && saved?.stage === 'assembly' ? 'publish' : null;
+        if (next) {
+          defaultRuntimeMetrics.increment(METRIC_NAMES.analysisMemoryRecovery, 1, { stage, action: 'checkpoint' });
+          stage = next;
+        } else if (!raisedAllowances.has(stage) && memory < budget) {
+          // One bounded correction per stage, not an unchanged OOM retry loop.
+          // Other jobs retain their normal estimates and owner quotas.
+          raisedAllowances.set(stage, Math.min(budget, Math.ceil(memory * 1.5 / 64) * 64));
+          defaultRuntimeMetrics.increment(METRIC_NAMES.analysisMemoryRecovery, 1, { stage, action: 'raise' });
+        } else throw memoryFailure;
+      }
     }
   } };
 }

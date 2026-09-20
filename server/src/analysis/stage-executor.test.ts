@@ -6,7 +6,13 @@ import { serialize } from 'node:v8';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from '../persistence/file-store.js';
-import { stageMemoryMb, stageMemoryFailureDetector } from './stage-executor.js';
+import { stageMemoryMb, stageMemoryFailureDetector, isolatedStageExecutor, type executeStageProcess } from './stage-executor.js';
+import { newAnalysisJob } from '../domain/jobs.js';
+import { createProject } from '../domain/conversation.js';
+import type { ProductStore } from '../persistence/store.js';
+import type { ServerConfig } from '../config.js';
+import { permitStoreFor } from '../scheduling/permits.js';
+import { ResourceScheduler } from '../scheduling/resources.js';
 import { concurrencyConfig } from '../scheduling/config.js';
 import { isRetryableAnalysisError } from './coordinator.js';
 import { checkpointExecutionStage } from './stage-protocol.js';
@@ -114,4 +120,92 @@ test('legacy inline checkpoints keep static caches when resumed into the lean se
       await store.clearAnalysisCheckpoint('legacy');
     }
   } finally { await store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+function recoveryFixture() {
+  const project = createProject('guest:recovery', 'https://github.com/example/recovery', 'Recovery');
+  const job = { ...newAnalysisJob(project.project_id, 'recovery'), status: 'running' as const, lease_owner: 'supervisor' };
+  const state = { checkpoint: 'source', job, onWait: async () => {} };
+  const store = {
+    loadProject: async () => project,
+    analysisCheckpointInfo: async () => ({ stage: state.checkpoint, bytes: 0, sourceBytes: 0 }),
+    loadJob: async () => state.job,
+    updateProject: async () => state.onWait(),
+  } as unknown as ProductStore;
+  const config = { analysisMemoryMb: 2048, analysisCpuConcurrency: 2 } as ServerConfig;
+  const signal = new AbortController();
+  return { store, config, signal, job, state };
+}
+
+test('memory recovery continues from a committed checkpoint without repeating static work', async () => {
+  const f = recoveryFixture();
+  const stages: string[] = [];
+  const execute: typeof executeStageProcess = async (_job, stage) => {
+    stages.push(stage);
+    if (stage === 'cpu') { f.state.checkpoint = 'semantic'; throw new Error('analysis_stage_memory_limit_exceeded'); }
+    return null;
+  };
+  await isolatedStageExecutor(f.store, f.config, execute).run(f.job, f.signal.signal);
+  assert.deepEqual(stages, ['cpu', 'semantic']);
+  assert.equal(await permitStoreFor(f.store).change('resource-admission-v1', rows => rows.length), 0);
+});
+
+test('a larger memory retry waits with every old grant released and retains the owner identity', async () => {
+  const f = recoveryFixture(), permits = permitStoreFor(f.store);
+  const scheduler = new ResourceScheduler(permits);
+  const allowances: number[] = [];
+  let blocker: Awaited<ReturnType<ResourceScheduler['acquire']>> | undefined;
+  let observedWait = false;
+  f.state.onWait = async () => {
+    if (observedWait) return;
+    await permits.change('resource-admission-v1', rows => {
+      assert.equal(rows.filter(row => row.state === 'running' && row.owner === 'guest:recovery').length, 0);
+      assert.equal(rows.filter(row => row.state === 'waiting' && row.owner === 'guest:recovery').length, 1);
+    });
+    observedWait = true;
+    await blocker!.release();
+  };
+  const execute: typeof executeStageProcess = async (_job, _stage, _config, memory) => {
+    allowances.push(memory);
+    if (allowances.length === 1) {
+      blocker = await scheduler.acquire({ owner: 'other', task: 'other', demands: {
+        'analysis:memory-mb': { units: 1024, limit: 2048 }, 'analysis:cpu': { units: 1, limit: 2 },
+      } });
+      throw new Error('analysis_stage_memory_limit_exceeded');
+    }
+    return null;
+  };
+  try {
+    await isolatedStageExecutor(f.store, f.config, execute).run(f.job, f.signal.signal);
+    assert.deepEqual(allowances, [768, 1152]); assert.equal(observedWait, true);
+    assert.equal(await permits.change('resource-admission-v1', rows => rows.length), 0);
+  } finally { await blocker?.release(); }
+});
+
+test('memory correction stops after one retry or at the pool ceiling; unrelated failures never retry', async () => {
+  for (const [budget, error, expected] of [[2048, 'analysis_stage_memory_limit_exceeded', 2],
+    [768, 'analysis_stage_memory_limit_exceeded', 1], [2048, 'analysis_stage_process_failed', 1]] as const) {
+    const f = recoveryFixture(); f.config.analysisMemoryMb = budget;
+    let attempts = 0;
+    await assert.rejects(isolatedStageExecutor(f.store, f.config, async () => {
+      attempts++; throw new Error(error);
+    }).run(f.job, f.signal.signal), { message: error });
+    assert.equal(attempts, expected);
+    assert.equal(await permitStoreFor(f.store).change('resource-admission-v1', rows => rows.length), 0);
+  }
+});
+
+test('cancellation and job lease changes cannot start a memory recovery', async () => {
+  for (const cancelled of [true, false]) {
+    const f = recoveryFixture(); let attempts = 0;
+    const run = isolatedStageExecutor(f.store, f.config, async () => {
+      attempts++;
+      if (cancelled) f.signal.abort(new Error('analysis_cancelled'));
+      else f.state.job = { ...f.job, lease_owner: 'replacement' };
+      throw new Error('analysis_stage_memory_limit_exceeded');
+    }).run(f.job, f.signal.signal);
+    if (cancelled) await assert.rejects(run, /analysis_cancelled/); else await run;
+    assert.equal(attempts, 1);
+    assert.equal(await permitStoreFor(f.store).change('resource-admission-v1', rows => rows.length), 0);
+  }
 });
