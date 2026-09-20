@@ -759,7 +759,7 @@ export class AnalysisCoordinator {
       await this.recordAnalysisPhase(job, fence, "fetching_source", resumingStatic || resumingSemantic ? "reused" : "completed");
       if (this.executionStage === 'fetch') { this.nextStage = 'cpu'; return; }
       await this.recordAnalysisPhase(job, fence, "comparing_versions", "running");
-      const existing = resumingSemantic ? null : await this.store.loadPublicSnapshot(publicKey);
+      const existing = resumingSemantic ? null : await this.store.loadPublicSnapshotView(publicKey);
       if (!(await refreshLease())) throw new Error("analysis_lease_lost");
       if (existing && String(existing.metadata.analysis_snapshot_id ?? "") === snapshotId) {
         await this.recordAnalysisPhase(job, fence, "comparing_versions", "completed", { strategy: "reuse" });

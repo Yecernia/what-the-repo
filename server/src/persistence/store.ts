@@ -88,6 +88,8 @@ export interface PublicSnapshotBundle<T = Record<string, unknown>> {
   analysis: Record<string, unknown>;
 }
 
+export type PublicSnapshotView<T = Record<string, unknown>> = Pick<PublicSnapshotBundle<T>, 'metadata' | 'view'>;
+
 export interface RepositoryIdentityInput {
   repository: string;
   analyzerBundleVersion: string;
@@ -161,6 +163,7 @@ export interface ProductStore {
   readSourceLines(projectId: string, snapshotId: string, relativePath: string, start: number, end: number): Promise<{ lines: string[]; truncated: boolean }>;
   readPublicSourceLines(publicKey: string, snapshotId: string, relativePath: string, start: number, end: number): Promise<{ lines: string[]; truncated: boolean }>;
   loadPublicSnapshot<T = Record<string, unknown>>(publicKey: string): Promise<PublicSnapshotBundle<T> | null>;
+  loadPublicSnapshotView<T = Record<string, unknown>>(publicKey: string): Promise<PublicSnapshotView<T> | null>;
   loadPublicSnapshotMetadata(publicKey: string): Promise<PublicSnapshotMetadata | null>;
   loadLatestPublicSnapshot<T = Record<string, unknown>>(input: {
     repository: string;

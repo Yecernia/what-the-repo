@@ -366,7 +366,7 @@ test("early source storage failure stops the semantic stage and preserves the st
     kind: "postgres", loadProject: async () => project,
     loadAnalysisCheckpoint: async () => ({ checkpoint: { analyzer_bundle_version: ANALYZER_BUNDLE_VERSION, static_identity: ANALYSIS_CONFIG_DIGEST, stage: "semantic", source_root: root, snapshot_id: "saved-static", parsed: [], lsp_results: [],
       fetched: { owner: "example", repo: "repo", commitSha: snapshot.commit_sha, files: [], manifest: [], research: snapshot.research } }, snapshot }),
-    loadPublicSnapshotMetadata: async () => null, loadPublicSnapshot: async () => null, loadLatestPublicSnapshot: async () => null,
+    loadPublicSnapshotMetadata: async () => null, loadPublicSnapshotView: async () => null, loadPublicSnapshot: async () => null, loadLatestPublicSnapshot: async () => null,
     heartbeatAnalysisJob: async () => true, saveAnalysisCheckpoint: async () => {},
     loadSemanticBatch: async (_job: string, id: string) => batches.get(id) ?? null,
     listSemanticBatches: async () => [...batches.values()],

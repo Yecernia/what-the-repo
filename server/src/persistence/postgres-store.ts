@@ -837,6 +837,13 @@ export class PostgresStore extends FileStore {
     return { ...bundle, view: bundle.view, analysis: bundle.analysis };
   }
 
+  override async loadPublicSnapshotView<T = Record<string, unknown>>(publicKey: string): Promise<Pick<PublicSnapshotBundle<T>, 'metadata' | 'view'> | null> {
+    const bundle = await this.readPublicSnapshotParts<T>(publicKey, 'view');
+    if (!bundle) return null;
+    if (bundle.view === null) throw new Error('public_snapshot_payload_missing');
+    return { metadata: bundle.metadata, view: bundle.view };
+  }
+
   protected override async readPublicStaticFile(publicKey: string, snapshotId: string, path: string): Promise<StaticFileFacts | null> {
     const bundle = await this.readPublicSnapshotParts(publicKey, 'analysis', false);
     if (!bundle || bundle.metadata.analysis_snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
@@ -2589,7 +2596,7 @@ export class PostgresStore extends FileStore {
     if (!input.migration && initialMigration.status === "executed") return initialProject;
     if (initialMigration.status !== "pending" && initialMigration.status !== "confirmed") throw new Error("repository_migration_not_pending");
     const metadata = await this.loadPublicSnapshotMetadata(initialMigration.to_public_snapshot_key);
-    const bundle = await this.loadPublicSnapshot<Record<string, unknown>>(initialMigration.to_public_snapshot_key);
+    const bundle = await this.loadPublicSnapshotView<Record<string, unknown>>(initialMigration.to_public_snapshot_key);
     if (!metadata || !bundle) throw new Error("repository_migration_target_missing");
     const view = bundle.view;
     const summary = view && typeof view === "object" && !Array.isArray(view)

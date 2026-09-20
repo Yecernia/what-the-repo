@@ -173,7 +173,7 @@ export class RepositoryService {
       ? Date.now() - Date.parse(head.last_checked_at) <= this.headFreshnessMs
       : false;
     if (fresh && head?.current_public_snapshot_key) {
-      const snapshot = await this.store.loadPublicSnapshot(head.current_public_snapshot_key);
+      const snapshot = await this.store.loadPublicSnapshotView(head.current_public_snapshot_key);
       if (snapshot) {
         recordAnalysisProgress(project.analysis, "checking_existing", "completed");
         setAnalysisStrategy(project.analysis, "reuse");
@@ -199,7 +199,7 @@ export class RepositoryService {
     if (upstream) {
       recordAnalysisProgress(project.analysis, "comparing_versions", "running");
       if (head?.current_commit_sha === upstream.commitSha && head.current_public_snapshot_key) {
-        const snapshot = await this.store.loadPublicSnapshot(head.current_public_snapshot_key);
+        const snapshot = await this.store.loadPublicSnapshotView(head.current_public_snapshot_key);
         if (snapshot) {
           const checkedAt = nowIso();
           await this.store.saveRepositoryHead({ ...head, last_checked_at: checkedAt, updated_at: checkedAt });
@@ -210,7 +210,7 @@ export class RepositoryService {
         }
       }
       const exactKey = canonicalPublicSnapshotKey(repository, upstream.commitSha, ANALYZER_BUNDLE_VERSION, analysisConfigDigest);
-      const exact = await this.store.loadPublicSnapshot(exactKey);
+      const exact = await this.store.loadPublicSnapshotView(exactKey);
       if (exact) {
         const checkedAt = nowIso();
         await this.store.saveRepositoryHead({
@@ -261,7 +261,7 @@ export class RepositoryService {
     job: AnalysisJob;
     created: boolean;
     publicKey: string;
-    snapshot: PublicSnapshotBundle;
+    snapshot: Pick<PublicSnapshotBundle, 'metadata' | 'view'>;
   }): Promise<StartAnalysisResult> {
     const metadataIdentity = input.snapshot.metadata.identity as Record<string, unknown> | undefined;
     const completedAt = nowIso();

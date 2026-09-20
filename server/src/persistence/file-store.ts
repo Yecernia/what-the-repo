@@ -839,6 +839,15 @@ export class FileStore implements ProductStore {
     return metadata && view && analysis ? { metadata, view, analysis } : null;
   }
 
+  async loadPublicSnapshotView<T = Record<string, unknown>>(publicKey: string): Promise<Pick<PublicSnapshotBundle<T>, 'metadata' | 'view'> | null> {
+    const directory = join(this.dirs.publicSnapshots, safePublicKey(publicKey));
+    const [metadata, view] = await Promise.all([
+      readJson<Record<string, unknown>>(join(directory, 'metadata.json')),
+      readJson<T>(join(directory, 'view.json')),
+    ]);
+    return metadata && view ? { metadata, view } : null;
+  }
+
   async loadPublicSnapshotMetadata(publicKey: string): Promise<PublicSnapshotMetadata | null> {
     const metadata = await readJson<Record<string, unknown>>(join(this.dirs.publicSnapshots, safePublicKey(publicKey), "metadata.json"));
     if (!metadata || typeof metadata.identity !== "object" || !metadata.identity) return null;

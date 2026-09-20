@@ -5,6 +5,29 @@ import type { PublicSnapshotMetadata } from "../domain/lifecycle.js";
 import type { ProductStore } from "../persistence/store.js";
 import { RepositoryService } from "./repository-service.js";
 
+test('fresh and upstream-confirmed snapshot reuse reads only the published view', async () => {
+  for (const fresh of [true, false]) {
+    let thinReads = 0;
+    const store = {
+      loadRepositoryHead: async () => ({ current_public_snapshot_key: 'published', current_commit_sha: 'a'.repeat(40),
+        last_checked_at: fresh ? new Date().toISOString() : '2020-01-01T00:00:00Z' }),
+      loadPublicSnapshot: async () => { throw new Error('must not load full compiler caches'); },
+      loadPublicSnapshotView: async () => { thinReads++; return {
+        metadata: { identity: { commit_sha: 'a'.repeat(40) }, analysis_snapshot_id: 'snapshot' },
+        view: { summary: { file_count: 11941, symbol_count: 107896 }, languages: [] },
+      }; },
+      saveRepositoryHead: async () => {}, createProjectWithJob: async () => {},
+    } as unknown as ProductStore;
+    const service = new RepositoryService(store, { resolveGithubHead: async () => ({ commitSha: 'a'.repeat(40) }) as never });
+    const result = await service.startAnalysis({ owner: { owner_id: 'guest:thin', kind: 'guest' },
+      kind: 'github', value: 'https://github.com/example/repo' });
+    assert.equal(thinReads, 1);
+    assert.equal(result.job.status, 'succeeded');
+    assert.equal(result.project.analysis.file_count, 11941);
+    assert.equal(result.project.analysis.canonical_snapshot_key, 'published');
+  }
+});
+
 test("each new analysis resolves current execution identity before cache lookup and joining a job", async () => {
   let current = "config-a";
   const seen: string[] = [];
