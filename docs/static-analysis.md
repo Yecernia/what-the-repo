@@ -126,6 +126,9 @@ compiler version, workspace package metadata, source structure and dependency
 inputs, including previously resolved JSON modules. Structural changes invalidate
 lookup domains even when no previous successful relation exists. Unchanged
 syntax remains reusable when semantics must be recomputed.
+File reads overlap with a bounded eight-request window; extraction order and
+per-file integrity checks remain deterministic. Decoding and dependency content
+hashes are reused within a run without retaining compiler state across runs.
 LSP reuse additionally requires a completed run and an identical digest of the
 entire mirrored workspace. Missing context invalidates the run even when an
 incomplete inventory cannot prove deletion; changed configuration in another

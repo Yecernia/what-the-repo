@@ -6,6 +6,33 @@ import { TreeSitterAnalyzer } from "./tree-sitter.js";
 import { analyzeTypeScriptTexts, scriptPath } from "./typescript.js";
 import { assignSyntaxProjects } from "./projects.js";
 
+/** Overlap eight disk reads, keeping deterministic extraction order and at
+ * most nine 4 MiB raw buffers including the file being parsed. Every file
+ * retains all boundary/digest checks. */
+async function* readInputs(input: {
+  manifest: SourceFileManifest[]; sourceRoot: string; signal?: AbortSignal;
+}) {
+  const ordered = [...input.manifest].sort((a, b) => a.path.localeCompare(b.path));
+  const pending = new Map<number, Promise<{ raw: Uint8Array } | { error: unknown }>>();
+  const start = (index: number) => {
+    const file = ordered[index];
+    if (file) pending.set(index, readSnapshotFile(input.sourceRoot, file.path, file)
+      .then(raw => ({ raw }), error => ({ error })));
+  };
+  try {
+    input.signal?.throwIfAborted();
+    for (let i = 0; i < Math.min(8, ordered.length); i++) start(i);
+    for (let i = 0; i < ordered.length; i++) {
+      input.signal?.throwIfAborted();
+      const result = (await pending.get(i))!;
+      pending.delete(i);
+      if ('error' in result) throw result.error;
+      start(i + 8);
+      yield { manifest: ordered[i]!, raw: result.raw };
+    }
+  } finally { await Promise.all(pending.values()); }
+}
+
 export async function analyzeStaticSource(input: {
   manifest: SourceFileManifest[];
   sourceRoot: string;
@@ -30,17 +57,10 @@ export async function analyzeStaticSource(input: {
   const syntax: ParsedFile[] = [],
     texts = new Map<string, string>();
   let syntaxHits = 0;
-  for (const manifest of [...input.manifest].sort((a, b) =>
-    a.path.localeCompare(b.path),
-  )) {
+  for await (const { manifest, raw } of readInputs(input)) {
     input.signal?.throwIfAborted();
     try {
-      const raw = await readSnapshotFile(
-          input.sourceRoot,
-          manifest.path,
-          manifest,
-        ),
-        decoded = decodeSource(manifest.path, raw);
+      const decoded = decodeSource(manifest.path, raw);
       const cached = previousSyntax.get(manifest.path);
       if (
         cached &&
@@ -51,7 +71,7 @@ export async function analyzeStaticSource(input: {
         syntaxHits++;
       } else
         syntax.push(
-          await parser.analyzeBytes(manifest.path, raw, input.signal),
+          await parser.analyzeDecoded(decoded, input.signal),
         );
       if (
         decoded.text !== null &&

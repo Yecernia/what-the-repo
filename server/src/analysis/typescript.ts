@@ -526,6 +526,14 @@ export async function analyzeTypeScriptTexts(
   );
   const structure = [...texts.keys()].sort();
   const resolutionDomain = `snapshot-paths:${bytesDigest(JSON.stringify(structure))}`;
+  // The same dependency often belongs to several project keys. Hash each text
+  // once per invocation; do not retain compiler state or inputs between runs.
+  const textDigests = new Map<string, string>();
+  const inputDigest = (path: string): string => {
+    let digest = textDigests.get(path);
+    if (!digest) { digest = bytesDigest(texts.get(path) ?? ''); textDigests.set(path, digest); }
+    return digest;
+  };
   for (const project of workspace.projects) {
     signal?.throwIfAborted();
     const owned = [...workspace.owners]
@@ -551,7 +559,7 @@ export async function analyzeTypeScriptTexts(
           project.context.configDigest,
           globalIdentity,
           structure,
-          inputs.sort().map((p) => [p, bytesDigest(texts.get(p) ?? "")]),
+          inputs.sort().map((p) => [p, inputDigest(p)]),
         ]),
       );
     const reuseKey = keyFor(contextInputs);

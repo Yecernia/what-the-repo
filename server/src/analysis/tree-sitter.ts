@@ -379,8 +379,15 @@ export class TreeSitterAnalyzer {
     raw: Uint8Array,
     signal?: AbortSignal,
   ): Promise<ParsedFile> {
+    return this.analyzeDecoded(decodeSource(path, raw), signal);
+  }
+  async analyzeDecoded(
+    decoded: ReturnType<typeof decodeSource>,
+    signal?: AbortSignal,
+  ): Promise<ParsedFile> {
     signal?.throwIfAborted();
-    const { file, text } = decodeSource(path, raw),
+    const { file, text } = decoded,
+      path = file.path,
       spec = languageForPath(path);
     if (
       text === null ||
