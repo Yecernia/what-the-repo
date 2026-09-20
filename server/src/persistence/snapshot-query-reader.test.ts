@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -30,8 +30,27 @@ test('PostgreSQL ranked pages match the in-memory contract for filters, scopes, 
     await store.init();await mkdir(store.publicSourceSnapshotRoot(key,snapshotId),{recursive:true});
     const analysis={fact_graph:{nodes:[],edges:[]}};
     await store.savePublicSnapshot({publicKey:key,repository:'test/query-'+key.slice(0,8),commitSha:'a'.repeat(40),snapshotId,view,analysis});
+    // Exercise backfill on existing rows, not only new publications. The legacy
+    // views must keep their shape and public results must not leak search data.
+    const before=(await store.pool.query('SELECT * FROM snapshot_query_nodes WHERE public_snapshot_key=$1 ORDER BY node_key',[key])).rows;
+    await store.pool.query(await readFile(join(process.cwd(),'migrations/0024_snapshot_text_search.down.sql'),'utf8'));
+    await store.pool.query(await readFile(join(process.cwd(),'migrations/0024_snapshot_text_search.sql'),'utf8'));
+    assert.deepEqual((await store.pool.query('SELECT * FROM snapshot_query_nodes WHERE public_snapshot_key=$1 ORDER BY node_key',[key])).rows,before);
+    const normalized=await store.pool.query(`SELECT bool_and(n.search_text=lower(concat_ws(' ',NULLIF(n.node_key,''),NULLIF(n.node_id,''),NULLIF(n.name,''),NULLIF(n.label,''),NULLIF(n.responsibility,''),NULLIF(n.path,''),NULLIF(n.payload::text,'')))) AS same
+      FROM snapshot_directory_nodes n JOIN snapshot_query_directories d USING(directory_id) WHERE d.public_snapshot_key=$1`,[key]);
+    assert.equal(normalized.rows[0].same,true);
+    const db=await store.pool.connect();
+    try {
+      await db.query('BEGIN');await db.query('SET LOCAL enable_seqscan=off');
+      for(const table of ['nodes','edges']) {
+        const plan=await db.query(`EXPLAIN (FORMAT JSON) SELECT 1 FROM snapshot_directory_${table} WHERE search_text LIKE $1`,['%session%']);
+        assert.match(JSON.stringify(plan.rows),new RegExp(`snapshot_directory_${table}_text_idx`));
+      }
+    } finally {await db.query('ROLLBACK');db.release();}
     const directory=buildSnapshotQueryDirectory(key,snapshotId,view,analysis);
-    const cases:SnapshotQueryInput[]=[{}, {text:'session'}, {text:'源码'}, {text:'entry_tag'}, {text:'"tag":"entry_tag"'}, {text:'a\\"b'},
+    const cases:SnapshotQueryInput[]=[{}, {text:'session'}, {text:'源码'}, {text:'entry_tag'}, {text:'entry_tag',expand_hops:1},
+      {text:'entryXtag'}, {text:'e'}, {text:'on'}, {text:'hello world'}, {text:'ENTRY_TAG'}, {text:'absent'},
+      {text:'"tag":"entry_tag"'}, {text:'a\\"b'},
       {paths:['src/A']},{paths:['%']},{languages:['ts']},{symbol_ids:['B']},{entity_ids:['A'],scope:'self'},
       {component_ids:['A'],scope:'subtree'}, {entity_ids:['D'],scope:'ancestors'}, {entity_ids:['B'],scope:'neighbors'},
       {entity_ids:['cycle1'],scope:'ancestors'}, {entity_ids:['cycle1'],scope:'subtree'},
