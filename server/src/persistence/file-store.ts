@@ -48,6 +48,7 @@ import {
   asSnapshotLanguageOverlayPayload,
 } from "../domain/snapshot-language.js";
 import { asEvidenceSnapshot } from "../domain/snapshot.js";
+import { boundedEvidenceIds, snapshotEvidence, type SnapshotEvidenceRequest } from "./snapshot-evidence.js";
 import { normalizeDisplayLanguage } from "../domain/display-language.js";
 import {
   buildSnapshotQueryDirectory,
@@ -728,6 +729,18 @@ export class FileStore implements ProductStore {
           .map((name) => rm(join(this.dirs.analysisCheckpoints, name), { force: true })),
       )).catch(() => undefined),
     ]);
+  }
+
+  async readPublicSnapshotEvidence(input: SnapshotEvidenceRequest) {
+    const ids = boundedEvidenceIds(input.evidenceIds);
+    if (!ids.length) return [];
+    const bundle = await this.loadPublicSnapshot(input.publicKey);
+    if (!bundle || String(bundle.metadata.analysis_snapshot_id ?? '') !== input.snapshotId) {
+      throw new Error('snapshot_query_not_found');
+    }
+    const directory = buildSnapshotQueryDirectory(input.publicKey, input.snapshotId, bundle.view, bundle.analysis);
+    const byId = new Map(directory.evidence.map(row => [row.evidence_id, row]));
+    return ids.flatMap(id => { const row = byId.get(id); return row ? [snapshotEvidence(row)] : []; });
   }
 
   async queryPublicSnapshot(input: {

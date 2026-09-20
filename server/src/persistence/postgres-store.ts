@@ -1,4 +1,6 @@
 import { readSnapshotQuery } from './snapshot-query-reader.js';
+import { boundedEvidenceIds, snapshotEvidence, type SnapshotEvidenceRequest } from './snapshot-evidence.js';
+import type { SnapshotQueryEvidenceRow } from '../domain/snapshot-query.js';
 import { randomUUID, createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { rm } from "node:fs/promises";
@@ -1382,6 +1384,20 @@ export class PostgresStore extends FileStore {
     } finally {
       if (ownsTransaction) client.release();
     }
+  }
+
+  override async readPublicSnapshotEvidence(input: SnapshotEvidenceRequest) {
+    const ids = boundedEvidenceIds(input.evidenceIds);
+    if (!ids.length) return [];
+    // One statement keeps directory identity and evidence consistent without hydrating object data.
+    const result = await this.pool.query<SnapshotQueryEvidenceRow>(
+      `SELECT e.* FROM snapshot_query_evidence e
+       JOIN snapshot_query_directories d ON d.public_snapshot_key=e.public_snapshot_key AND d.snapshot_id=e.snapshot_id
+       WHERE e.public_snapshot_key=$1 AND e.snapshot_id=$2 AND e.evidence_id=ANY($3::text[])`,
+      [input.publicKey, input.snapshotId, ids],
+    );
+    const byId = new Map(result.rows.map(row => [row.evidence_id, row]));
+    return ids.flatMap(id => { const row = byId.get(id); return row ? [snapshotEvidence(row)] : []; });
   }
 
   override async queryPublicSnapshot(input: { publicKey: string; snapshotId: string; query: SnapshotQueryInput }): Promise<SnapshotQueryResult> {

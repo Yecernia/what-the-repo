@@ -694,9 +694,19 @@ export function createConversationTools(
       };
       const byId = evidenceIndex(snapshot);
       const current = plan.steps[context.project.study.current_step] ?? null;
+      const refs = [...new Set(current?.evidence_refs ?? [])].slice(0, 10);
+      const missing = refs.filter(id => !byId.has(id));
+      if (missing.length && context.project.analysis.canonical_snapshot_key) {
+        const rows = await context.store.readPublicSnapshotEvidence({
+          publicKey: context.project.analysis.canonical_snapshot_key,
+          snapshotId: snapshot.snapshot_id,
+          evidenceIds: missing,
+        });
+        for (const row of rows) byId.set(row.stable_id, row);
+      }
       const evidence = expose(
         context,
-        (current?.evidence_refs ?? [])
+        refs
           .map((id) => byId.get(id))
           .filter((row): row is SnapshotEvidence => Boolean(row))
           .slice(0, 10),

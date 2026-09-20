@@ -5,6 +5,8 @@ import type {
 } from "../domain/conversation.js";
 import type { AnalysisJob } from "../domain/jobs.js";
 import type { SemanticBatch } from "../domain/semantic-batch.js";
+import type { SnapshotEvidence } from "../domain/snapshot.js";
+import type { SnapshotEvidenceRequest } from "./snapshot-evidence.js";
 import type { StoredSourceSnapshot } from "./snapshot-object-store.js";
 import type {
   EvolutionFeedbackRequest,
@@ -146,6 +148,7 @@ export interface ProductStore {
   loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string, options?: { omitStatic?: boolean }): Promise<{ checkpoint: T; snapshot: T | null } | null>;
   analysisCheckpointInfo(projectId: string): Promise<{ stage: string; bytes: number; sourceBytes: number; staticBytes?: number } | null>;
   clearAnalysisCheckpoint(projectId: string): Promise<void>;
+  readPublicSnapshotEvidence(input: SnapshotEvidenceRequest): Promise<SnapshotEvidence[]>;
   queryPublicSnapshot(input: {
     publicKey: string;
     snapshotId: string;

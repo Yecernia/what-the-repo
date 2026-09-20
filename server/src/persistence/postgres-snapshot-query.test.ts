@@ -5,6 +5,35 @@ import { join } from "node:path";
 import test from "node:test";
 import { PostgresStore } from "./postgres-store.js";
 
+test('exact evidence lookups are bounded, snapshot-scoped and never load object payloads', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'what-the-repo-evidence-'));
+  const store = new PostgresStore({ databaseUrl: 'postgresql://unused', root,
+    migrationsRoot: join(root, 'migrations'), encryptionSecret: 'evidence-test-secret' });
+  const originalPool = store.pool;
+  let reads = 0;
+  store.loadPublicSnapshot = async () => { throw new Error('unexpected object hydration'); };
+  const pool = { async query(sql: string, values: unknown[]) {
+    reads++;
+    assert.match(sql, /JOIN snapshot_query_directories/);
+    assert.match(sql, /e\.public_snapshot_key=\$1 AND e\.snapshot_id=\$2 AND e\.evidence_id=ANY\(\$3::text\[\]\)/);
+    assert.deepEqual(values[2], ['b', 'a', 'missing']);
+    return { rows: values[0] === 'public' && values[1] === 'snapshot' ? ['a', 'b'].map(id => ({
+      evidence_id: id, label: id, path: 'src/a.ts', start_line: 1, end_line: 2, kind: 'symbol',
+      source_id: null, target_id: null,
+    })) : [] };
+  } };
+  (store as unknown as { pool: typeof pool }).pool = pool;
+  try {
+    const input = { publicKey: 'public', snapshotId: 'snapshot', evidenceIds: ['b', 'a', 'missing', 'b'] };
+    assert.deepEqual((await store.readPublicSnapshotEvidence(input)).map(row => row.stable_id), ['b', 'a']);
+    assert.deepEqual(await store.readPublicSnapshotEvidence({ ...input, snapshotId: 'other' }), []);
+    assert.deepEqual(await store.readPublicSnapshotEvidence({ ...input, publicKey: 'other' }), []);
+    assert.deepEqual(await store.readPublicSnapshotEvidence({ ...input, evidenceIds: [] }), []);
+    await assert.rejects(store.readPublicSnapshotEvidence({ ...input, evidenceIds: Array(21).fill('a') }), /request_invalid/);
+    assert.equal(reads, 3);
+  } finally { await originalPool.end(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("PostgreSQL snapshot queries apply the shared expand_hops semantics", async () => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-postgres-query-"));
   const publicKey = "a".repeat(64);

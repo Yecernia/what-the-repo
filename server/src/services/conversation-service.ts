@@ -18,6 +18,7 @@ import {
   type Project,
 } from "../domain/conversation.js";
 import { asEvidenceSnapshot } from "../domain/snapshot.js";
+import { loadConversationSnapshot } from "./conversation-snapshot.js";
 import { createModelRuntime } from "../agent/model-runtime.js";
 import { runtimeForSkill } from "../agent/role-models.js";
 import type { ProviderGateFactory } from "../agent/provider-gate.js";
@@ -426,18 +427,7 @@ export class ConversationService {
     // Chat helpers always follow this conversation's selected model and payer.
     const modelRuntime = createModelRuntime(provider, runtimeOptions);
     const primarySkill = await loadProductSkill(PRIMARY_SKILL_ID);
-    const snapshot = asEvidenceSnapshot(await this.store.loadSnapshot(input.projectId));
-    const analysisResult = await this.store.loadAnalysisResult<{
-      fact_graph?: { nodes?: unknown[]; edges?: unknown[] };
-    }>(input.projectId);
-    if (
-      snapshot
-      && analysisResult?.fact_graph
-      && Array.isArray(analysisResult.fact_graph.nodes)
-      && Array.isArray(analysisResult.fact_graph.edges)
-    ) {
-      snapshot.fact_graph = analysisResult.fact_graph as NonNullable<typeof snapshot.fact_graph>;
-    }
+    const snapshot = await loadConversationSnapshot(this.store, input.projectId, Boolean(project.analysis.canonical_snapshot_key));
     const agentMemories = await this.memories.list(input.owner.owner_id);
     const profile = await this.store.loadProfile(input.owner.owner_id);
     if (profile.memory_summary_mode !== "edited") {

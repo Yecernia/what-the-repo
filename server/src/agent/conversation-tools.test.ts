@@ -90,6 +90,27 @@ function context(overrides: Partial<ConversationToolContext> = {}): Conversation
   };
 }
 
+test('learning context retrieves fact-only references without a full graph and exposes them to source reads', async () => {
+  const fact = { ...evidence, stable_id: 'fact:symbol:hidden', path: 'src/hidden.ts' };
+  const requests: unknown[] = [];
+  const ctx = context({ store: {
+    readPublicSnapshotEvidence: async (request: unknown) => { requests.push(request); return [fact]; },
+    readSourceLines: async () => ({ lines: ['function hidden() {}'], truncated: false }),
+  } as unknown as ProductStore });
+  ctx.project.analysis.canonical_snapshot_key = 'canonical';
+  ctx.project.study.dynamic_learning_plan = [{ step_id: 'step:1', order: 0, title: 'Hidden',
+    objective: 'Read the implementation', evidence_refs: [fact.stable_id, evidence.stable_id, 'missing'],
+    component_ids: [], completion_check: 'Explain it' }];
+  const tools = createConversationTools(ctx);
+  const result = await tools.find(tool => tool.name === 'get_learning_context')!.execute('learn', {});
+  const body = JSON.parse((result.content[0] as { text: string }).text);
+  assert.deepEqual(requests, [{ publicKey: 'canonical', snapshotId: 'snapshot:tools', evidenceIds: [fact.stable_id, 'missing'] }]);
+  assert.deepEqual(body.current_step_evidence.map((row: typeof fact) => row.stable_id), [fact.stable_id, evidence.stable_id]);
+  assert.equal(ctx.exposedEvidence.get(fact.stable_id), fact);
+  assert.ok(ctx.exposedPaths.has(fact.path));
+  await tools.find(tool => tool.name === 'read_source_excerpt')!.execute('read', { path: fact.path });
+});
+
 test("online conversation tools keep explanation in Primary and expose one action proposal tool", () => {
   const names = createConversationTools(context()).map((tool) => tool.name).sort();
   assert.deepEqual(names, [
