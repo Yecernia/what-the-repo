@@ -65,7 +65,7 @@ test("file store resumes an analysis from a durable stage checkpoint", async () 
     assert.equal(files.filter((name) => name.endsWith(".json")).length, 1);
     assert.equal(files.filter((name) => name.endsWith(".bin")).length, 1);
     const pointer = JSON.parse(await readFile(join(checkpointDir, "project_checkpoint.json"), "utf8")) as Record<string, unknown>;
-    assert.equal(pointer.encoding, "v8");
+    assert.equal(pointer.encoding, "v8-records");
     assert.equal(typeof pointer.payload_file, "string");
     assert.equal(typeof pointer.sha256, "string");
     await store.clearAnalysisCheckpoint(projectId);

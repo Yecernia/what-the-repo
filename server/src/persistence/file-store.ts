@@ -1,6 +1,7 @@
 import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { deserialize, serialize } from "node:v8";
+import { deserialize } from "node:v8";
+import { readCheckpointRecords, writeCheckpointRecords } from './checkpoint-records.js';
 function hasInlineStaticCheckpoint(value: unknown): boolean {
   return Boolean(value && typeof value === 'object' && ['parsed', 'syntax_files', 'lsp_results', 'previous_fact_graph']
     .some(key => (value as Record<string, unknown>)[key] !== undefined));
@@ -174,20 +175,20 @@ async function writeJson(
 
 interface BinaryAnalysisCheckpointEnvelope {
   schema_version: 1;
-  encoding: "v8";
+  encoding: "v8" | "v8-records";
   payload_file: string;
   bytes: number;
   sha256: string;
   stage?: string;
   source_bytes?: number;
-  static_payload?: { file: string; bytes: number; sha256: string };
+  static_payload?: { file: string; bytes: number; sha256: string; encoding?: 'v8-records' };
 }
 
 function isBinaryAnalysisCheckpointEnvelope(value: unknown): value is BinaryAnalysisCheckpointEnvelope {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
   return row.schema_version === 1
-    && row.encoding === "v8"
+    && (row.encoding === "v8" || row.encoding === "v8-records")
     && typeof row.payload_file === "string"
     && /^[A-Za-z0-9._-]+\.bin$/u.test(row.payload_file)
     && Number.isSafeInteger(row.bytes)
@@ -625,24 +626,21 @@ export class FileStore implements ProductStore {
     if (fields && typeof fields === 'object') {
       const { parsed, syntax_files, lsp_results, previous_fact_graph, ...light } = fields;
       if (parsed !== undefined || syntax_files !== undefined || lsp_results !== undefined || previous_fact_graph !== undefined) {
-        const bytes = serialize({ parsed, syntax_files, lsp_results, previous_fact_graph });
         const file = `${safeId(projectId)}.${randomUUID()}.static.bin`;
-        await writeBytes(join(this.dirs.analysisCheckpoints, file), bytes);
-        staticPayload = { file, bytes: bytes.byteLength, sha256: bytesSha256(bytes) };
+        const descriptor = await writeCheckpointRecords(join(this.dirs.analysisCheckpoints, file), { parsed, syntax_files, lsp_results, previous_fact_graph });
+        staticPayload = { file, ...descriptor, encoding: 'v8-records' };
       } else if (fields.stage === 'source') staticPayload = undefined;
       savedCheckpoint = light;
     }
-    const payload = serialize({ checkpoint: savedCheckpoint, snapshot });
     const payloadFile = `${safeId(projectId)}.${randomUUID()}.bin`;
     const payloadPath = join(this.dirs.analysisCheckpoints, payloadFile);
-    await writeBytes(payloadPath, payload);
+    const descriptor = await writeCheckpointRecords(payloadPath, { checkpoint: savedCheckpoint, snapshot });
     try {
       await writeJson(checkpointPath, {
         schema_version: 1,
-        encoding: "v8",
+        encoding: "v8-records",
         payload_file: payloadFile,
-        bytes: payload.byteLength,
-        sha256: bytesSha256(payload),
+        ...descriptor,
         stage: typeof fields?.stage === 'string' ? fields.stage : undefined,
         source_bytes: ((fields?.fetched as { manifest?: Array<{ bytes: number }> })?.manifest ?? []).reduce((sum, file) => sum + file.bytes, 0),
         static_payload: staticPayload,
@@ -672,23 +670,27 @@ export class FileStore implements ProductStore {
     if (!value) return null;
     if (isBinaryAnalysisCheckpointEnvelope(value)) {
       const payloadPath = join(this.dirs.analysisCheckpoints, value.payload_file);
-      let payload: Uint8Array;
-      try {
-        payload = await readFile(payloadPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-          throw new Error("analysis_checkpoint_payload_missing");
-        }
-        throw error;
-      }
-      if (payload.byteLength !== value.bytes || bytesSha256(payload) !== value.sha256) {
-        throw new Error("analysis_checkpoint_integrity_mismatch");
-      }
       let decoded: unknown;
-      try {
-        decoded = deserialize(payload);
-      } catch {
-        throw new Error("analysis_checkpoint_payload_invalid");
+      if (value.encoding === 'v8-records') {
+        decoded = await readCheckpointRecords(payloadPath, value);
+      } else {
+        let payload: Uint8Array;
+        try {
+          payload = await readFile(payloadPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            throw new Error("analysis_checkpoint_payload_missing");
+          }
+          throw error;
+        }
+        if (payload.byteLength !== value.bytes || bytesSha256(payload) !== value.sha256) {
+          throw new Error("analysis_checkpoint_integrity_mismatch");
+        }
+        try {
+          decoded = deserialize(payload);
+        } catch {
+          throw new Error("analysis_checkpoint_payload_invalid");
+        }
       }
       if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
         throw new Error("analysis_checkpoint_payload_invalid");
@@ -703,9 +705,13 @@ export class FileStore implements ProductStore {
         const part = value.static_payload;
         if (part.file !== part.file.replaceAll('\\', '/').split('/').at(-1) || !part.file.startsWith(`${safeId(projectId)}.`))
           throw new Error('analysis_checkpoint_payload_invalid');
-        const bytes = await readFile(join(this.dirs.analysisCheckpoints, part.file));
-        if (bytes.byteLength !== part.bytes || bytesSha256(bytes) !== part.sha256) throw new Error('analysis_checkpoint_integrity_mismatch');
-        Object.assign(row.checkpoint, deserialize(bytes));
+        if (part.encoding === 'v8-records') {
+          Object.assign(row.checkpoint, await readCheckpointRecords(join(this.dirs.analysisCheckpoints, part.file), part));
+        } else {
+          const bytes = await readFile(join(this.dirs.analysisCheckpoints, part.file));
+          if (bytes.byteLength !== part.bytes || bytesSha256(bytes) !== part.sha256) throw new Error('analysis_checkpoint_integrity_mismatch');
+          Object.assign(row.checkpoint, deserialize(bytes));
+        }
       }
       return { checkpoint: row.checkpoint, snapshot: row.snapshot ?? null };
     }
