@@ -82,7 +82,7 @@ test(
       );
       await budget.acquire(input);
       await assert.rejects(() => budget.acquire(input), {
-        code: 'site_analysis_budget_exhausted',
+        code: 'site_budget_busy',
       });
       await budget.acquire({
         ...input,

@@ -34,6 +34,8 @@ export interface ProviderBudgetInput {
   estimatedCostUsd?: number;
   pricingKnown?: boolean;
   signal?: AbortSignal;
+  /** Wait only for active reservations, never for spent/unknown settled usage. */
+  reservationWaitMs?: number;
   attribution?: UsageAttribution;
 }
 export interface ProviderUsageBudget {
@@ -115,9 +117,12 @@ export class ProviderBudgetExceededError extends Error {
     readonly kind: ProviderBudgetKind,
     readonly limit: number,
     readonly scope: ProviderBudgetScope = 'owner',
+    readonly reason?: 'busy' | 'insufficient',
   ) {
     const code =
-      kind === 'calls_per_minute'
+      reason === 'busy' ? 'site_budget_busy'
+      : reason === 'insufficient' ? 'site_budget_insufficient'
+      : kind === 'calls_per_minute'
         ? 'site_rate_limited'
         : limit === 0
           ? 'site_budget_disabled'
@@ -132,7 +137,7 @@ export class ProviderBudgetExceededError extends Error {
                   : 'provider_budget_exceeded';
     super(code);
     this.code = code;
-    if (kind === 'cost_per_day' && limit > 0)
+    if (kind === 'cost_per_day' && limit > 0 && !reason)
       this.resetAt = beijingBudgetDay().resetAt;
   }
 }
@@ -167,13 +172,35 @@ function assertBudget(
   limit: number | null,
   total: number,
   reservation: number,
+  committed = total,
 ) {
-  if (limit !== null && (limit === 0 || total + reservation > limit + 1e-10))
-    throw new ProviderBudgetExceededError(
+  if (limit !== null && (limit === 0 || total + reservation > limit + 1e-10)) {
+    const reason = limit > 0 && committed + reservation <= limit + 1e-10
+      ? 'busy' : limit > 0 && committed < limit - 1e-10 ? 'insufficient' : undefined;
+    const error = new ProviderBudgetExceededError(
       key === 'evolution_task' ? 'cost_per_task' : 'cost_per_day',
       limit,
       key,
+      reason,
     );
+    if (reason === 'busy') return error;
+    throw error;
+  }
+}
+
+async function waitForReservation<T>(input: ProviderBudgetInput, attempt: () => Promise<T>): Promise<T> {
+  const deadline = performance.now() + Math.min(30_000, amount(input.reservationWaitMs));
+  for (;;) {
+    input.signal?.throwIfAborted();
+    try { return await attempt(); }
+    catch (error) {
+      if (!(error instanceof ProviderBudgetExceededError) || error.reason !== 'busy') throw error;
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw error;
+      // Each attempt releases its mutex/transaction/connection before waiting.
+      await delay(Math.min(remaining, 200 + Math.random() * 100), input.signal);
+    }
+  }
 }
 function assertPricing(
   input: ProviderBudgetInput,
@@ -210,6 +237,9 @@ export class LocalProviderUsageBudget implements ProviderUsageBudget {
     private readonly now = Date.now,
   ) {}
   async acquire(input: ProviderBudgetInput): Promise<ProviderBudgetPermit> {
+    return waitForReservation(input, () => this.acquireOnce(input));
+  }
+  private async acquireOnce(input: ProviderBudgetInput): Promise<ProviderBudgetPermit> {
     input.signal?.throwIfAborted();
     const event = await this.mutex.runExclusive('budget', async () => {
       input.signal?.throwIfAborted();
@@ -240,6 +270,7 @@ export class LocalProviderUsageBudget implements ProviderUsageBudget {
         this.configured.policies ??
         DEFAULT_BUDGET_POLICIES;
       assertPricing(input, policies, a);
+      let busy: ProviderBudgetExceededError | undefined;
       for (const key of applicableBudgets(a)) {
         if (key === 'evolution_task' && !a.taskId)
           throw new Error('model_usage_task_required');
@@ -251,13 +282,15 @@ export class LocalProviderUsageBudget implements ProviderUsageBudget {
               ? e.attribution.taskId === a.taskId
               : e.startedAt >= day.start),
         );
-        assertBudget(
+        busy = assertBudget(
           key,
           policies[key],
           rows.reduce((sum, e) => sum + e.reservedCostUsd, 0),
           reservation,
-        );
+          rows.filter(e => e.settled).reduce((sum, e) => sum + e.reservedCostUsd, 0),
+        ) ?? busy;
       }
+      if (busy) throw busy;
       const created: LocalUsageEvent = {
         eventId: randomUUID(),
         ownerId: input.ownerId,
@@ -290,6 +323,9 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
     private readonly configured: ProviderBudgetLimits,
   ) {}
   async acquire(input: ProviderBudgetInput): Promise<ProviderBudgetPermit> {
+    return waitForReservation(input, () => this.acquireOnce(input));
+  }
+  private async acquireOnce(input: ProviderBudgetInput): Promise<ProviderBudgetPermit> {
     input.signal?.throwIfAborted();
     const client = await connectBudget(this.pool, input.signal),
       eventId = randomUUID(),
@@ -329,21 +365,24 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
         amount(input.estimatedCostUsd),
         this.configured.minimumReservationUsd,
       );
+      let busy: ProviderBudgetExceededError | undefined;
       for (const key of applicableBudgets(a)) {
         if (key === 'evolution_task' && !a.taskId)
           throw new Error('model_usage_task_required');
         if (policies[key] === null) continue;
-        const cost = await client.query<{ total: string }>(
-          `SELECT COALESCE(SUM(GREATEST(reserved_cost_usd,cost_usd)),0)::text AS total FROM provider_usage_events WHERE payer='platform' AND business=$1 AND ${key === 'evolution_task' ? 'task_id=$2' : "started_at >= (date_trunc('day',clock_timestamp() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')"}`,
+        const cost = await client.query<{ total: string; committed: string }>(
+          `SELECT COALESCE(SUM(GREATEST(reserved_cost_usd,cost_usd)),0)::text AS total, COALESCE(SUM(GREATEST(reserved_cost_usd,cost_usd)) FILTER (WHERE status<>'reserved'),0)::text AS committed FROM provider_usage_events WHERE payer='platform' AND business=$1 AND ${key === 'evolution_task' ? 'task_id=$2' : "started_at >= (date_trunc('day',clock_timestamp() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')"}`,
           key === 'evolution_task' ? [a.business, a.taskId] : [a.business],
         );
-        assertBudget(
+        busy = assertBudget(
           key,
           policies[key],
           Number(cost.rows[0]?.total ?? 0),
           reservation,
-        );
+          Number(cost.rows[0]?.committed ?? 0),
+        ) ?? busy;
       }
+      if (busy) throw busy;
       await client.query(
         `INSERT INTO provider_usage_events(event_id,owner_id,provider,model,started_at,status,reserved_cost_usd,cost_usd,input_tokens,output_tokens,cached_tokens,cache_write_tokens,business,payer,agent_role,connection_id,config_version,task_id) VALUES($1,$2,$3,$4,clock_timestamp(),'reserved',$5,0,0,0,0,0,$6,$7,$8,$9,$10,$11)`,
         [

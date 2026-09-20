@@ -11,6 +11,7 @@ import {
   type PublicFetchOptions,
 } from "../security/outbound-url.js";
 import { readResearchPage } from "./research-page.js";
+import { githubReadWithRetry } from "./github-transport.js";
 
 const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 300 * 1024 * 1024;
@@ -68,9 +69,10 @@ export async function fetchPublicGithubHead(
   signal?: AbortSignal,
 ): Promise<GithubRepositoryHead> {
   const { owner, repo } = parseGithubRepository(value);
-  const metadata = await githubJson({ kind: "metadata", owner, repo }, clientId, clientSecret, gateway, signal);
+  // This lookup runs before job admission; leave prolonged throttling to the worker.
+  const metadata = await githubJson({ kind: "metadata", owner, repo }, clientId, clientSecret, gateway, signal, 5000);
   const defaultBranch = String(metadata.default_branch ?? "main");
-  const commit = await githubJson({ kind: "commit", owner, repo, ref: defaultBranch }, clientId, clientSecret, gateway, signal);
+  const commit = await githubJson({ kind: "commit", owner, repo, ref: defaultBranch }, clientId, clientSecret, gateway, signal, 5000);
   const commitSha = String((commit as { sha?: unknown }).sha ?? "");
   if (!/^[0-9a-f]{40}$/i.test(commitSha)) throw new Error("github_commit_unavailable");
   return { owner, repo, repository: `${owner}/${repo}`, commitSha };
@@ -113,20 +115,21 @@ async function githubJson(
   clientSecret?: string | null,
   gateway?: GithubGatewayTransport | null,
   signal?: AbortSignal,
+  retryWindowMs = 65_000,
 ): Promise<Record<string, unknown>> {
   const headers: Record<string, string> = { accept: "application/vnd.github+json", "user-agent": "what-the-repo-typescript" };
   if (clientId && clientSecret) headers.authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
-  const response = gateway
-    ? await gatewayFetch(gateway, {
+  const response = await githubReadWithRetry(() => gateway
+    ? gatewayFetch(gateway, {
       kind: request.kind,
       owner: request.owner,
       repo: request.repo,
       ...(request.ref ? { ref: request.ref } : {}),
     }, signal)
-    : await fetch(directGithubUrl(request), {
+    : fetch(directGithubUrl(request), {
       headers,
       signal,
-    });
+    }), signal, undefined, retryWindowMs);
   signal?.throwIfAborted();
   if (!response.ok) throw new Error(`github_api_${response.status}`);
   const value: unknown = await response.json();
@@ -282,12 +285,12 @@ export async function fetchPublicGithubSource(
   }
   if (!files.length) throw new Error("github_no_safe_files");
   signal?.throwIfAborted();
-  const response = gateway
-    ? await gatewayFetch(gateway, { kind: "archive", owner, repo, ref: commitSha }, signal)
-    : await fetch(`https://codeload.github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zip/${commitSha}`, {
+  const response = await githubReadWithRetry(() => gateway
+    ? gatewayFetch(gateway, { kind: "archive", owner, repo, ref: commitSha }, signal)
+    : fetch(`https://codeload.github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/zip/${commitSha}`, {
       headers: { accept: "application/zip", "user-agent": "what-the-repo-typescript" },
       signal,
-    });
+    }), signal);
   signal?.throwIfAborted();
   if (!response.ok) throw new Error(`github_archive_${response.status}`);
   const archive = await readGithubArchive(response, signal);

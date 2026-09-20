@@ -50,7 +50,7 @@ test('concurrent callers reserve a shared analysis budget exactly once each', as
   assert.equal(budget.events.length, 5);
   for (const result of results)
     if (result.status === 'rejected')
-      assert.equal(result.reason.code, 'site_analysis_budget_exhausted');
+      assert.equal(result.reason.code, 'site_budget_busy');
 });
 test('null is unlimited, zero is disabled, legacy identity $1 never applies', async () => {
   const budget = new LocalProviderUsageBudget({
@@ -125,7 +125,7 @@ test('unknown usage including cancellation remains reserved; duplicate settlemen
     await permit.release({ ...report, costUsd: 0 });
     await assert.rejects(
       () => budget.acquire({ ...input, ownerId: 'another' }),
-      { code: 'site_analysis_budget_exhausted' },
+      { code: 'site_budget_insufficient' },
     );
   }
 });
@@ -153,7 +153,7 @@ test('Beijing natural day reset admits new calls and keeps previous day settleme
   await budget.acquire(input);
   await permit.release({ ...report, costUsd: 2 });
   await assert.rejects(() => budget.acquire(input), {
-    code: 'site_analysis_budget_exhausted',
+    code: 'site_budget_busy',
   });
 });
 test('PostgreSQL uses atomic reservation, Beijing boundaries, full attribution and idempotent retryable settlement', async () => {
@@ -221,4 +221,38 @@ test('unknown model pricing cannot masquerade as free under a finite platform bu
     ...input,
     pricingKnown: false,
   });
+});
+
+test('temporary reservations wait for settlement without duplicate events or false daily exhaustion', async () => {
+  const budget = new LocalProviderUsageBudget(limits({ analysis_daily: 0.015 }));
+  const first = await budget.acquire(input);
+  const waiting = budget.acquire({ ...input, reservationWaitMs: 1000 });
+  await first.release(report);
+  const second = await waiting;
+  assert.equal(budget.events.length, 2);
+  await second.release(report);
+  await assert.rejects(budget.acquire(input), { code: 'site_budget_insufficient' });
+});
+
+test('waiting is bounded, abortable, and never refunds unknown settled usage', async () => {
+  const budget = new LocalProviderUsageBudget(limits({ analysis_daily: 0.01 }));
+  const first = await budget.acquire(input);
+  await assert.rejects(budget.acquire({ ...input, reservationWaitMs: 20 }), { code: 'site_budget_busy' });
+  const cancel = new AbortController();
+  const waiting = budget.acquire({ ...input, reservationWaitMs: 1000, signal: cancel.signal });
+  cancel.abort(new Error('cancel-budget-wait'));
+  await assert.rejects(waiting, /cancel-budget-wait/);
+  assert.equal(budget.events.length, 1);
+  await first.release({ ...report, usageKnown: false, costUsd: 0 });
+  await assert.rejects(budget.acquire({ ...input, reservationWaitMs: 1000 }), { code: 'site_analysis_budget_exhausted' });
+});
+
+test('a permanently insufficient second policy takes precedence over a temporarily held first policy', async () => {
+  const budget = new LocalProviderUsageBudget(limits({ evolution_task: 0.02, evolution_daily: 0.03 }));
+  const evolution = { ...input, attribution: { ...input.attribution!, business: 'evolution' as const } };
+  await budget.acquire({ ...evolution, estimatedCostUsd: 0.015 });
+  const spent = await budget.acquire({ ...evolution, estimatedCostUsd: 0.014, attribution: { ...evolution.attribution, taskId: 'other' } });
+  await spent.release({ ...report, costUsd: 0.014 });
+  // Active task allowance fits by itself, but settled daily usage cannot cover another request.
+  await assert.rejects(budget.acquire({ ...evolution, estimatedCostUsd: 0.02, reservationWaitMs: 1000 }), { code: 'site_budget_insufficient' });
 });

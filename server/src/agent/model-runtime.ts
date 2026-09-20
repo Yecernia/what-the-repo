@@ -25,6 +25,7 @@ import type {
   ProviderUsageReport,
 } from "./provider-budget.js";
 import { ProviderBudgetExceededError } from "./provider-budget.js";
+import { providerReservation } from "./provider-reservation.js";
 import {
   defaultRuntimeMetrics,
   METRIC_NAMES,
@@ -359,10 +360,7 @@ function recordGateWait(runtime: PiModelRuntime, elapsedMs: number): void {
 }
 
 function estimatedProviderReservation(runtime: PiModelRuntime): number {
-  const cost = runtime.model.cost;
-  const input = Math.max(0, runtime.model.contextWindow) * Math.max(0, cost.input, cost.cacheRead, cost.cacheWrite);
-  const output = Math.max(0, runtime.model.maxTokens) * Math.max(0, cost.output);
-  return (input + output) / 1_000_000;
+  return providerReservation(runtime.model);
 }
 
 function usageReport(
@@ -403,6 +401,7 @@ function transportErrorCode(error: unknown): string {
 async function acquireBudget(
   runtime: PiModelRuntime,
   signal: AbortSignal | undefined,
+  reservation = estimatedProviderReservation(runtime),
 ): Promise<ProviderBudgetPermit | undefined> {
   if (!runtime.providerBudget || !runtime.ownerId) return undefined;
   return runtime.providerBudget.acquire({
@@ -410,7 +409,8 @@ async function acquireBudget(
     attribution: runtime.attribution,
     provider: runtime.model.provider,
     model: runtime.model.id,
-    estimatedCostUsd: estimatedProviderReservation(runtime),
+    estimatedCostUsd: reservation,
+    reservationWaitMs: 30_000,
     pricingKnown: Object.values(runtime.model.cost).some(value=>typeof value==='number'&&value>0),
     signal,
   });
@@ -483,6 +483,7 @@ export function streamWithProviderPermit(
   diagnostic?: ProviderRequestDiagnostic,
   mode: 'simple' | 'api' = 'simple',
 ): ReturnType<ReturnType<typeof createModels>["streamSimple"]> {
+  runtime = { ...runtime, model: candidate };
   const wrapped = new DeferredAssistantStream();
   void (async () => {
     const acquireStarted = performance.now();
@@ -503,7 +504,8 @@ export function streamWithProviderPermit(
       if (diagnostic) diagnostic.gateWaitMs = performance.now() - acquireStarted;
       const budgetStarted = performance.now();
       try {
-        budgetPermit = await acquireBudget(runtime, streamOptions?.signal);
+        budgetPermit = await acquireBudget(runtime, streamOptions?.signal,
+          providerReservation(candidate, context, Boolean(streamOptions?.onPayload)));
         if (diagnostic) {
           diagnostic.budgetWaitMs = performance.now() - budgetStarted;
           diagnostic.usageEventId = budgetPermit?.eventId ?? null;

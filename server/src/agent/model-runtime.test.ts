@@ -3,6 +3,7 @@ import dns from "node:dns/promises";
 import test, { mock } from "node:test";
 import { createModelRuntime, streamWithProviderPermit } from "./model-runtime.js";
 import { createWorkerDiagnostics } from "./worker-diagnostics.js";
+import { providerReservation } from "./provider-reservation.js";
 import { withProviderPermit } from "./model-runtime.js";
 import { LocalProviderUsageBudget, ProviderBudgetExceededError, type ProviderUsageReport } from "./provider-budget.js";
 import { createModels } from "@earendil-works/pi-ai";
@@ -674,6 +675,25 @@ test("cancellation after admission but before either provider entry releases a k
     assert.equal(called, false);
     assert.deepEqual(reports.map((r) => [r.usageKnown, r.costUsd, r.status]), [[true, 0, "cancelled"]]);
   }
+});
+
+test('stream admission uses the actual candidate and context, including direct compaction calls', async () => {
+  const faux = fauxProvider({ provider: 'reservation-context' });
+  const models = createModels(); models.setProvider(faux.provider);
+  const candidate = { ...faux.getModel(), contextWindow: 100_000, maxTokens: 1000,
+    cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } };
+  const context = { messages: [{ role: 'user' as const, content: 'ping', timestamp: 1 }] };
+  const abort = new AbortController();
+  let recorded = 0;
+  const runtime = { models, model: faux.getModel(), ownerId: 'owner', providerBudget: { async acquire(input: import('./provider-budget.js').ProviderBudgetInput) {
+    recorded = input.estimatedCostUsd!;
+    assert.equal(input.reservationWaitMs, 30_000);
+    abort.abort();
+    return { async release() {} };
+  } } };
+  for await (const event of streamWithProviderPermit(runtime, candidate, context, { signal: abort.signal })) assert.equal(event.type, 'error');
+  assert.equal(recorded, providerReservation(candidate, context));
+  assert.ok(recorded < providerReservation(candidate));
 });
 
 test("a failed provider operation preserves usage returned with its error", async () => {

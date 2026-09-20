@@ -17,6 +17,9 @@ export function providerErrorCode(error: unknown, fallback = "provider_request_f
 }
 
 export const FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  site_budget_busy: '额度暂被正在进行的请求占用，等待超时，请稍后重试。',
+  site_budget_insufficient: '平台剩余额度不足以启动这次模型请求，请联系管理员。',
+  github_rate_limited: '仓库拉取仍受限，已停止自动重试，请稍后再试。',
   chat_owner_busy: '你已有多轮对话正在进行，请等待一轮结束或取消后再试。',
   chat_queue_full: '服务器繁忙，请稍后重试。',
   chat_wait_timeout: '等待处理超时，请稍后重试。',

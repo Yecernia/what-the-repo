@@ -410,6 +410,12 @@ export function buildGithubGateway(dependencies: GithubGatewayDependencies): Fas
         : githubHeaders(config),
     });
     const payload = await readLimitedBytes(response, typedKind === "archive" ? ARCHIVE_RESPONSE_LIMIT : JSON_RESPONSE_LIMIT);
+    // Preserve upstream pacing instructions, never arbitrary headers or credentials.
+    for (const name of ['retry-after', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'x-ratelimit-resource']) {
+      const value = response.headers.get(name);
+      if (value && value.length <= 128 && !/[\r\n]/.test(value)) reply.header(name, value);
+    }
+    reply.header('x-wtr-rate-limit-source', 'github');
     return reply
       .header("cache-control", "no-store")
       .header("content-type", response.headers.get("content-type") ?? (typedKind === "archive" ? "application/zip" : "application/json"))

@@ -12,6 +12,24 @@ import {
 const now = Date.parse("2026-08-28T12:00:00.000Z");
 const sharedSecret = "gateway-test-secret-012345678901234567890123456789";
 
+test('repository gateway preserves upstream cooldown hints without forwarding arbitrary headers', async () => {
+  const app = buildGithubGateway({ config: config(), fetchImpl: async () => new Response('limited', {
+    status: 429, headers: { 'retry-after': '17', 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '2000000000',
+      'x-wtr-rate-limit-source': 'gateway', 'authorization': 'secret', 'set-cookie': 'secret=1' },
+  }) });
+  try {
+    const response = await app.inject({ method: 'POST', url: '/v1/github/fetch',
+      headers: { authorization: `Bearer ${sharedSecret}` }, payload: { kind: 'metadata', owner: 'example', repo: 'repo' } });
+    assert.equal(response.statusCode, 429);
+    assert.equal(response.headers['retry-after'], '17');
+    assert.equal(response.headers['x-ratelimit-remaining'], '0');
+    assert.equal(response.headers['x-ratelimit-reset'], '2000000000');
+    assert.equal(response.headers['x-wtr-rate-limit-source'], 'github');
+    assert.equal(response.headers.authorization, undefined);
+    assert.equal(response.headers['set-cookie'], undefined);
+  } finally { await app.close(); }
+});
+
 function config(): GithubGatewayConfig {
   return {
     host: "127.0.0.1",

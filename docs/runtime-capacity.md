@@ -121,6 +121,30 @@ label still matches. Unlisted personal keys get normal business and personal
 limits but no invented upstream account allowance. RPM/TPM quotas are not inferred
 from concurrency; this setting does not implement token-rate limiting.
 
+## Budget reservations and repository throttling
+
+Model admission also reserves money independently of execution capacity. Text
+requests estimate input from the current system prompt, history and tool schemas,
+with conservative byte-based headroom; images, custom payload rewrites and calls
+without context retain the full context-window allowance. The full configured
+output allowance is always reserved, including reasoning. This is an estimate,
+not a provider invoice, and increasing concurrency never increases the money budget.
+
+Active reservations can wait for up to 30 seconds, without holding a database
+connection while sleeping. Settled unknown usage remains charged conservatively.
+Temporary contention (`site_budget_busy`), insufficient remaining allowance
+(`site_budget_insufficient`) and an exhausted budget have distinct public errors.
+Existing personal admission limits continue to apply to waiting requests.
+
+Idempotent GitHub reads retry rate-limited requests at most four times, following
+`Retry-After` and primary rate-limit reset headers with jitter and backoff. The
+retry window is 65 seconds in workers and 5 seconds per read during the initial
+head lookup; it does not replace network/body timeouts. Persistent limits stop
+automatic whole-job retries with `github_rate_limited`. A gateway forwards the
+upstream cooldown headers; a separately configured edge should identify its own
+429s using `X-WTR-Rate-Limit-Source: gateway` and a suitable `Retry-After`.
+See [GitHub's rate-limit guidance](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
+
 ## Migration and verification
 
 Remove these obsolete variables before starting the new runtime:

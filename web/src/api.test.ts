@@ -35,6 +35,14 @@ describe('streamed messages', () => {
     await expect(apiClient.sendMessageStream('project-1','hello',null,()=>undefined)).rejects.toMatchObject({code:'site_chat_budget_exhausted'});
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it('temporary and insufficient reservations never claim that the daily budget is spent', () => {
+    expect(conversationErrorMessage('site_budget_busy')).toContain('暂被');
+    expect(conversationErrorMessage('site_budget_insufficient')).toContain('剩余额度不足');
+    setUiLanguage('en');
+    expect(conversationErrorMessage('site_budget_busy')).toContain('temporarily reserved');
+    expect(conversationErrorMessage('site_budget_insufficient')).not.toContain('tomorrow');
+    expect(conversationErrorMessage('github_rate_limited')).toContain('Automatic retries have stopped');
+  });
   it('also includes the selected language in non-streaming requests', async () => {
     setUiLanguage('en');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
