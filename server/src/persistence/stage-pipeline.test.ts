@@ -78,6 +78,9 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
       assert.equal(cache.syntax_files.length, 1);
       assert.equal(cache.parsed_files.length, 1);
       const snapshotId = String(saved.checkpoint.snapshot_id);
+      assert.deepEqual(await reader.readSourceLines(project.project_id, snapshotId, 'src/main.ts', 1, 1),
+        { lines: [source], truncated: false });
+      await assert.rejects(reader.readSourceLines(project.project_id, 'another-snapshot', 'src/main.ts', 1, 1), /snapshot_not_bound/);
       const detail = await reader.readStaticFile(project.project_id, snapshotId, 'src/main.ts');
       assert.equal(detail?.calls[0]?.callee, 'target');
       assert.equal(detail?.calls[0]?.status, 'static');

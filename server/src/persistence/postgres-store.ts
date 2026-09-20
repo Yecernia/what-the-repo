@@ -79,6 +79,8 @@ import {
   parseSnapshotManifest,
   parseJsonObject,
   putSourceSnapshot,
+  readSourceSnapshotFile,
+  sourceSnapshotManifestBytes,
   snapshotObjectDigest,
   type SourceSnapshotManifest,
   type SourceSnapshotManifestFile,
@@ -506,10 +508,7 @@ export class PostgresStore extends FileStore {
   ): Promise<{ lines: string[]; truncated: boolean }> {
     const descriptor = source.files.get(relativePath);
     if (!descriptor) throw new Error("source_file_not_found");
-    const body = verifySourceSnapshotObject(
-      await this.snapshotObjects.get(descriptor.key),
-      descriptor,
-    );
+    const body = await readSourceSnapshotFile(this.snapshotObjects, descriptor);
     return sourceLines(body, start, end);
   }
 
@@ -1123,13 +1122,14 @@ export class PostgresStore extends FileStore {
     ]);
     // A resumed assembly may carry a previously uploaded immutable manifest.
     // Verify its identity and bytes before binding it to the published snapshot.
-    const sourceManifestBody = jsonBytes(sourceSnapshot.manifest);
+    const sourceManifestBody = sourceSnapshotManifestBytes(sourceSnapshot.manifest);
     if (sourceSnapshot.manifest.public_snapshot_key !== input.publicKey
       || sourceSnapshot.manifest.snapshot_id !== input.snapshotId
       || sourceSnapshot.manifestObject.sha256 !== snapshotObjectDigest(sourceManifestBody)
       || sourceSnapshot.manifestObject.bytes !== sourceManifestBody.byteLength) {
       throw new Error("prepared_source_snapshot_mismatch");
     }
+    parseSourceSnapshotManifest(sourceManifestBody, { publicKey: input.publicKey, snapshotId: input.snapshotId });
     const analysisStart = performance.now();
     const analysisBody = jsonBytes(preparedAnalysis.value);
     const analysisKey = `public-repository-snapshots/${input.publicKey}/analysis-${snapshotObjectDigest(analysisBody)}.json`;

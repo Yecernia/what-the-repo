@@ -3,7 +3,7 @@ import {
   parseSourceSnapshotManifest,
   putSourceSnapshot,
   snapshotObjectDigest,
-  verifySourceSnapshotObject,
+  readSourceSnapshotFile,
   type SnapshotObjectStore,
 } from "../persistence/snapshot-object-store.js";
 
@@ -345,7 +345,7 @@ export async function runTencentCosObjectSmoke(input: {
       { publicKey, snapshotId },
     );
     for (const file of parsed.files) {
-      verifySourceSnapshotObject(await input.reader.get(file.key), file);
+      await readSourceSnapshotFile(input.reader, file);
     }
     sourceResult = {
       manifest_key: source.manifestObject.key,

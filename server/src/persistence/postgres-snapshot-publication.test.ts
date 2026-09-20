@@ -93,7 +93,7 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
       analysis: { snapshot_id: snapshotId, fact_graph: { nodes: [], edges: [] } },
     });
     assert.ok(timings.total_ms >= timings.directory_write_ms);
-    assert.equal(objects.writes.filter(key => /\/source\/|\/source-manifest-/.test(key)).length, sourceWrites,
+    assert.equal(objects.writes.filter(key => /\/source-packs\/|\/source-manifest-/.test(key)).length, sourceWrites,
       "publication must reuse prepared source even when the local directory is no longer present");
 
     const sql = queries.map((item) => item.sql);

@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rm, writeFile, stat } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rm, writeFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import COS from "cos-nodejs-sdk-v5";
+import { packSourceFiles, SOURCE_PACK_BYTES, SOURCE_PACK_FILES } from './source-packs.js';
+export { readSourceSnapshotFile } from './source-packs.js';
 
 export interface StoredObject {
   key: string;
@@ -13,6 +15,8 @@ export interface SnapshotObjectStore {
   readonly kind: "local" | "cos";
   put(key: string, body: Uint8Array, contentType?: string): Promise<StoredObject>;
   get(key: string): Promise<Uint8Array | null>;
+  /** Exact byte range. Implementations must reject truncated/ignored ranges. */
+  getRange?(key: string, offset: number, length: number): Promise<Uint8Array | null>;
   delete(key: string): Promise<void>;
   /** Irreversible reclamation of an already-unreferenced object, including retained versions. */
   purge?(key: string): Promise<void>;
@@ -29,6 +33,11 @@ function safeKey(value: string): string {
     throw new Error("invalid_object_key");
   }
   return key;
+}
+
+function assertRange(offset: number, length: number): void {
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length <= 0
+    || !Number.isSafeInteger(offset + length)) throw new Error('snapshot_object_range_invalid');
 }
 
 export class LocalSnapshotObjectStore implements SnapshotObjectStore {
@@ -73,6 +82,24 @@ export class LocalSnapshotObjectStore implements SnapshotObjectStore {
 
   async delete(key: string): Promise<void> {
     await rm(this.path(key), { force: true });
+  }
+
+  async getRange(key: string, offset: number, length: number): Promise<Uint8Array | null> {
+    assertRange(offset, length);
+    let file;
+    try { file = await open(this.path(key), 'r'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+    try {
+      if (offset + length > (await file.stat()).size) throw new Error('snapshot_object_range_invalid');
+      const body = Buffer.alloc(length);
+      let read = 0;
+      while (read < length) {
+        const result = await file.read(body, read, length - read, offset + read);
+        if (!result.bytesRead) throw new Error('snapshot_object_range_invalid');
+        read += result.bytesRead;
+      }
+      return body;
+    } finally { await file.close(); }
   }
 }
 
@@ -207,6 +234,23 @@ export class TencentCosObjectStore implements SnapshotObjectStore {
       Key: this.key(key),
     });
   }
+
+  async getRange(key: string, offset: number, length: number): Promise<Uint8Array | null> {
+    assertRange(offset, length);
+    try {
+      const result = await this.client.getObject({ Bucket: this.options.bucket, Region: this.options.region,
+        Key: this.key(key), Range: `bytes=${offset}-${offset + length - 1}` });
+      const range = String(result.headers?.['content-range'] ?? '').match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+      if (result.statusCode !== 206 || !range || Number(range[1]) !== offset
+        || Number(range[2]) !== offset + length - 1 || Number(range[3]) < offset + length
+        || result.Body?.byteLength !== length) throw new Error('snapshot_object_range_invalid');
+      return result.Body;
+    } catch (error) {
+      if (Number((error as { statusCode?: number }).statusCode) === 404
+        || (error as { code?: string }).code === 'NoSuchKey') return null;
+      throw error;
+    }
+  }
 }
 
 export interface SnapshotManifest {
@@ -235,20 +279,39 @@ export interface SourceSnapshotManifestFile {
   key: string;
   bytes: number;
   sha256: string;
+  offset?: number;
+  stored_bytes?: number;
+  encoding?: 'gzip' | 'identity';
 }
 
 export interface SourceSnapshotManifest {
-  schema_version: 1;
+  schema_version: 1 | 2;
   public_snapshot_key: string;
   snapshot_id: string;
   files: SourceSnapshotManifestFile[];
   total_bytes: number;
   created_at: string;
+  packs?: StoredObject[];
 }
 
 export interface StoredSourceSnapshot {
   manifest: SourceSnapshotManifest;
   manifestObject: StoredObject;
+}
+
+/** Keep the wire index compact: pack keys occur once, not once per source file. */
+export function sourceSnapshotManifestBytes(manifest: SourceSnapshotManifest): Uint8Array {
+  if (manifest.schema_version === 1) return jsonBytes(manifest);
+  const ordinals = new Map(manifest.packs?.map((pack, index) => [pack.key, index]));
+  return jsonBytes({ schema_version: 2, public_snapshot_key: manifest.public_snapshot_key,
+    snapshot_id: manifest.snapshot_id,
+    packs: manifest.packs?.map(({ key, bytes, sha256 }) => ({ key, bytes, sha256 })),
+    files: manifest.files.map(file => {
+      const pack = ordinals.get(file.key);
+      if (pack === undefined) throw new Error('source_snapshot_manifest_invalid');
+      return { path: file.path, pack, offset: file.offset, stored_bytes: file.stored_bytes,
+        encoding: file.encoding, bytes: file.bytes, sha256: file.sha256 };
+    }), total_bytes: manifest.total_bytes, created_at: manifest.created_at });
 }
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -358,7 +421,7 @@ export function parseSourceSnapshotManifest(
   } catch {
     throw new Error("source_snapshot_manifest_invalid");
   }
-  if (row.schema_version !== 1
+  if ((row.schema_version !== 1 && row.schema_version !== 2)
     || row.public_snapshot_key !== expected.publicKey
     || row.snapshot_id !== expected.snapshotId
     || !Array.isArray(row.files)
@@ -369,11 +432,26 @@ export function parseSourceSnapshotManifest(
     throw new Error("source_snapshot_manifest_invalid");
   }
   const paths = new Set<string>();
+  const packs = new Map<string, StoredObject>();
+  if (row.schema_version === 2) {
+    if (!Array.isArray(row.packs)) throw new Error('source_snapshot_manifest_invalid');
+    for (const [ordinal, value] of row.packs.entries()) {
+      const pack = sourceRecord(value);
+      if (typeof pack.sha256 !== 'string' || !SHA256.test(pack.sha256)
+        || pack.key !== `public-repository-snapshots/${expected.publicKey}/source-packs/${ordinal}-${pack.sha256}.bin`
+        || !Number.isSafeInteger(pack.bytes) || Number(pack.bytes) < 0 || Number(pack.bytes) > SOURCE_PACK_BYTES
+        || packs.has(String(pack.key))) throw new Error('source_snapshot_manifest_invalid');
+      packs.set(String(pack.key), { key: String(pack.key), bytes: Number(pack.bytes), sha256: pack.sha256 });
+    }
+  }
+  const positions = new Map<string, { offset: number; bytes: number; files: number }>();
+  const packKeys = [...packs.keys()];
   let totalBytes = 0;
   const files = row.files.map((value) => {
     const item = sourceRecord(value);
     if (typeof item.path !== "string"
-      || typeof item.key !== "string"
+      || (row.schema_version === 1 ? typeof item.key !== 'string'
+        : !Number.isSafeInteger(item.pack) || Number(item.pack) < 0 || Number(item.pack) >= packs.size)
       || !Number.isSafeInteger(item.bytes)
       || Number(item.bytes) < 0
       || typeof item.sha256 !== "string"
@@ -386,64 +464,55 @@ export function parseSourceSnapshotManifest(
     const bytes = Number(item.bytes);
     totalBytes += bytes;
     if (!Number.isSafeInteger(totalBytes)) throw new Error("source_snapshot_manifest_invalid");
-    return {
-      path,
-      key: safeKey(item.key),
-      bytes,
-      sha256: item.sha256,
-    };
+    const file: SourceSnapshotManifestFile = { path,
+      key: row.schema_version === 1 ? safeKey(item.key as string) : packKeys[Number(item.pack)],
+      bytes, sha256: item.sha256 };
+    if (row.schema_version === 2) {
+      const pack = packs.get(file.key);
+      const previous = positions.get(file.key) ?? { offset: 0, bytes: 0, files: 0 };
+      if (!pack || !Number.isSafeInteger(item.offset) || Number(item.offset) !== previous.offset
+        || !Number.isSafeInteger(item.stored_bytes) || Number(item.stored_bytes) < 0
+        || Number(item.offset) + Number(item.stored_bytes) > pack.bytes
+        || (item.encoding !== 'identity' && item.encoding !== 'gzip')
+        || (item.encoding === 'identity' ? item.stored_bytes !== bytes : Number(item.stored_bytes) <= 0)
+        || previous.bytes + bytes > SOURCE_PACK_BYTES || previous.files >= SOURCE_PACK_FILES) {
+        throw new Error('source_snapshot_manifest_invalid');
+      }
+      file.offset = Number(item.offset); file.stored_bytes = Number(item.stored_bytes); file.encoding = item.encoding;
+      positions.set(file.key, { offset: file.offset + file.stored_bytes, bytes: previous.bytes + bytes, files: previous.files + 1 });
+    }
+    return file;
   });
   if (totalBytes !== Number(row.total_bytes)) throw new Error("source_snapshot_manifest_invalid");
+  if (row.schema_version === 2 && (positions.size !== packs.size
+    || [...packs.values()].some(pack => positions.get(pack.key)?.offset !== pack.bytes))) throw new Error('source_snapshot_manifest_invalid');
   return {
-    schema_version: 1,
+    schema_version: row.schema_version,
     public_snapshot_key: expected.publicKey,
     snapshot_id: expected.snapshotId,
     files,
     total_bytes: totalBytes,
     created_at: row.created_at,
+    ...(row.schema_version === 2 ? { packs: [...packs.values()] } : {}),
   };
 }
 
-async function sourceFiles(root: string): Promise<Array<{ path: string; absolute: string }>> {
-  const result: Array<{ path: string; absolute: string }> = [];
+async function sourceFiles(root: string, signal?: AbortSignal): Promise<Array<{ path: string; absolute: string; bytes: number }>> {
+  const result: Array<{ path: string; absolute: string; bytes: number }> = [];
   const visit = async (directory: string, prefix: string): Promise<void> => {
     const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((left, right) => left.name.localeCompare(right.name));
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
     for (const entry of entries) {
+      signal?.throwIfAborted();
       if (!prefix && entry.name === ".snapshot-meta.json") continue;
       const path = normalizeSourceSnapshotPath(prefix ? `${prefix}/${entry.name}` : entry.name);
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute, path);
-      else if (entry.isFile()) result.push({ path, absolute });
+      else if (entry.isFile()) result.push({ path, absolute, bytes: (await stat(absolute)).size });
       else throw new Error("source_snapshot_unsupported_entry");
     }
   };
   await visit(root, "");
-  return result;
-}
-
-async function mapWithConcurrency<T, R>(
-  values: T[],
-  concurrency: number,
-  operation: (value: T) => Promise<R>,
-): Promise<R[]> {
-  const result = new Array<R>(values.length);
-  let nextIndex = 0;
-  let failed = false;
-  const run = async (): Promise<void> => {
-    while (!failed && nextIndex < values.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      try { result[index] = await operation(values[index] as T); }
-      catch (error) { failed = true; throw error; }
-    }
-  };
-  const settled = await Promise.allSettled(Array.from(
-    { length: Math.min(Math.max(1, Math.floor(concurrency)), Math.max(1, values.length)) },
-    run,
-  ));
-  const failure = settled.find(row => row.status === "rejected");
-  if (failure?.status === "rejected") throw failure.reason;
   return result;
 }
 
@@ -457,32 +526,22 @@ export async function putSourceSnapshot(input: {
   signal?: AbortSignal;
 }): Promise<StoredSourceSnapshot> {
   input.signal?.throwIfAborted();
-  const files = await sourceFiles(input.sourceRoot);
-  const descriptors = await mapWithConcurrency(files, input.concurrency ?? 8, async (file) => {
-    input.signal?.throwIfAborted();
-    const body = await readFile(file.absolute);
-    input.signal?.throwIfAborted();
-    const sha256 = snapshotObjectDigest(body);
-    const key = `public-repository-snapshots/${input.publicKey}/source/${sha256}`;
-    const stored = await input.objectStore.put(key, body, "application/octet-stream");
-    input.signal?.throwIfAborted();
-    if (stored.key !== key || stored.bytes !== body.byteLength || stored.sha256 !== sha256) {
-      throw new Error("source_snapshot_object_write_mismatch");
-    }
-    return { path: file.path, key: stored.key, bytes: stored.bytes, sha256: stored.sha256 };
-  });
+  const files = await sourceFiles(input.sourceRoot, input.signal);
+  const { descriptors, packs } = await packSourceFiles(input, files);
   const manifest: SourceSnapshotManifest = {
-    schema_version: 1,
+    schema_version: 2,
+    packs,
     public_snapshot_key: input.publicKey,
     snapshot_id: input.snapshotId,
     files: descriptors,
     total_bytes: descriptors.reduce((total, file) => total + file.bytes, 0),
     created_at: input.createdAt ?? new Date().toISOString(),
   };
-  const body = jsonBytes(manifest);
+  const body = sourceSnapshotManifestBytes(manifest);
   input.signal?.throwIfAborted();
   const key = `public-repository-snapshots/${input.publicKey}/source-manifest-${snapshotObjectDigest(body)}.json`;
   const manifestObject = await input.objectStore.put(key, body, "application/json");
+  input.signal?.throwIfAborted();
   if (manifestObject.key !== key
     || manifestObject.bytes !== body.byteLength
     || manifestObject.sha256 !== snapshotObjectDigest(body)) {

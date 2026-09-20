@@ -221,7 +221,7 @@ test("COS smoke round-trips, restores a delete marker, and removes every test ve
     assert.equal(report.version_restore.restored, true);
     assert.equal(report.cleanup.strategy, "versions");
     assert.equal(report.cleanup.remaining_entries, 0);
-    assert.ok(report.cleanup.entries_removed >= 5);
+    assert.ok(report.cleanup.entries_removed >= 4, 'packed source, manifest, round-trip object and delete marker');
     assert.equal(backend.objects.size, 0);
   } finally {
     await rm(sourceRoot, { recursive: true, force: true });

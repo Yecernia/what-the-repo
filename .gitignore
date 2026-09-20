@@ -144,6 +144,7 @@ Thumbs.db
 /docs/*
 !/docs/runtime-capacity.md
 !/docs/static-analysis.md
+!/docs/source-snapshots.md
 .agents/
 .claude/
 .codex/

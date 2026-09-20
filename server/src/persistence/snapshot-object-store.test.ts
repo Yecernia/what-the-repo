@@ -10,6 +10,7 @@ import {
   parseSourceSnapshotManifest,
   parseSnapshotManifest,
   putSourceSnapshot,
+  readSourceSnapshotFile,
   snapshotObjectDigest,
   tencentCosClientOptions,
   TencentCosObjectStore,
@@ -44,7 +45,7 @@ test("source preparation stops queued uploads and settles active uploads before 
   let release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   try {
-    await Promise.all(Array.from({ length: 8 }, (_, i) => writeFile(join(root, `${i}.ts`), `// ${i}`)));
+    await Promise.all(Array.from({ length: 8 }, (_, i) => writeFile(join(root, `${i}.ts`), Buffer.alloc(2 * 1024 * 1024 + 1, i))));
     const operation = putSourceSnapshot({ sourceRoot: root, publicKey: "a".repeat(64), snapshotId: "cancel", concurrency: 2,
       signal: controller.signal, objectStore: {
         kind: "local", get: async () => null, delete: async () => {},
@@ -64,7 +65,7 @@ test("source preparation stops queued uploads and settles active uploads before 
     release();
     await checked;
     assert.equal(active, 0);
-    assert.equal(puts, 2, "no queued file or final manifest is uploaded after cancellation");
+    assert.equal(puts, 2, "no queued pack or final manifest is uploaded after cancellation");
   } finally {
     release?.();
     await rm(root, { recursive: true, force: true });
@@ -131,13 +132,14 @@ test("source snapshot stores immutable files behind a validated manifest", async
     assert.equal(parsed.total_bytes, Buffer.byteLength("line one\nline two\nexport const ok = true;\n"));
     const readme = parsed.files[0]!;
     assert.equal(
-      Buffer.from(verifySourceSnapshotObject(await store.get(readme.key), readme)).toString("utf8"),
+      Buffer.from(await readSourceSnapshotFile(store, readme)).toString("utf8"),
       "line one\nline two\n",
     );
     const changed = Buffer.from(await store.get(readme.key) ?? []);
     changed[0] = changed[0] === 108 ? 76 : 108;
-    assert.throws(
-      () => verifySourceSnapshotObject(changed, readme),
+    await store.put(readme.key, changed);
+    await assert.rejects(
+      () => readSourceSnapshotFile(store, readme),
       /source_snapshot_object_integrity_mismatch/,
     );
     assert.throws(() => normalizeSourceSnapshotPath("../outside.ts"), /invalid_source_path/);

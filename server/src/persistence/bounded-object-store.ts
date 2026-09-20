@@ -13,6 +13,7 @@ export function boundedObjectStore(store: SnapshotObjectStore, scheduler: Resour
     kind: store.kind,
     put: (key, body, contentType) => run(() => store.put(key, body, contentType)),
     get: key => run(() => store.get(key)),
+    ...(store.getRange ? { getRange: (key: string, offset: number, length: number) => run(() => store.getRange!(key, offset, length)) } : {}),
     delete: key => run(() => store.delete(key)),
     ...(store.purge ? { purge: (key: string) => run(() => store.purge!(key)) } : {}),
     ...(store.inventory ? { inventory: () => run(() => store.inventory!()) } : {}),
