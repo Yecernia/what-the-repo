@@ -1,5 +1,4 @@
 import {
-  jsonBytes,
   snapshotObjectDigest,
 } from "./snapshot-object-store.js";
 import type { EvidenceSnapshot } from "../domain/snapshot.js";
@@ -13,6 +12,7 @@ export type StaticFileFacts = NonNullable<EvidenceSnapshot["static_analysis"]>["
  */
 export const CHUNKED_ANALYSIS_PAYLOAD_SCHEMA = "analysis-payload-chunks-v1" as const;
 export const ANALYSIS_PAYLOAD_CHUNK_SIZE = 2_048;
+export const ANALYSIS_PAYLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 
 export type AnalysisPayloadChunkPath =
   | "fact_graph.nodes"
@@ -116,15 +116,32 @@ function indexedPaths(path: AnalysisPayloadChunkPath, items: unknown[]): { file_
     : {};
 }
 
+function* chunkBodies(values: unknown[], path: AnalysisPayloadChunkPath): Generator<{ items: unknown[]; body: Uint8Array }> {
+  let items: unknown[] = [], parts: string[] = [], bytes = 3;
+  // Keep strings until the bounded chunk is ready. Allocating a native Buffer
+  // for each tiny graph relation causes excessive GC during million-row saves.
+  const flush = () => ({ items, body: Buffer.from('[' + parts.join(',') + ']\n', 'utf8') });
+  for (const value of values) {
+    // One unusually large record remains indivisible. Ordinary chunks are
+    // bounded by bytes as well as count; 2,048 parsed files can be hundreds of MB.
+    const body = JSON.stringify(value) ?? 'null', length = Buffer.byteLength(body, 'utf8');
+    if (items.length && (items.length >= chunkSize(path) || bytes + length + 1 > ANALYSIS_PAYLOAD_CHUNK_BYTES)) {
+      yield flush(); items = []; parts = []; bytes = 3;
+    }
+    if (items.length) bytes++;
+    items.push(value); parts.push(body); bytes += length;
+  }
+  if (items.length) yield flush();
+}
+
 function chunkArray(
   values: unknown[],
   path: AnalysisPayloadChunkPath,
   keyForChunk: (path: AnalysisPayloadChunkPath, index: number, sha256: string) => string,
 ): PreparedAnalysisPayloadChunk[] {
   const chunks: PreparedAnalysisPayloadChunk[] = [];
-  for (let offset = 0, index = 0; offset < values.length; offset += chunkSize(path), index += 1) {
-    const items = values.slice(offset, offset + chunkSize(path));
-    const body = jsonBytes(items);
+  let index = 0;
+  for (const { items, body } of chunkBodies(values, path)) {
     const sha256 = snapshotObjectDigest(body);
     const key = keyForChunk(path, index, sha256);
     if (!isSafeObjectKey(key)) throw new Error("analysis_payload_chunk_key_invalid");
@@ -140,6 +157,7 @@ function chunkArray(
       },
       body,
     });
+    index++;
   }
   return chunks;
 }
@@ -287,10 +305,8 @@ export async function prepareStoredAnalysisPayload(
   if (!root) return { value, envelope: null, chunks: [] };
 
   const payload: Record<string, unknown> = { ...root };
-  const tasks: Array<{
+  const arrays: Array<{
     path: AnalysisPayloadChunkPath;
-    index: number;
-    offset: number;
     values: unknown[];
   }> = [];
   for (const path of CHUNK_PATHS) {
@@ -300,15 +316,23 @@ export async function prepareStoredAnalysisPayload(
     if (!Array.isArray(values) || !values.length || (path !== "static_analysis.files" && values.length <= ANALYSIS_PAYLOAD_CHUNK_SIZE)) continue;
     payload[parent] = { ...parentValue };
     delete (payload[parent] as Record<string, unknown>)[child];
-    for (let offset = 0, index = 0; offset < values.length; offset += chunkSize(path), index += 1) {
-      tasks.push({ path, index, offset, values });
+    arrays.push({ path, values });
+  }
+  if (!arrays.length) return { value, envelope: null, chunks: [] };
+
+  function* tasks() {
+    for (const { path, values } of arrays) {
+      let index = 0;
+      for (const chunk of chunkBodies(values, path)) yield { path, index: index++, ...chunk };
     }
   }
-  if (!tasks.length) return { value, envelope: null, chunks: [] };
-
-  const prepared = await mapWithConcurrency(tasks, concurrency, async (task) => {
-    const items = task.values.slice(task.offset, task.offset + chunkSize(task.path));
-    const body = jsonBytes(items);
+  const iterator = tasks();
+  const prepared: Array<{ descriptor: AnalysisPayloadChunkDescriptor; stored: AnalysisPayloadStoredChunk }> = [];
+  let next = 0;
+  const worker = async () => { for (;;) {
+    const step = iterator.next();
+    if (step.done) return;
+    const position = next++, task = step.value, { items, body } = task;
     const sha256 = snapshotObjectDigest(body);
     const key = keyForChunk(task.path, task.index, sha256);
     if (!isSafeObjectKey(key)) throw new Error("analysis_payload_chunk_key_invalid");
@@ -325,8 +349,11 @@ export async function prepareStoredAnalysisPayload(
     if (stored.key !== key || stored.bytes !== descriptor.bytes || stored.sha256 !== descriptor.sha256) {
       throw new Error("analysis_payload_chunk_write_mismatch");
     }
-    return { descriptor, stored };
-  });
+    prepared[position] = { descriptor, stored };
+  } };
+  try {
+    await Promise.all(Array.from({ length: Math.max(1, Math.floor(concurrency)) }, worker));
+  } finally { iterator.return(undefined); }
   const envelope: ChunkedAnalysisPayloadEnvelope = {
     schema_version: CHUNKED_ANALYSIS_PAYLOAD_SCHEMA,
     payload,

@@ -51,6 +51,7 @@ import {
   buildFullPlan,
   buildIncrementalPlan,
   createAnalysisCache,
+  takeCheckpointAnalysisCache,
   incrementalSummary,
   readAnalysisCache,
   type AnalysisCache,
@@ -1313,14 +1314,7 @@ export class AnalysisCoordinator {
         languages: view.languages,
         source_reports: validatedSnapshot.source_reports,
         static_analysis: validatedSnapshot.static_analysis,
-        analysis_cache: input.checkpoint.parsed && input.checkpoint.lsp_results && input.checkpoint.plan
-          ? createAnalysisCache({
-              manifest: input.checkpoint.fetched.manifest,
-              parsedFiles: input.checkpoint.parsed,
-              syntaxFiles: input.checkpoint.syntax_files,
-              lspResults: input.checkpoint.lsp_results,
-            })
-          : undefined,
+        analysis_cache: takeCheckpointAnalysisCache(input.checkpoint),
         incremental: input.checkpoint.plan ? incrementalSummary(input.checkpoint.plan) : undefined,
         active_fact_fingerprint: localizedSnapshot.active_fact_fingerprint,
       },

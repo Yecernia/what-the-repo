@@ -489,16 +489,28 @@ export function buildSnapshotQueryDirectory(
       };
     });
   });
-  const digestInput = JSON.stringify({
-    nodes: nodes.map((row) => [row.node_key, row.lifecycle_status]).sort(),
-    edges: edges.map((row) => [row.edge_key, row.source_node_key, row.target_node_key, row.lifecycle_status]).sort(),
-    evidence: [...evidenceMap.keys()].sort(),
-    layers: layers.map((row) => row.layer_id).sort(),
-    valuePoints: valuePoints.map((row) => row.value_point_id).sort(),
-    memberships: memberships.map((row) => [row.overlay_id, row.entity_id, row.relation_id, row.role]).sort(),
-    projections: projections.map((row) => [row.projection_kind, row.projection_node_id, row.entity_id, row.overlay_ids]).sort(),
-    aggregates: aggregates.map((row) => [row.projection_kind, row.projection_edge_id, row.overlay_ids]).sort(),
-  });
+  // Hash exactly the same JSON representation without creating a repository-
+  // sized string or retaining every section's sort keys at once.
+  const digest = createHash('sha256').update('{');
+  let firstField = true;
+  const hashRows = (name: string, rows: unknown[]) => {
+    digest.update((firstField ? '' : ',') + JSON.stringify(name) + ':[');
+    firstField = false;
+    rows.sort();
+    for (let i = 0; i < rows.length; i++) {
+      if (i) digest.update(',');
+      digest.update(JSON.stringify(rows[i]));
+    }
+    digest.update(']');
+  };
+  hashRows('nodes', nodes.map(row => [row.node_key, row.lifecycle_status]));
+  hashRows('edges', edges.map(row => [row.edge_key, row.source_node_key, row.target_node_key, row.lifecycle_status]));
+  hashRows('evidence', [...evidenceMap.keys()]);
+  hashRows('layers', layers.map(row => row.layer_id));
+  hashRows('valuePoints', valuePoints.map(row => row.value_point_id));
+  hashRows('memberships', memberships.map(row => [row.overlay_id, row.entity_id, row.relation_id, row.role]));
+  hashRows('projections', projections.map(row => [row.projection_kind, row.projection_node_id, row.entity_id, row.overlay_ids]));
+  hashRows('aggregates', aggregates.map(row => [row.projection_kind, row.projection_edge_id, row.overlay_ids]));
   return {
     public_snapshot_key: publicKey,
     snapshot_id: snapshotId,
@@ -511,7 +523,7 @@ export function buildSnapshotQueryDirectory(
     memberships,
     projections,
     aggregates,
-    digest: createHash("sha256").update(digestInput).digest("hex"),
+    digest: digest.update('}').digest('hex'),
   };
 }
 

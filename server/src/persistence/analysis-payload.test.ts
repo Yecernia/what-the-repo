@@ -2,12 +2,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ANALYSIS_PAYLOAD_CHUNK_SIZE,
+  ANALYSIS_PAYLOAD_CHUNK_BYTES,
   assembleAnalysisPayload,
   parseAnalysisPayloadEnvelope,
   prepareAnalysisPayload,
   prepareStoredAnalysisPayload,
   readStaticFileFacts,
 } from "./analysis-payload.js";
+
+test('stored chunks bound UTF-8 bytes, preserve order and allow one indivisible large record', async () => {
+  const values = Array.from({length:ANALYSIS_PAYLOAD_CHUNK_SIZE+1},(_,i)=>({id:i,text:'中'.repeat(1500)}));
+  values[23]!.text='x'.repeat(ANALYSIS_PAYLOAD_CHUNK_BYTES+1);
+  const original={analysis_cache:{parsed_files:values}};
+  const bodies=new Map<string,Uint8Array>();let active=0,peak=0;
+  const prepared=await prepareStoredAnalysisPayload(original,(path,i,sha)=>`chunks/${path}-${i}-${sha}.json`,async(key,body)=>{
+    active++;peak=Math.max(peak,active);
+    const decoded=JSON.parse(Buffer.from(body).toString());
+    assert.ok(body.byteLength<=ANALYSIS_PAYLOAD_CHUNK_BYTES || decoded.length===1);
+    bodies.set(key,body);await new Promise(resolve=>setTimeout(resolve,2));active--;
+    return {key,bytes:body.byteLength,sha256:key.slice(-69,-5)};
+  },2);
+  assert.ok(peak<=2);assert.ok(prepared.chunks.length>2);
+  assert.deepEqual(await assembleAnalysisPayload(prepared.value,async key=>bodies.get(key)??null),original);
+  const sync=prepareAnalysisPayload(original,(path,i,sha)=>`chunks/${path}-${i}-${sha}.json`);
+  assert.deepEqual(sync.value,prepared.value);
+  for(const chunk of sync.chunks)assert.deepEqual(chunk.body,bodies.get(chunk.descriptor.key));
+});
 
 test("large analysis arrays are chunked and reassembled with ordering", async () => {
   const nodes = Array.from({ length: ANALYSIS_PAYLOAD_CHUNK_SIZE + 17 }, (_, index) => ({

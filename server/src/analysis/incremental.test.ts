@@ -9,12 +9,27 @@ import {
   buildIncrementalPlan,
   classifyFileChanges,
   createAnalysisCache,
+  takeCheckpointAnalysisCache,
 } from "./incremental.js";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
 const SHA_C = "c".repeat(64);
 const COMMIT = "1".repeat(40);
+
+test('publication transfers compiler cache ownership without discarding its data or mutating a saved checkpoint', () => {
+  const files = [parsed('main.ts', SHA_A)];
+  const checkpoint = { fetched: { manifest: files.map(toManifest) }, parsed: files,
+    syntax_files: files, lsp_results: [] as LspRunResult[], previous_fact_graph: null, plan: buildFullPlan(files.map(toManifest)) };
+  const persisted = structuredClone(checkpoint);
+  const cache = takeCheckpointAnalysisCache(checkpoint)!;
+  assert.deepEqual(cache, createAnalysisCache({manifest:persisted.fetched.manifest,parsedFiles:persisted.parsed,syntaxFiles:persisted.syntax_files,lspResults:persisted.lsp_results}));
+  assert.equal(Object.hasOwn(checkpoint,'parsed'),false);
+  assert.equal(Object.hasOwn(checkpoint,'syntax_files'),false);
+  assert.equal(Object.hasOwn(checkpoint,'previous_fact_graph'),false);
+  assert.equal(checkpoint.fetched.manifest.length,1);
+  assert.equal(persisted.parsed[0]!.path,'main.ts');
+});
 
 test("classifies added, modified, deleted and unambiguous renamed files", () => {
   const previous = manifest([

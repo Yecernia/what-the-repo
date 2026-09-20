@@ -1,9 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from 'node:crypto';
 import {
   buildSnapshotQueryDirectory,
   querySnapshotQueryDirectory,
 } from "./snapshot-query.js";
+
+test('streamed directory digest preserves the previous canonical JSON hash', () => {
+  const d = buildSnapshotQueryDirectory('public', 'snap:test-query', snapshot(), {});
+  const legacy = JSON.stringify({
+    nodes: d.nodes.map(row=>[row.node_key,row.lifecycle_status]).sort(),
+    edges: d.edges.map(row=>[row.edge_key,row.source_node_key,row.target_node_key,row.lifecycle_status]).sort(),
+    evidence: d.evidence.map(row=>row.evidence_id).sort(),
+    layers: d.layers.map(row=>row.layer_id).sort(),
+    valuePoints: d.value_points.map(row=>row.value_point_id).sort(),
+    memberships: d.memberships.map(row=>[row.overlay_id,row.entity_id,row.relation_id,row.role]).sort(),
+    projections: d.projections.map(row=>[row.projection_kind,row.projection_node_id,row.entity_id,row.overlay_ids]).sort(),
+    aggregates: d.aggregates.map(row=>[row.projection_kind,row.projection_edge_id,row.overlay_ids]).sort(),
+  });
+  assert.equal(d.digest,createHash('sha256').update(legacy).digest('hex'));
+});
 
 function snapshot() {
   const evidence = {

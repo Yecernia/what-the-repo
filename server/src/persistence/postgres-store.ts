@@ -1065,7 +1065,7 @@ export class PostgresStore extends FileStore {
     return putSourceSnapshot({ ...input, objectStore: this.snapshotObjects });
   }
 
-  override async savePublicSnapshot(input: {
+  override async savePublicSnapshot({ analysis, ...input }: {
     publicKey: string;
     repository: string;
     commitSha: string;
@@ -1112,7 +1112,7 @@ export class PostgresStore extends FileStore {
     const [viewObject, preparedAnalysis, sourceSnapshot] = await Promise.all([
       measure("view_upload_ms", () => this.snapshotObjects.put(viewKey, viewBody, "application/json")),
       measure("analysis_prepare_ms", () => prepareStoredAnalysisPayload(
-        input.analysis,
+        analysis,
         (path, index, sha256) => defaultAnalysisChunkKey(
           `public-repository-snapshots/${input.publicKey}`,
           path,
@@ -1144,12 +1144,16 @@ export class PostgresStore extends FileStore {
     const analysisKey = `public-repository-snapshots/${input.publicKey}/analysis-${snapshotObjectDigest(analysisBody)}.json`;
     const analysisObject = await this.snapshotObjects.put(analysisKey, analysisBody, "application/json");
     timings.analysis_upload_ms = performance.now() - analysisStart;
+    // The query directory uses only the fact graph. Let already uploaded
+    // compiler caches become collectible before allocating directory rows.
+    const directoryAnalysis = { fact_graph: (analysis as { fact_graph?: unknown } | null)?.fact_graph };
+    analysis = undefined;
     const directoryStart = performance.now();
     const directory = buildSnapshotQueryDirectory(
       input.publicKey,
       input.snapshotId,
       input.view,
-      input.analysis,
+      directoryAnalysis,
     );
     timings.directory_build_ms = performance.now() - directoryStart;
     const manifest: SnapshotManifest = {

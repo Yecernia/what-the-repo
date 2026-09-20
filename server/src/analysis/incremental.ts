@@ -61,6 +61,27 @@ export function createAnalysisCache(input: {
   };
 }
 
+/** Transfer an exclusively owned publication checkpoint's compiler data.
+ * The persisted checkpoint is unchanged and remains available after a failure.
+ */
+export function takeCheckpointAnalysisCache(checkpoint: {
+  fetched: { manifest: SourceFileManifest[] };
+  parsed?: ParsedFile[];
+  syntax_files?: ParsedFile[];
+  lsp_results?: LspRunResult[];
+  previous_fact_graph?: FactGraph | null;
+  plan?: IncrementalPlan;
+}): AnalysisCache | undefined {
+  if (!checkpoint.parsed || !checkpoint.lsp_results || !checkpoint.plan) return undefined;
+  const cache = createAnalysisCache({ manifest: checkpoint.fetched.manifest,
+    parsedFiles: checkpoint.parsed, syntaxFiles: checkpoint.syntax_files, lspResults: checkpoint.lsp_results });
+  delete checkpoint.parsed;
+  delete checkpoint.syntax_files;
+  delete checkpoint.lsp_results;
+  delete checkpoint.previous_fact_graph;
+  return cache;
+}
+
 export function readAnalysisCache(value: unknown): AnalysisCache | null {
   if (!isRecord(value) || value.schema_version !== ANALYSIS_CACHE_SCHEMA_VERSION) return null;
   if (!Array.isArray(value.manifest) || !Array.isArray(value.parsed_files) || !Array.isArray(value.lsp_results)) return null;
