@@ -18,7 +18,7 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
   const url = process.env.WTR_ADMIN_TEST_DATABASE_URL!;
   assert.match(new URL(url).pathname, /^\/wtr_admin_test_[a-z0-9_]+$/);
   const root = await mkdtemp(join(tmpdir(), 'wtr-pipeline-pg-'));
-  const source = 'export function answer() { return 42; }';
+  const source = 'export function target(){ return 42; } export const run = () => target();';
   const archive = zipSync({ 'repo-sha/src/main.ts': strToU8(source) });
   const gateway = createServer(async (req, res) => {
     const parts: Buffer[] = []; for await (const chunk of req) parts.push(chunk);
@@ -57,11 +57,33 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
     const saved = await store.loadAnalysisCheckpoint(project.project_id);
     assert.ok(saved?.snapshot);
     assert.ok(Array.isArray(saved.checkpoint.parsed));
+    assert.equal((saved.checkpoint.syntax_files as unknown[]).length, 1);
+    const staticAnalysis = saved.snapshot.static_analysis as import('../domain/snapshot.js').EvidenceSnapshot['static_analysis'];
+    assert.equal(staticAnalysis?.coverage.discovered_call_sites, 1);
+    assert.equal(staticAnalysis?.files[0]?.calls[0]?.status, 'static');
     // A deterministic completed semantic checkpoint exercises the real publication path.
     await store.saveAnalysisCheckpoint(project.project_id, { ...saved.checkpoint, stage: 'assembly', provenance_applied: true }, saved.snapshot);
     await isolatedStageExecutor(store, config).run(job, signal);
     assert.equal((await store.loadJob(job.job_id))?.status, 'succeeded');
     assert.equal(await store.analysisCheckpointInfo(project.project_id), null);
+    // Reopen through another pool: facts must survive without in-memory state.
+    const reader = new PostgresStore({ root, databaseUrl: url, migrationsRoot: join(process.cwd(), 'migrations'),
+      encryptionSecret: config.keyEncryptionSecret, poolMax: 1 });
+    try {
+      await reader.init();
+      const published = await reader.loadPublicSnapshot(String(saved.checkpoint.public_key));
+      assert.deepEqual(published?.analysis.static_analysis, staticAnalysis);
+      assert.deepEqual((published?.view.static_analysis as { files: unknown[] }).files, []);
+      const cache = published?.analysis.analysis_cache as { syntax_files: unknown[]; parsed_files: unknown[] };
+      assert.equal(cache.syntax_files.length, 1);
+      assert.equal(cache.parsed_files.length, 1);
+      const snapshotId = String(saved.checkpoint.snapshot_id);
+      const detail = await reader.readStaticFile(project.project_id, snapshotId, 'src/main.ts');
+      assert.equal(detail?.calls[0]?.callee, 'target');
+      assert.equal(detail?.calls[0]?.status, 'static');
+      assert.equal(await reader.readStaticFile(project.project_id, snapshotId, 'absent.ts'), null);
+      await assert.rejects(reader.readStaticFile(project.project_id, 'another-snapshot', 'src/main.ts'), /snapshot_not_bound/);
+    } finally { await reader.close(); }
     assert.equal((await store.claimAnalysisJob('other-worker', 900))?.project_id, other.project_id);
     const permits = await store.pool.query('SELECT count(*)::int AS count FROM runtime_permits');
     assert.equal(permits.rows[0].count, 0, 'all stage/object resources are released');

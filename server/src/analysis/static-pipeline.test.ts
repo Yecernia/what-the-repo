@@ -10,6 +10,37 @@ import { createProject } from "../domain/conversation.js";
 import { newAnalysisJob } from "../domain/jobs.js";
 import { loadConfig } from "../config.js";
 import { AnalysisCoordinator } from "./coordinator.js";
+import { enrichSnapshotWithPi } from './semantic-worker.js';
+import { createModels, type Api, type Model } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseFactory } from '@earendil-works/pi-ai/providers/faux';
+
+async function interpretFixture(snapshot: import('./graph.js').BuiltSnapshot) {
+  const faux = fauxProvider({ provider: 'static-pipeline-fixture', models: [{ id: 'fixture', contextWindow: 1_000_000, maxTokens: 384_000 }] });
+  const models = createModels(); models.setProvider(faux.provider);
+  const components = snapshot.graph.nodes.filter(node => (node.entity_kind ?? 'component') === 'component');
+  const response: FauxResponseFactory = context => {
+    const first = context.messages.find(message => message.role === 'user')!.content;
+    const input = JSON.parse(typeof first === 'string' ? first : first.filter(item => item.type === 'text').map(item => item.text).join(''));
+    const value = input.mode === 'components' ? { mode: 'components', components: input.required_component_ids.map((id: string) => ({
+      component_id: id, name: '调用模块', responsibility: '通过调用目标函数完成入口工作', grouping_rationale: '成员共同提供调用能力',
+    })) } : input.mode === 'layers' ? { mode: 'layers', layers: [{ name: '调用层', responsibility: '组织入口与目标调用',
+      rationale: '成员共同实现调用路径', scopes: [], direct_component_ids: components.map(node => node.id) }] } : {
+      official_design_review: { candidates: [], no_candidates_reason: 'No official design claims in this fixture.' },
+      value_points: [{ title: '调用职责分离', claim: '入口通过明确函数调用复用目标逻辑', problem: '需要避免重复实现目标功能',
+        implementation: '入口导入目标函数并发起调用', tradeoffs: '需要维护模块之间的接口', transfer_conditions: '适用于共享稳定功能的模块',
+        component_ids: [components[0]!.id], evidence_ids: [components[0]!.members[0]!.stable_id] }],
+    };
+    return fauxAssistantMessage(fauxToolCall('submit_result', value));
+  };
+  faux.setResponses(Array.from({ length: 8 }, () => response));
+  const result = await enrichSnapshotWithPi(snapshot, { models, model: faux.getModel() as Model<Api> }, undefined, 'zh-CN', undefined,
+    { search: async () => [], readPage: async () => null });
+  assert.equal(result.stopReason, 'completed');
+  assert.equal(faux.state.callCount, 3);
+  assert.equal(result.snapshot.value_points.length, 1);
+  assert.deepEqual(result.snapshot.static_analysis, snapshot.static_analysis);
+  return result.snapshot;
+}
 
 test(
   "source, static checkpoint and resumed publication retain the new fact contract",
@@ -107,8 +138,8 @@ test(
       );
       await store.saveAnalysisCheckpoint(
         project.project_id,
-        { ...saved.checkpoint, stage: "assembly", provenance_applied: true },
-        snapshot,
+        { ...saved.checkpoint, stage: "assembly", provenance_applied: true, display_language: 'zh-CN' },
+        await interpretFixture(snapshot),
       );
       await new AnalysisCoordinator(store, config).runAssignedStage(
         job,
