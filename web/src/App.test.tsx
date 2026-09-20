@@ -3030,12 +3030,43 @@ describe('App project state synchronization', () => {
     const entry = await screen.findByRole('button', { name: '打开源码 src/entry.ts:2' });
     expect(container.querySelectorAll('.evidence-chips button')).toHaveLength(3);
     expect(entry).toHaveTextContent('entry.ts:2');
-    expect(entry).toHaveAttribute('title', 'src/entry.ts:2');
+    expect(entry).not.toHaveAttribute('title');
     expect(screen.getByRole('button', { name: '打开源码 src/task_queue/common.ts:1' })).toHaveTextContent('task_queue/common.ts:1');
     expect(screen.queryByRole('button', { name: '打开源码 common.ts:1' })).toBeNull();
     expect(screen.queryByRole('button', { name: '打开源码 missing.ts:7' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '打开源码 src/entry.ts:2' }));
     await waitFor(() => expect(apiClient.getSource).toHaveBeenCalledWith('project-1', 'snapshot-1', 'src/entry.ts', 1, 162, 'ref-2'));
+  });
+
+  it('opens validated line references beyond the capped evidence list and preserves unresolved references', async () => {
+    const refs = Array.from({ length: 12 }, (_, index) => ({
+      stable_id: `ref-${index}`, label: `file-${index}.ts`, path: `file-${index}.ts`,
+      start_line: 1, end_line: 1, kind: 'file', snapshot_id: 'snapshot-1',
+    }));
+    refs[0] = { ...refs[0], label: 'README.md', path: 'README.md' };
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [{
+      message_id: 'capped-references', role: 'assistant',
+      content: '看 `README.md:22-24`。\n\n## 代码块：`skills/security-audit/validate-findings.cjs:17-49`\n\n`missing.ts:7`、`common.ts:1` 和 `README.md:999` 未核实；`README.md` 没有行号。',
+      created_at: '2026-08-14T00:00:00Z', evidence: refs, model: 'test-model', usage: null,
+      latency_ms: 10, error: null, placeholder: false, analysis_snapshot_id: 'snapshot-1',
+      unresolved_references: ['missing.ts:7', 'common.ts:1', 'README.md:999'],
+    }] }), null, true));
+    vi.mocked(apiClient.getSource).mockResolvedValue({ snapshot_id: 'snapshot-1',
+      path: 'skills/security-audit/validate-findings.cjs', start_line: 1, end_line: 49,
+      lines: Array.from({ length: 49 }, (_, index) => `line ${index + 1}`), truncated: false });
+    const { container } = render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await waitFor(() => expect(screen.getByRole('button', { name: '打开源码 README.md:22-24' })).toBeVisible());
+    for (const reference of ['missing.ts:7', 'common.ts:1', 'README.md:999', 'README.md']) {
+      expect(screen.queryByRole('button', { name: `打开源码 ${reference}` })).toBeNull();
+    }
+    await userEvent.click(screen.getByRole('button', {
+      name: '打开源码 skills/security-audit/validate-findings.cjs:17-49',
+    }));
+    await waitFor(() => expect(apiClient.getSource).toHaveBeenCalledWith(
+      'project-1', 'snapshot-1', 'skills/security-audit/validate-findings.cjs', 1, 177, undefined,
+    ));
+    await waitFor(() => expect(container.querySelector('.source-code-line.highlighted')).toHaveAttribute('data-line', '17'));
   });
 
   it('opens only line-numbered file references without mistaking code members for files', async () => {

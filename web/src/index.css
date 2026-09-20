@@ -133,8 +133,8 @@
   --accent-dim: #6db980;
   --accent-soft: #3c4c33;
   --accent-ring: rgba(140,202,152,.30);
-  --file-reference-ink: #39815a;
-  --file-reference-hover: #39815a;
+  --file-reference-ink: var(--accent);
+  --file-reference-hover: var(--primary-hover);
   --sun-hover: #f2ac64;
   --moon-hover: #f2e477;
   --selection-blue: #78a7ff;

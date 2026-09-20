@@ -191,7 +191,6 @@ function MarkdownFileReferenceButton({
       type="button"
       className="markdown-file-reference"
       aria-label={t("打开源码 {0}{1}", reference.path, lineLabel)}
-      title={reference.path + lineLabel}
       onClick={() => onOpen(reference)}
     >
       <LanguageGlyph language={languageFromPath(reference.path)} />
@@ -208,7 +207,7 @@ function MarkdownFileReferenceLabel({
   text: string;
 }) {
   return (
-    <span className="markdown-file-reference-label" title={reference.path}>
+    <span className="markdown-file-reference-label">
       <LanguageGlyph language={languageFromPath(reference.path)} />
       <code>{text}</code>
     </span>
@@ -222,13 +221,16 @@ const MarkdownCode = memo(function MarkdownCode({ value, className }: { value: s
     : <code className={className}>{value}</code>;
 });
 
-function createMarkdownComponents(onFileReference: (reference: MarkdownFileReference) => void, evidence: MessageEvidence[], unresolved: string[]): MarkdownComponents {
+function createMarkdownComponents(onFileReference: (reference: MarkdownFileReference) => void, evidence: MessageEvidence[], unresolved?: string[]): MarkdownComponents {
   const renderFileReference = (reference: MarkdownFileReference, text: string) => {
     const suffix = reference.line === null ? '' : `:${reference.line}${reference.endLine !== reference.line ? `-${reference.endLine}` : ''}`;
-    const resolved = unresolved.includes(reference.path + suffix) ? undefined : resolveMessageEvidence(evidence, reference);
+    const isUnresolved = unresolved?.includes(reference.path + suffix) ?? false;
+    const resolved = isUnresolved ? undefined : resolveMessageEvidence(evidence, reference);
     const canonical = resolved ? { ...reference, path: resolved.path } : reference;
     const label = resolved ? shortReferencePath(resolved.path, evidence) + suffix : text;
-    return resolved && reference.line !== null
+    // Validation canonicalizes valid paths, but the attached evidence list is capped.
+    // Older messages without validation metadata still require matching evidence.
+    return reference.line !== null && !isUnresolved && (resolved || unresolved !== undefined)
       ? <MarkdownFileReferenceButton reference={canonical} text={label} onOpen={onFileReference} />
       : <MarkdownFileReferenceLabel reference={canonical} text={label} />;
   };
@@ -1655,7 +1657,7 @@ const MessageMarkdown = memo(function MessageMarkdown({ msg, onEvidenceClick }: 
     const resolved = resolveMessageEvidence(evidence, reference);
     onEvidenceClick(resolved?.path ?? reference.path, reference.line ?? resolved?.start_line ?? 1,
       resolved?.snapshot_id ?? snapshotId, resolved?.stable_id);
-  }, evidence, unresolved ?? []), [evidence, unresolved, snapshotId, onEvidenceClick, language]);
+  }, evidence, unresolved), [evidence, unresolved, snapshotId, onEvidenceClick, language]);
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{msg.content}</ReactMarkdown>;
 });
 
@@ -1736,11 +1738,8 @@ function MsgBubble({
                 const label = ev.start_line ? `${name}:${ev.start_line}` : name;
                 return (
                   <button key={i} type="button" className={`evidence-chip ${ev.kind}`}
-                    title={ev.path}
                     aria-label={ev.start_line ? `${ev.path}:${ev.start_line}` : ev.path}
-                    onClick={() => onEvidenceClick(ev.path, ev.start_line ?? 1, ev.snapshot_id ?? msg.analysis_snapshot_id, ev.stable_id)}
-                    data-tooltip={ev.kind === 'unverified' ? t("模型引用了不存在的路径")
-                      : ev.kind === 'out_of_scope' ? t("这处引用不在本次检查范围内") : undefined}>
+                    onClick={() => onEvidenceClick(ev.path, ev.start_line ?? 1, ev.snapshot_id ?? msg.analysis_snapshot_id, ev.stable_id)}>
                     <LanguageGlyph language={languageFromPath(ev.path ?? 'file')} className="evidence-chip-icon" />
                     <span className="evidence-chip-label">{label}</span>
                   </button>
