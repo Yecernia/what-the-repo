@@ -11,12 +11,15 @@ import { ResourceScheduler, type ResourceDemands } from '../scheduling/resources
 import { checkpointExecutionStage, type AnalysisExecutionStage, type AnalysisStageExecutor } from './stage-protocol.js';
 
 export function stageMemoryMb(stage: AnalysisExecutionStage, info: { bytes: number; sourceBytes: number; staticBytes?: number } | null,
-  cpuMemoryExpansion = 80): number {
+  cpuMemoryExpansion = 80, budgetMb = Number.POSITIVE_INFINITY): number {
   const bytes = (info?.bytes ?? 0) + (stage === 'semantic' ? 0 : info?.staticBytes ?? 0), source = info?.sourceBytes ?? 0;
   // Admission estimates are deliberately separate from the measured RSS guard.
   const working = stage === 'fetch' ? 1024 : stage === 'cpu' ? 768 + Math.max(source * cpuMemoryExpansion, bytes * 10) / 1048576
     : 512 + bytes / 1048576 * (stage === 'publish' ? 10 : 6);
-  return Math.ceil(Math.max(working, stage === 'overlay' ? 2048 : 0) / 64) * 64;
+  // A conservative expansion estimate is not proof that execution cannot fit.
+  // Let the isolated process try within the available budget; its RSS guard
+  // and V8 heap ceiling remain in force.
+  return Math.min(budgetMb, Math.ceil(Math.max(working, stage === 'overlay' ? 2048 : 0) / 64) * 64);
 }
 
 export function isolatedStageExecutor(store: ProductStore, config: ServerConfig): AnalysisStageExecutor {
@@ -29,9 +32,8 @@ export function isolatedStageExecutor(store: ProductStore, config: ServerConfig)
     while (stage) {
       signal.throwIfAborted();
       const info = await store.analysisCheckpointInfo(job.project_id);
-      const memory = stageMemoryMb(stage, info, config.analysisCpuMemoryExpansion);
       const budget = config.analysisMemoryMb ?? 6144;
-      if (memory > budget) throw new Error('analysis_stage_memory_budget_exceeded');
+      const memory = stageMemoryMb(stage, info, config.analysisCpuMemoryExpansion, budget);
       const demands: ResourceDemands = { 'analysis:memory-mb': { units: memory, limit: budget } };
       if (stage === 'fetch') demands['analysis:fetch'] = { units: 1, limit: config.analysisFetchConcurrency ?? 2 };
       if (stage === 'cpu') demands['analysis:cpu'] = { units: 1, limit: config.analysisCpuConcurrency ?? 2 };

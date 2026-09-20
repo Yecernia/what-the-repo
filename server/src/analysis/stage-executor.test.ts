@@ -54,6 +54,17 @@ test('large static stages can raise heap allowance without inflating semantic re
   }
 });
 
+test('large publication estimates do not reject a checkpoint before bounded execution', () => {
+  // A real 11,941-file checkpoint was rejected after all model work completed.
+  const info = { bytes: 577078888, sourceBytes: 96806438, staticBytes: 500990953 };
+  assert.equal(stageMemoryMb('publish', info), 10816);
+  assert.equal(stageMemoryMb('publish', info, 80, 8192), 8192);
+  assert.equal(stageMemoryMb('cpu', info, 80, 8192), 8192);
+  assert.equal(stageMemoryMb('fetch', null, 80, 8192), 1024);
+  const small = { bytes: 1048576, sourceBytes: 1048576 };
+  assert.equal(stageMemoryMb('publish', small, 80, 8192), stageMemoryMb('publish', small));
+});
+
 test('fragmented fatal V8 diagnostics classify memory exhaustion without retrying it', () => {
   const detect = stageMemoryFailureDetector();
   assert.equal(detect('private diagnostic payload; ordinary heap usage\n'), false);
