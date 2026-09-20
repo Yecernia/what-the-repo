@@ -2,6 +2,7 @@ import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "n
 import { createHash, randomUUID } from "node:crypto";
 import { deserialize } from "node:v8";
 import { readCheckpointRecords, writeCheckpointRecords } from './checkpoint-records.js';
+import { loadDeferredPublicationCheckpoint, type AnalysisCheckpointReadOptions, type LoadedAnalysisCheckpoint } from './publication-checkpoint.js';
 function hasInlineStaticCheckpoint(value: unknown): boolean {
   return Boolean(value && typeof value === 'object' && ['parsed', 'syntax_files', 'lsp_results', 'previous_fact_graph']
     .some(key => (value as Record<string, unknown>)[key] !== undefined));
@@ -666,15 +667,31 @@ export class FileStore implements ProductStore {
       sourceBytes: value.source_bytes ?? 0, staticBytes: value.static_payload?.bytes ?? 0 };
   }
 
-  async loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string, options: { omitStatic?: boolean } = {}): Promise<{ checkpoint: T; snapshot: T | null } | null> {
+  async loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string, options: AnalysisCheckpointReadOptions = {}): Promise<LoadedAnalysisCheckpoint<T> | null> {
+    options.signal?.throwIfAborted();
+    if (options.deferPublication && options.omitStatic) throw new Error("analysis_checkpoint_read_options_invalid");
     const checkpointPath = this.path("analysisCheckpoints", projectId);
     const value = await readJson<unknown>(checkpointPath);
     if (!value) return null;
+    if (typeof value === 'object' && ('payload_file' in value || 'encoding' in value)
+      && !isBinaryAnalysisCheckpointEnvelope(value)) throw new Error('analysis_checkpoint_payload_invalid');
     if (isBinaryAnalysisCheckpointEnvelope(value)) {
       const payloadPath = join(this.dirs.analysisCheckpoints, value.payload_file);
+      if (options.deferPublication && value.stage === 'assembly' && value.encoding === 'v8-records') {
+        const prefix = safeId(projectId) + '.';
+        const part = value.static_payload;
+        if (!value.payload_file.startsWith(prefix) || part && (
+          typeof part.file !== 'string' || !/^[A-Za-z0-9._-]+[.]bin$/.test(part.file)
+          || !part.file.startsWith(prefix) || part.encoding !== 'v8-records')) {
+          throw new Error('analysis_checkpoint_payload_invalid');
+        }
+        return loadDeferredPublicationCheckpoint<T>({ path: payloadPath, bytes: value.bytes, sha256: value.sha256 },
+          part ? { path: join(this.dirs.analysisCheckpoints, part.file), bytes: part.bytes, sha256: part.sha256 } : undefined,
+          options.signal);
+      }
       let decoded: unknown;
       if (value.encoding === 'v8-records') {
-        decoded = await readCheckpointRecords(payloadPath, value);
+        decoded = await readCheckpointRecords(payloadPath, value, { signal: options.signal });
       } else {
         let payload: Uint8Array;
         try {

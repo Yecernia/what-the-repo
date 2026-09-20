@@ -120,6 +120,9 @@ export interface SnapshotLanguageOverlayPublication {
   error?: string | null;
 }
 
+export type { AnalysisCheckpointReadOptions, LoadedAnalysisCheckpoint } from './publication-checkpoint.js';
+import type { AnalysisCheckpointReadOptions, LoadedAnalysisCheckpoint } from './publication-checkpoint.js';
+
 export interface ProductStore {
   readonly kind: "file" | "postgres";
   readonly root: string;
@@ -148,7 +151,7 @@ export interface ProductStore {
   readStaticFile(projectId: string, snapshotId: string, path: string): Promise<import("./analysis-payload.js").StaticFileFacts | null>;
   /** Persist an analysis-stage checkpoint independently of any published snapshot binding. */
   saveAnalysisCheckpoint(projectId: string, checkpoint: unknown, snapshot: unknown): Promise<void>;
-  loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string, options?: { omitStatic?: boolean }): Promise<{ checkpoint: T; snapshot: T | null } | null>;
+  loadAnalysisCheckpoint<T = Record<string, unknown>>(projectId: string, options?: AnalysisCheckpointReadOptions): Promise<LoadedAnalysisCheckpoint<T> | null>;
   analysisCheckpointInfo(projectId: string): Promise<{ stage: string; bytes: number; sourceBytes: number; staticBytes?: number } | null>;
   clearAnalysisCheckpoint(projectId: string): Promise<void>;
   readPublicSnapshotEvidence(input: SnapshotEvidenceRequest): Promise<SnapshotEvidence[]>;

@@ -6,11 +6,10 @@ import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { PostgresStore } from './postgres-store.js';
 import { LocalSnapshotObjectStore } from './snapshot-object-store.js';
-import { readCheckpointRecords, writeCheckpointRecords } from './checkpoint-records.js';
 import { LocalPermitStore } from '../scheduling/permits.js';
 import { buildSnapshot } from '../analysis/graph.js';
-import { buildFullPlan, createAnalysisCache } from '../analysis/incremental.js';
-import { preparePublicationSnapshot } from '../analysis/publication-snapshot.js';
+import { buildFullPlan, createAnalysisCache, takeCheckpointAnalysisCache } from '../analysis/incremental.js';
+import { preparePublicationCache, preparePublicationSnapshot } from '../analysis/publication-snapshot.js';
 import type { ParsedFile } from '../analysis/facts.js';
 const databaseUrl = process.env.WTR_PUBLICATION_TEST_DATABASE_URL;
 
@@ -44,15 +43,20 @@ test('checkpoint publication persists and reloads facts, cache, sources and atom
     snapshot.fact_graph.edges = Array.from({ length: 2_101 }, (_, index) => ({ id: `test-edge:${index}`,
       source: snapshot.fact_graph.nodes[index]!.id, target: fact.id, relation_kind: 'calls', label: 'calls',
       description: 'A static call.', certainty: 'verified', weight: 1, evidence: [] }));
-    const checkpointPath = join(root, 'assembly.bin');
-    const checkpoint = { snapshot, plan: buildFullPlan(manifest), files: [file] };
-    const descriptor = await writeCheckpointRecords(checkpointPath, checkpoint);
-    const loadedCheckpoint = await readCheckpointRecords(checkpointPath, descriptor) as typeof checkpoint;
-    const prepared = preparePublicationSnapshot({ snapshot: loadedCheckpoint.snapshot, plan: loadedCheckpoint.plan,
-      currentParsedFiles: loadedCheckpoint.files, previousFactGraph: null, displayLanguage: 'en' });
-    const analysis = { ...prepared.analysis, analysis_cache: createAnalysisCache({ manifest, parsedFiles: [file], lspResults: [] }) };
-    const preparedCache = await store.preparePublicSnapshotAnalysisCache({publicKey,snapshotId:snapshot.snapshot_id,cache:analysis.analysis_cache});
-    assert.equal(await store.loadPublicSnapshot(publicKey),null,'cache upload alone must not publish the snapshot');
+    const checkpoint = { stage: 'assembly', fetched: { manifest }, plan: buildFullPlan(manifest),
+      parsed: [file], syntax_files: [], lsp_results: [] };
+    await store.saveAnalysisCheckpoint('pipeline-checkpoint', checkpoint, snapshot);
+    const loadedCheckpoint = await store.loadAnalysisCheckpoint<typeof checkpoint>('pipeline-checkpoint', { deferPublication: true });
+    assert.ok(loadedCheckpoint?.loadPublication); assert.equal(loadedCheckpoint.snapshot, null);
+    const expectedCache = createAnalysisCache({ manifest, parsedFiles: [file], lspResults: [] });
+    const cache = await preparePublicationCache(takeCheckpointAnalysisCache(loadedCheckpoint.checkpoint), data =>
+      store.preparePublicSnapshotAnalysisCache({ publicKey, snapshotId: snapshot.snapshot_id, cache: data }));
+    assert.equal(await store.loadPublicSnapshot(publicKey), null, 'cache upload alone must not publish');
+    const graphs = await loadedCheckpoint.loadPublication();
+    const prepared = preparePublicationSnapshot({ snapshot: graphs.snapshot as typeof snapshot, plan: checkpoint.plan,
+      currentParsedFiles: cache.files, previousFactGraph: null, displayLanguage: 'en' });
+    const analysis = { ...prepared.analysis, analysis_cache: expectedCache };
+    const preparedCache = cache.prepared;
     const input = { publicKey, repository, commitSha: 'b'.repeat(40),
       snapshotId: snapshot.snapshot_id, sourceRoot, view: prepared.view, analysis:prepared.analysis, preparedAnalysisCache:preparedCache };
     await store.savePublicSnapshot(input);

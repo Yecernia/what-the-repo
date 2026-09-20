@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import { open, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { serialize, deserialize } from 'node:v8';
+import { projectCheckpointHeader } from './checkpoint-projection.js';
 
 export interface CheckpointDescriptor { bytes: number; sha256: string }
 type ArrayPart = { path: Array<string | number>; values: unknown[] };
@@ -57,11 +58,23 @@ export async function writeCheckpointRecords(path: string, value: unknown): Prom
   }
 }
 
-export async function readCheckpointRecords(path: string, expected: CheckpointDescriptor): Promise<unknown> {
-  const stream = createReadStream(path, { highWaterMark: 1024 * 1024 });
+export interface CheckpointReadOptions {
+  /** Decode only these root fields; all framed bytes are still checksummed. */
+  includeRootFields?: readonly string[];
+  signal?: AbortSignal;
+}
+
+export async function readCheckpointRecords(path: string, expected: CheckpointDescriptor,
+  options: CheckpointReadOptions = {}): Promise<unknown> {
+  options.signal?.throwIfAborted();
+  if (!Number.isSafeInteger(expected.bytes) || expected.bytes < 0 || !/^[a-f0-9]{64}$/.test(expected.sha256)) {
+    throw new Error('analysis_checkpoint_payload_invalid');
+  }
+  const stream = createReadStream(path, { highWaterMark: 1024 * 1024, signal: options.signal });
   const iterator = stream[Symbol.asyncIterator]();
   const hash = createHash('sha256'); let bytes = 0, consumed = 0, buffer: Buffer = Buffer.alloc(0), offset = 0;
   const next = async () => {
+    options.signal?.throwIfAborted();
     const chunk = await iterator.next();
     if (chunk.done) return false;
     buffer = chunk.value as Buffer; offset = 0; bytes += buffer.length; hash.update(buffer); return true;
@@ -78,6 +91,15 @@ export async function readCheckpointRecords(path: string, expected: CheckpointDe
     }
     return value;
   };
+  const skip = async (length: number): Promise<void> => {
+    if (!Number.isSafeInteger(length) || length <= 0 || consumed + length > expected.bytes) throw new Error('analysis_checkpoint_payload_invalid');
+    consumed += length;
+    while (length > 0) {
+      if (offset === buffer.length && !await next()) throw new Error('analysis_checkpoint_payload_invalid');
+      const count = Math.min(length, buffer.length - offset);
+      offset += count; length -= count;
+    }
+  };
   const frame = async () => deserialize(await take((await take(4)).readUInt32LE()));
   let value: unknown, failure: unknown;
   try {
@@ -85,19 +107,17 @@ export async function readCheckpointRecords(path: string, expected: CheckpointDe
       if (!(await take(MAGIC.length)).equals(MAGIC)) throw new Error('analysis_checkpoint_payload_invalid');
       const header = await frame() as { root?: unknown; arrays?: Array<{ path: Array<string | number>; length: number }> };
       if (!header || !Array.isArray(header.arrays)) throw new Error('analysis_checkpoint_payload_invalid');
-      value = header.root;
-      for (const part of header.arrays) {
-        if (!Array.isArray(part.path) || !Number.isSafeInteger(part.length) || part.length < 0 || part.length > expected.bytes / 4) throw new Error('analysis_checkpoint_payload_invalid');
-        let target = value;
-        for (const key of part.path) {
-          if (!target || typeof target !== 'object' || !Object.hasOwn(target, key)) throw new Error('analysis_checkpoint_payload_invalid');
-          target = (target as Record<string | number, unknown>)[key];
+      const projection = projectCheckpointHeader(header.root, header.arrays, expected.bytes, options.includeRootFields);
+      value = projection.value;
+      for (const part of projection.arrays) {
+        for (let index = 0; index < part.length; index++) {
+          if (part.retained) part.target.push(await frame());
+          else await skip((await take(4)).readUInt32LE());
         }
-        if (!Array.isArray(target) || target.length) throw new Error('analysis_checkpoint_payload_invalid');
-        for (let index = 0; index < part.length; index++) target.push(await frame());
       }
       if (consumed !== expected.bytes) throw new Error('analysis_checkpoint_payload_invalid');
     } catch (error) { failure = error; }
+    options.signal?.throwIfAborted();
     if ((failure as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') throw failure;
     // Validate the entire immutable file before exposing even partially decoded data.
     while (await next()) { /* checksum the unread tail after a malformed frame */ }

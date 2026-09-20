@@ -20,6 +20,7 @@ import type { ServerConfig } from "../config.js";
 import {
   AnalysisLeaseLostError,
   type AnalysisLeaseFence,
+  type LoadedAnalysisCheckpoint,
   type ProductStore,
 } from "../persistence/store.js";
 import { digestSemanticBatch, type SemanticBatch } from "../domain/semantic-batch.js";
@@ -644,7 +645,7 @@ export class AnalysisCoordinator {
       }
       return;
     }
-    let checkpoint: { checkpoint: AnalysisCheckpoint; snapshot: unknown | null } | null = null;
+    let checkpoint: LoadedAnalysisCheckpoint<AnalysisCheckpoint> | null = null;
     let checkpointPersisted = false;
     let temporary = join(config.dataDir, "source-snapshots", project.project_id, `.tmp-${randomUUID()}`);
     const backgroundController = new AbortController();
@@ -655,7 +656,7 @@ export class AnalysisCoordinator {
     try {
       // Missing checkpoints return null. Corruption or read errors must stop
       // recovery instead of silently discarding completed work and model cost.
-      checkpoint = await this.store.loadAnalysisCheckpoint<AnalysisCheckpoint>(project.project_id, { omitStatic: this.executionStage === 'semantic' });
+      checkpoint = await this.store.loadAnalysisCheckpoint<AnalysisCheckpoint>(project.project_id, { omitStatic: this.executionStage === 'semantic', deferPublication: this.executionStage !== 'semantic', signal });
       if (checkpoint && (checkpoint.checkpoint.analyzer_bundle_version !== ANALYZER_BUNDLE_VERSION || checkpoint.checkpoint.static_identity !== ANALYSIS_CONFIG_DIGEST)) throw new Error("analysis_checkpoint_version_mismatch");
       checkpointPersisted = Boolean(checkpoint);
       if (checkpoint?.checkpoint.source_root) temporary = checkpoint.checkpoint.source_root;
@@ -664,7 +665,8 @@ export class AnalysisCoordinator {
         this.nextStage = checkpointExecutionStage(checkpoint?.checkpoint.stage);
         return;
       }
-      if (checkpoint?.snapshot && checkpointStage === "assembly") {
+      if (checkpoint && checkpointStage === "assembly") {
+        if (!checkpoint.snapshot && !checkpoint.loadPublication) throw new Error("analysis_checkpoint_snapshot_missing");
         await this.resumeAssemblyFromCheckpoint({
           job: runningJob,
           project,
@@ -672,6 +674,7 @@ export class AnalysisCoordinator {
           signal,
           checkpoint: checkpoint.checkpoint,
           snapshot: checkpoint.snapshot as unknown as BuiltSnapshot,
+          loadPublication: checkpoint.loadPublication,
         });
         return;
       }
@@ -1240,7 +1243,8 @@ export class AnalysisCoordinator {
     fence: AnalysisLeaseFence;
     signal: AbortSignal;
     checkpoint: AnalysisCheckpoint;
-    snapshot: BuiltSnapshot;
+    snapshot?: BuiltSnapshot;
+    loadPublication?: LoadedAnalysisCheckpoint<AnalysisCheckpoint>['loadPublication'];
   }): Promise<void> {
     input.signal.throwIfAborted();
     const analysisConfigDigest = input.checkpoint.analysis_config_digest;
@@ -1264,9 +1268,18 @@ export class AnalysisCoordinator {
     const preparedCache = await preparePublicationCache(takeCheckpointAnalysisCache(input.checkpoint),
       cache => this.store.preparePublicSnapshotAnalysisCache({ publicKey: input.checkpoint.public_key,
         snapshotId: input.checkpoint.snapshot_id, cache, fence: input.fence }));
+    input.signal.throwIfAborted();
+    const graphLoadStarted = performance.now();
+    const publication = input.loadPublication ? await input.loadPublication()
+      : { snapshot: input.snapshot, previousFactGraph };
+    input.signal.throwIfAborted();
+    if (!publication.snapshot) throw new Error('analysis_checkpoint_snapshot_missing');
+    if ((publication.snapshot as BuiltSnapshot).snapshot_id !== input.checkpoint.snapshot_id) throw new Error('analysis_checkpoint_identity_mismatch');
+    const graphLoadTimings = { preparation_graph_load_ms: performance.now() - graphLoadStarted,
+      preparation_graph_load_rss_bytes: process.memoryUsage().rss };
     const preparation = preparePublicationSnapshot({
-      snapshot: input.snapshot,
-      previousFactGraph,
+      snapshot: publication.snapshot as BuiltSnapshot,
+      previousFactGraph: asFactGraph(publication.previousFactGraph),
       plan: input.checkpoint.plan ?? (input.checkpoint.provenance_applied ? undefined : buildFullPlan(input.checkpoint.fetched.manifest)),
       currentParsedFiles: preparedCache.files,
       provenanceApplied: input.checkpoint.provenance_applied,
@@ -1275,6 +1288,7 @@ export class AnalysisCoordinator {
     const { view, languageOverlay, overlayStatus } = preparation;
     await this.recordAnalysisPhase(input.job, input.fence, "validating_analysis", "completed");
     await this.recordAnalysisPhase(input.job, input.fence, "publishing_analysis", "running");
+    input.signal.throwIfAborted();
     const storageTimings = await this.store.savePublicSnapshot({
       publicKey: input.checkpoint.public_key,
       repository: input.checkpoint.repository,
@@ -1290,7 +1304,7 @@ export class AnalysisCoordinator {
       languageOverlayVersion: SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
       fence: input.fence,
     });
-    const publicationTimings = { ...(storageTimings ?? {}), ...preparedCache.timings, ...preparation.timings };
+    const publicationTimings = { ...(storageTimings ?? {}), ...preparedCache.timings, ...graphLoadTimings, ...preparation.timings };
     await this.store.saveTrace("analysis-publication-" + input.job.job_id, {
       trace_id: "analysis-publication-" + input.job.job_id, job_id: input.job.job_id, job_attempt: input.job.attempt,
       project_id: input.project.project_id, snapshot_id: input.checkpoint.snapshot_id,

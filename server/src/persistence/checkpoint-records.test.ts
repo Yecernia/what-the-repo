@@ -64,3 +64,64 @@ test('semantic resume omits framed static data and retains it across the next ch
     assert.equal(await store.loadAnalysisCheckpoint('project'), null);
   } finally { await store.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test('root projection hydrates shared aliases even when their first path is excluded', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'checkpoint-project-'));
+  try {
+    const shared = Array.from({ length: 200 }, (_, id) => ({ id, value: 'shared' }));
+    const hidden = Array.from({ length: 200 }, (_, id) => ({ id, value: 'hidden'.repeat(800) }));
+    const value = { excluded: { shared, hidden }, retained: { first: shared, second: shared },
+      special: JSON.parse('{"__proto__":{"own":true}}') };
+    const path = join(root, 'project.bin');
+    const descriptor = await writeCheckpointRecords(path, value);
+    const result = await readCheckpointRecords(path, descriptor, { includeRootFields: ['retained', 'special'] }) as Partial<typeof value>;
+    assert.deepEqual(result, { retained: value.retained, special: value.special });
+    assert.strictEqual(result.retained!.first, result.retained!.second);
+    assert.equal(Object.hasOwn(result.special!, '__proto__'), true);
+    assert.deepEqual(await readCheckpointRecords(path, descriptor, { includeRootFields: [] }), {});
+    assert.deepEqual(await readCheckpointRecords(path, descriptor), value);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('excluded records remain checksum protected and cancellation is preserved', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'checkpoint-project-integrity-'));
+  try {
+    const path = join(root, 'payload.bin');
+    const value = { metadata: { stage: 'assembly' }, hidden: Array.from({ length: 200 }, (_, id) => ({ id, text: 'x'.repeat(9000) })) };
+    const descriptor = await writeCheckpointRecords(path, value);
+    const original = await readFile(path);
+    const modified = Buffer.from(original); modified[modified.length - 7]! ^= 1;
+    await writeFile(path, modified);
+    await assert.rejects(readCheckpointRecords(path, descriptor, { includeRootFields: ['metadata'] }), /integrity_mismatch/);
+    await writeFile(path, original);
+    const controller = new AbortController();
+    const reason = new Error('test-cancel-checkpoint');
+    controller.abort(reason);
+    await assert.rejects(readCheckpointRecords(path, descriptor, { signal: controller.signal }), error => error === reason);
+    const during = new AbortController();
+    const pending = readCheckpointRecords(path, descriptor, { includeRootFields: ['metadata'], signal: during.signal });
+    setImmediate(() => during.abort(reason));
+    await assert.rejects(pending, error => error === reason || (error as Error).name === 'AbortError');
+    assert.deepEqual(await readCheckpointRecords(path, descriptor, { includeRootFields: ['metadata'] }), { metadata: value.metadata });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('projection rejects empty skipped frames and duplicate array destinations', async () => {
+  const { serialize } = await import('node:v8');
+  const { projectCheckpointHeader } = await import('./checkpoint-projection.js');
+  const shared: unknown[] = [];
+  assert.throws(() => projectCheckpointHeader({ a: shared, b: shared }, [
+    { path: ['a'], length: 1 }, { path: ['b'], length: 1 },
+  ], 4096, []), /payload_invalid/);
+  const root = await mkdtemp(join(tmpdir(), 'checkpoint-empty-frame-'));
+  try {
+    const path = join(root, 'payload.bin');
+    const header = serialize({ root: { hidden: [] }, arrays: [{ path: ['hidden'], length: 1 }] });
+    const size = Buffer.alloc(4); size.writeUInt32LE(header.length);
+    const body = Buffer.concat([Buffer.from('WTRCP2\n'), size, header, Buffer.alloc(4)]);
+    await writeFile(path, body);
+    const descriptor = { bytes: body.length, sha256: createHash('sha256').update(body).digest('hex') };
+    await assert.rejects(readCheckpointRecords(path, descriptor, { includeRootFields: [] }), /payload_invalid/);
+    await assert.rejects(readCheckpointRecords(path, descriptor), /payload_invalid/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

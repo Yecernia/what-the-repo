@@ -444,3 +444,60 @@ test('LSP reuse binds the complete workspace, retries incomplete runs and reacts
   await coordinator.analyzeWithLsp(files, '/unused', { ...cache, lsp_results: [{ ...first[0]!, completed: false }] }, plan);
   assert.equal(runs, 4, 'incomplete server runs are not reusable semantic caches');
 });
+
+test('deferred publication waits for cache persistence and never loads the graph after a cache failure', async () => {
+  for (const failure of [null, 'cache', 'graph', 'cancel', 'identity', 'cancel-after-graph', 'cancel-before-publish'] as const) {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'analysis-deferred-order-'));
+    try {
+      const snapshot = buildSnapshot({ snapshotId: 'deferred-snapshot', repository: 'example/deferred',
+        commitSha: 'a'.repeat(40), files: [], sourceRoot });
+      const publicKey = canonicalPublicSnapshotKey(snapshot.repository, snapshot.commit_sha, 'analyzer', 'config');
+      const checkpoint = { stage: 'assembly', source_root: sourceRoot, repository: snapshot.repository,
+        commit_sha: snapshot.commit_sha, snapshot_id: snapshot.snapshot_id, public_key: publicKey,
+        analysis_config_digest: 'config', analyzer_bundle_version: 'analyzer', fetched: { manifest: [] },
+        parsed: [], syntax_files: [], lsp_results: [], plan: buildFullPlan([]), provenance_applied: false };
+      const project = createProject('guest:deferred', 'https://github.com/example/deferred', 'Deferred', null);
+      const events: string[] = [];
+      const controller = new AbortController();
+      const store = {
+        preparePublicSnapshotAnalysisCache: async () => {
+          events.push('cache-start');
+          await new Promise<void>(resolve => setImmediate(resolve));
+          if (failure === 'cache') throw new Error('test-cache-failure');
+          if (failure === 'cancel') controller.abort(new Error('test-cancel'));
+          events.push('cache-finished');
+          return { publicKey, snapshotId: snapshot.snapshot_id, payload: { value: {}, envelope: null, chunks: [] } };
+        },
+        savePublicSnapshot: async () => { events.push('publish'); },
+        saveSnapshotLanguageOverlay: async () => {}, loadProject: async () => project,
+        updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => {
+          mutate(project);
+          if (failure === 'cancel-before-publish' && project.analysis.progress_events?.some(
+            event => event.kind === 'publishing_analysis' && event.status === 'running')) {
+            controller.abort(new Error('test-cancel-before-publish'));
+          }
+        },
+        finishAnalysisJob: async () => {}, saveTrace: async () => {},
+        clearAnalysisCheckpoint: async () => { events.push('clear'); },
+      } as unknown as ProductStore;
+      const coordinator = new AnalysisCoordinator(store, config(1)) as unknown as {
+        resumeAssemblyFromCheckpoint(input: Record<string, unknown>): Promise<void>;
+      };
+      const run = coordinator.resumeAssemblyFromCheckpoint({ checkpoint, project, job: job('deferred'),
+        signal: controller.signal, fence: {}, loadPublication: async () => {
+          assert.deepEqual(events, ['cache-start', 'cache-finished']);
+          assert.equal(Object.hasOwn(checkpoint, 'parsed'), false);
+          events.push('graph');
+          if (failure === 'graph') throw new Error('test-graph-failure');
+          if (failure === 'cancel-after-graph') controller.abort(new Error('test-cancel-after-graph'));
+          if (failure === 'identity') return { snapshot: { ...snapshot, snapshot_id: 'wrong-snapshot' }, previousFactGraph: null };
+          return { snapshot, previousFactGraph: null };
+        } });
+      if (failure) {
+        await assert.rejects(run, failure === 'identity' ? /analysis_checkpoint_identity_mismatch/ : new RegExp('test-' + failure));
+        assert.equal(events.includes('publish'), false); assert.equal(events.includes('clear'), false);
+        if (!['graph', 'identity', 'cancel-after-graph', 'cancel-before-publish'].includes(failure)) assert.equal(events.includes('graph'), false);
+      } else { await run; assert.deepEqual(events, ['cache-start', 'cache-finished', 'graph', 'publish', 'clear']); }
+    } finally { await rm(sourceRoot, { recursive: true, force: true }); }
+  }
+});
