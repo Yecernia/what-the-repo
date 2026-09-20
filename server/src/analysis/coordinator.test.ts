@@ -35,7 +35,11 @@ test("assembly resume publishes the recorded execution identity and rejects miss
       commit_sha: snapshot.commit_sha, snapshot_id: snapshot.snapshot_id, public_key: publicKey,
       analysis_config_digest: "previous-config", analyzer_bundle_version: "previous-analyzer", provenance_applied: true };
     const saved: Array<{ analysisConfigDigest: string; analyzerBundleVersion: string; publicKey: string }> = [];
-    const store = { savePublicSnapshot: async (input: typeof saved[number]) => { saved.push(input); },
+    project.analysis.stage = "fetching";
+    const store = { savePublicSnapshot: async (input: typeof saved[number]) => {
+      assert.equal(project.analysis.stage, "interpreting", "resumed publication must not remain in fetching");
+      saved.push(input);
+    },
       saveSnapshotLanguageOverlay: async () => {}, loadProject: async () => project,
       updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },
       finishAnalysisJob: async () => {}, clearAnalysisCheckpoint: async () => {}, saveTrace: async () => {},

@@ -1282,7 +1282,7 @@ export class AnalysisCoordinator {
     if (!input.checkpoint.prepared_source && !(await access(input.checkpoint.source_root).then(() => true).catch(() => false))) {
       throw new Error("analysis_checkpoint_source_missing");
     }
-    await this.recordAnalysisPhase(input.job, input.fence, "validating_analysis", "running");
+    await this.recordAnalysisPhase(input.job, input.fence, "validating_analysis", "running", { stage: "interpreting" });
     const displayLanguage = input.checkpoint.display_language ?? normalizeDisplayLanguage(input.project.display_language);
     const localizedSnapshot = input.checkpoint.provenance_applied
       ? input.snapshot
