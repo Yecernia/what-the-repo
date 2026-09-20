@@ -1,4 +1,4 @@
-import { createHash, type Hash } from "node:crypto";
+import { createHash } from "node:crypto";
 import type {
   EvidenceSnapshot,
   SnapshotEdge,
@@ -261,6 +261,8 @@ export function applyIncrementalProvenance(input: {
   previousFactGraph: FactGraph | null;
   plan: IncrementalPlan;
   currentParsedFiles: ParsedFile[];
+  /** Current rows are exclusively owned by publication, never the previous graph. */
+  takeOwnership?: boolean;
 }): BuiltSnapshot {
   const snapshotId = input.snapshot.snapshot_id;
   const parsedByPath = new Map(input.currentParsedFiles.map((file) => [file.path, file]));
@@ -336,8 +338,7 @@ export function applyIncrementalProvenance(input: {
     const reused = Boolean(previous && path && reusedPaths.has(path) && previous.revision_id === revisionId);
     const change = path ? changedByPath.get(path) : undefined;
     const changeKind = reused ? "reused" : change?.kind ?? (previous ? "recomputed" : "added");
-    return {
-      ...node,
+    return Object.assign(input.takeOwnership && previous !== node ? node : { ...node }, {
       lifecycle_status: "active" as const,
       tombstoned_at_snapshot_id: null,
       superseded_by: null,
@@ -358,7 +359,7 @@ export function applyIncrementalProvenance(input: {
         cache_key: path ? parsedByPath.get(path)?.digest ?? null : null,
         cache_hit: reused,
       },
-    };
+    });
   });
   const activeNodeIds = new Set(nodes.map((node) => node.id));
   const tombstonePathSet = new Set(input.plan.tombstonePaths);
@@ -403,8 +404,7 @@ export function applyIncrementalProvenance(input: {
       && (!sourcePath || reusedPaths.has(sourcePath))
       && (!targetPath || reusedPaths.has(targetPath)),
     );
-    return {
-      ...edge,
+    return Object.assign(input.takeOwnership && previous !== edge ? edge : { ...edge }, {
       lifecycle_status: "active" as const,
       tombstoned_at_snapshot_id: null,
       superseded_by: null,
@@ -421,7 +421,7 @@ export function applyIncrementalProvenance(input: {
         cache_key: null,
         cache_hit: reused,
       },
-    };
+    });
   });
   const activeEdgeIds = new Set(edges.map((edge) => edge.id));
   const previousNodePaths = new Map((input.previousFactGraph?.nodes ?? []).map((node) => [node.id, nodePath(node)]));
@@ -469,25 +469,18 @@ export function applyIncrementalProvenance(input: {
   };
 }
 
-export function activeFactFingerprint(snapshot: Pick<BuiltSnapshot, "fact_graph">): string {
-  // Hash each fact independently and sort only fixed-size digests. Building a
-  // canonical clone for every fact and then serializing the complete graph can
-  // retain several copies of a large repository in memory and starve the
-  // worker heartbeat while the snapshot is being closed.
-  const nodeDigests = snapshot.fact_graph.nodes
-    .filter(isActiveNode)
-    .map((node) => canonicalFactDigest(node))
-    .sort();
-  const edgeDigests = snapshot.fact_graph.edges
-    .filter(isActiveEdge)
-    .map((edge) => canonicalFactDigest(edge))
-    .sort();
-  const hash = createHash("sha256");
-  hash.update("nodes\0");
-  for (const digest of nodeDigests) hash.update(digest).update("\0");
-  hash.update("edges\0");
-  for (const digest of edgeDigests) hash.update(digest).update("\0");
-  return hash.digest("hex");
+export function activeFactFingerprint(snapshot: Pick<BuiltSnapshot, 'fact_graph'>): string {
+  const hash = createHash('sha256');
+  const group = <T>(name: string, rows: T[], active: (row: T) => boolean) => {
+    const digests: string[] = [];
+    for (const row of rows) if (active(row)) digests.push(canonicalFactDigest(row));
+    digests.sort();
+    hash.update(name).update('\0');
+    for (const digest of digests) hash.update(digest).update('\0');
+  };
+  group('nodes', snapshot.fact_graph.nodes, isActiveNode);
+  group('edges', snapshot.fact_graph.edges, isActiveEdge);
+  return hash.digest('hex');
 }
 
 export function incrementalSummary(plan: IncrementalPlan): Record<string, unknown> {
@@ -518,9 +511,9 @@ function isActiveEdge(edge: SnapshotEdge): boolean {
 }
 
 function revision(kind: "node" | "edge", value: unknown): string {
-  const hash = createHash("sha256");
+  const hash = new CanonicalHashWriter();
   writeCanonicalJson(hash, value);
-  const digest = hash.digest("hex").slice(0, 24);
+  const digest = hash.digest().slice(0, 24);
   return `rev:${kind}:${digest}`;
 }
 
@@ -547,9 +540,9 @@ const CANONICAL_IGNORED_KEYS = new Set([
 ]);
 
 function canonicalFactDigest(value: unknown): string {
-  const hash = createHash("sha256");
+  const hash = new CanonicalHashWriter();
   writeCanonicalFact(hash, value);
-  return hash.digest("hex");
+  return hash.digest();
 }
 
 /**
@@ -557,7 +550,7 @@ function canonicalFactDigest(value: unknown): string {
  * JSON data, so explicit type/length markers avoid ambiguity without creating
  * a full canonical object or string in memory.
  */
-function writeCanonicalFact(hash: Hash, value: unknown): void {
+function writeCanonicalFact(hash: CanonicalHashWriter, value: unknown): void {
   if (value === null) {
     hash.update("null;");
     return;
@@ -602,7 +595,7 @@ function writeCanonicalFact(hash: Hash, value: unknown): void {
 }
 
 /** Preserve the legacy revision digest while avoiding a full canonical clone. */
-function writeCanonicalJson(hash: Hash, value: unknown): void {
+function writeCanonicalJson(hash: CanonicalHashWriter, value: unknown): void {
   if (value === undefined || typeof value === "function" || typeof value === "symbol") {
     hash.update("null");
     return;
@@ -697,4 +690,24 @@ function isLspRunResult(value: unknown): value is LspRunResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+/** Batch tiny canonical tokens without retaining a repository-sized representation. */
+class CanonicalHashWriter {
+  private readonly hash = createHash('sha256');
+  private parts: string[] = [];
+  private characters = 0;
+  update(value: string): this {
+    this.parts.push(value);
+    this.characters += value.length;
+    if (this.characters >= 16_384) this.flush();
+    return this;
+  }
+  private flush(): void {
+    if (!this.parts.length) return;
+    this.hash.update(this.parts.join(''));
+    this.parts = [];
+    this.characters = 0;
+  }
+  digest(): string { this.flush(); return this.hash.digest('hex'); }
 }

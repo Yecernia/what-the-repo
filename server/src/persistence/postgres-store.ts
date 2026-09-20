@@ -53,6 +53,8 @@ import { asEvidenceSnapshot } from "../domain/snapshot.js";
 import { normalizeDisplayLanguage } from "../domain/display-language.js";
 import {
   buildSnapshotQueryDirectory,
+  streamSnapshotQueryDirectory,
+  type SnapshotQueryDirectorySource,
   querySnapshotQueryDirectory,
   type SnapshotQueryDirectory,
   type SnapshotQueryInput,
@@ -1109,7 +1111,7 @@ export class PostgresStore extends FileStore {
     const viewBody = jsonBytes(input.view);
     const viewKey = `public-repository-snapshots/${input.publicKey}/view-${snapshotObjectDigest(viewBody)}.json`;
     timings.view_serialization_ms = performance.now() - viewStart;
-    const [viewObject, preparedAnalysis, sourceSnapshot] = await Promise.all([
+    const uploads = [
       measure("view_upload_ms", () => this.snapshotObjects.put(viewKey, viewBody, "application/json")),
       measure("analysis_prepare_ms", () => prepareStoredAnalysisPayload(
         analysis,
@@ -1128,7 +1130,10 @@ export class PostgresStore extends FileStore {
         snapshotId: input.snapshotId,
         createdAt,
       })),
-    ]);
+    ] as const;
+    // Keep admitted writes owned by this task even when one upload fails.
+    const [viewObject, preparedAnalysis, sourceSnapshot] = await Promise.all(uploads)
+      .finally(async () => { await Promise.allSettled(uploads); });
     // A resumed assembly may carry a previously uploaded immutable manifest.
     // Verify its identity and bytes before binding it to the published snapshot.
     const sourceManifestBody = sourceSnapshotManifestBytes(sourceSnapshot.manifest);
@@ -1149,7 +1154,7 @@ export class PostgresStore extends FileStore {
     const directoryAnalysis = { fact_graph: (analysis as { fact_graph?: unknown } | null)?.fact_graph };
     analysis = undefined;
     const directoryStart = performance.now();
-    const directory = buildSnapshotQueryDirectory(
+    const directory = streamSnapshotQueryDirectory(
       input.publicKey,
       input.snapshotId,
       input.view,
@@ -1300,7 +1305,7 @@ export class PostgresStore extends FileStore {
   }
 
   private async saveSnapshotQueryDirectory(
-    directory: SnapshotQueryDirectory,
+    directory: SnapshotQueryDirectorySource,
     transactionClient?: PoolClient,
   ): Promise<void> {
     const client = transactionClient ?? await this.pool.connect();
@@ -1337,7 +1342,7 @@ export class PostgresStore extends FileStore {
       if (!directoryId) throw new Error('snapshot_query_directory_identity_missing');
       for (const table of ['evidence_links','evidence','edges','nodes','layers','value_points','projection_edges','projection_nodes','overlay_memberships'])
         await client.query('DELETE FROM snapshot_directory_' + table + ' WHERE directory_id=$1', [directoryId]);
-      const writeRows = <T extends object>(table: string, columns: string[], rows: readonly T[], convert?: (row: T) => object) =>
+      const writeRows = <T extends object>(table: string, columns: string[], rows: Iterable<T>, convert?: (row: T) => object) =>
         insertSnapshotRows(client, table.replace('snapshot_query_', 'snapshot_directory_'), ['directory_id', ...columns.filter(column => !['public_snapshot_key','snapshot_id'].includes(column))], rows,
           row => ({ ...(convert ? convert(row) : row), directory_id: directoryId }));
       await writeRows(

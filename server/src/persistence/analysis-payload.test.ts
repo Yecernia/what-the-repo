@@ -129,3 +129,20 @@ test("stored preparation writes bounded chunks and returns only descriptors", as
   const restored = await assembleAnalysisPayload(prepared.value, async (key) => bodies.get(key) ?? null);
   assert.deepEqual(restored, original);
 });
+
+test('byte limits also chunk arrays below the record-count threshold', async () => {
+  const original = { analysis_cache: { parsed_files: [
+    { path: 'one.ts', text: 'x'.repeat(ANALYSIS_PAYLOAD_CHUNK_BYTES / 2) },
+    { path: 'two.ts', text: '中'.repeat(ANALYSIS_PAYLOAD_CHUNK_BYTES / 6 | 0) },
+  ] } };
+  const bodies = new Map<string, Uint8Array>();
+  const key = (path: string, index: number, sha: string) => `chunks/${path}-${index}-${sha}.json`;
+  const result = await prepareStoredAnalysisPayload(original, key, async (key, body) => {
+    bodies.set(key, body);
+    assert.ok(body.byteLength <= ANALYSIS_PAYLOAD_CHUNK_BYTES);
+    return { key, bytes: body.byteLength, sha256: key.slice(-69, -5) };
+  }, 2);
+  assert.equal(result.chunks.length, 2);
+  assert.deepEqual(result.value, prepareAnalysisPayload(original, key).value);
+  assert.deepEqual(await assembleAnalysisPayload(result.value, async key => bodies.get(key) ?? null), original);
+});

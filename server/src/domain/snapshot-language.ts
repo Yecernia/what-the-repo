@@ -59,14 +59,14 @@ export function extractSnapshotLanguageOverlay(
 ): SnapshotLanguageOverlayPayload {
   const normalizedLanguage = normalizeDisplayLanguage(language);
   const relationKinds = new Set<string>();
-  const relationEdges = [
-    ...snapshot.graph.edges,
-    ...(snapshot.fact_graph?.edges ?? []),
-  ].filter((edge) => {
-    if (relationKinds.has(edge.relation_kind)) return false;
-    relationKinds.add(edge.relation_kind);
-    return true;
-  });
+  const relationEdges: SnapshotEdge[] = [];
+  for (const edges of [snapshot.graph.edges, snapshot.fact_graph?.edges ?? []]) {
+    for (const edge of edges) {
+      if (relationKinds.has(edge.relation_kind)) continue;
+      relationKinds.add(edge.relation_kind);
+      relationEdges.push(edge);
+    }
+  }
   return {
     schema_version: SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
     language: normalizedLanguage,
@@ -119,6 +119,18 @@ export function snapshotMatchesDisplayLanguage(
 }
 
 export function stripSnapshotLanguage(snapshot: EvidenceSnapshot): EvidenceSnapshot {
+  return stripLanguage(snapshot, false);
+}
+
+/** Consume exclusively owned fact rows after extracting their language overlay. */
+export function stripOwnedSnapshotLanguage(snapshot: EvidenceSnapshot): EvidenceSnapshot {
+  return stripLanguage(snapshot, true);
+}
+
+function stripLanguage(snapshot: EvidenceSnapshot, ownsFacts: boolean): EvidenceSnapshot {
+  if (ownsFacts && snapshot.fact_graph) {
+    for (const edge of snapshot.fact_graph.edges) { edge.label = edge.relation_kind; edge.description = ""; }
+  }
   // Keep large evidence/member arrays shared. Only the user-facing language
   // fields are rewritten, so a deep clone would create a second full graph.
   return {
@@ -132,7 +144,7 @@ export function stripSnapshotLanguage(snapshot: EvidenceSnapshot): EvidenceSnaps
     fact_graph: snapshot.fact_graph
       ? {
           ...snapshot.fact_graph,
-          edges: snapshot.fact_graph.edges.map(stripEdgeText),
+          edges: ownsFacts ? snapshot.fact_graph.edges : snapshot.fact_graph.edges.map(stripEdgeText),
         }
       : snapshot.fact_graph,
     value_points: snapshot.value_points.map(stripValuePointText),

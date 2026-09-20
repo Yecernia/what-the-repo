@@ -1,3 +1,4 @@
+import { forEachBounded } from "./bounded-tasks.js";
 import {
   snapshotObjectDigest,
 } from "./snapshot-object-store.js";
@@ -110,6 +111,17 @@ function chunkSize(path: AnalysisPayloadChunkPath): number {
   return path === "static_analysis.files" ? 32 : ANALYSIS_PAYLOAD_CHUNK_SIZE;
 }
 
+function shouldChunk(values: unknown[], path: AnalysisPayloadChunkPath): boolean {
+  if (!values.length) return false;
+  if (path === "static_analysis.files" || values.length > chunkSize(path)) return true;
+  let bytes = 3;
+  for (let i = 0; i < values.length; i++) {
+    bytes += Buffer.byteLength(JSON.stringify(values[i]) ?? "null", "utf8") + (i ? 1 : 0);
+    if (bytes > ANALYSIS_PAYLOAD_CHUNK_BYTES) return true;
+  }
+  return false;
+}
+
 function indexedPaths(path: AnalysisPayloadChunkPath, items: unknown[]): { file_paths?: string[] } {
   return path === "static_analysis.files"
     ? { file_paths: items.map(item => String(record(item)?.path ?? "")) }
@@ -179,7 +191,7 @@ export function prepareAnalysisPayload(
     const { parent, child } = pathParts(path);
     const parentValue = record(payload[parent]);
     const values = parentValue?.[child];
-    if (!Array.isArray(values) || !values.length || (path !== "static_analysis.files" && values.length <= ANALYSIS_PAYLOAD_CHUNK_SIZE)) continue;
+    if (!Array.isArray(values) || !shouldChunk(values, path)) continue;
     payload[parent] = { ...parentValue };
     delete (payload[parent] as Record<string, unknown>)[child];
     chunks.push(...chunkArray(values, path, keyForChunk));
@@ -253,23 +265,12 @@ export function parseAnalysisPayloadEnvelope(value: unknown): ChunkedAnalysisPay
 }
 
 async function mapWithConcurrency<T, R>(
-  values: T[],
-  concurrency: number,
-  operation: (value: T) => Promise<R>,
+  values: T[], concurrency: number, operation: (value: T) => Promise<R>,
 ): Promise<R[]> {
   const result = new Array<R>(values.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < values.length) {
-      const index = next;
-      next += 1;
-      result[index] = await operation(values[index] as T);
-    }
-  };
-  await Promise.all(Array.from(
-    { length: Math.min(Math.max(1, Math.floor(concurrency)), Math.max(1, values.length)) },
-    worker,
-  ));
+  await forEachBounded(values, concurrency, async (value, index) => {
+    result[index] = await operation(value);
+  });
   return result;
 }
 
@@ -313,7 +314,7 @@ export async function prepareStoredAnalysisPayload(
     const { parent, child } = pathParts(path);
     const parentValue = record(payload[parent]);
     const values = parentValue?.[child];
-    if (!Array.isArray(values) || !values.length || (path !== "static_analysis.files" && values.length <= ANALYSIS_PAYLOAD_CHUNK_SIZE)) continue;
+    if (!Array.isArray(values) || !shouldChunk(values, path)) continue;
     payload[parent] = { ...parentValue };
     delete (payload[parent] as Record<string, unknown>)[child];
     arrays.push({ path, values });
@@ -326,13 +327,10 @@ export async function prepareStoredAnalysisPayload(
       for (const chunk of chunkBodies(values, path)) yield { path, index: index++, ...chunk };
     }
   }
-  const iterator = tasks();
   const prepared: Array<{ descriptor: AnalysisPayloadChunkDescriptor; stored: AnalysisPayloadStoredChunk }> = [];
-  let next = 0;
-  const worker = async () => { for (;;) {
-    const step = iterator.next();
-    if (step.done) return;
-    const position = next++, task = step.value, { items, body } = task;
+  await forEachBounded(tasks(), concurrency, async (task, position) => {
+    if (position >= MAX_CHUNKS) throw new Error("analysis_payload_chunk_limit_exceeded");
+    const { items, body } = task;
     const sha256 = snapshotObjectDigest(body);
     const key = keyForChunk(task.path, task.index, sha256);
     if (!isSafeObjectKey(key)) throw new Error("analysis_payload_chunk_key_invalid");
@@ -350,10 +348,7 @@ export async function prepareStoredAnalysisPayload(
       throw new Error("analysis_payload_chunk_write_mismatch");
     }
     prepared[position] = { descriptor, stored };
-  } };
-  try {
-    await Promise.all(Array.from({ length: Math.max(1, Math.floor(concurrency)) }, worker));
-  } finally { iterator.return(undefined); }
+  });
   const envelope: ChunkedAnalysisPayloadEnvelope = {
     schema_version: CHUNKED_ANALYSIS_PAYLOAD_SCHEMA,
     payload,

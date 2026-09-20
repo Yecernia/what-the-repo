@@ -1,5 +1,5 @@
 import { runtimeConfig } from '../admin/runtime-config.js';
-import { snapshotPublicView } from '../domain/snapshot-public-view.js';
+import { preparePublicationSnapshot } from './publication-snapshot.js';
 import { randomUUID, createHash } from "node:crypto";
 import { analysisFailureCode } from "../agent/provider-error.js";
 import { access, rm } from "node:fs/promises";
@@ -39,7 +39,6 @@ import { enrichSnapshotWithPi } from "./semantic-worker.js";
 import { createWebResearchClient } from "./web-research-client.js";
 import { searchInitialRepositoryResearch, type InitialWebResearch } from "./initial-web-research.js";
 import type { WebResearchClient } from "../agent/web-research-tools.js";
-import { assertValidEvidenceSnapshot } from "../domain/snapshot-validation.js";
 import { createLspRunner, type LspRunner } from "./lsp.js";
 import {
   type LspRunResult,
@@ -47,7 +46,6 @@ import {
   unavailableLspResult,
 } from "./facts.js";
 import {
-  applyIncrementalProvenance,
   buildFullPlan,
   buildIncrementalPlan,
   createAnalysisCache,
@@ -62,9 +60,6 @@ import type { RevisionRedirect } from "../domain/lifecycle.js";
 import {
   SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
   asSnapshotLanguageOverlayPayload,
-  extractSnapshotLanguageOverlay,
-  snapshotMatchesDisplayLanguage,
-  stripSnapshotLanguage,
 } from "../domain/snapshot-language.js";
 import type { PiModelRuntime } from "../agent/types.js";
 import type { ProviderGateFactory } from "../agent/provider-gate.js";
@@ -1045,27 +1040,14 @@ export class AnalysisCoordinator {
         this.nextStage = 'publish'; return;
       }
       checkpointPersisted = true;
-      const localizedSnapshot = applyIncrementalProvenance({
-        snapshot: semantic.snapshot,
-        previousFactGraph,
-        plan,
-        currentParsedFiles: parsed,
+      const preparation = preparePublicationSnapshot({
+        snapshot: semantic.snapshot, previousFactGraph, plan,
+        currentParsedFiles: parsed, displayLanguage,
       });
-      // The pre-provenance assembly checkpoint is intentionally the only full
-      // snapshot checkpoint. Provenance is deterministic and cheap to replay,
-      // while persisting a second localized copy can exceed V8's string limit
-      // and doubles the peak memory/disk pressure for large repositories.
-      const languageOverlay = extractSnapshotLanguageOverlay(localizedSnapshot, displayLanguage);
-      const overlayStatus = snapshotMatchesDisplayLanguage(localizedSnapshot, displayLanguage)
-        ? "ready"
-        : "degraded";
-      const baseSnapshot = stripSnapshotLanguage(localizedSnapshot);
-      const validatedSnapshot = assertValidEvidenceSnapshot(baseSnapshot);
-      const factGraph = validatedSnapshot.fact_graph;
-      const view = snapshotPublicView(validatedSnapshot);
+      const { view, languageOverlay, overlayStatus } = preparation;
       await this.recordAnalysisPhase(job, fence, "validating_analysis", "completed");
       await this.recordAnalysisPhase(job, fence, "publishing_analysis", "running");
-      const publicationTimings = await this.store.savePublicSnapshot({
+      const storageTimings = await this.store.savePublicSnapshot({
         publicKey,
         repository,
         commitSha: fetched.commitSha,
@@ -1074,27 +1056,15 @@ export class AnalysisCoordinator {
         preparedSource,
         view,
         analysis: {
-          snapshot_id: snapshotId,
-          fact_graph: factGraph,
-          semantic_graph: view.graph,
-          value_points: view.value_points,
-          languages: view.languages,
-          source_reports: validatedSnapshot.source_reports,
-          static_analysis: validatedSnapshot.static_analysis,
-          analysis_cache: createAnalysisCache({
-            manifest: fetched.manifest,
-            parsedFiles: parsed,
-            syntaxFiles,
-            lspResults,
-          }),
-          incremental: incrementalSummary(plan),
-          active_fact_fingerprint: localizedSnapshot.active_fact_fingerprint,
+          ...preparation.analysis,
+          analysis_cache: createAnalysisCache({ manifest: fetched.manifest, parsedFiles: parsed, syntaxFiles, lspResults }),
         },
         analyzerBundleVersion: ANALYZER_BUNDLE_VERSION,
         analysisConfigDigest,
         languageOverlayVersion: SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
         fence,
       });
+      const publicationTimings = { ...(storageTimings ?? {}), ...preparation.timings };
       await this.store.saveSnapshotLanguageOverlay({
         publicKey,
         language: displayLanguage,
@@ -1121,7 +1091,7 @@ export class AnalysisCoordinator {
         component_count: view.graph.nodes.filter(node => (node.entity_kind ?? "component") === "component").length,
         value_point_count: view.value_points.length,
         incremental: incrementalSummary(plan),
-        active_fact_fingerprint: localizedSnapshot.active_fact_fingerprint,
+        active_fact_fingerprint: preparation.analysis.active_fact_fingerprint,
         semantic_batches: await this.store.listSemanticBatches(job.job_id),
         languages: view.languages.map((language) => ({
           language: language.language,
@@ -1284,21 +1254,18 @@ export class AnalysisCoordinator {
     }
     await this.recordAnalysisPhase(input.job, input.fence, "validating_analysis", "running", { stage: "interpreting" });
     const displayLanguage = input.checkpoint.display_language ?? normalizeDisplayLanguage(input.project.display_language);
-    const localizedSnapshot = input.checkpoint.provenance_applied
-      ? input.snapshot
-      : applyIncrementalProvenance({
-          snapshot: input.snapshot,
-          previousFactGraph: input.checkpoint.previous_fact_graph ?? null,
-          plan: input.checkpoint.plan ?? buildFullPlan(input.checkpoint.fetched.manifest),
-          currentParsedFiles: input.checkpoint.parsed ?? [],
-        });
-    const baseSnapshot = stripSnapshotLanguage(localizedSnapshot);
-    const validatedSnapshot = assertValidEvidenceSnapshot(baseSnapshot);
-    const factGraph = validatedSnapshot.fact_graph;
-    const view = snapshotPublicView(validatedSnapshot);
+    const preparation = preparePublicationSnapshot({
+      snapshot: input.snapshot,
+      previousFactGraph: input.checkpoint.previous_fact_graph ?? null,
+      plan: input.checkpoint.plan ?? (input.checkpoint.provenance_applied ? undefined : buildFullPlan(input.checkpoint.fetched.manifest)),
+      currentParsedFiles: input.checkpoint.parsed ?? [],
+      provenanceApplied: input.checkpoint.provenance_applied,
+      displayLanguage,
+    });
+    const { view, languageOverlay, overlayStatus } = preparation;
     await this.recordAnalysisPhase(input.job, input.fence, "validating_analysis", "completed");
     await this.recordAnalysisPhase(input.job, input.fence, "publishing_analysis", "running");
-    const publicationTimings = await this.store.savePublicSnapshot({
+    const storageTimings = await this.store.savePublicSnapshot({
       publicKey: input.checkpoint.public_key,
       repository: input.checkpoint.repository,
       commitSha: input.checkpoint.commit_sha,
@@ -1306,30 +1273,18 @@ export class AnalysisCoordinator {
       sourceRoot: input.checkpoint.source_root,
       preparedSource: input.checkpoint.prepared_source,
       view,
-      analysis: {
-        snapshot_id: input.checkpoint.snapshot_id,
-        fact_graph: factGraph,
-        semantic_graph: view.graph,
-        value_points: view.value_points,
-        languages: view.languages,
-        source_reports: validatedSnapshot.source_reports,
-        static_analysis: validatedSnapshot.static_analysis,
-        analysis_cache: takeCheckpointAnalysisCache(input.checkpoint),
-        incremental: input.checkpoint.plan ? incrementalSummary(input.checkpoint.plan) : undefined,
-        active_fact_fingerprint: localizedSnapshot.active_fact_fingerprint,
-      },
+      analysis: { ...preparation.analysis, analysis_cache: takeCheckpointAnalysisCache(input.checkpoint) },
       analyzerBundleVersion,
       analysisConfigDigest,
       languageOverlayVersion: SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
       fence: input.fence,
     });
+    const publicationTimings = { ...(storageTimings ?? {}), ...preparation.timings };
     await this.store.saveTrace("analysis-publication-" + input.job.job_id, {
       trace_id: "analysis-publication-" + input.job.job_id, job_id: input.job.job_id, job_attempt: input.job.attempt,
       project_id: input.project.project_id, snapshot_id: input.checkpoint.snapshot_id,
       worker: "snapshot-publication", resumed: true, publication_timings: publicationTimings,
     }, input.fence);
-    const languageOverlay = extractSnapshotLanguageOverlay(localizedSnapshot, displayLanguage);
-    const overlayStatus = snapshotMatchesDisplayLanguage(localizedSnapshot, displayLanguage) ? "ready" : "degraded";
     await this.store.saveSnapshotLanguageOverlay({
       publicKey: input.checkpoint.public_key,
       language: displayLanguage,

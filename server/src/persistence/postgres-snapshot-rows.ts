@@ -5,7 +5,7 @@ export async function insertSnapshotRows<T extends object>(
   db: Pick<Pool | PoolClient, "query">,
   table: string,
   columns: string[],
-  rows: readonly T[],
+  rows: Iterable<T>,
   convert?: (row: T) => object,
 ): Promise<void> {
   // A fixed query avoids tens of thousands of placeholders per batch. JSONB

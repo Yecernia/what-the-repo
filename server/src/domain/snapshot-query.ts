@@ -362,26 +362,6 @@ function valuePointRow(publicKey: string, snapshotId: string, point: SnapshotVal
   };
 }
 
-function addEvidence(
-  publicKey: string,
-  snapshotId: string,
-  evidenceMap: Map<string, SnapshotQueryEvidenceRow>,
-  links: SnapshotQueryEvidenceLinkRow[],
-  linkKeys: Set<string>,
-  ownerKind: SnapshotQueryOwnerKind,
-  ownerKey: string,
-  evidence: SnapshotEvidence[] | undefined,
-  role: "evidence" | "member",
-): void {
-  for (const item of evidence ?? []) {
-    if (!item?.stable_id) continue;
-    if (!evidenceMap.has(item.stable_id)) evidenceMap.set(item.stable_id, evidenceRow(publicKey, snapshotId, item));
-    const linkKey = `${item.stable_id}\u0000${ownerKind}\u0000${ownerKey}\u0000${role}`;
-    if (linkKeys.has(linkKey)) continue;
-    linkKeys.add(linkKey);
-    links.push({ public_snapshot_key: publicKey, evidence_id: item.stable_id, owner_kind: ownerKind, owner_key: ownerKey, role });
-  }
-}
 
 function graphNodes(value: unknown): SnapshotNode[] {
   return Array.isArray(value) ? value.filter((item): item is SnapshotNode => Boolean(item && typeof item === "object")) : [];
@@ -391,12 +371,28 @@ function graphEdges(value: unknown): SnapshotEdge[] {
   return Array.isArray(value) ? value.filter((item): item is SnapshotEdge => Boolean(item && typeof item === "object")) : [];
 }
 
-export function buildSnapshotQueryDirectory(
+export interface SnapshotQueryRows<T> extends Iterable<T> { readonly length: number }
+export type SnapshotQueryDirectorySource = Omit<SnapshotQueryDirectory, 'nodes' | 'edges' | 'evidence' | 'evidence_links'> & {
+  nodes: SnapshotQueryRows<SnapshotQueryNodeRow>;
+  edges: SnapshotQueryRows<SnapshotQueryEdgeRow>;
+  evidence: SnapshotQueryRows<SnapshotQueryEvidenceRow>;
+  evidence_links: SnapshotQueryRows<SnapshotQueryEvidenceLinkRow>;
+};
+
+function projectedRows<T, R>(sections: Array<{ values: T[]; project: (value: T) => R }>): SnapshotQueryRows<R> {
+  return {
+    length: sections.reduce((sum, section) => sum + section.values.length, 0),
+    *[Symbol.iterator]() { for (const section of sections) for (const value of section.values) yield section.project(value); },
+  };
+}
+
+/** Publication generates database rows on demand instead of retaining a second graph. */
+export function streamSnapshotQueryDirectory(
   publicKey: string,
   snapshotId: string,
   viewValue: unknown,
   analysisValue: unknown,
-): SnapshotQueryDirectory {
+): SnapshotQueryDirectorySource {
   const view = asEvidenceSnapshot(viewValue);
   if (!view) throw new Error("snapshot_query_view_invalid");
   const analysis = object(analysisValue);
@@ -405,31 +401,52 @@ export function buildSnapshotQueryDirectory(
   const semanticEdges = graphEdges(view.graph.edges);
   const factNodes = graphNodes(factGraph.nodes);
   const factEdges = graphEdges(factGraph.edges);
-  const nodes = [
-    ...semanticNodes.map((node) => nodeRow(publicKey, snapshotId, node, "component")),
-    ...factNodes.map((node) => nodeRow(publicKey, snapshotId, node, "fact")),
-  ];
-  const edges = [
-    ...semanticEdges.map((edge) => edgeRow(publicKey, snapshotId, edge, "semantic")),
-    ...factEdges.map((edge) => edgeRow(publicKey, snapshotId, edge, "fact")),
-  ];
-  const evidenceMap = new Map<string, SnapshotQueryEvidenceRow>();
-  const evidenceLinks: SnapshotQueryEvidenceLinkRow[] = [];
-  const evidenceLinkKeys = new Set<string>();
-  for (const node of semanticNodes) {
-    addEvidence(publicKey, snapshotId, evidenceMap, evidenceLinks, evidenceLinkKeys, "node", nodeKey("component", node.id), node.evidence, "evidence");
-    addEvidence(publicKey, snapshotId, evidenceMap, evidenceLinks, evidenceLinkKeys, "node", nodeKey("component", node.id), node.members, "member");
+  const nodes = projectedRows([
+    { values: semanticNodes, project: node => nodeRow(publicKey, snapshotId, node, "component") },
+    { values: factNodes, project: node => nodeRow(publicKey, snapshotId, node, "fact") },
+  ]);
+  const edges = projectedRows([
+    { values: semanticEdges, project: edge => edgeRow(publicKey, snapshotId, edge, "semantic") },
+    { values: factEdges, project: edge => edgeRow(publicKey, snapshotId, edge, "fact") },
+  ]);
+  const evidenceMap = new Map<string, SnapshotEvidence>();
+  const layers = (view.graph.layers ?? []).map(layer => layerRow(publicKey, snapshotId, layer));
+  const valuePoints = (view.value_points ?? []).map(point => valuePointRow(publicKey, snapshotId, point));
+  type Owner = { kind: SnapshotQueryOwnerKind; key: string; values: SnapshotEvidence[]; role: 'evidence' | 'member' };
+  function* owners(): Generator<Owner> {
+    for (const [rows, kind] of [[semanticNodes, 'component'], [factNodes, 'fact']] as const) {
+      for (const node of rows) {
+        yield { kind: 'node', key: nodeKey(kind, node.id), values: node.evidence, role: 'evidence' };
+        yield { kind: 'node', key: nodeKey(kind, node.id), values: node.members, role: 'member' };
+      }
+    }
+    for (const [rows, kind] of [[semanticEdges, 'semantic'], [factEdges, 'fact']] as const) {
+      for (const edge of rows) yield { kind: 'edge', key: edgeKey(kind, edge.id), values: edge.evidence, role: 'evidence' };
+    }
+    for (const layer of view!.graph.layers ?? []) yield { kind: 'layer', key: layer.id, values: layer.evidence, role: 'evidence' };
+    for (const point of view!.value_points ?? []) yield { kind: 'value_point', key: point.stable_id, values: point.evidence, role: 'evidence' };
   }
-  for (const node of factNodes) {
-    addEvidence(publicKey, snapshotId, evidenceMap, evidenceLinks, evidenceLinkKeys, "node", nodeKey("fact", node.id), node.evidence, "evidence");
-    addEvidence(publicKey, snapshotId, evidenceMap, evidenceLinks, evidenceLinkKeys, "node", nodeKey("fact", node.id), node.members, "member");
+  for (const owner of owners()) for (const item of owner.values ?? []) {
+    if (item?.stable_id && !evidenceMap.has(item.stable_id)) evidenceMap.set(item.stable_id, item);
   }
-  for (const edge of semanticEdges) addEvidence(publicKey, snapshotId, evidenceMap, evidenceLinks, evidenceLinkKeys, "edge", edgeKey("semantic", edge.id), edge.evidence, "evidence");
-  for (const edge of factEdges) addEvidence(publicKey, snapshotId, evidenceMap, evidenceLinks, evidenceLinkKeys, "edge", edgeKey("fact", edge.id), edge.evidence, "evidence");
-  const layers = (view.graph.layers ?? []).map((layer) => layerRow(publicKey, snapshotId, layer));
-  for (const layer of view.graph.layers ?? []) addEvidence(publicKey, snapshotId, evidenceMap, evidenceLinks, evidenceLinkKeys, "layer", layer.id, layer.evidence, "evidence");
-  const valuePoints = (view.value_points ?? []).map((point) => valuePointRow(publicKey, snapshotId, point));
-  for (const point of view.value_points ?? []) addEvidence(publicKey, snapshotId, evidenceMap, evidenceLinks, evidenceLinkKeys, "value_point", point.stable_id, point.evidence, "evidence");
+  function* links(): Generator<SnapshotQueryEvidenceLinkRow> {
+    const seen = new Set<string>();
+    for (const owner of owners()) for (const item of owner.values ?? []) {
+      if (!item?.stable_id) continue;
+      const identity = JSON.stringify([item.stable_id, owner.kind, owner.key, owner.role]);
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      yield { public_snapshot_key: publicKey, evidence_id: item.stable_id, owner_kind: owner.kind, owner_key: owner.key, role: owner.role };
+    }
+  }
+  let linkCount = 0;
+  for (const _link of links()) linkCount++;
+  const evidenceLinks: SnapshotQueryRows<SnapshotQueryEvidenceLinkRow> = { length: linkCount, [Symbol.iterator]: links };
+  const evidenceIds = [...evidenceMap.keys()].sort((a, b) => a.localeCompare(b));
+  const evidence: SnapshotQueryRows<SnapshotQueryEvidenceRow> = {
+    length: evidenceIds.length,
+    *[Symbol.iterator]() { for (const id of evidenceIds) yield evidenceRow(publicKey, snapshotId, evidenceMap.get(id)!); },
+  };
   const memberships = (view.graph.overlays ?? []).flatMap((overlay) => [
     ...overlay.member_entity_ids.map((entityId) => ({
       public_snapshot_key: publicKey,
@@ -493,7 +510,8 @@ export function buildSnapshotQueryDirectory(
   // sized string or retaining every section's sort keys at once.
   const digest = createHash('sha256').update('{');
   let firstField = true;
-  const hashRows = (name: string, rows: unknown[]) => {
+  const hashRows = (name: string, source: Iterable<unknown>) => {
+    const rows = Array.from(source);
     digest.update((firstField ? '' : ',') + JSON.stringify(name) + ':[');
     firstField = false;
     rows.sort();
@@ -503,9 +521,15 @@ export function buildSnapshotQueryDirectory(
     }
     digest.update(']');
   };
-  hashRows('nodes', nodes.map(row => [row.node_key, row.lifecycle_status]));
-  hashRows('edges', edges.map(row => [row.edge_key, row.source_node_key, row.target_node_key, row.lifecycle_status]));
-  hashRows('evidence', [...evidenceMap.keys()]);
+  hashRows('nodes', projectedRows([
+    { values: semanticNodes, project: node => [nodeKey('component', node.id), node.lifecycle_status ?? 'active'] },
+    { values: factNodes, project: node => [nodeKey('fact', node.id), node.lifecycle_status ?? 'active'] },
+  ]));
+  hashRows('edges', projectedRows([
+    { values: semanticEdges, project: edge => [edgeKey('semantic', edge.id), nodeKey('component', edge.source), nodeKey('component', edge.target), edge.lifecycle_status ?? 'active'] },
+    { values: factEdges, project: edge => [edgeKey('fact', edge.id), nodeKey('fact', edge.source), nodeKey('fact', edge.target), edge.lifecycle_status ?? 'active'] },
+  ]));
+  hashRows('evidence', evidenceMap.keys());
   hashRows('layers', layers.map(row => row.layer_id));
   hashRows('valuePoints', valuePoints.map(row => row.value_point_id));
   hashRows('memberships', memberships.map(row => [row.overlay_id, row.entity_id, row.relation_id, row.role]));
@@ -516,7 +540,7 @@ export function buildSnapshotQueryDirectory(
     snapshot_id: snapshotId,
     nodes,
     edges,
-    evidence: [...evidenceMap.values()].sort((left, right) => left.evidence_id.localeCompare(right.evidence_id)),
+    evidence,
     evidence_links: evidenceLinks,
     layers,
     value_points: valuePoints,
@@ -525,6 +549,15 @@ export function buildSnapshotQueryDirectory(
     aggregates,
     digest: digest.update('}').digest('hex'),
   };
+}
+
+/** Materialize only for in-memory querying; database publication uses the row source. */
+export function buildSnapshotQueryDirectory(
+  publicKey: string, snapshotId: string, view: unknown, analysis: unknown,
+): SnapshotQueryDirectory {
+  const source = streamSnapshotQueryDirectory(publicKey, snapshotId, view, analysis);
+  return { ...source, nodes: Array.from(source.nodes), edges: Array.from(source.edges),
+    evidence: Array.from(source.evidence), evidence_links: Array.from(source.evidence_links) };
 }
 
 export function cursorKey(value: string | null | undefined): string | null {

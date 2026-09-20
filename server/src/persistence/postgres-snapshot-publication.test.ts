@@ -392,3 +392,49 @@ test("PostgreSQL rolls back snapshot metadata when query directory publication f
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('publication drains admitted object writes before reporting an upload failure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-publication-drain-'));
+  const objects = new MemorySnapshotObjects();
+  let release!: () => void, started!: () => void, settled = false, active = 0;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const entered = new Promise<void>(resolve => { started = resolve; });
+  const originalPut = objects.put.bind(objects);
+  const failure = new Error('view upload failed');
+  objects.put = async (key, body) => {
+    if (key.includes('/view-')) throw failure;
+    if (key.includes('/analysis-chunks/')) {
+      active++; started();
+      try { await gate; return await originalPut(key, body); }
+      finally { active--; }
+    }
+    return originalPut(key, body);
+  };
+  const store = new PostgresStore({ root, databaseUrl: 'postgresql://unused',
+    migrationsRoot: join(root, 'migrations'), encryptionSecret: 'drain-test-only',
+    objectAdmissionStore: new LocalPermitStore(), objectStore: objects });
+  try {
+    const sourceRoot = join(root, 'source');
+    await mkdir(sourceRoot);
+    await writeFile(join(sourceRoot, 'one.ts'), 'export const x = 1;');
+    const result = store.savePublicSnapshot({ publicKey: '9'.repeat(64),
+      repository: 'test/drain', commitSha: 'a'.repeat(40), snapshotId: 'drain', sourceRoot,
+      view: view('drain'), analysis: { fact_graph: { nodes: Array.from({ length: 2_049 }, (_, id) => ({ id })), edges: [] } },
+    });
+    const checked = assert.rejects(result, error => error === failure).then(() => { settled = true; });
+    await entered;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(settled, false);
+    assert.ok(active > 0);
+    release();
+    await checked;
+    assert.equal(active, 0);
+    const writes = objects.writes.length;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(objects.writes.length, writes);
+  } finally {
+    release();
+    await store.pool.end();
+    await rm(root, { recursive: true, force: true });
+  }
+});

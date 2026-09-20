@@ -3,6 +3,7 @@ import test from "node:test";
 import { createHash } from 'node:crypto';
 import {
   buildSnapshotQueryDirectory,
+  streamSnapshotQueryDirectory,
   querySnapshotQueryDirectory,
 } from "./snapshot-query.js";
 
@@ -233,4 +234,27 @@ test("query directory ranks personalized entities and reports token-bound contin
     cursor: budgeted.next_cursor,
   });
   assert.notEqual(continued.nodes[0]?.node_id, budgeted.nodes[0]?.node_id);
+});
+
+test('publication row streams are repeatable and do not allocate fact rows eagerly', () => {
+  const view = snapshot();
+  let labelsRead = 0;
+  const fact = { ...view.graph.nodes[0]!, id: 'fact:lazy' };
+  Object.defineProperty(fact, 'label', { get() { labelsRead++; return 'Lazy fact'; }, enumerable: true });
+  const source = streamSnapshotQueryDirectory('public', view.snapshot_id, view, {
+    fact_graph: { nodes: [fact], edges: [] },
+  });
+  assert.equal(labelsRead, 0, 'preparing metadata must not materialize fact rows');
+  assert.equal(Array.isArray(source.nodes), false);
+  assert.equal(Array.isArray(source.evidence_links), false);
+  const first = Array.from(source.nodes);
+  assert.equal(labelsRead, 1);
+  assert.deepEqual(Array.from(source.nodes), first);
+  assert.equal(labelsRead, 2);
+  for (const rows of [source.nodes, source.edges, source.evidence, source.evidence_links]) {
+    assert.equal(Array.from<unknown>(rows).length, rows.length);
+    assert.deepEqual(Array.from<unknown>(rows), Array.from<unknown>(rows));
+  }
+  assert.equal(source.evidence.length, 1);
+  assert.equal(source.evidence_links.length, 5);
 });
