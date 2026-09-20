@@ -466,13 +466,23 @@ export async function withProviderPermit<T>(
     }
   } finally {
     if (active) runtime.metrics?.addGauge(METRIC_NAMES.providerActive, -1, providerLabels(runtime));
-    try {
-      await budgetPermit?.release(usageReport(finalUsage, !active && signal?.aborted ? "cancelled" : status, active, estimatedProviderReservation(runtime)>0));
-    } catch {
-      runtime.metrics?.increment(METRIC_NAMES.providerBudgetRecordErrors, 1, providerLabels(runtime));
-    }
+    await settleProviderUsage(runtime, budgetPermit,
+      usageReport(finalUsage, !active && signal?.aborted ? "cancelled" : status, active, estimatedProviderReservation(runtime)>0));
     await permit?.release();
   }
+}
+
+async function settleProviderUsage(runtime: PiModelRuntime, permit: ProviderBudgetPermit | undefined, report: ProviderUsageReport): Promise<void> {
+  if (!permit) return;
+  // The provider call has already ended. Retry only its idempotent settlement,
+  // even when the caller cancelled; never repeat the billable model request.
+  for (const wait of [0, 100, 500]) {
+    if (wait) await new Promise(resolve => setTimeout(resolve, wait));
+    try { await permit.release(report); return; }
+    catch { runtime.metrics?.increment(METRIC_NAMES.providerBudgetRecordErrors, 1, providerLabels(runtime)); }
+  }
+  // Persistent failures retain the reservation as unknown usage. A successful
+  // answer must not be replaced by an accounting error or an invented refund.
 }
 
 export function streamWithProviderPermit(
@@ -630,11 +640,7 @@ export function streamWithProviderPermit(
         recordProviderCall(runtime, outcome, performance.now() - callStarted, finalUsage);
       }
       if (active) runtime.metrics?.addGauge(METRIC_NAMES.providerActive, -1, providerLabels(runtime));
-      try {
-        await budgetPermit?.release(usageReport(finalUsage, usageStatus, active, estimatedProviderReservation(runtime)>0));
-      } catch {
-        runtime.metrics?.increment(METRIC_NAMES.providerBudgetRecordErrors, 1, providerLabels(runtime));
-      }
+      await settleProviderUsage(runtime, budgetPermit, usageReport(finalUsage, usageStatus, active, estimatedProviderReservation(runtime)>0));
       try { await permit?.release(); }
       catch { runtime.metrics?.increment(METRIC_NAMES.providerBudgetRecordErrors, 1, providerLabels(runtime)); }
       finally {

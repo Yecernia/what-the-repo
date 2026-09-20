@@ -540,7 +540,29 @@ test("provider budget record failures do not replace a successful provider resul
     value: "provider-result",
   }));
   assert.equal((result as { value: string }).value, "provider-result");
-  assert.equal(releaseCalls, 1);
+  assert.equal(releaseCalls, 3);
+});
+
+test('usage settlement retries preserve the known report without repeating a cancelled provider operation', async () => {
+  const faux = fauxProvider({ provider: 'settlement-retry-test' });
+  const models = createModels(); models.setProvider(faux.provider);
+  const controller = new AbortController();
+  const reports: unknown[] = []; let operations = 0, gateReleased = false;
+  const runtime = { models, model: faux.getModel(), ownerId: 'settlement-retry-owner',
+    providerGate: { async acquire() { return { async release() { gateReleased = true; } }; } },
+    providerBudget: { async acquire() { return { async release(report: unknown) {
+      reports.push(report); if(reports.length===1) throw new Error('temporary connection failure');
+    } }; } },
+  };
+  const result = await withProviderPermit(runtime, controller.signal, async () => {
+    operations++; controller.abort();
+    return { value: 'completed-before-disconnect', usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } } };
+  });
+  assert.equal(result.value, 'completed-before-disconnect');
+  assert.equal(operations, 1); assert.equal(reports.length, 2);
+  assert.strictEqual(reports[0], reports[1]);
+  assert.equal((reports[1] as { usageKnown: boolean }).usageKnown, true);
+  assert.equal(gateReleased, true);
 });
 
 test("legacy built-in provider endpoints are ignored during settings normalization", () => {
