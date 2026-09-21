@@ -27,6 +27,8 @@ test('compact directory migration preserves data, constraints and separate runti
   const down = await readFile(join(config.migrationsRoot,'0023_compact_snapshot_directory.down.sql'),'utf8');
   const searchUp = await readFile(join(config.migrationsRoot,'0024_snapshot_text_search.sql'),'utf8');
   const searchDown = await readFile(join(config.migrationsRoot,'0024_snapshot_text_search.down.sql'),'utf8');
+  const generationUp = await readFile(join(config.migrationsRoot,'0025_snapshot_directory_generations.sql'),'utf8');
+  const generationDown = await readFile(join(config.migrationsRoot,'0025_snapshot_directory_generations.down.sql'),'utf8');
   const key = createHash('sha256').update(randomUUID()).digest('hex'), snapshotId = 'snap:migration:'+key.slice(0,12);
   const evidence = {stable_id:'proof',label:'proof',path:'src/a.ts',start_line:1,end_line:2,kind:'symbol'};
   const view = asEvidenceSnapshot({snapshot_id:snapshotId,graph:{nodes:[{id:'A',name:'A',responsibility:'test',members:[evidence],evidence:[evidence]}],edges:[],layers:[]},value_points:[],learning_plan:{steps:[]}})!;
@@ -47,6 +49,7 @@ test('compact directory migration preserves data, constraints and separate runti
     await mkdir(store.publicSourceSnapshotRoot(key,snapshotId),{recursive:true});
     await store.savePublicSnapshot({publicKey:key,repository:'test/migration',commitSha:'a'.repeat(40),snapshotId,view,analysis});
     const before = await signature();
+    await migrate(generationDown);
     await migrate(searchDown);
     await migrate(down);
     assert.deepEqual(await signature(), before);
@@ -64,6 +67,7 @@ test('compact directory migration preserves data, constraints and separate runti
     await store.pool.query('UPDATE snapshot_query_nodes SET snapshot_id=$2 WHERE public_snapshot_key=$1',[key,snapshotId]);
     await migrate(up);
     await migrate(searchUp);
+    await migrate(generationUp);
     assert.deepEqual(await signature(), before);
     const actual = await runtime.queryPublicSnapshot({publicKey:key,snapshotId,query:{entity_ids:['A'],include_metadata:false}});
     assert.equal(actual.nodes[0]?.node_id,'A');
@@ -76,6 +80,7 @@ test('compact directory migration preserves data, constraints and separate runti
     await assert.rejects(store.pool.query("INSERT INTO snapshot_directory_evidence_links(directory_id,evidence_id,owner_kind,owner_key,role) SELECT directory_id,'missing','node','A','evidence' FROM snapshot_query_directories WHERE public_snapshot_key=$1",[key]), {code:'23503'});
     await runtime.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[secondKey]);
     assert.equal((await reader.query('SELECT count(*)::int AS n FROM snapshot_query_nodes WHERE public_snapshot_key=$1',[secondKey])).rows[0].n,0);
+    await migrate(generationDown);
     await migrate(searchDown);
     await migrate(down);
     assert.deepEqual(await signature(),before);
@@ -83,6 +88,7 @@ test('compact directory migration preserves data, constraints and separate runti
     await assert.rejects(reader.query('DELETE FROM snapshot_query_nodes WHERE false'), {code:'42501'});
     await migrate(up);
     await migrate(searchUp);
+    await migrate(generationUp);
     assert.deepEqual(await signature(),before);
   } finally {
     await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[key]).catch(()=>undefined);

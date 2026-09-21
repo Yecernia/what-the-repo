@@ -74,9 +74,12 @@ test('checkpoint publication persists and reloads facts, cache, sources and atom
     const directoryId = String((await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1', [publicKey])).rows[0].directory_id);
     assert.match(directoryId, /^\d+$/);
     await store.pool.query(`CREATE FUNCTION ${failureFunction}() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN RAISE EXCEPTION 'publication_test_injected_failure'; END $$;
+      BEGIN
+        IF EXISTS(SELECT 1 FROM snapshot_directory_generations WHERE directory_id=NEW.directory_id AND public_snapshot_key='${publicKey}')
+        THEN RAISE EXCEPTION 'publication_test_injected_failure'; END IF;
+        RETURN NEW; END $$;
       CREATE TRIGGER ${failureFunction} BEFORE INSERT ON snapshot_directory_edges
-      FOR EACH ROW WHEN (NEW.directory_id = ${directoryId}) EXECUTE FUNCTION ${failureFunction}();`);
+      FOR EACH ROW EXECUTE FUNCTION ${failureFunction}();`);
     try {
       await assert.rejects(store.savePublicSnapshot(input), /publication_test_injected_failure/);
       assert.deepEqual((await store.pool.query('SELECT directory_digest, node_count, edge_count FROM snapshot_query_directories WHERE public_snapshot_key=$1', [publicKey])).rows[0], before);

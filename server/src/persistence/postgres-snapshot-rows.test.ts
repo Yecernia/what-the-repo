@@ -50,3 +50,16 @@ test('row insertion applies backpressure and closes the source on database failu
     assert.equal(closed, true);
   }
 });
+
+test('publication lease checks run before batch writes and close the row source on failure', async () => {
+  let writes = 0, closed = false;
+  const failure = new Error('lease no longer valid');
+  function* rows() {
+    try { for (let id = 0; id < 4_001; id++) yield { id }; }
+    finally { closed = true; }
+  }
+  const db = { query: async () => { writes++; return { rows: [], rowCount: 0 }; } } as unknown as Parameters<typeof insertSnapshotRows>[0];
+  await assert.rejects(insertSnapshotRows(db, 'snapshot_query_nodes', ['id'], rows(), undefined,
+    async () => { throw failure; }), error => error === failure);
+  assert.equal(writes, 0); assert.equal(closed, true);
+});

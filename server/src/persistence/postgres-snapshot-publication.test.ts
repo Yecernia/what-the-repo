@@ -100,7 +100,7 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
     const begin = sql.indexOf("BEGIN");
     const snapshotInsert = sql.findIndex((item) => item.startsWith("INSERT INTO canonical_public_repository_snapshots"));
     const directoryInsert = sql.findIndex((item) => item.startsWith("INSERT INTO snapshot_query_directories"));
-    const commit = sql.indexOf("COMMIT");
+    const commit = sql.lastIndexOf("COMMIT");
     assert.ok(begin >= 0 && snapshotInsert > begin && directoryInsert > snapshotInsert && commit > directoryInsert);
     assert.equal(released, true);
 
@@ -204,6 +204,7 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
           && normalized.includes("FOR UPDATE")) {
           return { rows: [snapshotRow], rowCount: 1 };
         }
+        if (normalized.includes("pg_try_advisory_xact_lock")) return { rows: [{ acquired: true }], rowCount: 1 };
         if (normalized.startsWith("SELECT 1 WHERE EXISTS")) return { rows: [], rowCount: 0 };
         return { rows: [], rowCount: 1 };
       },
@@ -346,7 +347,7 @@ test("PostgreSQL rolls back snapshot metadata when query directory publication f
       if (normalized.startsWith("INSERT INTO snapshot_query_directories")) {
         throw new Error("query_directory_write_failed");
       }
-      return { rows: [], rowCount: 1 };
+      return { rows: normalized.includes("RETURNING directory_id") ? [{ directory_id: "1" }] : [], rowCount: 1 };
     },
     release() { released = true; },
   };
@@ -413,6 +414,10 @@ test('publication drains admitted object writes before reporting an upload failu
   const store = new PostgresStore({ root, databaseUrl: 'postgresql://unused',
     migrationsRoot: join(root, 'migrations'), encryptionSecret: 'drain-test-only',
     objectAdmissionStore: new LocalPermitStore(), objectStore: objects });
+  const originalPool = store.pool;
+  (store as unknown as { pool: unknown }).pool = { connect: async () => ({
+    query: async () => ({ rows: [], rowCount: 1 }), release() {},
+  }) };
   try {
     const sourceRoot = join(root, 'source');
     await mkdir(sourceRoot);
@@ -434,7 +439,7 @@ test('publication drains admitted object writes before reporting an upload failu
     assert.equal(objects.writes.length, writes);
   } finally {
     release();
-    await store.pool.end();
+    await originalPool.end();
     await rm(root, { recursive: true, force: true });
   }
 });

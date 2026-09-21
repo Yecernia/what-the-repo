@@ -7,6 +7,7 @@ export async function insertSnapshotRows<T extends object>(
   columns: string[],
   rows: Iterable<T>,
   convert?: (row: T) => object,
+  beforeBatch?: () => Promise<void>,
 ): Promise<void> {
   // A fixed query avoids tens of thousands of placeholders per batch. JSONB
   // preserves nested payloads/arrays; the existing table supplies SQL types.
@@ -16,6 +17,7 @@ export async function insertSnapshotRows<T extends object>(
   let batch: string[] = [], bytes = 2;
   const flush = async () => {
     if (!batch.length) return;
+    await beforeBatch?.();
     await db.query(sql, [`[${batch.join(",")}]`]);
     batch = []; bytes = 2;
   };

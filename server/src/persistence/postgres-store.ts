@@ -62,7 +62,7 @@ import {
 } from "../domain/snapshot-query.js";
 import { EncryptedPostgresKeyVault } from "./encrypted-key-vault.js";
 import { FileStore } from "./file-store.js";
-import { insertSnapshotRows } from "./postgres-snapshot-rows.js";
+import { stageSnapshotQueryDirectory, bindSnapshotQueryDirectory, pruneDetachedSnapshotDirectories } from "./snapshot-directory-publication.js";
 import { applyMigrations } from "./migrations.js";
 import { boundedObjectStore } from './bounded-object-store.js';
 import { ResourceScheduler } from '../scheduling/resources.js';
@@ -1065,19 +1065,18 @@ export class PostgresStore extends FileStore {
     publicKey: string; snapshotId: string; sourceRoot: string; fence?: AnalysisLeaseFence; signal?: AbortSignal;
   }): Promise<StoredSourceSnapshot> {
     input.signal?.throwIfAborted();
-    if (input.fence) await this.withAnalysisLeaseTransaction(input.fence, async () => undefined);
-    return putSourceSnapshot({ ...input, objectStore: this.snapshotObjects });
+    return this.withSnapshotPreparation(input.fence, () => putSourceSnapshot({ ...input, objectStore: this.snapshotObjects }));
   }
 
   override async preparePublicSnapshotAnalysisCache(input: {
     publicKey: string; snapshotId: string; cache: unknown; fence?: AnalysisLeaseFence;
   }): Promise<PreparedAnalysisCache> {
-    if (input.fence) await this.withAnalysisLeaseTransaction(input.fence, async () => undefined);
-    const payload = await prepareStoredAnalysisPayload({ analysis_cache: input.cache },
-      (path, index, sha256) => defaultAnalysisChunkKey(`public-repository-snapshots/${input.publicKey}`, path, index, sha256),
-      (key, body) => this.snapshotObjects.put(key, body, 'application/json'));
-    if (input.fence) await this.withAnalysisLeaseTransaction(input.fence, async () => undefined);
-    return { publicKey: input.publicKey, snapshotId: input.snapshotId, payload };
+    return this.withSnapshotPreparation(input.fence, async () => {
+      const payload = await prepareStoredAnalysisPayload({ analysis_cache: input.cache },
+        (path, index, sha256) => defaultAnalysisChunkKey(`public-repository-snapshots/${input.publicKey}`, path, index, sha256),
+        (key, body) => this.snapshotObjects.put(key, body, 'application/json'));
+      return { publicKey: input.publicKey, snapshotId: input.snapshotId, payload };
+    });
   }
 
   override async savePublicSnapshot({ analysis, ...input }: {
@@ -1116,304 +1115,225 @@ export class PostgresStore extends FileStore {
       manifestObject: Awaited<ReturnType<SnapshotObjectStore["put"]>>;
     };
     if (input.fence) {
-      // Preflight while holding the row lock only briefly. Object uploads must
-      // happen outside the transaction so the worker heartbeat can extend the
-      // lease during a large source snapshot upload.
+      // Preflight holds the job lock briefly. The long preparation transaction
+      // below uses only non-locking lease reads; the next exclusive fence is
+      // immediately before the atomic publication binding.
       await this.withAnalysisLeaseTransaction(input.fence, async () => undefined);
     }
-    const viewStart = performance.now();
-    const viewBody = jsonBytes(input.view);
-    const viewKey = `public-repository-snapshots/${input.publicKey}/view-${snapshotObjectDigest(viewBody)}.json`;
-    timings.view_serialization_ms = performance.now() - viewStart;
-    const uploads = [
-      measure("view_upload_ms", () => this.snapshotObjects.put(viewKey, viewBody, "application/json")),
-      measure("analysis_prepare_ms", async () => mergePreparedAnalysisCache(await prepareStoredAnalysisPayload(
-        analysis,
-        (path, index, sha256) => defaultAnalysisChunkKey(
-          `public-repository-snapshots/${input.publicKey}`,
-          path,
-          index,
-          sha256,
-        ),
-        (key, body) => this.snapshotObjects.put(key, body, "application/json"),
-      ), input.preparedAnalysisCache, input.publicKey, input.snapshotId)),
-      measure("source_upload_ms", async () => input.preparedSource ?? putSourceSnapshot({
-        objectStore: this.snapshotObjects,
-        sourceRoot,
-        publicKey: input.publicKey,
-        snapshotId: input.snapshotId,
-        createdAt,
-      })),
-    ] as const;
-    // Keep admitted writes owned by this task even when one upload fails.
-    const [viewObject, preparedAnalysis, sourceSnapshot] = await Promise.all(uploads)
-      .finally(async () => { await Promise.allSettled(uploads); });
-    // A resumed assembly may carry a previously uploaded immutable manifest.
-    // Verify its identity and bytes before binding it to the published snapshot.
-    const sourceManifestBody = sourceSnapshotManifestBytes(sourceSnapshot.manifest);
-    if (sourceSnapshot.manifest.public_snapshot_key !== input.publicKey
-      || sourceSnapshot.manifest.snapshot_id !== input.snapshotId
-      || sourceSnapshot.manifestObject.sha256 !== snapshotObjectDigest(sourceManifestBody)
-      || sourceSnapshot.manifestObject.bytes !== sourceManifestBody.byteLength) {
-      throw new Error("prepared_source_snapshot_mismatch");
-    }
-    parseSourceSnapshotManifest(sourceManifestBody, { publicKey: input.publicKey, snapshotId: input.snapshotId });
-    const analysisStart = performance.now();
-    const analysisBody = jsonBytes(preparedAnalysis.value);
-    const analysisKey = `public-repository-snapshots/${input.publicKey}/analysis-${snapshotObjectDigest(analysisBody)}.json`;
-    const analysisObject = await this.snapshotObjects.put(analysisKey, analysisBody, "application/json");
-    timings.analysis_upload_ms = performance.now() - analysisStart;
-    // The query directory uses only the fact graph. Let already uploaded
-    // compiler caches become collectible before allocating directory rows.
-    const directoryAnalysis = { fact_graph: (analysis as { fact_graph?: unknown } | null)?.fact_graph };
-    analysis = undefined;
-    const directoryStart = performance.now();
-    const directory = streamSnapshotQueryDirectory(
-      input.publicKey,
-      input.snapshotId,
-      input.view,
-      directoryAnalysis,
-    );
-    timings.directory_build_ms = performance.now() - directoryStart;
-    const manifest: SnapshotManifest = {
-      schema_version: 1,
-      public_snapshot_key: input.publicKey,
-      snapshot_id: input.snapshotId,
-      objects: [
-        { kind: "view", key: viewKey, bytes: viewObject.bytes, sha256: viewObject.sha256 },
-        { kind: "analysis", key: analysisKey, bytes: analysisObject.bytes, sha256: analysisObject.sha256 },
-      ],
-      query_directory: {
-        digest: directory.digest,
-        nodes: directory.nodes.length,
-        edges: directory.edges.length,
-        evidence: directory.evidence.length,
-        layers: directory.layers.length,
-        value_points: directory.value_points.length,
-      },
-      created_at: createdAt,
-    };
-    const manifestBody = jsonBytes(manifest);
-    const manifestKey = `public-repository-snapshots/${input.publicKey}/manifest-${snapshotObjectDigest(manifestBody)}.json`;
-    const manifestObject = await measure("manifest_upload_ms", () => this.snapshotObjects.put(manifestKey, manifestBody, "application/json"));
-    const prepared: PreparedSnapshotObjects = {
-      viewKey,
-      analysisKey,
-      viewBody,
-      analysisBody,
-      analysisChunked: preparedAnalysis.envelope !== null,
-      viewObject,
-      analysisObject,
-      analysisChunks: preparedAnalysis.chunks,
-      sourceSnapshot,
-      manifestObject,
-    };
-    const persist = async (
-      client: PoolClient,
-      prepared: PreparedSnapshotObjects,
-    ): Promise<void> => {
-      const { viewObject, analysisObject, analysisChunks, sourceSnapshot, manifestObject } = prepared;
-      const logicalBytes = sourceSnapshot.manifest.total_bytes
-        + viewObject.bytes
-        + analysisObject.bytes
-        + analysisChunks.reduce((total, chunk) => total + chunk.bytes, 0);
-      const sourceStorageKey = sourceSnapshot.manifestObject.key;
-      const viewStorageKey = prepared.viewKey;
-      const analysisStorageKey = prepared.analysisKey;
-      // PostgreSQL jsonb has a much larger nominal value limit, but a single array
-      // element cannot exceed 256 MiB. Keep a wide safety margin for dense graphs.
-      const viewPayload = shouldInlinePublicSnapshotPayload(viewObject.bytes)
-        ? Buffer.from(prepared.viewBody.buffer, prepared.viewBody.byteOffset, prepared.viewBody.byteLength - 1).toString("utf8")
-        : null;
-      const analysisPayload = !prepared.analysisChunked
-        && shouldInlinePublicSnapshotPayload(analysisObject.bytes)
-        ? Buffer.from(prepared.analysisBody.buffer, prepared.analysisBody.byteOffset, prepared.analysisBody.byteLength - 1).toString("utf8")
-        : null;
-      await client.query(
-        `INSERT INTO canonical_public_repository_snapshots(
-         public_snapshot_key, repository_identity, commit_sha,
-         analyzer_bundle_version, analysis_config_digest, analysis_snapshot_id,
-         view_payload, analysis_payload, source_storage_key,
-         view_storage_key, analysis_storage_key, manifest_storage_key,
-         manifest_sha256, manifest_bytes, view_sha256, view_bytes,
-         analysis_sha256, analysis_bytes, logical_bytes,
-         source_manifest_sha256, source_manifest_bytes, source_file_count,
-         reuse_count, created_at, last_used_at, language_overlay_version
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9,
-         $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-         $20, $21, $22, 0, now(), now(), $23
-       )
-       ON CONFLICT(public_snapshot_key) DO UPDATE SET
-         view_payload = EXCLUDED.view_payload,
-         analysis_payload = EXCLUDED.analysis_payload,
-         source_storage_key = EXCLUDED.source_storage_key,
-         view_storage_key = EXCLUDED.view_storage_key,
-         analysis_storage_key = EXCLUDED.analysis_storage_key,
-         manifest_storage_key = EXCLUDED.manifest_storage_key,
-         manifest_sha256 = EXCLUDED.manifest_sha256,
-         manifest_bytes = EXCLUDED.manifest_bytes,
-         view_sha256 = EXCLUDED.view_sha256,
-         view_bytes = EXCLUDED.view_bytes,
-         analysis_sha256 = EXCLUDED.analysis_sha256,
-         analysis_bytes = EXCLUDED.analysis_bytes,
-         logical_bytes = EXCLUDED.logical_bytes,
-         source_manifest_sha256 = EXCLUDED.source_manifest_sha256,
-         source_manifest_bytes = EXCLUDED.source_manifest_bytes,
-         source_file_count = EXCLUDED.source_file_count,
-         language_overlay_version = EXCLUDED.language_overlay_version,
-         retired_at = NULL,
-         purge_after = NULL,
-         payload_purged_at = NULL,
-         last_used_at = now()`,
-        [
-          input.publicKey,
-          input.repository.toLowerCase(),
-          input.commitSha,
-          input.analyzerBundleVersion ?? "typescript-0.1.0",
-          input.analysisConfigDigest ?? "tree-sitter-nine-language-v1",
-          input.snapshotId,
-          viewPayload,
-          analysisPayload,
-          sourceStorageKey,
-          viewStorageKey,
-          analysisStorageKey,
-          manifestObject.key,
-          manifestObject.sha256,
-          manifestObject.bytes,
-          viewObject.sha256,
-          viewObject.bytes,
-          analysisObject.sha256,
-          analysisObject.bytes,
-          logicalBytes,
-          sourceSnapshot.manifestObject.sha256,
-          sourceSnapshot.manifestObject.bytes,
-          sourceSnapshot.manifest.files.length,
-          input.languageOverlayVersion ?? null,
-        ],
-      );
-      await measure("directory_write_ms", () => this.saveSnapshotQueryDirectory(directory, client));
-    };
-    const transactionStart = performance.now();
+    const transactionStarted = performance.now();
     const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
-      let fencedProjectId: string | undefined;
-      if (input.fence) {
-        fencedProjectId = await this.lockAnalysisProject(client, input.fence);
-        await this.assertAnalysisLeaseWithDb(client, input.fence, fencedProjectId);
+      await client.query('BEGIN');
+      // A transaction-scoped shared guard blocks reclamation, not heartbeats.
+      await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('repository-payload-use',0))");
+      if (input.fence) await this.assertAnalysisLeaseWithDb(client, input.fence, input.fence.projectId, false);
+      const viewStart = performance.now();
+      const viewBody = jsonBytes(input.view);
+      const viewKey = `public-repository-snapshots/${input.publicKey}/view-${snapshotObjectDigest(viewBody)}.json`;
+      timings.view_serialization_ms = performance.now() - viewStart;
+      const uploads = [
+        measure("view_upload_ms", () => this.snapshotObjects.put(viewKey, viewBody, "application/json")),
+        measure("analysis_prepare_ms", async () => mergePreparedAnalysisCache(await prepareStoredAnalysisPayload(
+          analysis,
+          (path, index, sha256) => defaultAnalysisChunkKey(
+            `public-repository-snapshots/${input.publicKey}`,
+            path,
+            index,
+            sha256,
+          ),
+          (key, body) => this.snapshotObjects.put(key, body, "application/json"),
+        ), input.preparedAnalysisCache, input.publicKey, input.snapshotId)),
+        measure("source_upload_ms", async () => input.preparedSource ?? putSourceSnapshot({
+          objectStore: this.snapshotObjects,
+          sourceRoot,
+          publicKey: input.publicKey,
+          snapshotId: input.snapshotId,
+          createdAt,
+        })),
+      ] as const;
+      // Keep admitted writes owned by this task even when one upload fails.
+      const [viewObject, preparedAnalysis, sourceSnapshot] = await Promise.all(uploads)
+        .finally(async () => { await Promise.allSettled(uploads); });
+      // A resumed assembly may carry a previously uploaded immutable manifest.
+      // Verify its identity and bytes before binding it to the published snapshot.
+      const sourceManifestBody = sourceSnapshotManifestBytes(sourceSnapshot.manifest);
+      if (sourceSnapshot.manifest.public_snapshot_key !== input.publicKey
+        || sourceSnapshot.manifest.snapshot_id !== input.snapshotId
+        || sourceSnapshot.manifestObject.sha256 !== snapshotObjectDigest(sourceManifestBody)
+        || sourceSnapshot.manifestObject.bytes !== sourceManifestBody.byteLength) {
+        throw new Error("prepared_source_snapshot_mismatch");
       }
-      await persist(client, prepared);
-      if (input.fence) await this.assertAnalysisLeaseWithDb(client, input.fence, fencedProjectId);
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-      timings.transaction_ms = performance.now() - transactionStart;
-    }
-    this.rememberSourceManifest(prepared.sourceSnapshot.manifest, prepared.sourceSnapshot.manifestObject.sha256);
-    timings.total_ms = performance.now() - started;
-    return timings;
-  }
-
-  private async saveSnapshotQueryDirectory(
-    directory: SnapshotQueryDirectorySource,
-    transactionClient?: PoolClient,
-  ): Promise<void> {
-    const client = transactionClient ?? await this.pool.connect();
-    const ownsTransaction = transactionClient === undefined;
-    try {
-      if (ownsTransaction) await client.query("BEGIN");
-      const saved = await client.query<{ directory_id: string }>(
-        `INSERT INTO snapshot_query_directories(
-           public_snapshot_key, snapshot_id, schema_version, directory_digest,
-           node_count, edge_count, evidence_count, layer_count, value_point_count, ready_at
-         ) VALUES ($1, $2, 2, $3, $4, $5, $6, $7, $8, now())
-         ON CONFLICT(public_snapshot_key) DO UPDATE SET
-           snapshot_id = EXCLUDED.snapshot_id,
-           schema_version = EXCLUDED.schema_version,
-           directory_digest = EXCLUDED.directory_digest,
-           node_count = EXCLUDED.node_count,
-           edge_count = EXCLUDED.edge_count,
-           evidence_count = EXCLUDED.evidence_count,
-           layer_count = EXCLUDED.layer_count,
-           value_point_count = EXCLUDED.value_point_count,
-           ready_at = EXCLUDED.ready_at RETURNING directory_id`,
-        [
-          directory.public_snapshot_key,
-          directory.snapshot_id,
-          directory.digest,
-          directory.nodes.length,
-          directory.edges.length,
-          directory.evidence.length,
-          directory.layers.length,
-          directory.value_points.length,
+      parseSourceSnapshotManifest(sourceManifestBody, { publicKey: input.publicKey, snapshotId: input.snapshotId });
+      const analysisStart = performance.now();
+      const analysisBody = jsonBytes(preparedAnalysis.value);
+      const analysisKey = `public-repository-snapshots/${input.publicKey}/analysis-${snapshotObjectDigest(analysisBody)}.json`;
+      const analysisObject = await this.snapshotObjects.put(analysisKey, analysisBody, "application/json");
+      timings.analysis_upload_ms = performance.now() - analysisStart;
+      // The query directory uses only the fact graph. Let already uploaded
+      // compiler caches become collectible before allocating directory rows.
+      const directoryAnalysis = { fact_graph: (analysis as { fact_graph?: unknown } | null)?.fact_graph };
+      analysis = undefined;
+      const directoryStart = performance.now();
+      const directory = streamSnapshotQueryDirectory(
+        input.publicKey,
+        input.snapshotId,
+        input.view,
+        directoryAnalysis,
+      );
+      timings.directory_build_ms = performance.now() - directoryStart;
+      const manifest: SnapshotManifest = {
+        schema_version: 1,
+        public_snapshot_key: input.publicKey,
+        snapshot_id: input.snapshotId,
+        objects: [
+          { kind: "view", key: viewKey, bytes: viewObject.bytes, sha256: viewObject.sha256 },
+          { kind: "analysis", key: analysisKey, bytes: analysisObject.bytes, sha256: analysisObject.sha256 },
         ],
-      );
-      const directoryId = saved.rows[0]?.directory_id;
-      if (!directoryId) throw new Error('snapshot_query_directory_identity_missing');
-      for (const table of ['evidence_links','evidence','edges','nodes','layers','value_points','projection_edges','projection_nodes','overlay_memberships'])
-        await client.query('DELETE FROM snapshot_directory_' + table + ' WHERE directory_id=$1', [directoryId]);
-      const writeRows = <T extends object>(table: string, columns: string[], rows: Iterable<T>, convert?: (row: T) => object) =>
-        insertSnapshotRows(client, table.replace('snapshot_query_', 'snapshot_directory_'), ['directory_id', ...columns.filter(column => !['public_snapshot_key','snapshot_id'].includes(column))], rows,
-          row => ({ ...(convert ? convert(row) : row), directory_id: directoryId }));
-      await writeRows(
-        "snapshot_query_nodes",
-        ["public_snapshot_key", "snapshot_id", "node_key", "node_id", "node_kind", "entity_kind", "parent_entity_id", "depth", "label", "name", "responsibility", "path", "language", "layer_id", "layer_name", "certainty", "lifecycle_status", "payload"],
-        directory.nodes,
-      );
-      await writeRows(
-        "snapshot_query_edges",
-        ["public_snapshot_key", "snapshot_id", "edge_key", "edge_id", "edge_kind", "source_node_key", "target_node_key", "relation_kind", "label", "description", "certainty", "weight", "lifecycle_status", "payload"],
-        directory.edges,
-      );
-      await writeRows(
-        "snapshot_query_evidence",
-        ["public_snapshot_key", "snapshot_id", "evidence_id", "label", "path", "start_line", "end_line", "kind", "source_id", "target_id", "payload"],
-        directory.evidence,
-      );
-      await writeRows(
-        "snapshot_query_evidence_links",
-        ["public_snapshot_key", "evidence_id", "owner_kind", "owner_key", "role"],
-        directory.evidence_links,
-      );
-      await writeRows(
-        "snapshot_query_layers",
-        ["public_snapshot_key", "snapshot_id", "layer_id", "name", "responsibility", "certainty", "payload"],
-        directory.layers,
-      );
-      await writeRows(
-        "snapshot_query_value_points",
-        ["public_snapshot_key", "snapshot_id", "value_point_id", "kind", "title", "claim", "certainty", "connectivity", "payload"],
-        directory.value_points,
-      );
-      await writeRows(
-        "snapshot_query_overlay_memberships",
-        ["public_snapshot_key", "snapshot_id", "overlay_id", "overlay_kind", "entity_id", "relation_id", "role", "payload"],
-        directory.memberships ?? [],
-        row => ({ ...row, relation_id: row.relation_id ?? "" }),
-      );
-      await writeRows(
-        "snapshot_query_projection_nodes",
-        ["public_snapshot_key", "snapshot_id", "projection_kind", "projection_node_id", "entity_id", "parent_projection_node_id", "depth", "aggregate_member_entity_ids", "evidence_ids", "overlay_ids", "payload"],
-        directory.projections ?? [],
-        row => ({ ...row, overlay_ids: row.overlay_ids ?? [] }),
-      );
-      await writeRows(
-        "snapshot_query_projection_edges",
-        ["public_snapshot_key", "snapshot_id", "projection_kind", "projection_edge_id", "relation_id", "source_projection_node_id", "target_projection_node_id", "source_entity_id", "target_entity_id", "aggregate_relation_ids", "evidence_ids", "overlay_ids", "payload"],
-        directory.aggregates ?? [],
-        row => ({ ...row, overlay_ids: row.overlay_ids ?? [] }),
-      );
-      if (ownsTransaction) await client.query("COMMIT");
+        query_directory: {
+          digest: directory.digest,
+          nodes: directory.nodes.length,
+          edges: directory.edges.length,
+          evidence: directory.evidence.length,
+          layers: directory.layers.length,
+          value_points: directory.value_points.length,
+        },
+        created_at: createdAt,
+      };
+      const manifestBody = jsonBytes(manifest);
+      const manifestKey = `public-repository-snapshots/${input.publicKey}/manifest-${snapshotObjectDigest(manifestBody)}.json`;
+      const manifestObject = await measure("manifest_upload_ms", () => this.snapshotObjects.put(manifestKey, manifestBody, "application/json"));
+      const prepared: PreparedSnapshotObjects = {
+        viewKey,
+        analysisKey,
+        viewBody,
+        analysisBody,
+        analysisChunked: preparedAnalysis.envelope !== null,
+        viewObject,
+        analysisObject,
+        analysisChunks: preparedAnalysis.chunks,
+        sourceSnapshot,
+        manifestObject,
+      };
+      const persist = async (
+        client: PoolClient,
+        prepared: PreparedSnapshotObjects,
+      ): Promise<void> => {
+        const { viewObject, analysisObject, analysisChunks, sourceSnapshot, manifestObject } = prepared;
+        const logicalBytes = sourceSnapshot.manifest.total_bytes
+          + viewObject.bytes
+          + analysisObject.bytes
+          + analysisChunks.reduce((total, chunk) => total + chunk.bytes, 0);
+        const sourceStorageKey = sourceSnapshot.manifestObject.key;
+        const viewStorageKey = prepared.viewKey;
+        const analysisStorageKey = prepared.analysisKey;
+        // PostgreSQL jsonb has a much larger nominal value limit, but a single array
+        // element cannot exceed 256 MiB. Keep a wide safety margin for dense graphs.
+        const viewPayload = shouldInlinePublicSnapshotPayload(viewObject.bytes)
+          ? Buffer.from(prepared.viewBody.buffer, prepared.viewBody.byteOffset, prepared.viewBody.byteLength - 1).toString("utf8")
+          : null;
+        const analysisPayload = !prepared.analysisChunked
+          && shouldInlinePublicSnapshotPayload(analysisObject.bytes)
+          ? Buffer.from(prepared.analysisBody.buffer, prepared.analysisBody.byteOffset, prepared.analysisBody.byteLength - 1).toString("utf8")
+          : null;
+        await client.query(
+          `INSERT INTO canonical_public_repository_snapshots(
+           public_snapshot_key, repository_identity, commit_sha,
+           analyzer_bundle_version, analysis_config_digest, analysis_snapshot_id,
+           view_payload, analysis_payload, source_storage_key,
+           view_storage_key, analysis_storage_key, manifest_storage_key,
+           manifest_sha256, manifest_bytes, view_sha256, view_bytes,
+           analysis_sha256, analysis_bytes, logical_bytes,
+           source_manifest_sha256, source_manifest_bytes, source_file_count,
+           reuse_count, created_at, last_used_at, language_overlay_version
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9,
+           $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+           $20, $21, $22, 0, now(), now(), $23
+         )
+         ON CONFLICT(public_snapshot_key) DO UPDATE SET
+           analysis_snapshot_id = EXCLUDED.analysis_snapshot_id,
+           view_payload = EXCLUDED.view_payload,
+           analysis_payload = EXCLUDED.analysis_payload,
+           source_storage_key = EXCLUDED.source_storage_key,
+           view_storage_key = EXCLUDED.view_storage_key,
+           analysis_storage_key = EXCLUDED.analysis_storage_key,
+           manifest_storage_key = EXCLUDED.manifest_storage_key,
+           manifest_sha256 = EXCLUDED.manifest_sha256,
+           manifest_bytes = EXCLUDED.manifest_bytes,
+           view_sha256 = EXCLUDED.view_sha256,
+           view_bytes = EXCLUDED.view_bytes,
+           analysis_sha256 = EXCLUDED.analysis_sha256,
+           analysis_bytes = EXCLUDED.analysis_bytes,
+           logical_bytes = EXCLUDED.logical_bytes,
+           source_manifest_sha256 = EXCLUDED.source_manifest_sha256,
+           source_manifest_bytes = EXCLUDED.source_manifest_bytes,
+           source_file_count = EXCLUDED.source_file_count,
+           language_overlay_version = EXCLUDED.language_overlay_version,
+           retired_at = NULL,
+           purge_after = NULL,
+           payload_purged_at = NULL,
+           last_used_at = now()`,
+          [
+            input.publicKey,
+            input.repository.toLowerCase(),
+            input.commitSha,
+            input.analyzerBundleVersion ?? "typescript-0.1.0",
+            input.analysisConfigDigest ?? "tree-sitter-nine-language-v1",
+            input.snapshotId,
+            viewPayload,
+            analysisPayload,
+            sourceStorageKey,
+            viewStorageKey,
+            analysisStorageKey,
+            manifestObject.key,
+            manifestObject.sha256,
+            manifestObject.bytes,
+            viewObject.sha256,
+            viewObject.bytes,
+            analysisObject.sha256,
+            analysisObject.bytes,
+            logicalBytes,
+            sourceSnapshot.manifestObject.sha256,
+            sourceSnapshot.manifestObject.bytes,
+            sourceSnapshot.manifest.files.length,
+            input.languageOverlayVersion ?? null,
+          ],
+        );
+      };
+
+      let lastLeaseCheck = performance.now();
+      const beforeBatch = input.fence ? async () => {
+        if (performance.now() - lastLeaseCheck < 1_000) return;
+        await this.assertAnalysisLeaseWithDb(client, input.fence!, input.fence!.projectId, false);
+        lastLeaseCheck = performance.now();
+      } : undefined;
+      const directoryId = await measure('directory_write_ms', () => stageSnapshotQueryDirectory(client, directory, beforeBatch));
+      const finalizeStarted = performance.now();
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`snapshot-publication:${input.publicKey}`]);
+      let fencedProjectId: string | undefined;
+      if (input.fence) fencedProjectId = await this.lockAnalysisProject(client, input.fence);
+      const fenceStarted = performance.now();
+      if (input.fence) await this.assertAnalysisLeaseWithDb(client, input.fence, fencedProjectId);
+      await persist(client, prepared);
+      await bindSnapshotQueryDirectory(client, directory, directoryId);
+      if (input.fence) await this.assertAnalysisLeaseWithDb(client, input.fence, fencedProjectId);
+      await client.query('COMMIT');
+      timings.publication_fence_ms = performance.now() - fenceStarted;
+      timings.publication_finalize_ms = performance.now() - finalizeStarted;
+      timings.transaction_ms = performance.now() - transactionStarted;
+      // Reclamation can be expensive. It must never extend the lease-row lock.
+      try { await measure('directory_cleanup_ms', () => pruneDetachedSnapshotDirectories(client, input.publicKey)); }
+      catch (error) {
+        timings.directory_cleanup_failed = 1;
+        console.error('snapshot_directory_cleanup_failed', (error as { code?: string }).code ?? 'unknown');
+      }
+      this.rememberSourceManifest(prepared.sourceSnapshot.manifest, prepared.sourceSnapshot.manifestObject.sha256);
+      timings.total_ms = performance.now() - started;
+      return timings;
     } catch (error) {
-      if (ownsTransaction) await client.query("ROLLBACK");
+      await client.query('ROLLBACK');
       throw error;
-    } finally {
-      if (ownsTransaction) client.release();
-    }
+    } finally { client.release(); }
   }
 
   override async readPublicSnapshotEvidence(input: SnapshotEvidenceRequest) {
@@ -2466,7 +2386,10 @@ export class PostgresStore extends FileStore {
     let analysisObject: { key: string; bytes: number; sha256: string } | null = null;
     try {
       await client.query("BEGIN");
-      await client.query("LOCK TABLE analysis_jobs, project_public_snapshot_bindings, canonical_public_repository_heads IN SHARE ROW EXCLUSIVE MODE");
+      const guard = await client.query<{ acquired: boolean }>(
+        "SELECT pg_try_advisory_xact_lock(hashtextextended('repository-payload-use',0)) AS acquired");
+      if (!guard.rows[0]?.acquired) { await client.query('ROLLBACK'); return false; }
+      await client.query("LOCK TABLE analysis_jobs, project_public_snapshot_bindings, canonical_public_repository_heads IN SHARE ROW EXCLUSIVE MODE NOWAIT");
       const locked = await client.query(
         `SELECT public_snapshot_key, repository_identity, commit_sha,
                 analyzer_bundle_version, analysis_config_digest, analysis_snapshot_id,
@@ -2535,6 +2458,7 @@ export class PostgresStore extends FileStore {
         "DELETE FROM snapshot_query_directories WHERE public_snapshot_key = $1",
         [publicKey],
       );
+      await pruneDetachedSnapshotDirectories(client, publicKey);
       await client.query('DELETE FROM public_snapshot_language_overlays WHERE public_snapshot_key=$1',[publicKey]);
       if(administrator) await client.query(`DELETE FROM semantic_batches WHERE snapshot_id=$1 AND job_id IN (
         SELECT j.job_id FROM analysis_jobs j JOIN projects p USING(project_id)
@@ -2598,6 +2522,7 @@ export class PostgresStore extends FileStore {
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
+      if ((error as { code?: string }).code === '55P03') return false;
       throw error;
     } finally {
       if (!maintenanceClient) client.release();
@@ -3919,6 +3844,7 @@ export class PostgresStore extends FileStore {
     client: PoolClient,
     fence: AnalysisLeaseFence,
     projectId = fence.projectId,
+    lock = true,
   ): Promise<void> {
     const projectClause = projectId ? " AND project_id = $4" : "";
     const result = await client.query(
@@ -3931,12 +3857,27 @@ export class PostgresStore extends FileStore {
          AND lease_expires_at IS NOT NULL
          AND lease_expires_at > clock_timestamp()
          ${projectClause}
-       FOR UPDATE`,
+       ${lock ? "FOR UPDATE" : ""}`,
       projectId
         ? [fence.jobId, fence.workerId, fence.attempt, projectId]
         : [fence.jobId, fence.workerId, fence.attempt],
     );
     if (!result.rowCount) throw new AnalysisLeaseLostError();
+  }
+
+  /** Preparatory uploads are invisible and protect their objects from reclamation. */
+  private async withSnapshotPreparation<T>(fence: AnalysisLeaseFence | undefined, task: () => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('repository-payload-use',0))");
+      if (fence) await this.assertAnalysisLeaseWithDb(client, fence, fence.projectId, false);
+      const result = await task();
+      if (fence) await this.assertAnalysisLeaseWithDb(client, fence, fence.projectId, false);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
   }
 
   private async withAnalysisLeaseTransaction<T>(
