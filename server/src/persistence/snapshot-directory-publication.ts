@@ -66,6 +66,15 @@ export async function stageSnapshotQueryDirectory(client: PoolClient, directory:
 
 /** Constant-sized final binding; no data-row insertion or deletion under the job lock. */
 export async function bindSnapshotQueryDirectory(client: PoolClient, directory: SnapshotQueryDirectorySource, directoryId: string): Promise<void> {
+  const candidate = await client.query(`SELECT directory_id FROM snapshot_directory_generations g
+    WHERE directory_id=$1 AND public_snapshot_key=$2 AND snapshot_id=$3
+      AND NOT EXISTS(SELECT 1 FROM snapshot_directory_reclamation q WHERE q.directory_id=g.directory_id) FOR KEY SHARE`,
+    [directoryId,directory.public_snapshot_key,directory.snapshot_id]);
+  if (!candidate.rowCount) throw new Error('snapshot_directory_generation_not_publishable');
+  // The old version and its durable work item become retired atomically with the new pointer.
+  await client.query(`INSERT INTO snapshot_directory_reclamation(directory_id)
+    SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1 AND directory_id<>$2
+    ON CONFLICT(directory_id) DO NOTHING`, [directory.public_snapshot_key,directoryId]);
   await client.query(
     `INSERT INTO snapshot_query_directories(public_snapshot_key,snapshot_id,schema_version,directory_digest,
        node_count,edge_count,evidence_count,layer_count,value_point_count,ready_at,directory_id)

@@ -125,6 +125,8 @@ for (const mode of modes) test(`isolated PostgreSQL: publication ${mode} leaves 
       await assert.rejects(publication, mode === 'write-failure' ? /publication_injected_failure/ : (error: unknown) => error instanceof AnalysisLeaseLostError);
       assert.deepEqual((await store.loadPublicSnapshot(publicKey))?.analysis, previous!.analysis);
       assert.equal((await admin.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1', [publicKey])).rows[0].directory_id, oldDirectory);
+      assert.equal((await admin.query('SELECT 1 FROM snapshot_directory_reclamation q JOIN snapshot_directory_generations g USING(directory_id) WHERE g.public_snapshot_key=$1',[publicKey])).rowCount,0,
+        'failed finalization cannot enqueue a still-visible generation');
       assert.equal(Number((await admin.query('SELECT count(*) AS n FROM snapshot_directory_generations WHERE public_snapshot_key=$1', [publicKey])).rows[0].n), 1,
         'failed candidates leave no committed generation');
       if (mode === 'transfer') {

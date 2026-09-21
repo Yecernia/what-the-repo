@@ -1315,18 +1315,13 @@ export class PostgresStore extends FileStore {
       const fenceStarted = performance.now();
       if (input.fence) await this.assertAnalysisLeaseWithDb(client, input.fence, fencedProjectId);
       await persist(client, prepared);
-      await bindSnapshotQueryDirectory(client, directory, directoryId);
+      await measure('directory_bind_ms', () => bindSnapshotQueryDirectory(client, directory, directoryId));
       if (input.fence) await this.assertAnalysisLeaseWithDb(client, input.fence, fencedProjectId);
       await client.query('COMMIT');
       timings.publication_fence_ms = performance.now() - fenceStarted;
       timings.publication_finalize_ms = performance.now() - finalizeStarted;
       timings.transaction_ms = performance.now() - transactionStarted;
-      // Reclamation can be expensive. It must never extend the lease-row lock.
-      try { await measure('directory_cleanup_ms', () => pruneDetachedSnapshotDirectories(client, input.publicKey)); }
-      catch (error) {
-        timings.directory_cleanup_failed = 1;
-        console.error('snapshot_directory_cleanup_failed', (error as { code?: string }).code ?? 'unknown');
-      }
+      // The scheduler owns durable reclamation; release the analysis stage immediately.
       this.rememberSourceManifest(prepared.sourceSnapshot.manifest, prepared.sourceSnapshot.manifestObject.sha256);
       timings.total_ms = performance.now() - started;
       return timings;

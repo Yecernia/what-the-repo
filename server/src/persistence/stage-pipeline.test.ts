@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Pool } from 'pg';
+import { setTimeout as delay } from 'node:timers/promises';
+import { reclaimSnapshotDirectoryBatch } from './directory-reclamation.js';
 import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -63,6 +66,13 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
     assert.equal(staticAnalysis?.files[0]?.calls[0]?.status, 'static');
     // A deterministic completed semantic checkpoint exercises the real publication path.
     await store.saveAnalysisCheckpoint(project.project_id, { ...saved.checkpoint, stage: 'assembly', provenance_applied: true }, saved.snapshot);
+    const publicKey = String(saved.checkpoint.public_key), snapshotId = String(saved.checkpoint.snapshot_id);
+    const oldView = {snapshot_id:snapshotId,graph:{nodes:[],edges:[],layers:[]},value_points:[],learning_plan:{steps:[]}};
+    await store.savePublicSnapshot({publicKey,snapshotId,repository:String(saved.checkpoint.repository),
+      commitSha:String(saved.checkpoint.commit_sha),sourceRoot:String(saved.checkpoint.source_root),view:oldView,
+      analyzerBundleVersion:String(saved.checkpoint.analyzer_bundle_version),analysisConfigDigest:String(saved.checkpoint.analysis_config_digest),
+      analysis:{fact_graph:{nodes:[{id:'retired-marker',name:'retired-marker',members:[],evidence:[],certainty:'verified'}],edges:[]}}});
+    const oldId = (await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[publicKey])).rows[0].directory_id;
     await isolatedStageExecutor(store, config).run(job, signal);
     assert.equal((await store.loadJob(job.job_id))?.status, 'succeeded');
     assert.equal(await store.analysisCheckpointInfo(project.project_id), null);
@@ -90,6 +100,42 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
     assert.equal((await store.claimAnalysisJob('other-worker', 900))?.project_id, other.project_id);
     const permits = await store.pool.query('SELECT count(*)::int AS count FROM runtime_permits');
     assert.equal(permits.rows[0].count, 0, 'all stage/object resources are released');
+    assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rowCount,1,
+      'the completed child leaves durable cleanup for the independent maintenance process');
+    while ((await store.pool.query('SELECT table_index FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0].table_index<5) {
+      await reclaimSnapshotDirectoryBatch(store.pool);
+    }
+    const cleanupPool = new Pool({connectionString:url,max:1,application_name:'wtr-cleanup-release-proof'});
+    const cleanupPid = (await cleanupPool.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const trigger = 'wtr_cleanup_delay_' + project.project_id.replaceAll('-','');
+    let cleanup: Promise<unknown> | undefined;
+    try {
+    await store.pool.query(`CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_sleep(0.8); RETURN OLD; END $$;
+      CREATE TRIGGER ${trigger} BEFORE DELETE ON snapshot_directory_nodes FOR EACH ROW
+      WHEN(OLD.directory_id=${oldId}) EXECUTE FUNCTION ${trigger}()`);
+      cleanup = reclaimSnapshotDirectoryBatch(cleanupPool);
+      let observed = false; const deadline = performance.now()+3_000;
+      while (!observed && performance.now()<deadline) {
+        observed = (await store.pool.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event='PgSleep'",[cleanupPid])).rowCount===1;
+        if (!observed) await delay(10);
+      }
+      assert.equal(observed,true,'observe real delayed SQL, not a timer standing in for cleanup');
+      assert.equal((await store.loadJob(job.job_id))?.status,'succeeded');
+      const active = (await store.pool.query('SELECT count(*)::int AS n FROM runtime_permits')).rows[0].n;
+      assert.equal(active,0,'analysis and publication permits are free while cleanup is still executing');
+      await cleanup;
+      console.log(JSON.stringify({analysisPermitsDuringCleanup:active,jobStatus:'succeeded',cleanupSqlDelayObserved:observed}));
+    } finally {
+      await cleanup?.catch(() => undefined);
+      try { await store.pool.query(`DROP TRIGGER IF EXISTS ${trigger} ON snapshot_directory_nodes; DROP FUNCTION IF EXISTS ${trigger}()`); }
+      finally { await cleanupPool.end(); }
+    }
+    for (let i=0;i<20;i++) {
+      if (!(await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rowCount) break;
+      await reclaimSnapshotDirectoryBatch(store.pool);
+    }
+    assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rowCount,0);
   } finally { await store.close(); gateway.closeAllConnections(); await new Promise<void>(resolve => gateway.close(() => resolve())); await rm(root, { recursive: true, force: true }); }
 });
 

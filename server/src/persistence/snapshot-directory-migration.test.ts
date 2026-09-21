@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { PostgresStore } from './postgres-store.js';
+import { reclaimSnapshotDirectoryBatch } from './directory-reclamation.js';
 import { asEvidenceSnapshot } from '../domain/snapshot.js';
 const ownerUrl = process.env.WTR_STORAGE_TEST_DATABASE_URL;
 const runtimeUrl = process.env.WTR_STORAGE_RUNTIME_DATABASE_URL;
@@ -27,6 +28,8 @@ test('compact directory migration preserves data, constraints and separate runti
   const down = await readFile(join(config.migrationsRoot,'0023_compact_snapshot_directory.down.sql'),'utf8');
   const searchUp = await readFile(join(config.migrationsRoot,'0024_snapshot_text_search.sql'),'utf8');
   const searchDown = await readFile(join(config.migrationsRoot,'0024_snapshot_text_search.down.sql'),'utf8');
+  const reclaimUp = await readFile(join(config.migrationsRoot,'0027_directory_reclamation.sql'),'utf8');
+  const reclaimDown = await readFile(join(config.migrationsRoot,'0027_directory_reclamation.down.sql'),'utf8');
   const generationUp = await readFile(join(config.migrationsRoot,'0025_snapshot_directory_generations.sql'),'utf8');
   const generationDown = await readFile(join(config.migrationsRoot,'0025_snapshot_directory_generations.down.sql'),'utf8');
   const key = createHash('sha256').update(randomUUID()).digest('hex'), snapshotId = 'snap:migration:'+key.slice(0,12);
@@ -49,6 +52,7 @@ test('compact directory migration preserves data, constraints and separate runti
     await mkdir(store.publicSourceSnapshotRoot(key,snapshotId),{recursive:true});
     await store.savePublicSnapshot({publicKey:key,repository:'test/migration',commitSha:'a'.repeat(40),snapshotId,view,analysis});
     const before = await signature();
+    await migrate(reclaimDown);
     await migrate(generationDown);
     await migrate(searchDown);
     await migrate(down);
@@ -68,6 +72,7 @@ test('compact directory migration preserves data, constraints and separate runti
     await migrate(up);
     await migrate(searchUp);
     await migrate(generationUp);
+    await migrate(reclaimUp);
     assert.deepEqual(await signature(), before);
     const actual = await runtime.queryPublicSnapshot({publicKey:key,snapshotId,query:{entity_ids:['A'],include_metadata:false}});
     assert.equal(actual.nodes[0]?.node_id,'A');
@@ -80,6 +85,7 @@ test('compact directory migration preserves data, constraints and separate runti
     await assert.rejects(store.pool.query("INSERT INTO snapshot_directory_evidence_links(directory_id,evidence_id,owner_kind,owner_key,role) SELECT directory_id,'missing','node','A','evidence' FROM snapshot_query_directories WHERE public_snapshot_key=$1",[key]), {code:'23503'});
     await runtime.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[secondKey]);
     assert.equal((await reader.query('SELECT count(*)::int AS n FROM snapshot_query_nodes WHERE public_snapshot_key=$1',[secondKey])).rows[0].n,0);
+    await migrate(reclaimDown);
     await migrate(generationDown);
     await migrate(searchDown);
     await migrate(down);
@@ -89,6 +95,22 @@ test('compact directory migration preserves data, constraints and separate runti
     await migrate(up);
     await migrate(searchUp);
     await migrate(generationUp);
+    await migrate(reclaimUp);
+    assert.deepEqual(await signature(),before);
+    const retiredId=(await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id;
+    await runtime.savePublicSnapshot({publicKey:key,repository:'test/migration',commitSha:'a'.repeat(40),snapshotId,view,analysis,sourceRoot:store.publicSourceSnapshotRoot(key,snapshotId)});
+    await migrate(reclaimDown);
+    assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE directory_id=$1',[retiredId])).rowCount,1);
+    await migrate(reclaimUp);
+    assert.equal((await reader.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=$1',[retiredId])).rowCount,1,
+      'migration backfills durable work without removing a visible directory');
+    await assert.rejects(reader.query('DELETE FROM snapshot_directory_reclamation WHERE false'),{code:'42501'});
+    for(let i=0;i<20;i++){
+      if(!(await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=$1',[retiredId])).rowCount)break;
+      const batch=await reclaimSnapshotDirectoryBatch(runtime.pool);
+      assert.ok(['progress','finished'].includes(batch.status));
+    }
+    assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE directory_id=$1',[retiredId])).rowCount,0);
     assert.deepEqual(await signature(),before);
   } finally {
     await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[key]).catch(()=>undefined);
