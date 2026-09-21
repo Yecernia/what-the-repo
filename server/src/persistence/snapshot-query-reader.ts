@@ -47,7 +47,11 @@ export async function readSnapshotQuery(pool: Pool, input: Request): Promise<Sna
     const candidates = items.slice(0,limitOf(input.query.limit));
     const nodeKeys = candidates.filter(item=>item.kind==='node').map(item=>(item.row as SnapshotQueryDirectory['nodes'][number]).node_key);
     const edgeKeys = candidates.filter(item=>item.kind==='edge').map(item=>(item.row as SnapshotQueryDirectory['edges'][number]).edge_key);
-    const links = await db.query('SELECT * FROM snapshot_query_evidence_links WHERE public_snapshot_key=$1 AND ((owner_kind=\'node\' AND owner_key=ANY($2::text[])) OR (owner_kind=\'edge\' AND owner_key=ANY($3::text[])))',[input.publicKey,nodeKeys,edgeKeys]);
+    const links = await db.query(`SELECT $1::text AS public_snapshot_key,l.evidence_id,l.owner_kind,l.owner_key,l.role
+      FROM snapshot_directory_evidence_links l WHERE directory_id=$2 AND owner_kind='node' AND owner_key=ANY($3::text[])
+      UNION ALL SELECT $1::text,l.evidence_id,l.owner_kind,l.owner_key,l.role
+      FROM snapshot_directory_evidence_links l WHERE directory_id=$2 AND owner_kind='edge' AND owner_key=ANY($4::text[])`,
+      [input.publicKey,meta.rows[0].directory_id,nodeKeys,edgeKeys]);
     const ids = [...new Set(links.rows.map(row=>row.evidence_id))];
     if (ids.length) {
       directory.evidence = (await db.query('SELECT * FROM snapshot_query_evidence WHERE public_snapshot_key=$1 AND snapshot_id=$2 AND evidence_id=ANY($3::text[]) ORDER BY evidence_id',[input.publicKey,input.snapshotId,ids])).rows;
@@ -103,10 +107,20 @@ async function rankedCandidates(db: PoolClient, request: Request, directoryId: s
       SELECT endpoint.node_key,w.hop+1 FROM walked w JOIN snapshot_directory_edges e ON ${edgeBase} AND (e.source_node_key=w.node_key OR e.target_node_key=w.node_key)
       CROSS JOIN LATERAL unnest(ARRAY[e.source_node_key,e.target_node_key]) AS endpoint(node_key) WHERE w.hop<${hops})`);
     scopes.push('chosen AS (SELECT DISTINCT node_key FROM walked)');
-    edgeConditions.splice(0,edgeConditions.length,edgeBase,'(e.source_node_key IN (SELECT node_key FROM chosen) OR e.target_node_key IN (SELECT node_key FROM chosen))');
+    edgeConditions.splice(0,edgeConditions.length,edgeBase,'e.edge_key IN (SELECT edge_key FROM incident_edges)');
   }else{
     scopes.push('chosen AS (SELECT node_key FROM seed)');
-    if(ids.length||input.depth!==undefined||input.projection)edgeConditions.push('(e.source_node_key IN (SELECT node_key FROM chosen) OR e.target_node_key IN (SELECT node_key FROM chosen))');
+    if(ids.length||input.depth!==undefined||input.projection)edgeConditions.push('e.edge_key IN (SELECT edge_key FROM incident_edges)');
+  }
+  if (hops || ids.length || input.depth !== undefined || input.projection) {
+    // Parameterize each endpoint lookup. OR over two subqueries otherwise turns
+    // a one-node request into a full scan of every edge in a large directory.
+    scopes.push(`incident_edges AS MATERIALIZED (SELECT DISTINCT hit.edge_key FROM chosen c
+      CROSS JOIN LATERAL (
+        SELECT e.edge_key FROM snapshot_directory_edges e WHERE ${edgeBase} AND e.source_node_key=c.node_key
+        UNION ALL
+        SELECT e.edge_key FROM snapshot_directory_edges e WHERE ${edgeBase} AND e.target_node_key=c.node_key
+      ) hit)`);
   }
   const terms=bind(queryTerms(input.text),'text[]');
   // Ranking excludes the local key. Terms contain no spaces, so skipped empty

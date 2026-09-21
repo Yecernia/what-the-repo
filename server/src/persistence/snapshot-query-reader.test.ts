@@ -14,7 +14,8 @@ function canonical(result: SnapshotQueryResult) {
     (copy[field] as unknown[])?.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
   return copy;
 }
-test('PostgreSQL ranked pages match the in-memory contract for filters, scopes, cycles, budgets and continuation', {skip:!url}, async () => {
+async function withQueryFixture(task: (store: PostgresStore, key: string, snapshotId: string, view: NonNullable<ReturnType<typeof asEvidenceSnapshot>>, analysis: Record<string, unknown>) => Promise<void>): Promise<void> {
+  assert.equal(new URL(url!).hostname, '127.0.0.1');
   assert.match(new URL(url!).pathname,/^\/wtr_(storage|admin)_test_[a-z0-9_]+$/);
   const root=await mkdtemp(join(tmpdir(),'wtr-query-contract-'));
   const store=new PostgresStore({databaseUrl:url!,root,migrationsRoot:join(process.cwd(),'migrations'),encryptionSecret:'query-contract-test-only',poolMax:2});
@@ -30,23 +31,15 @@ test('PostgreSQL ranked pages match the in-memory contract for filters, scopes, 
     await store.init();await mkdir(store.publicSourceSnapshotRoot(key,snapshotId),{recursive:true});
     const analysis={fact_graph:{nodes:[],edges:[]}};
     await store.savePublicSnapshot({publicKey:key,repository:'test/query-'+key.slice(0,8),commitSha:'a'.repeat(40),snapshotId,view,analysis});
-    // Exercise backfill on existing rows, not only new publications. The legacy
-    // views must keep their shape and public results must not leak search data.
-    const before=(await store.pool.query('SELECT * FROM snapshot_query_nodes WHERE public_snapshot_key=$1 ORDER BY node_key',[key])).rows;
-    await store.pool.query(await readFile(join(process.cwd(),'migrations/0024_snapshot_text_search.down.sql'),'utf8'));
-    await store.pool.query(await readFile(join(process.cwd(),'migrations/0024_snapshot_text_search.sql'),'utf8'));
-    assert.deepEqual((await store.pool.query('SELECT * FROM snapshot_query_nodes WHERE public_snapshot_key=$1 ORDER BY node_key',[key])).rows,before);
-    const normalized=await store.pool.query(`SELECT bool_and(n.search_text=lower(concat_ws(' ',NULLIF(n.node_key,''),NULLIF(n.node_id,''),NULLIF(n.name,''),NULLIF(n.label,''),NULLIF(n.responsibility,''),NULLIF(n.path,''),NULLIF(n.payload::text,'')))) AS same
-      FROM snapshot_directory_nodes n JOIN snapshot_query_directories d USING(directory_id) WHERE d.public_snapshot_key=$1`,[key]);
-    assert.equal(normalized.rows[0].same,true);
-    const db=await store.pool.connect();
-    try {
-      await db.query('BEGIN');await db.query('SET LOCAL enable_seqscan=off');
-      for(const table of ['nodes','edges']) {
-        const plan=await db.query(`EXPLAIN (FORMAT JSON) SELECT 1 FROM snapshot_directory_${table} WHERE search_text LIKE $1`,['%session%']);
-        assert.match(JSON.stringify(plan.rows),new RegExp(`snapshot_directory_${table}_text_idx`));
-      }
-    } finally {await db.query('ROLLBACK');db.release();}
+    await task(store,key,snapshotId,view,analysis);
+  } finally {
+    await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[key]).catch(()=>undefined);
+    await store.close();await rm(root,{recursive:true,force:true});
+  }
+}
+
+test('PostgreSQL ranked pages match the in-memory contract for filters, scopes, cycles, budgets and continuation', {skip:!url}, async () => {
+  await withQueryFixture(async (store,key,snapshotId,view,analysis) => {
     const directory=buildSnapshotQueryDirectory(key,snapshotId,view,analysis);
     const cases:SnapshotQueryInput[]=[{}, {text:'session'}, {text:'源码'}, {text:'entry_tag'}, {text:'entry_tag',expand_hops:1},
       {text:'entryXtag'}, {text:'e'}, {text:'on'}, {text:'hello world'}, {text:'ENTRY_TAG'}, {text:'absent'},
@@ -72,8 +65,28 @@ test('PostgreSQL ranked pages match the in-memory contract for filters, scopes, 
     assert.deepEqual(new Set(oneHop.nodes.map(n=>n.node_id)),new Set(['A','B']),'one hop cannot cascade through an edge chain');
     await assert.rejects(store.queryPublicSnapshot({publicKey:key,snapshotId:'wrong-snapshot',query:{}}),/snapshot_query_not_found/);
     assert.ok(pages>30);
-  } finally {
-    await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[key]).catch(()=>undefined);
-    await store.close();await rm(root,{recursive:true,force:true});
-  }
+    console.log(JSON.stringify({ queryContractCases: cases.length, pages }));
+  });
+});
+
+test('PostgreSQL search-column migration preserves values and indexes', {skip:!url}, async () => {
+  await withQueryFixture(async (store,key) => {
+    // Exercise backfill on existing rows, not only new publications. The legacy
+    // views must keep their shape and public results must not leak search data.
+    const before=(await store.pool.query('SELECT * FROM snapshot_query_nodes WHERE public_snapshot_key=$1 ORDER BY node_key',[key])).rows;
+    await store.pool.query(await readFile(join(process.cwd(),'migrations/0024_snapshot_text_search.down.sql'),'utf8'));
+    await store.pool.query(await readFile(join(process.cwd(),'migrations/0024_snapshot_text_search.sql'),'utf8'));
+    assert.deepEqual((await store.pool.query('SELECT * FROM snapshot_query_nodes WHERE public_snapshot_key=$1 ORDER BY node_key',[key])).rows,before);
+    const normalized=await store.pool.query(`SELECT bool_and(n.search_text=lower(concat_ws(' ',NULLIF(n.node_key,''),NULLIF(n.node_id,''),NULLIF(n.name,''),NULLIF(n.label,''),NULLIF(n.responsibility,''),NULLIF(n.path,''),NULLIF(n.payload::text,'')))) AS same
+      FROM snapshot_directory_nodes n JOIN snapshot_query_directories d USING(directory_id) WHERE d.public_snapshot_key=$1`,[key]);
+    assert.equal(normalized.rows[0].same,true);
+    const db=await store.pool.connect();
+    try {
+      await db.query('BEGIN');await db.query('SET LOCAL enable_seqscan=off');
+      for(const table of ['nodes','edges']) {
+        const plan=await db.query(`EXPLAIN (FORMAT JSON) SELECT 1 FROM snapshot_directory_${table} WHERE search_text LIKE $1`,['%session%']);
+        assert.match(JSON.stringify(plan.rows),new RegExp(`snapshot_directory_${table}_text_idx`));
+      }
+    } finally {await db.query('ROLLBACK');db.release();}
+  });
 });

@@ -122,7 +122,7 @@ test("PostgreSQL snapshot queries apply the shared expand_hops semantics", async
           rowCount: 1,
         };
       }
-      if (sql.includes("FROM snapshot_query_evidence_links")) return { rows: [], rowCount: 0 };
+      if (sql.includes("FROM snapshot_query_evidence_links") || sql.includes("FROM snapshot_directory_evidence_links")) return { rows: [], rowCount: 0 };
       if (sql.includes("FROM snapshot_query_evidence")) return { rows: [], rowCount: 0 };
       if (sql.includes("FROM snapshot_query_layers")) return { rows: [], rowCount: 0 };
       if (sql.includes("FROM snapshot_query_value_points")) return { rows: [], rowCount: 0 };
