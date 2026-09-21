@@ -1,3 +1,4 @@
+import { EncryptedPostgresKeyVault } from "./encrypted-key-vault.js";
 import { readSnapshotQuery } from './snapshot-query-reader.js';
 import { boundedEvidenceIds, snapshotEvidence, type SnapshotEvidenceRequest } from './snapshot-evidence.js';
 import type { SnapshotQueryEvidenceRow } from '../domain/snapshot-query.js';
@@ -60,7 +61,6 @@ import {
   type SnapshotQueryInput,
   type SnapshotQueryResult,
 } from "../domain/snapshot-query.js";
-import { EncryptedPostgresKeyVault } from "./encrypted-key-vault.js";
 import { FileStore } from "./file-store.js";
 import { stageSnapshotQueryDirectory, bindSnapshotQueryDirectory, pruneDetachedSnapshotDirectories } from "./snapshot-directory-publication.js";
 import { applyMigrations } from "./migrations.js";
@@ -3314,30 +3314,7 @@ export class PostgresStore extends FileStore {
         );
       }
 
-      // Explicit target keys win per connection. Source-only connections move
-      // without deleting unrelated target credentials.
-      const sourceKeys = await client.query<{ connection_id: string }>(
-        "SELECT connection_id FROM provider_keys WHERE owner_id = $1",
-        [input.sourceOwnerId],
-      );
-      const targetKeys = await client.query<{ connection_id: string }>(
-        "SELECT connection_id FROM provider_keys WHERE owner_id = $1",
-        [input.targetOwnerId],
-      );
-      const targetConnectionIds = new Set(targetKeys.rows.map((row) => row.connection_id));
-      for (const row of sourceKeys.rows) {
-        if (targetConnectionIds.has(row.connection_id)) {
-          await client.query(
-            "DELETE FROM provider_keys WHERE owner_id = $1 AND connection_id = $2",
-            [input.sourceOwnerId, row.connection_id],
-          );
-        } else {
-          await client.query(
-            "UPDATE provider_keys SET owner_id = $2 WHERE owner_id = $1 AND connection_id = $3",
-            [input.sourceOwnerId, input.targetOwnerId, row.connection_id],
-          );
-        }
-      }
+      // User credentials are request-local and never migrated between owners.
 
       // Session rows are rebuilt by PiSessionStore using the new owner-derived IDs.
       await client.query("DELETE FROM pi_sessions WHERE owner_id = $1", [input.sourceOwnerId]);

@@ -75,12 +75,14 @@ export class AnalysisLeaseLostError extends Error {
 /** Elapsed substeps; uploads overlap, so these durations must not be added. */
 export type SnapshotPublicationTimings = Record<string, number>;
 
+/** Store user credentials with authenticated encryption; retrieve plaintext only on demand. */
 export interface ProviderKeyVault {
   init(): Promise<void>;
   set(ownerId: string, value: string, connectionId?: string): Promise<void>;
-  get(ownerId: string, connectionId?: string): string | null;
+  get(ownerId: string, connectionId?: string): Promise<string | null>;
+  has(ownerId: string, connectionId?: string): Promise<boolean>;
   clear(ownerId: string, connectionId?: string): Promise<void>;
-  masked(ownerId: string, connectionId?: string): string | null;
+  masked(ownerId: string, connectionId?: string): Promise<string | null>;
 }
 
 export interface PublicSnapshotBundle<T = Record<string, unknown>> {

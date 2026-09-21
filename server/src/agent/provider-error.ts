@@ -1,5 +1,6 @@
 /** Public categories only. Never forward an upstream response body to the UI. */
 export function providerErrorCode(error: unknown, fallback = "provider_request_failed"): string {
+  if (typeof error === "string" && FAILURE_MESSAGES[error]) return error;
   const explicit = error && typeof error === "object" && "code" in error ? String(error.code) : "";
   if (FAILURE_MESSAGES[explicit]) return explicit;
   const value = error instanceof Error ? `${error.name} ${error.message} ${error.cause instanceof Error ? error.cause.message : ""}` : String(error ?? "");
@@ -67,4 +68,13 @@ export function failureMessage(code: string): string {
 /** Legacy analysis failures may carry a safe stage prefix around the category. */
 export function analysisFailureCode(value: string): string {
   return Object.keys(FAILURE_MESSAGES).find(code => value.includes(code)) ?? "server_error";
+}
+
+/** Preserve only an allowlisted transport discriminator needed by retry policy. */
+export function providerDiagnosticMessage(error: unknown): string {
+  const category = providerErrorCode(error);
+  const value = error instanceof Error ? `${error.message} ${error.cause instanceof Error ? error.cause.message : ''}` : String(error ?? '');
+  const transport = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET']
+    .find(code => new RegExp(`\\b${code}\\b`, 'i').test(value));
+  return transport ? `${category}:${transport}` : category;
 }

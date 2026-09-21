@@ -5,7 +5,7 @@ import { createHmac } from "node:crypto";
 import dns from "node:dns/promises";
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, InjectOptions } from "fastify";
 import { buildApp, progressPayload } from "./app.js";
 import { createMessage, createProject, emptyProfile } from "../domain/conversation.js";
 import { newAnalysisJob } from "../domain/jobs.js";
@@ -19,6 +19,16 @@ import {
   parseGithubGatewayStartGrant,
   signGithubGatewayPayload,
 } from "../github-gateway/protocol.js";
+
+async function browserInject(app: FastifyInstance, options: InjectOptions) {
+  const payload = options.payload && typeof options.payload === 'object' && !Array.isArray(options.payload) ? { ...options.payload as Record<string, unknown> } : options.payload;
+  const headers: NonNullable<InjectOptions['headers']> & { 'x-wtr-byok-draft'?: string } = { ...options.headers };
+  if (payload && typeof payload === 'object' && 'api_key' in payload && ['/api/settings/connections', '/api/settings/connections/verify'].includes(String(options.url))) {
+    headers['x-wtr-byok-draft'] = String((payload as Record<string, unknown>).api_key);
+    delete (payload as Record<string, unknown>).api_key;
+  }
+  return app.inject({ ...options, payload, headers } as InjectOptions);
+}
 
 function config(dataDir: string): ServerConfig {
   return {
@@ -111,7 +121,7 @@ async function verifyAndAddConnection(
   headers: Record<string, string>,
   payload: Record<string, unknown>,
 ) {
-  const verified = await app.inject({
+  const verified = await browserInject(app, {
     method: "POST",
     url: "/api/settings/connections/verify",
     headers,
@@ -121,7 +131,7 @@ async function verifyAndAddConnection(
   const verification = verified.json() as { ok: boolean; verification_token?: string; message?: string };
   assert.equal(verification.ok, true, verification.message);
   assert.ok(verification.verification_token);
-  return app.inject({
+  return browserInject(app, {
     method: "POST",
     url: "/api/settings/connections",
     headers,
@@ -144,17 +154,17 @@ test("TypeScript API keeps guest project/profile contracts", async () => {
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const health = await app.inject({ method: "GET", url: "/api/health" });
+    const health = await browserInject(app, { method: "GET", url: "/api/health" });
     assert.equal(health.statusCode, 200);
     assert.deepEqual(health.json(), { ok: true, storage: "file", model_configured: false });
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     assert.equal(guest.statusCode, 200);
     const cookie = guest.headers["set-cookie"];
     assert.ok(cookie);
     const cookieHeader = Array.isArray(cookie) ? cookie[0].split(";", 1)[0] : cookie.split(";", 1)[0];
-    const me = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: cookieHeader } });
+    const me = await browserInject(app, { method: "GET", url: "/api/auth/me", headers: { cookie: cookieHeader } });
     assert.equal(me.statusCode, 200);
-    const project = await app.inject({
+    const project = await browserInject(app, {
       method: "POST",
       url: "/api/projects",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -165,11 +175,11 @@ test("TypeScript API keeps guest project/profile contracts", async () => {
     assert.equal(createdProject.project.model_override, null);
     assert.deepEqual(project.json().project.chat_limits, { max_rounds: 12, max_content_bytes: 3456 });
     const projectId = createdProject.project.project_id;
-    const refreshed = await app.inject({ method: 'GET', url: `/api/projects/${projectId}`, headers: { cookie: cookieHeader } });
+    const refreshed = await browserInject(app, { method: 'GET', url: `/api/projects/${projectId}`, headers: { cookie: cookieHeader } });
     assert.equal(refreshed.statusCode, 200);
     assert.deepEqual(refreshed.json().project.chat_limits, { max_rounds: 12, max_content_bytes: 3456 });
     assert.equal('chat_limits' in (await store.loadProject(projectId))!, false);
-    const renamed = await app.inject({
+    const renamed = await browserInject(app, {
       method: "PATCH",
       url: `/api/projects/${projectId}`,
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -177,7 +187,7 @@ test("TypeScript API keeps guest project/profile contracts", async () => {
     });
     assert.equal(renamed.statusCode, 200);
     assert.equal((renamed.json() as { title: string }).title, "新标题");
-    const profile = await app.inject({
+    const profile = await browserInject(app, {
       method: "PUT",
       url: "/api/profile",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -198,7 +208,7 @@ test("snapshot language query is read-only, validates language and preserves own
   const app = buildApp({ config: config(root), store,
     sessions: new PiSessionStore(join(root, 'pi-sessions')), memories: new PiMemoryStore(join(root, 'pi-memory')) });
   try {
-    const guest = await app.inject({ method: 'POST', url: '/api/auth/guest' });
+    const guest = await browserInject(app, { method: 'POST', url: '/api/auth/guest' });
     const cookie = guest.headers['set-cookie']!;
     const headers = { cookie: (Array.isArray(cookie) ? cookie[0]! : cookie).split(';')[0]! };
     const project = createProject(guest.json<{ owner_id: string }>().owner_id, 'https://github.com/example/repo', 'Example', 'free:test');
@@ -209,12 +219,12 @@ test("snapshot language query is read-only, validates language and preserves own
       reads.push(language); return { snapshot_id: 'same-id', display_language: language ?? 'zh-CN' } as T;
     };
     const url = `/api/projects/${project.project_id}/snapshot`;
-    const response = await app.inject({ method: 'GET', url: `${url}?display_language=en`, headers });
+    const response = await browserInject(app, { method: 'GET', url: `${url}?display_language=en`, headers });
     assert.equal(response.statusCode, 200); assert.equal(response.json().display_language, 'en');
-    assert.equal((await app.inject({ method: 'GET', url: `${url}?display_language=fr`, headers })).statusCode, 400);
+    assert.equal((await browserInject(app, { method: 'GET', url: `${url}?display_language=fr`, headers })).statusCode, 400);
     const stranger = createProject('guest:someone-else', 'https://github.com/example/repo', 'Other', 'free:test');
     await store.saveProject(stranger);
-    assert.equal((await app.inject({ method: 'GET', url: `/api/projects/${stranger.project_id}/snapshot?display_language=en`, headers })).statusCode, 404);
+    assert.equal((await browserInject(app, { method: 'GET', url: `/api/projects/${stranger.project_id}/snapshot?display_language=en`, headers })).statusCode, 404);
     assert.deepEqual(reads, ['en']);
     assert.equal((await store.loadProject(project.project_id))!.display_language, 'zh-CN');
   } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
@@ -232,7 +242,7 @@ test("reanalyze reuses an active job and the user cancellation route is gone", a
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     assert.equal(guest.statusCode, 200);
     const ownerId = (guest.json() as { owner_id: string }).owner_id;
     const cookie = guest.headers["set-cookie"];
@@ -242,14 +252,14 @@ test("reanalyze reuses an active job and the user cancellation route is gone", a
     const originalJob = newAnalysisJob(project.project_id, "analysis:reuse-api:first");
     await store.createProjectWithJob(project, originalJob);
 
-    const cancelled = await app.inject({
+    const cancelled = await browserInject(app, {
       method: "POST",
       url: `/api/projects/${project.project_id}/analysis/cancel`,
       headers: { cookie: cookieHeader },
     });
     assert.equal(cancelled.statusCode, 404);
 
-    const reanalyzed = await app.inject({
+    const reanalyzed = await browserInject(app, {
       method: "POST",
       url: `/api/projects/${project.project_id}/reanalyze`,
       headers: { cookie: cookieHeader },
@@ -259,11 +269,11 @@ test("reanalyze reuses an active job and the user cancellation route is gone", a
     assert.equal(reanalyzedBody.job_id, originalJob.job_id);
     assert.equal(reanalyzedBody.job_status, "queued");
 
-    const otherGuest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const otherGuest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const otherCookie = otherGuest.headers["set-cookie"];
     assert.ok(otherCookie);
     const otherCookieHeader = Array.isArray(otherCookie) ? otherCookie[0].split(";", 1)[0] : otherCookie.split(";", 1)[0];
-    const forbidden = await app.inject({
+    const forbidden = await browserInject(app, {
       method: "POST",
       url: `/api/projects/${project.project_id}/reanalyze`,
       headers: { cookie: otherCookieHeader },
@@ -290,7 +300,7 @@ test("health endpoint fails closed when the configured store is unavailable", as
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const health = await app.inject({ method: "GET", url: "/api/health" });
+    const health = await browserInject(app, { method: "GET", url: "/api/health" });
     assert.equal(health.statusCode, 503);
     assert.deepEqual(health.json(), { ok: false, storage: "file", model_configured: false });
     await app.close();
@@ -320,12 +330,12 @@ test("conversation requests report session_busy when the previous turn still own
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const ownerId = (guest.json() as { owner_id: string }).owner_id;
     const cookie = guest.headers["set-cookie"];
     assert.ok(cookie);
     const cookieHeader = Array.isArray(cookie) ? cookie[0].split(";", 1)[0] : cookie.split(";", 1)[0];
-    const created = await app.inject({
+    const created = await browserInject(app, {
       method: "POST",
       url: "/api/projects",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -357,7 +367,7 @@ test("conversation requests report session_busy when the previous turn still own
     });
     await holderReady;
 
-    const response = await app.inject({
+    const response = await browserInject(app, {
       method: "POST",
       url: `/api/projects/${projectId}/messages`,
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -391,11 +401,11 @@ test("assistant feedback persists immediately and keeps natural model failures o
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const cookie = guest.headers["set-cookie"];
     assert.ok(cookie);
     const cookieHeader = Array.isArray(cookie) ? cookie[0].split(";", 1)[0] : cookie.split(";", 1)[0];
-    const projectResponse = await app.inject({
+    const projectResponse = await browserInject(app, {
       method: "POST",
       url: "/api/projects",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -408,7 +418,7 @@ test("assistant feedback persists immediately and keeps natural model failures o
     project.messages.push(assistant);
     await store.saveProject(project);
 
-    const response = await app.inject({
+    const response = await browserInject(app, {
       method: "POST",
       url: `/api/projects/${projectId}/messages/${assistant.message_id}/feedback`,
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -437,12 +447,12 @@ test("learning action decline is model-free and stop confirmation commits only a
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const ownerId = (guest.json() as { owner_id: string }).owner_id;
     const cookie = guest.headers["set-cookie"];
     assert.ok(cookie);
     const cookieHeader = Array.isArray(cookie) ? cookie[0].split(";", 1)[0] : cookie.split(";", 1)[0];
-    const created = await app.inject({
+    const created = await browserInject(app, {
       method: "POST",
       url: "/api/projects",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -496,7 +506,7 @@ test("learning action decline is model-free and stop confirmation commits only a
     await store.saveProject(project);
     await store.saveSnapshot(projectId, snapshot);
 
-    const declined = await app.inject({
+    const declined = await browserInject(app, {
       method: "POST",
       url: `/api/projects/${projectId}/learning-actions/${encodeURIComponent(routeProposal.action_id)}`,
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -506,7 +516,7 @@ test("learning action decline is model-free and stop confirmation commits only a
     assert.equal((declined.json() as { action: { status: string } }).action.status, "declined");
     assert.equal((declined.json() as { state_changed: boolean }).state_changed, false);
 
-    const stopped = await app.inject({
+    const stopped = await browserInject(app, {
       method: "POST",
       url: `/api/projects/${projectId}/learning-actions/${encodeURIComponent(stopProposal.action_id)}`,
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -541,11 +551,11 @@ test("streaming chat closes with a safe error event when a run fails", async () 
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const cookie = guest.headers["set-cookie"];
     assert.ok(cookie);
     const cookieHeader = Array.isArray(cookie) ? cookie[0].split(";", 1)[0] : cookie.split(";", 1)[0];
-    const project = await app.inject({
+    const project = await browserInject(app, {
       method: "POST",
       url: "/api/projects",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -557,7 +567,7 @@ test("streaming chat closes with a safe error event when a run fails", async () 
       },
     });
     const projectId = (project.json() as { project: { project_id: string } }).project.project_id;
-    const response = await app.inject({
+    const response = await browserInject(app, {
       method: "POST",
       url: `/api/projects/${projectId}/messages/stream`,
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -645,11 +655,11 @@ test("run event replay returns events from the final trace after Last-Event-ID",
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const cookie = guest.headers["set-cookie"];
     assert.ok(cookie);
     const cookieHeader = Array.isArray(cookie) ? cookie[0].split(";", 1)[0] : cookie.split(";", 1)[0];
-    const created = await app.inject({
+    const created = await browserInject(app, {
       method: "POST",
       url: "/api/projects",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -688,7 +698,7 @@ test("run event replay returns events from the final trace after Last-Event-ID",
       throw new Error("run replay must not scan every project trace");
     };
 
-    const response = await app.inject({
+    const response = await browserInject(app, {
       method: "GET",
       url: `/api/projects/${projectId}/runs/run-replay/events`,
       headers: { cookie: cookieHeader, "last-event-id": "1" },
@@ -732,11 +742,11 @@ test("run event replay paginates complete traces and ignores arbitrary persisted
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const cookie = guest.headers["set-cookie"];
     assert.ok(cookie);
     const cookieHeader = Array.isArray(cookie) ? cookie[0].split(";", 1)[0] : cookie.split(";", 1)[0];
-    const created = await app.inject({
+    const created = await browserInject(app, {
       method: "POST",
       url: "/api/projects",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -778,7 +788,7 @@ test("run event replay paginates complete traces and ignores arbitrary persisted
       events,
     });
 
-    const first = await app.inject({
+    const first = await browserInject(app, {
       method: "GET",
       url: `/api/projects/${projectId}/runs/run-pagination/events?limit=500`,
       headers: { cookie: cookieHeader },
@@ -797,7 +807,7 @@ test("run event replay paginates complete traces and ignores arbitrary persisted
     assert.equal(firstBody.events[0]?.label, "正在理解问题");
     assert.doesNotMatch(JSON.stringify(firstBody), /DO NOT TRUST|DO NOT SHOW/);
 
-    const second = await app.inject({
+    const second = await browserInject(app, {
       method: "GET",
       url: `/api/projects/${projectId}/runs/run-pagination/events?after=${firstBody.next_sequence}&limit=500`,
       headers: { cookie: cookieHeader },
@@ -852,7 +862,7 @@ test("multiple domestic provider keys expose only their verified models and thin
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const identity = guest.json() as { owner_id: string };
     await store.saveUser(identity.owner_id, {
       ...identity,
@@ -873,7 +883,7 @@ test("multiple domestic provider keys expose only their verified models and thin
       });
       assert.equal(response.statusCode, 200);
     }
-    const settingsResponse = await app.inject({
+    const settingsResponse = await browserInject(app, {
       method: "GET",
       url: "/api/settings",
       headers: { cookie: cookieHeader },
@@ -892,7 +902,7 @@ test("multiple domestic provider keys expose only their verified models and thin
     assert.ok(selected);
     assert.equal(selected.thinking_mode, "pi");
     const selectedThinking = selected.thinking_levels.at(-1) ?? "off";
-    const choose = await app.inject({
+    const choose = await browserInject(app, {
       method: "PUT",
       url: "/api/settings/selection",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -900,7 +910,7 @@ test("multiple domestic provider keys expose only their verified models and thin
     });
     assert.equal(choose.statusCode, 200);
     assert.equal((choose.json() as { model: string }).model, selected.selector);
-    const thinkingOnly = await app.inject({
+    const thinkingOnly = await browserInject(app, {
       method: "PUT",
       url: "/api/settings/selection",
       headers: { cookie: cookieHeader, "content-type": "application/json" },
@@ -938,7 +948,7 @@ test("new connection verification does not save until the signed result is added
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const identity = guest.json() as { owner_id: string };
     await store.saveUser(identity.owner_id, {
       ...identity,
@@ -951,7 +961,7 @@ test("new connection verification does not save until the signed result is added
     const headers = { cookie: `what_the_repo_identity=${cookie}`, "content-type": "application/json" };
     const payload = { provider: "deepseek", label: "只验证不保存", api_key: "flow-key" };
 
-    const verified = await app.inject({
+    const verified = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections/verify",
       headers,
@@ -963,9 +973,9 @@ test("new connection verification does not save until the signed result is added
     assert.deepEqual(verification.models, ["gpt-5.4"]);
     assert.ok(verification.verification_token);
     assert.equal((await store.loadSettings(identity.owner_id)).connections.length, 0);
-    assert.equal(store.keys.get(identity.owner_id, "flow-key"), null);
+    assert.equal((await store.keys.get(identity.owner_id, "flow-key")), null);
 
-    const changed = await app.inject({
+    const changed = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections",
       headers,
@@ -973,9 +983,9 @@ test("new connection verification does not save until the signed result is added
     });
     assert.equal(changed.statusCode, 409);
     assert.equal((await store.loadSettings(identity.owner_id)).connections.length, 0);
-    assert.equal(store.keys.get(identity.owner_id, "flow-key"), null);
+    assert.equal((await store.keys.get(identity.owner_id, "flow-key")), null);
 
-    const added = await app.inject({
+    const added = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections",
       headers,
@@ -983,11 +993,11 @@ test("new connection verification does not save until the signed result is added
     });
     assert.equal(added.statusCode, 200);
     assert.equal((await store.loadSettings(identity.owner_id)).connections[0]?.label, "只验证不保存");
-    assert.equal(store.keys.get(identity.owner_id, "flow-key"), null, "vault lookup is keyed by connection id");
+    assert.equal((await store.keys.get(identity.owner_id, "flow-key")), null, "vault lookup is keyed by connection id");
     const saved = await store.loadSettings(identity.owner_id);
     const savedId = saved.connections[0]?.connection_id;
     assert.ok(savedId);
-    assert.equal(store.keys.get(identity.owner_id, savedId!), "flow-key");
+    assert.equal((await store.keys.get(identity.owner_id, savedId!)), "flow-key");
     await app.close();
   } finally {
     globalThis.fetch = originalFetch;
@@ -1034,7 +1044,7 @@ test("provider model discovery filters task-specific models before saving a conn
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const identity = guest.json() as { owner_id: string };
     await store.saveUser(identity.owner_id, {
       ...identity,
@@ -1047,7 +1057,7 @@ test("provider model discovery filters task-specific models before saving a conn
     const headers = { cookie: `what_the_repo_identity=${cookie}`, "content-type": "application/json" };
     const payload = { provider: "doubao", label: "模型过滤", api_key: "filter-key" };
 
-    const verified = await app.inject({
+    const verified = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections/verify",
       headers,
@@ -1059,7 +1069,7 @@ test("provider model discovery filters task-specific models before saving a conn
     assert.deepEqual(verification.models, ["doubao-pro-chat", "deepseek-vl2"]);
     assert.match(verification.message, /2 个可对话模型/u);
 
-    const added = await app.inject({
+    const added = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections",
       headers,
@@ -1100,21 +1110,21 @@ test("manual model proof supports unlisted models, rejects unverified changes an
   const app = buildApp({ config: config(root), store, sessions: new PiSessionStore(join(root, 'sessions')), memories: new PiMemoryStore(join(root, 'memory')) });
   try {
     await app.ready();
-    const guest = await app.inject({ method: 'POST', url: '/api/auth/guest' });
+    const guest = await browserInject(app, { method: 'POST', url: '/api/auth/guest' });
     const owner = guest.json();
     await store.saveUser(owner.owner_id, { ...owner, kind: 'github' });
     const headers = { cookie: `what_the_repo_identity=${cookieValue(guest.headers['set-cookie'], 'what_the_repo_identity')}` };
     const input = { provider: 'deepseek', label: 'Manual', api_key: 'valid-key', model_id: 'deepseek-unlisted-preview' };
-    const rejected = await app.inject({ method: 'POST', url: '/api/settings/connections/verify', headers, payload: { ...input, api_key: 'invalid-key' } });
+    const rejected = await browserInject(app, { method: 'POST', url: '/api/settings/connections/verify', headers, payload: { ...input, api_key: 'invalid-key' } });
     assert.equal(rejected.json().ok, false);
     assert.equal(rejected.json().verification_token, undefined);
-    const verified = await app.inject({ method: 'POST', url: '/api/settings/connections/verify', headers, payload: input });
+    const verified = await browserInject(app, { method: 'POST', url: '/api/settings/connections/verify', headers, payload: input });
     assert.equal(verified.json().ok, true, verified.body);
     assert.equal(calls, 2);
     const proof = verified.json().verification_token;
     assert.deepEqual(verified.json().models, ['deepseek-unlisted-preview']);
     assert.equal((await store.loadSettings(owner.owner_id)).connections.length, 0);
-    const add = (models: string[], override = {}) => app.inject({ method: 'POST', url: '/api/settings/connections', headers, payload: { ...input, verification_token: proof, models, ...override } });
+    const add = (models: string[], override = {}) => browserInject(app, { method: 'POST', url: '/api/settings/connections', headers, payload: { ...input, verification_token: proof, models, ...override } });
     assert.equal((await add([])).statusCode, 400);
     assert.equal((await add(['never-verified'])).statusCode, 409);
     assert.equal((await add(['deepseek-unlisted-preview'], { api_key: 'changed-key' })).statusCode, 409);
@@ -1124,17 +1134,17 @@ test("manual model proof supports unlisted models, rejects unverified changes an
     assert.equal(connection.models_source, 'verified');
     assert.equal(calls, 2, 'Saving must not call the model again');
     const id = connection.connection_id;
-    const refreshed = await app.inject({ method: 'POST', url: `/api/settings/connections/${id}/verify`, headers });
+    const refreshed = await browserInject(app, { method: 'POST', url: `/api/settings/connections/${id}/verify`, headers });
     assert.equal(refreshed.json().ok, true);
     assert.deepEqual(refreshed.json().models, ['deepseek-unlisted-preview', 'deepseek-v4-flash']);
-    const update = (models: string[]) => app.inject({ method: 'PATCH', url: `/api/settings/connections/${id}`, headers, payload: { models } });
+    const update = (models: string[]) => browserInject(app, { method: 'PATCH', url: `/api/settings/connections/${id}`, headers, payload: { models } });
     assert.equal((await update(['never-verified'])).statusCode, 409);
     assert.equal((await update([])).statusCode, 400);
     assert.equal((await update(['deepseek-unlisted-preview'])).statusCode, 200);
     discoveryFails = true;
-    const failed = await app.inject({ method: 'POST', url: `/api/settings/connections/${id}/verify`, headers });
+    const failed = await browserInject(app, { method: 'POST', url: `/api/settings/connections/${id}/verify`, headers });
     assert.equal(failed.json().ok, false);
-    const settings = await app.inject({ method: 'GET', url: '/api/settings', headers });
+    const settings = await browserInject(app, { method: 'GET', url: '/api/settings', headers });
     assert.deepEqual(settings.json().providers[0].custom_models, ['deepseek-unlisted-preview']);
     assert.equal(calls, 2);
   } finally {
@@ -1158,7 +1168,7 @@ test("refresh revokes stopped cached models without deleting keys or restoring t
   const app = buildApp({ config: config(root), store, sessions: new PiSessionStore(join(root, "sessions")), memories: new PiMemoryStore(join(root, "memory")) });
   try {
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const owner = guest.json();
     await store.saveUser(owner.owner_id, { ...owner, kind: "github" });
     const headers = { cookie: `what_the_repo_identity=${cookieValue(guest.headers["set-cookie"], "what_the_repo_identity")}` };
@@ -1170,32 +1180,32 @@ test("refresh revokes stopped cached models without deleting keys or restoring t
     await store.saveSettings(owner.owner_id, saved);
     await store.keys.set(owner.owner_id, "fake-key", "live");
     await store.keys.set(owner.owner_id, "fake-key", "retired");
-    const settings = () => app.inject({ method: "GET", url: "/api/settings", headers });
+    const settings = () => browserInject(app, { method: "GET", url: "/api/settings", headers });
     const initial = (await settings()).json();
     assert.equal(initial.providers.length, 2);
     assert.deepEqual(initial.providers.find((item: { connection_id: string }) => item.connection_id === "retired").custom_models, []);
-    assert.equal(store.keys.get(owner.owner_id, "retired"), "fake-key");
-    const refreshed = await app.inject({ method: "POST", url: "/api/settings/connections/live/verify", headers });
+    assert.equal((await store.keys.get(owner.owner_id, "retired")), "fake-key");
+    const refreshed = await browserInject(app, { method: "POST", url: "/api/settings/connections/live/verify", headers });
     assert.deepEqual(refreshed.json().models, ["unlisted-manual", "active"]);
-    const select = await app.inject({ method: "PUT", url: "/api/settings/selection", headers, payload: { model: "provider:live:removed" } });
+    const select = await browserInject(app, { method: "PUT", url: "/api/settings/selection", headers, payload: { model: "provider:live:removed" } });
     assert.equal(select.statusCode, 409);
     rows = [{ id: "active", status: "online" }, { id: "unlisted-manual", status: "discontinued" }];
-    const draft = await app.inject({ method: "POST", url: "/api/settings/connections/verify", headers, payload: { existing_connection_id: "live" } });
+    const draft = await browserInject(app, { method: "POST", url: "/api/settings/connections/verify", headers, payload: { existing_connection_id: "live" } });
     assert.deepEqual(draft.json().models, ["active"]);
     const proof = draft.json().verification_token;
-    const patch = (models: string[]) => app.inject({ method: "PATCH", url: "/api/settings/connections/live", headers, payload: { models, verification_token: proof } });
+    const patch = (models: string[]) => browserInject(app, { method: "PATCH", url: "/api/settings/connections/live", headers, payload: { models, verification_token: proof } });
     assert.equal((await patch(["active", "unlisted-manual"])).statusCode, 409);
     assert.equal((await patch(["active"])).statusCode, 200);
     fail = true;
-    assert.equal((await app.inject({ method: "POST", url: "/api/settings/connections/live/verify", headers })).json().ok, false);
+    assert.equal((await browserInject(app, { method: "POST", url: "/api/settings/connections/live/verify", headers })).json().ok, false);
     assert.deepEqual((await store.loadSettings(owner.owner_id)).connections.find(item => item.connection_id === "live")?.custom_models, ["active"]);
     fail = false;
     rows = [{ id: "active", status: "discontinued" }];
-    assert.equal((await app.inject({ method: "POST", url: "/api/settings/connections/verify", headers, payload: { existing_connection_id: "live" } })).json().ok, false);
+    assert.equal((await browserInject(app, { method: "POST", url: "/api/settings/connections/verify", headers, payload: { existing_connection_id: "live" } })).json().ok, false);
     const final = (await settings()).json();
     assert.equal(final.providers.length, 2);
     assert.deepEqual(final.providers.find((item: { connection_id: string }) => item.connection_id === "live").custom_models, []);
-    assert.equal(store.keys.get(owner.owner_id, "live"), "fake-key");
+    assert.equal((await store.keys.get(owner.owner_id, "live")), "fake-key");
     assert.equal((await patch(["active"])).statusCode, 409, "A proof issued before revocation must not revive a stopped model");
   } finally {
     await app.close();
@@ -1272,7 +1282,7 @@ test("domestic plan presets use their provider model-list endpoints", async (t) 
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const identity = guest.json() as { owner_id: string };
     await store.saveUser(identity.owner_id, {
       ...identity,
@@ -1283,7 +1293,7 @@ test("domestic plan presets use their provider model-list endpoints", async (t) 
     });
     const cookie = cookieValue(guest.headers["set-cookie"], "what_the_repo_identity");
     const headers = { cookie: `what_the_repo_identity=${cookie}`, "content-type": "application/json" };
-    const initialSettings = await app.inject({ method: "GET", url: "/api/settings", headers });
+    const initialSettings = await browserInject(app, { method: "GET", url: "/api/settings", headers });
     assert.equal(initialSettings.statusCode, 200);
     const initialPresets = (initialSettings.json() as { provider_presets: Array<Record<string, unknown>> }).provider_presets;
     assert.equal(initialPresets.some((preset) => "compat" in preset), false);
@@ -1312,7 +1322,7 @@ test("domestic plan presets use their provider model-list endpoints", async (t) 
       "hunyuan-coding-plan-cn",
     ] as const;
     for (const [index, provider] of providers.entries()) {
-      const response = await app.inject({
+      const response = await browserInject(app, {
         method: "POST",
         url: "/api/settings/connections/verify",
         headers,
@@ -1341,7 +1351,7 @@ test("custom Provider settings reject private endpoints before storing the user 
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const identity = guest.json() as { owner_id: string };
     await store.saveUser(identity.owner_id, {
       ...identity,
@@ -1351,7 +1361,7 @@ test("custom Provider settings reject private endpoints before storing the user 
       kind: "github",
     });
     const cookie = cookieValue(guest.headers["set-cookie"], "what_the_repo_identity");
-    const response = await app.inject({
+    const response = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections",
       headers: { cookie: `what_the_repo_identity=${cookie}`, "content-type": "application/json" },
@@ -1364,7 +1374,7 @@ test("custom Provider settings reject private endpoints before storing the user 
       },
     });
     assert.equal(response.statusCode, 400);
-    assert.equal(store.keys.get(identity.owner_id, "private-endpoint"), null);
+    assert.equal((await store.keys.get(identity.owner_id, "private-endpoint")), null);
     await app.close();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1398,7 +1408,7 @@ test("domestic Provider settings require an upstream model list and reject conne
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const identity = guest.json() as { owner_id: string };
     await store.saveUser(identity.owner_id, {
       ...identity,
@@ -1410,7 +1420,7 @@ test("domestic Provider settings require an upstream model list and reject conne
     const cookie = cookieValue(guest.headers["set-cookie"], "what_the_repo_identity");
     const headers = { cookie: `what_the_repo_identity=${cookie}`, "content-type": "application/json" };
 
-    const missingModel = await app.inject({
+    const missingModel = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections/verify",
       headers,
@@ -1423,9 +1433,9 @@ test("domestic Provider settings require an upstream model list and reject conne
     });
     assert.equal(missingModel.statusCode, 200);
     assert.equal((missingModel.json() as { ok: boolean }).ok, false);
-    assert.equal(store.keys.get(identity.owner_id, "doubao-missing-model"), null);
+    assert.equal((await store.keys.get(identity.owner_id, "doubao-missing-model")), null);
 
-    const unverifiedAdd = await app.inject({
+    const unverifiedAdd = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections",
       headers,
@@ -1437,7 +1447,7 @@ test("domestic Provider settings require an upstream model list and reject conne
       },
     });
     assert.equal(unverifiedAdd.statusCode, 409);
-    assert.equal(store.keys.get(identity.owner_id, "doubao-missing-model"), null);
+    assert.equal((await store.keys.get(identity.owner_id, "doubao-missing-model")), null);
 
     await store.saveSettings(identity.owner_id, {
       model: "provider:stale-connection:hunyuan-pro",
@@ -1454,7 +1464,7 @@ test("domestic Provider settings require an upstream model list and reject conne
       }],
     });
     await store.keys.set(identity.owner_id, "stale-key", "stale-connection");
-    const cleaned = await app.inject({
+    const cleaned = await browserInject(app, {
       method: "GET",
       url: "/api/settings",
       headers: { cookie: `what_the_repo_identity=${cookie}` },
@@ -1466,10 +1476,10 @@ test("domestic Provider settings require an upstream model list and reject conne
     };
     assert.equal(cleanedSettings.providers.some((row) => row.connection_id === "stale-connection"), false);
     assert.equal(cleanedSettings.model_options.some((row) => row.connection_id === "stale-connection"), false);
-    assert.equal(store.keys.get(identity.owner_id, "stale-connection"), null);
+    assert.equal((await store.keys.get(identity.owner_id, "stale-connection")), null);
     assert.equal((await store.loadSettings(identity.owner_id)).connections.some((row) => row.connection_id === "stale-connection"), false);
 
-    const retiredProvider = await app.inject({
+    const retiredProvider = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections",
       headers,
@@ -1480,7 +1490,7 @@ test("domestic Provider settings require an upstream model list and reject conne
       },
     });
     assert.equal(retiredProvider.statusCode, 400);
-    assert.equal(store.keys.get(identity.owner_id, "retired-zai"), null);
+    assert.equal((await store.keys.get(identity.owner_id, "retired-zai")), null);
 
     const created = await verifyAndAddConnection(app, headers, {
       provider: "deepseek",
@@ -1503,7 +1513,7 @@ test("domestic Provider settings require an upstream model list and reject conne
     assert.ok(createdConnection);
     const verifiedAt = createdConnection?.last_verified_at;
     assert.ok(verifiedAt);
-    const savedWithoutChanges = await app.inject({
+    const savedWithoutChanges = await browserInject(app, {
       method: "PATCH",
       url: "/api/settings/connections/domestic-switch",
       headers,
@@ -1513,7 +1523,7 @@ test("domestic Provider settings require an upstream model list and reject conne
       },
     });
     assert.equal(savedWithoutChanges.statusCode, 405);
-    const afterRejectedPatch = await app.inject({
+    const afterRejectedPatch = await browserInject(app, {
       method: "GET",
       url: "/api/settings",
       headers: { cookie: `what_the_repo_identity=${cookie}` },
@@ -1528,7 +1538,7 @@ test("domestic Provider settings require an upstream model list and reject conne
     assert.deepEqual(unchangedConnection?.custom_models, ["deepseek-live-model"]);
     assert.ok(unchangedSettings.model_options.some((option) => option.connection_id === "domestic-switch"));
 
-    const duplicateName = await app.inject({
+    const duplicateName = await browserInject(app, {
       method: "POST",
       url: "/api/settings/connections/verify",
       headers,
@@ -1541,7 +1551,7 @@ test("domestic Provider settings require an upstream model list and reject conne
     assert.equal(duplicateName.statusCode, 409);
     assert.match(String((duplicateName.json() as { detail?: string }).detail), /连接名称已存在/);
 
-    const rejectedPut = await app.inject({
+    const rejectedPut = await browserInject(app, {
       method: "PUT",
       url: "/api/settings",
       headers,
@@ -1551,7 +1561,7 @@ test("domestic Provider settings require an upstream model list and reject conne
         api_key: "replacement-key",
       },
     });
-    assert.equal(rejectedPut.statusCode, 405);
+    assert.equal(rejectedPut.statusCode, 400);
     await app.close();
   } finally {
     globalThis.fetch = originalFetch;
@@ -1572,7 +1582,7 @@ test("profile summary endpoints sanitize legacy and edited content", async () =>
       memories,
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const identity = guest.json() as { owner_id: string };
     await store.saveUser(identity.owner_id, {
       ...identity,
@@ -1589,13 +1599,13 @@ test("profile summary endpoints sanitize legacy and edited content", async () =>
     const cookie = cookieValue(guest.headers["set-cookie"], "what_the_repo_identity");
     const headers = { cookie: `what_the_repo_identity=${cookie}`, "content-type": "application/json" };
 
-    const loaded = await app.inject({ method: "GET", url: "/api/profile", headers });
+    const loaded = await browserInject(app, { method: "GET", url: "/api/profile", headers });
     assert.equal(loaded.statusCode, 200);
     const loadedProfile = (loaded.json() as { profile: { memory_summary: string; memory_summary_mode: string } }).profile;
     assert.equal(loadedProfile.memory_summary, "旧 [已隐藏]；[已隐藏]");
     assert.equal(loadedProfile.memory_summary_mode, "edited");
 
-    const edited = await app.inject({
+    const edited = await browserInject(app, {
       method: "PUT",
       url: "/api/profile/summary",
       headers,
@@ -1606,7 +1616,7 @@ test("profile summary endpoints sanitize legacy and edited content", async () =>
     assert.equal(editedProfile.memory_summary, "保留 [已隐藏] 和 [已隐藏]");
     assert.equal(editedProfile.memory_summary_mode, "edited");
 
-    const regenerated = await app.inject({
+    const regenerated = await browserInject(app, {
       method: "POST",
       url: "/api/profile/summary/regenerate",
       headers: { cookie: headers.cookie },
@@ -1637,9 +1647,9 @@ test("GitHub OAuth gateway accepts a bound identity ticket and rejects its repla
       throw new Error("gateway OAuth must not contact GitHub from the application API");
     }) as typeof fetch;
 
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const guestIdentity = cookieValue(guest.headers["set-cookie"], "what_the_repo_identity");
-    const started = await app.inject({
+    const started = await browserInject(app, {
       method: "GET",
       url: "/api/auth/github/start?return_to=%2Fworkspace",
       headers: { cookie: `what_the_repo_identity=${guestIdentity}` },
@@ -1671,7 +1681,7 @@ test("GitHub OAuth gateway accepts a bound identity ticket and rejects its repla
     const callbackHeaders = {
       cookie: `what_the_repo_identity=${guestIdentity}; what_the_repo_oauth_state=${stateCookie}`,
     };
-    const callback = await app.inject({
+    const callback = await browserInject(app, {
       method: "GET",
       url: `/api/auth/github/callback?ticket=${encodeURIComponent(ticket)}`,
       headers: callbackHeaders,
@@ -1679,14 +1689,14 @@ test("GitHub OAuth gateway accepts a bound identity ticket and rejects its repla
     assert.equal(callback.statusCode, 302);
     assert.equal(new URL(String(callback.headers.location)).pathname, "/workspace");
     const githubIdentity = cookieValue(callback.headers["set-cookie"], "what_the_repo_identity");
-    const me = await app.inject({
+    const me = await browserInject(app, {
       method: "GET",
       url: "/api/auth/me",
       headers: { cookie: `what_the_repo_identity=${githubIdentity}` },
     });
     assert.equal((me.json() as { owner_id: string }).owner_id, "github:42");
 
-    const replay = await app.inject({
+    const replay = await browserInject(app, {
       method: "GET",
       url: `/api/auth/github/callback?ticket=${encodeURIComponent(ticket)}`,
       headers: callbackHeaders,
@@ -1713,7 +1723,7 @@ test("GitHub OAuth gateway rejects a ticket issued for another browser nonce", a
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const started = await app.inject({ method: "GET", url: "/api/auth/github/start" });
+    const started = await browserInject(app, { method: "GET", url: "/api/auth/github/start" });
     const stateCookie = cookieValue(started.headers["set-cookie"], "what_the_repo_oauth_state");
     const ticket = signGithubGatewayPayload({
       version: 1,
@@ -1725,7 +1735,7 @@ test("GitHub OAuth gateway rejects a ticket issued for another browser nonce", a
       expires_at: Date.now() + 60_000,
       github: { id: 42, login: "octocat", name: null, avatar_url: null },
     }, configured.githubGatewaySharedSecret!);
-    const callback = await app.inject({
+    const callback = await browserInject(app, {
       method: "GET",
       url: `/api/auth/github/callback?ticket=${encodeURIComponent(ticket)}`,
       headers: { cookie: `what_the_repo_oauth_state=${stateCookie}` },
@@ -1750,9 +1760,9 @@ test("GitHub OAuth rejects a tampered state cookie before exchanging the code", 
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const identityCookie = cookieValue(guest.headers["set-cookie"], "what_the_repo_identity");
-    const started = await app.inject({
+    const started = await browserInject(app, {
       method: "GET",
       url: "/api/auth/github/start?return_to=%2Fprojects",
       headers: { cookie: `what_the_repo_identity=${identityCookie}` },
@@ -1763,7 +1773,7 @@ test("GitHub OAuth rejects a tampered state cookie before exchanging the code", 
     assert.ok(nonce);
     const stateCookie = cookieValue(started.headers["set-cookie"], "what_the_repo_oauth_state");
     const tampered = `${stateCookie.slice(0, -1)}${stateCookie.endsWith("a") ? "b" : "a"}`;
-    const callback = await app.inject({
+    const callback = await browserInject(app, {
       method: "GET",
       url: `/api/auth/github/callback?code=test-code&state=${encodeURIComponent(nonce!)}`,
       headers: {
@@ -1791,7 +1801,7 @@ test("GitHub OAuth rejects an expired signed state cookie", async () => {
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const identityCookie = cookieValue(guest.headers["set-cookie"], "what_the_repo_identity");
     const ownerId = (guest.json() as { owner_id: string }).owner_id;
     const nonce = "01234567-89ab-cdef-0123-456789abcdef";
@@ -1801,7 +1811,7 @@ test("GitHub OAuth rejects an expired signed state cookie", async () => {
       return_to: "/",
       issued_at: Date.now() - 11 * 60 * 1000,
     }, "test-session-secret");
-    const callback = await app.inject({
+    const callback = await browserInject(app, {
       method: "GET",
       url: `/api/auth/github/callback?code=test-code&state=${nonce}`,
       headers: {
@@ -1828,11 +1838,11 @@ test("GitHub OAuth rejects a callback made with a different guest owner", async 
       memories: new PiMemoryStore(join(root, "pi-memory")),
     });
     await app.ready();
-    const first = await app.inject({ method: "POST", url: "/api/auth/guest" });
-    const second = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const first = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
+    const second = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const firstIdentity = cookieValue(first.headers["set-cookie"], "what_the_repo_identity");
     const secondIdentity = cookieValue(second.headers["set-cookie"], "what_the_repo_identity");
-    const started = await app.inject({
+    const started = await browserInject(app, {
       method: "GET",
       url: "/api/auth/github/start",
       headers: { cookie: `what_the_repo_identity=${firstIdentity}` },
@@ -1841,7 +1851,7 @@ test("GitHub OAuth rejects a callback made with a different guest owner", async 
     const nonce = location.searchParams.get("state");
     const stateCookie = cookieValue(started.headers["set-cookie"], "what_the_repo_oauth_state");
     assert.ok(nonce);
-    const callback = await app.inject({
+    const callback = await browserInject(app, {
       method: "GET",
       url: `/api/auth/github/callback?code=test-code&state=${encodeURIComponent(nonce!)}`,
       headers: {
@@ -1875,12 +1885,12 @@ test("GitHub OAuth maps an unavailable token endpoint to a retryable 502", async
       }
       throw new Error(`unexpected fetch: ${String(input)}`);
     }) as typeof fetch;
-    const started = await app.inject({ method: "GET", url: "/api/auth/github/start" });
+    const started = await browserInject(app, { method: "GET", url: "/api/auth/github/start" });
     const location = new URL(String(started.headers.location));
     const nonce = location.searchParams.get("state");
     const stateCookie = cookieValue(started.headers["set-cookie"], "what_the_repo_oauth_state");
     assert.ok(nonce);
-    const callback = await app.inject({
+    const callback = await browserInject(app, {
       method: "GET",
       url: `/api/auth/github/callback?code=test-code&state=${encodeURIComponent(nonce!)}`,
       headers: { cookie: `what_the_repo_oauth_state=${stateCookie}` },
@@ -1914,11 +1924,11 @@ test("GitHub OAuth merges guest-owned records and rebuilds the Pi session", asyn
     });
     await app.ready();
 
-    const guest = await app.inject({ method: "POST", url: "/api/auth/guest" });
+    const guest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     assert.equal(guest.statusCode, 200);
     const sourceOwnerId = (guest.json() as { owner_id: string }).owner_id;
     const sourceIdentity = cookieValue(guest.headers["set-cookie"], "what_the_repo_identity");
-    const projectResponse = await app.inject({
+    const projectResponse = await browserInject(app, {
       method: "POST",
       url: "/api/projects",
       headers: { cookie: `what_the_repo_identity=${sourceIdentity}`, "content-type": "application/json" },
@@ -2051,7 +2061,7 @@ test("GitHub OAuth merges guest-owned records and rebuilds the Pi session", asyn
       throw new Error(`unexpected fetch: ${url}`);
     }) as typeof fetch;
 
-    const started = await app.inject({
+    const started = await browserInject(app, {
       method: "GET",
       url: "/api/auth/github/start?return_to=%2Fworkspace",
       headers: { cookie: `what_the_repo_identity=${sourceIdentity}` },
@@ -2061,7 +2071,7 @@ test("GitHub OAuth merges guest-owned records and rebuilds the Pi session", asyn
     const nonce = location.searchParams.get("state");
     assert.ok(nonce);
     const stateCookie = cookieValue(started.headers["set-cookie"], "what_the_repo_oauth_state");
-    const callback = await app.inject({
+    const callback = await browserInject(app, {
       method: "GET",
       url: `/api/auth/github/callback?code=test-code&state=${encodeURIComponent(nonce!)}`,
       headers: {
@@ -2083,8 +2093,8 @@ test("GitHub OAuth merges guest-owned records and rebuilds the Pi session", asyn
     const mergedMemories = await memories.list(targetOwnerId);
     assert.equal(mergedMemories.find((row) => row.key === "shared")?.value, "目标版本");
     assert.equal(mergedMemories.some((row) => row.key === "source-only"), true);
-    assert.equal(store.keys.get(targetOwnerId), "target-provider-key");
-    assert.equal(store.keys.get(sourceOwnerId), null);
+    assert.equal((await store.keys.get(targetOwnerId)), "target-provider-key");
+    assert.equal((await store.keys.get(sourceOwnerId)), null);
     assert.deepEqual(await memories.list(sourceOwnerId), []);
     assert.deepEqual(await sessions.listOwnerSessions(sourceOwnerId), []);
     const newSessionId = projectSessionId(targetOwnerId, projectId, project.analysis.snapshot_id);
@@ -2106,7 +2116,7 @@ test("GitHub OAuth merges guest-owned records and rebuilds the Pi session", asyn
     assert.deepEqual(feedback[0]?.owner_ids, [targetOwnerId]);
     assert.equal(await store.loadUser(sourceOwnerId), null);
 
-    const me = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: `what_the_repo_identity=${targetIdentity}` } });
+    const me = await browserInject(app, { method: "GET", url: "/api/auth/me", headers: { cookie: `what_the_repo_identity=${targetIdentity}` } });
     assert.equal(me.statusCode, 200);
     const mergeSummary = (me.json() as { merge_summary: { projects: number; messages: number; memories: number; sessions: number } | null }).merge_summary;
     assert.deepEqual(mergeSummary && {
@@ -2115,11 +2125,49 @@ test("GitHub OAuth merges guest-owned records and rebuilds the Pi session", asyn
       memories: mergeSummary.memories,
       sessions: mergeSummary.sessions,
     }, { projects: 1, messages: 2, memories: 1, sessions: 1 });
-    const consumed = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: `what_the_repo_identity=${targetIdentity}` } });
+    const consumed = await browserInject(app, { method: "GET", url: "/api/auth/me", headers: { cookie: `what_the_repo_identity=${targetIdentity}` } });
     assert.equal((consumed.json() as { merge_summary: unknown }).merge_summary, null);
     await app.close();
   } finally {
     globalThis.fetch = originalFetch;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('managed BYOK survives new API requests and replaces keys only after explicit verified save', async t => {
+  t.mock.method(dns, 'lookup', async () => [{ address: '93.184.216.34', family: 4 }]);
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ data: [{ id: 'gpt-5.4' }] }));
+  const root = await mkdtemp(join(tmpdir(), 'wtr-managed-key-api-'));
+  const store = new FileStore(root); await store.init();
+  const app = buildApp({ config: config(root), store, sessions: new PiSessionStore(join(root, 'sessions')),
+    memories: new PiMemoryStore(join(root, 'memories')) });
+  const oldKey = 'managed-old-canary-1', newKey = 'managed-new-canary-2';
+  try {
+    const guest = await app.inject({ method: 'POST', url: '/api/auth/guest' });
+    const owner = guest.json(); await store.saveUser(owner.owner_id, { ...owner, kind: 'github' });
+    const headers = { cookie: 'what_the_repo_identity=' + cookieValue(guest.headers['set-cookie'], 'what_the_repo_identity') };
+    const added = await verifyAndAddConnection(app, headers, {
+      connection_id: 'managed', provider: 'deepseek', label: 'Managed', api_key: oldKey,
+    });
+    assert.equal(added.statusCode, 200);
+    const refreshed = await app.inject({ method: 'GET', url: '/api/settings', headers });
+    assert.equal(refreshed.json().has_api_key, true);
+    assert.equal(refreshed.json().api_key_storage, 'server-encrypted');
+    assert.equal(refreshed.body.includes(oldKey), false);
+    const verified = await app.inject({ method: 'POST', url: '/api/settings/connections/verify',
+      headers: { ...headers, 'x-wtr-byok-draft': newKey }, payload: { existing_connection_id: 'managed' } });
+    assert.equal(verified.json().ok, true);
+    assert.equal(await store.keys.get(owner.owner_id, 'managed'), oldKey, 'verification is not a key update');
+    const rejected = await app.inject({ method: 'PUT', url: '/api/settings/connections/managed/key',
+      headers: { ...headers, 'x-wtr-byok-draft': newKey }, payload: { models: ['gpt-5.4'] } });
+    assert.equal(rejected.statusCode, 409); assert.equal(await store.keys.get(owner.owner_id, 'managed'), oldKey);
+    const saved = await app.inject({ method: 'PUT', url: '/api/settings/connections/managed/key',
+      headers: { ...headers, 'x-wtr-byok-draft': newKey },
+      payload: { verification_token: verified.json().verification_token, models: verified.json().models } });
+    assert.equal(saved.statusCode, 200); assert.equal(saved.body.includes(newKey), false);
+    assert.equal(await store.keys.get(owner.owner_id, 'managed'), newKey);
+    assert.equal(JSON.stringify(await store.loadSettings(owner.owner_id)).includes(newKey), false);
+    const cleared = await app.inject({ method: 'DELETE', url: '/api/settings/key', headers });
+    assert.equal(cleared.statusCode, 200); assert.equal(await store.keys.get(owner.owner_id, 'managed'), null);
+  } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
 });

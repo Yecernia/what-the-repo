@@ -89,8 +89,8 @@ test('free chat reserves and sends its configured output ceiling, including thin
     config.freeProviderId = deploymentId;
     const input = { config, store: {} as ProductStore, owner: { kind: 'guest' as const, owner_id: 'guest:wire' },
       settings: { thinking_level: 'high' } as ProviderSettings, selectedModel: FREE_SELECTOR };
-    const original = resolveProvider(input)!;
-    const chat = resolveChatProvider(input)!;
+    const original = (await resolveProvider(input))!;
+    const chat = (await resolveChatProvider(input))!;
     assert.equal(original.maxOutputTokens, 384_000);
     assert.equal(chat.maxOutputTokens, 32_768);
     const runtime = createModelRuntime(chat);
@@ -101,7 +101,7 @@ test('free chat reserves and sends its configured output ceiling, including thin
       assert.equal(result.stopReason, 'stop');
       assert.equal(limits.at(-1), 32_768);
     }
-    assert.equal(resolveProvider(input)!.maxOutputTokens, 384_000);
+    assert.equal((await resolveProvider(input))!.maxOutputTokens, 384_000);
   }
   for (const value of ['0', '1023', '1.5', '1048577', 'NaN']) assert.throws(() => loadConfig({
     WHAT_THE_REPO_LOAD_LOCAL_ENV: '0', NODE_ENV: 'test', WHAT_THE_REPO_FREE_CHAT_MAX_OUTPUT_TOKENS: value,

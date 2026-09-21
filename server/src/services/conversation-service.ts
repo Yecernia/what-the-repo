@@ -294,8 +294,8 @@ export class ConversationService {
 
     const config = await runtimeConfig(this.config, this.store);
     const settings = await this.store.loadSettings(input.owner.owner_id);
-    const selectedModel = reserved.model_override || effectiveModelSelector(config, this.store, input.owner, settings);
-    const selectedProvider = resolveChatProvider({
+    const selectedModel = reserved.model_override || settings.model || await effectiveModelSelector(config, this.store, input.owner, settings);
+    const selectedProvider = await resolveChatProvider({
       config: config,
       store: this.store,
       owner: input.owner,
@@ -402,8 +402,8 @@ export class ConversationService {
     const originalStudy = structuredClone(project.study);
     const config = await runtimeConfig(this.config, this.store);
     const settings = await this.store.loadSettings(input.owner.owner_id);
-    const selectedModel = project.model_override || effectiveModelSelector(config, this.store, input.owner, settings);
-    const provider = resolveChatProvider({
+    const selectedModel = project.model_override || settings.model || await effectiveModelSelector(config, this.store, input.owner, settings);
+    const provider = await resolveChatProvider({
       config: config,
       store: this.store,
       owner: input.owner,
@@ -680,7 +680,7 @@ export class ConversationService {
             } : {}),
           })),
       });
-      if (assistantMessage.context_eligible) {
+      if (assistantMessage.context_eligible && modelRuntime.attribution?.payer !== "user") {
         this.memoryMaintenance.schedule({
           ownerId: input.owner.owner_id,
           projectId: input.projectId,

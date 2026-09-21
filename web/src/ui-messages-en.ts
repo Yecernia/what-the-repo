@@ -2,6 +2,11 @@
 import { detailedAnalysisStages } from './analysis-stage-catalog';
 
 export const englishMessages: Record<string, string> = {
+  "替换 API Key（可选）": "Replace API key (optional)",
+  "留空继续使用已保存的 Key": "Leave blank to keep the saved key",
+  "请填写有效的 API Key。": "Enter a valid API key.",
+  "API Key 只能通过 HTTPS 发送。": "API keys must be sent over HTTPS.",
+  "Key 在服务端加密保存，刷新或更换设备无需重新输入；不会返回原文或写入日志。": "Keys are encrypted on the server and remain available across refreshes and devices. Raw keys are not returned or logged.",
   "适应视图": "Fit view",
   "缩小": "Zoom out",
   "放大": "Zoom in",

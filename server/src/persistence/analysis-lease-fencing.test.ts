@@ -24,7 +24,7 @@ test("Postgres tail replacement deletes only the removed answer inside the proje
       return { rows: [], rowCount: 0 };
     }, release() {},
   };
-  const store = new PostgresStore({ databaseUrl: "postgresql://unused", root, migrationsRoot: join(root, "migrations"), encryptionSecret: "test-edit-only" });
+  const store = new PostgresStore({ databaseUrl: "postgresql://unused", root, migrationsRoot: join(root, "migrations"), encryptionSecret: "test-edit-only-secret" });
   const originalPool = store.pool;
   (store as unknown as { pool: unknown }).pool = { connect: async () => client };
   try {

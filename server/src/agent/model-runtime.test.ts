@@ -88,7 +88,7 @@ test("a known builtin model applies explicit token limits to requests and budget
 
 test("DeepSeek free access preserves the same endpoint compatibility and thinking mapping", async () => {
   type Input = Parameters<typeof resolveProvider>[0];
-  const config = resolveProvider({
+  const config = await resolveProvider({
     config: { freeProviderBaseUrl: "https://api.deepseek.com", freeProviderModel: "deepseek-v4-flash", freeProviderApiKey: "test-key" } as Input["config"],
     store: {} as Input["store"], owner: { kind: "guest", owner_id: "test-guest" },
     settings: normalizeSettings({ thinking_level: "medium" }), selectedModel: FREE_SELECTOR,
@@ -817,7 +817,7 @@ test("GA DeepSeek Flash analysis and saved free selector preserve the real model
   type Input = Parameters<typeof resolveProvider>[0];
   const analysis = resolveDeploymentProvider({ providerId: "deepseek", baseUrl: "https://api.deepseek.com",
     model: "deepseek-flash", apiKey: "test-key", connectionId: "analysis-deployment" });
-  const free = resolveProvider({
+  const free = await resolveProvider({
     config: { freeProviderBaseUrl: "https://api.deepseek.com", freeProviderModel: "deepseek-flash", freeProviderApiKey: "test-key" } as Input["config"],
     store: {} as Input["store"], owner: { kind: "guest", owner_id: "test-guest" },
     settings: normalizeSettings({ thinking_level: "medium", model: "free:deepseek-v4-flash" }), selectedModel: "free:deepseek-v4-flash",

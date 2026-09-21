@@ -412,7 +412,7 @@ test('publication drains admitted object writes before reporting an upload failu
     return originalPut(key, body);
   };
   const store = new PostgresStore({ root, databaseUrl: 'postgresql://unused',
-    migrationsRoot: join(root, 'migrations'), encryptionSecret: 'drain-test-only',
+    migrationsRoot: join(root, 'migrations'), encryptionSecret: 'drain-test-only-secret',
     objectAdmissionStore: new LocalPermitStore(), objectStore: objects });
   const originalPool = store.pool;
   (store as unknown as { pool: unknown }).pool = { connect: async () => ({

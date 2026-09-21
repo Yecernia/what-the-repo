@@ -1085,7 +1085,7 @@ function SettingsDialog({
     setConnectionVerification(current => ({ ...current, status: 'loading', message: modelId ? t('正在验证模型…') : t("正在验证并拉取模型列表…") }));
     try {
       const r = await apiClient.verifyProviderConnection({
-        ...(connectionDialog === 'models' ? { existing_connection_id: connectionId } : {
+        ...(connectionDialog === 'models' ? { existing_connection_id: connectionId, ...(apiKey.trim() ? { api_key: apiKey } : {}) } : {
           provider: providerId, label: connectionLabel || undefined, base_url: baseUrl || undefined, api_key: apiKey,
         }),
         model_id: modelId,
@@ -1118,13 +1118,15 @@ function SettingsDialog({
       setConnectionVerification({ status: 'error', message: t("请先填写 API Key"), models: [] });
       return;
     }
-    if (!connectionVerification.models.length || (connectionDialog === 'new' && (!connectionVerificationToken || verifiedConnectionInputKey !== connectionInputKey))) {
+    if (!connectionVerification.models.length || ((connectionDialog === 'new' || apiKey.trim()) && (!connectionVerificationToken || verifiedConnectionInputKey !== connectionInputKey))) {
       setConnectionVerification(current => ({ ...current, status: 'error', message: t("请先获取或验证模型。") }));
       return;
     }
     setLoading(true);
     try {
-      const s = connectionDialog === 'models' ? await apiClient.updateProviderModels(connectionId, {
+      const s = connectionDialog === 'models' && apiKey.trim() ? await apiClient.replaceProviderKey(connectionId, {
+        api_key: apiKey, verification_token: connectionVerificationToken, models: connectionVerification.models,
+      }) : connectionDialog === 'models' ? await apiClient.updateProviderModels(connectionId, {
         models: connectionVerification.models, verification_token: connectionVerificationToken || undefined,
       }) : await apiClient.addProviderConnection({
         provider: providerId,
@@ -1200,6 +1202,7 @@ function SettingsDialog({
 
   function closeConnectionDialog() {
     if (loading) return;
+    setApiKey('');
     setConnectionDialog(null);
     setConnectionVerification({ status: 'idle', message: '', models: [] });
     setConnectionVerificationToken('');
@@ -1400,10 +1403,12 @@ function SettingsDialog({
               )}
               <div className="settings-two-columns">
                 <div><label className="form-label">{t("配置名称")}</label><input className="form-input" disabled={loading} value={connectionLabel} onChange={e => { invalidateNewConnectionVerification(); setConnectionLabel(e.target.value); }} placeholder={t("例如：我的 DeepSeek")} /></div>
-                <div><label className="form-label">API Key</label><input className="form-input" disabled={loading} type="password" value={apiKey} onChange={e => { invalidateNewConnectionVerification(); setApiKey(e.target.value); }} placeholder={t("填入 API Key")} /></div>
+                <div><label className="form-label">API Key</label><input className="form-input" disabled={loading} type="password" autoComplete="off" value={apiKey} onChange={e => { invalidateNewConnectionVerification(); setApiKey(e.target.value); }} placeholder={t("填入 API Key")} /></div>
               </div>
               {providerId === 'custom' && <div><label className="form-label">{t("接口地址")}</label><input className="form-input" disabled={loading} value={baseUrl} onChange={e => { invalidateNewConnectionVerification(); setBaseUrl(e.target.value); }} placeholder="https://api.example.com/v1" /></div>}
               </>}
+              {connectionDialog === 'models' && <div><label className="form-label">{t('替换 API Key（可选）')}</label><input className="form-input" type="password" autoComplete="off" value={apiKey} disabled={loading} onChange={e => { invalidateNewConnectionVerification(); setApiKey(e.target.value); }} placeholder={t('留空继续使用已保存的 Key')} /></div>}
+              <p className="settings-status-note">{t('Key 在服务端加密保存，刷新或更换设备无需重新输入；不会返回原文或写入日志。')}</p>
               <ProviderModelList models={connectionVerification.models} busy={loading}
                 canVerify={connectionDialog === 'models' || Boolean(apiKey.trim() && (providerId !== 'custom' || baseUrl.trim()))}
                 onFetch={async () => { await verifyNewConnection(); }} onVerify={verifyNewConnection}

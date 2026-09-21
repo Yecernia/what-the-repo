@@ -204,26 +204,8 @@ function bytesSha256(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export class KeyVault implements ProviderKeyVault {
-  private readonly keys = new Map<string, string>();
-  async init(): Promise<void> {}
-  async set(ownerId: string, value: string, connectionId = "legacy"): Promise<void> {
-    const id = `${ownerId}\0${connectionId}`;
-    const key = value.trim();
-    if (key) this.keys.set(id, key); else this.keys.delete(id);
-  }
-  get(ownerId: string, connectionId = "legacy"): string | null {
-    return this.keys.get(`${ownerId}\0${connectionId}`) ?? null;
-  }
-  async clear(ownerId: string, connectionId = "legacy"): Promise<void> {
-    this.keys.delete(`${ownerId}\0${connectionId}`);
-  }
-  masked(ownerId: string, connectionId = "legacy"): string | null {
-    const key = this.get(ownerId, connectionId);
-    if (!key) return null;
-    return key.length <= 8 ? "*".repeat(key.length) : `${key.slice(0, 4)}********${key.slice(-4)}`;
-  }
-}
+export { TransientKeyVault as KeyVault } from "./encrypted-key-vault.js";
+import { TransientKeyVault } from "./encrypted-key-vault.js";
 
 export class FileStore implements ProductStore {
   private readonly admissionContext = new AsyncLocalStorage<boolean>();
@@ -244,7 +226,7 @@ export class FileStore implements ProductStore {
   constructor(
     readonly root: string,
     private readonly quotaLimits: QuotaLimits = DEFAULT_QUOTA_LIMITS,
-    keys: ProviderKeyVault = new KeyVault(),
+    keys: ProviderKeyVault = new TransientKeyVault(),
     protected readonly analysisLimits: AnalysisLimits = DEFAULT_ANALYSIS_LIMITS,
   ) {
     this.keys = keys;
@@ -2115,17 +2097,6 @@ export class FileStore implements ProductStore {
       await this.saveProfile(input.targetOwnerId, mergedProfile);
       const sourceSettings = await this.loadSettings(input.sourceOwnerId);
       const targetSettings = await this.loadSettings(input.targetOwnerId);
-      const connectionIds = new Set([
-        "legacy",
-        ...sourceSettings.connections.map((connection) => connection.connection_id),
-        ...targetSettings.connections.map((connection) => connection.connection_id),
-      ]);
-      for (const connectionId of connectionIds) {
-        const sourceKey = this.keys.get(input.sourceOwnerId, connectionId);
-        if (sourceKey && !this.keys.get(input.targetOwnerId, connectionId)) {
-          await this.keys.set(input.targetOwnerId, sourceKey, connectionId);
-        }
-      }
       await this.saveSettings(input.targetOwnerId, {
         ...targetSettings,
         model: targetSettings.model || sourceSettings.model,

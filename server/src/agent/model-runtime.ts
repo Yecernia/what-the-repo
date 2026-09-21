@@ -1,4 +1,6 @@
 import { performance } from "node:perf_hooks";
+import { credentialSafeEvents } from "./credential-stream.js";
+import { providerDiagnosticMessage } from "./provider-error.js";
 import {
   createModels,
   createProvider,
@@ -271,7 +273,7 @@ function customProvider(config: ProviderConfig, fetch: FetchFunction): Provider 
 }
 
 export function createModelRuntime(config: ProviderConfig, options: ModelRuntimeOptions = {}): PiModelRuntime {
-  const publicFetch = config.builtin ? undefined : createPublicFetch();
+  const publicFetch = !config.builtin || options.attribution?.payer === "user" ? createPublicFetch() : undefined;
   const provider = config.builtin
     ? configuredBuiltinProvider(config)
     : customProvider(config, publicFetch as FetchFunction);
@@ -578,7 +580,7 @@ export function streamWithProviderPermit(
           return replacement;
         } } : {}),
       });
-      for await (const event of source) {
+      for await (const event of credentialSafeEvents(source, [runtime.apiKey ?? "", streamOptions?.apiKey ?? ""])) {
         if (diagnostic
           && (event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta")
           && event.delta.length > 0) {
@@ -604,7 +606,7 @@ export function streamWithProviderPermit(
       outcome = streamOptions?.signal?.aborted ? "aborted" : "error";
       if (diagnostic) diagnostic.completionReason = outcome;
       usageStatus = outcome === "aborted" ? "cancelled" : "failed";
-      const message = error instanceof Error ? error.message : "provider_gate_failed";
+      const message = providerDiagnosticMessage(error);
       const assistant: AssistantMessage = {
         role: "assistant",
         content: [],

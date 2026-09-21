@@ -290,12 +290,12 @@ export function builtinModelOptions(
   });
 }
 
-export function availableModels(
+export async function availableModels(
   config: ServerConfig,
   store: ProductStore,
   owner: ProviderOwner,
   settings: ProviderSettings,
-): AvailableModelOption[] {
+): Promise<AvailableModelOption[]> {
   const rows: AvailableModelOption[] = [];
   if (config.freeProviderBaseUrl && config.freeProviderModel && config.freeProviderApiKey) {
     const catalogModel = freeCatalogModel(config);
@@ -312,7 +312,7 @@ export function availableModels(
   if (owner.kind === "guest") return rows;
   for (const connection of settings.connections) {
     if (!CONFIGURABLE_PROVIDER_IDS.includes(connection.provider)) continue;
-    if (!store.keys.get(owner.owner_id, connection.connection_id)) continue;
+    if (!await store.keys.has(owner.owner_id, connection.connection_id)) continue;
     rows.push(...builtinModelOptions(connection));
   }
   return rows;
@@ -321,14 +321,14 @@ export function availableModels(
 /** Return a selector that still belongs to a configured connection.
  * Older settings stored a bare model id; translate that shape when possible
  * so a provider/plan change cannot leave an unusable selector behind. */
-export function effectiveModelSelector(
+export async function effectiveModelSelector(
   config: ServerConfig,
   store: ProductStore,
   owner: ProviderOwner,
   settings: ProviderSettings,
   requested = settings.model,
-): string {
-  const options = availableModels(config, store, owner, settings);
+): Promise<string> {
+  const options = await availableModels(config, store, owner, settings);
   const candidate = typeof requested === "string" ? requested.trim() : "";
   if (candidate === FREE_SELECTOR && options.some((option) => option.selector === FREE_SELECTOR)) {
     return FREE_SELECTOR;
@@ -350,13 +350,13 @@ function connectionForSelector(
   return connection ? { connection, modelId: decoded.modelId } : null;
 }
 
-export function resolveProvider(input: {
+export async function resolveProvider(input: {
   config: ServerConfig;
   store: ProductStore;
   owner: ProviderOwner;
   settings: ProviderSettings;
   selectedModel: string;
-}): ProviderConfig | null {
+}): Promise<ProviderConfig | null> {
   const { config, store, owner, settings, selectedModel } = input;
   if (selectedModel === FREE_SELECTOR || owner.kind === "guest") {
     if (config.freeProviderId) {
@@ -390,7 +390,7 @@ export function resolveProvider(input: {
   const resolved = connectionForSelector(settings, selectedModel);
   if (!resolved) return null;
   const { connection, modelId } = resolved;
-  const apiKey = store.keys.get(owner.owner_id, connection.connection_id);
+  const apiKey = await store.keys.get(owner.owner_id, connection.connection_id);
   if (!apiKey) return null;
   const model = catalogModelsForConnection(connection)
     .find((candidate) => candidate.id === modelId);
@@ -402,7 +402,7 @@ export function resolveProvider(input: {
   const baseUrl = connection.provider === "custom"
     ? connection.base_url ?? ""
     : preset.base_url || model.baseUrl;
-  if (connection.provider === "custom" && !safePublicHttpsUrl(baseUrl)) return null;
+  if (connection.provider === "custom" && (!safePublicHttpsUrl(baseUrl) || new URL(baseUrl).search || new URL(baseUrl).hash)) return null;
   return {
     provider: connection.provider,
     adapterProvider: adapterProvider ?? undefined,
@@ -432,8 +432,8 @@ export function resolveProvider(input: {
 
 /** Bound the actual free-chat request, so cost reservations use the same ceiling.
  * Analysis and user-funded connections retain their selected model's allowance. */
-export function resolveChatProvider(input: Parameters<typeof resolveProvider>[0]): ProviderConfig | null {
-  const provider = resolveProvider(input);
+export async function resolveChatProvider(input: Parameters<typeof resolveProvider>[0]): Promise<ProviderConfig | null> {
+  const provider = await resolveProvider(input);
   if (!provider || provider.modelSelector !== FREE_SELECTOR) return provider;
   return { ...provider, maxOutputTokens: Math.min(provider.maxOutputTokens ?? 16_384,
     input.config.freeChatMaxOutputTokens ?? 32_768) };
@@ -457,7 +457,7 @@ export async function resolveProjectProvider(
     store,
     owner,
     settings,
-    selectedModel: project.model_override || effectiveModelSelector(config, store, owner, settings),
+    selectedModel: project.model_override || await effectiveModelSelector(config, store, owner, settings),
   });
 }
 

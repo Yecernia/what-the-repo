@@ -98,19 +98,8 @@ function entriesForCompaction(messages: AgentMessage[]): Entry[] {
   });
 }
 
-function diagnosticError(error: unknown): { name: string; message: string } {
-  const value = error as { name?: unknown; message?: unknown } | null;
-  const name = typeof value?.name === "string" ? value.name.slice(0, 80) : "unknown";
-  const message = typeof value?.message === "string" ? value.message : String(error ?? "unknown");
-  return {
-    name,
-    // Keep diagnostics useful without allowing prompts, source, or credentials
-    // to become part of the local service log.
-    message: message
-      .replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]")
-      .replace(/(?:api[_-]?key|token|secret)[=:][^\s,;]+/gi, "$1=[redacted]")
-      .slice(0, 300),
-  };
+function diagnosticError(error: unknown): { code: string } {
+  return { code: providerErrorCode(error, "server_error") };
 }
 
 export class PiConversationRuntime {

@@ -481,3 +481,35 @@ test("a pause requested before provider startup is honored", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('BYOK echoed by a provider never reaches console diagnostics, events or saved Pi sessions', async (t) => {
+  const { readFile, readdir } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'wtr-byok-runtime-'));
+  const key = 'never-persist-sentinel-BYOK-714';
+  const logs: unknown[][] = [];
+  t.mock.method(console, 'error', (...args: unknown[]) => { logs.push(args); });
+  try {
+    const sessions = new PiSessionStore(root);
+    const runtime = new PiConversationRuntime(sessions);
+    const faux = fauxProvider({ provider: 'byok-security-test' });
+    const models = createModels(); models.setProvider(faux.provider);
+    const modelRuntime: PiModelRuntime = { models, model: faux.getModel() as Model<Api>, apiKey: key };
+    faux.setResponses([fauxAssistantMessage('upstream echoed ' + key + ' safely')]);
+    const result = await runtime.run(options(modelRuntime, 'ordinary-request'));
+    assert.equal(result.text.includes(key), false);
+    assert.ok(result.text.includes('[redacted]'));
+    assert.equal(JSON.stringify(result).includes(key), false);
+    faux.setResponses([{ ...fauxAssistantMessage(''), stopReason: 'error', errorMessage: '401 invalid key ' + key }]);
+    const failed = await runtime.run(options(modelRuntime, 'ordinary-error'));
+    assert.equal(failed.stopReason, 'provider_authentication_failed');
+    assert.equal(JSON.stringify(logs).includes(key), false);
+    const scan = async (path: string): Promise<void> => {
+      for (const entry of await readdir(path, { withFileTypes: true })) {
+        const file = join(path, entry.name);
+        if (entry.isDirectory()) await scan(file);
+        else assert.equal((await readFile(file)).includes(Buffer.from(key)), false, 'session must not contain the credential');
+      }
+    };
+    await scan(root);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

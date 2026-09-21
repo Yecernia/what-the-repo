@@ -194,6 +194,18 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Keys are sent only while adding, verifying or replacing a credential. */
+function credentialRequest(body: Record<string, unknown>): RequestInit {
+  const { api_key: raw, ...metadata } = body;
+  const key = typeof raw === 'string' ? raw.trim() : '';
+  if (raw !== undefined && (!key || key.length > 500 || !/^[\x21-\x7e]+$/.test(key))) throw new ApiError(t('请填写有效的 API Key。'), 400, 'provider_key_required');
+  if (key) {
+    const url = new URL(BASE || '/', window.location.href);
+    if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new ApiError(t('API Key 只能通过 HTTPS 发送。'), 400);
+  }
+  return { body: JSON.stringify(metadata), headers: key ? { 'x-wtr-byok-draft': key } : {}, redirect: 'error', cache: 'no-store' };
+}
+
 const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
 const STREAM_RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000] as const;
 
@@ -494,7 +506,7 @@ export const apiClient = {
     verification_token: string;
     models?: string[];
   }) => api<import('./types').SettingsResponse>('/api/settings/connections', {
-    method: 'POST', body: JSON.stringify(body),
+    method: 'POST', ...credentialRequest(body),
   }),
   verifyProviderConnection: (body: {
     provider?: string;
@@ -512,8 +524,12 @@ export const apiClient = {
     message: string;
     verification_token?: string;
   }>('/api/settings/connections/verify', {
-    method: 'POST', body: JSON.stringify(body),
+    method: 'POST', ...credentialRequest(body),
   }),
+  replaceProviderKey: (connectionId: string, body: { api_key: string; verification_token: string; models: string[] }) =>
+    api<import('./types').SettingsResponse>('/api/settings/connections/' + encodeURIComponent(connectionId) + '/key', {
+      method: 'PUT', ...credentialRequest(body),
+    }),
   updateProviderModels: (connectionId: string, body: { models: string[]; verification_token?: string }) =>
     api<import('./types').SettingsResponse>(`/api/settings/connections/${encodeURIComponent(connectionId)}`, {
       method: 'PATCH', body: JSON.stringify(body),

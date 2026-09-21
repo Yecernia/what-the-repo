@@ -133,6 +133,8 @@ export class MemoryMaintenance {
     projectId: string;
     modelRuntime: PiModelRuntime;
   }): void {
+    // BYOK belongs only to the initiating request, never to background work.
+    if (input.modelRuntime.attribution?.payer === "user") return;
     void this.mutex.runExclusive(input.ownerId, async () => {
       const project = await this.store.loadProject(input.projectId, input.ownerId);
       if (!project) return;

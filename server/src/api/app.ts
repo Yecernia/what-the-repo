@@ -65,6 +65,10 @@ import {
   signGithubGatewayPayload,
 } from "../github-gateway/protocol.js";
 
+import { registerByokBoundary } from "./byok-boundary.js";
+import { bindByokOwner, byokDraftKey } from "../security/byok-credentials.js";
+import { credentialRedactor } from "../security/secret-redaction.js";
+
 const IDENTITY_COOKIE = "what_the_repo_identity";
 const OAUTH_STATE_COOKIE = "what_the_repo_oauth_state";
 const OWNER_TOUCH_INTERVAL_MS = 60_000;
@@ -122,11 +126,11 @@ interface GithubRequestInit {
 
 function networkErrorDetails(error: unknown): { name: string; code: string | null; causeCode: string | null } {
   const value = error as { name?: unknown; code?: unknown; cause?: { code?: unknown } } | null;
-  return {
-    name: typeof value?.name === "string" ? value.name : "unknown",
-    code: typeof value?.code === "string" ? value.code : null,
-    causeCode: typeof value?.cause?.code === "string" ? value.cause.code : null,
-  };
+  const codes = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN',
+    'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET']);
+  const safeCode = (code: unknown) => typeof code === 'string' && codes.has(code) ? code : null;
+  return { name: ['Error', 'TypeError', 'AbortError', 'TimeoutError', 'SyntaxError', 'RangeError'].includes(String(value?.name))
+    ? String(value?.name) : 'unknown', code: safeCode(value?.code), causeCode: safeCode(value?.cause?.code) };
 }
 
 function githubUnavailable(stage: string, error: unknown, elapsedMs: number): Error & { statusCode: number; code: string } {
@@ -289,8 +293,8 @@ function decodeProviderVerificationTicket(
   }
 }
 
-function providerKeyDigest(apiKey: string): string {
-  return createHash("sha256").update(apiKey, "utf8").digest("hex");
+function providerKeyDigest(apiKey: string, config: ServerConfig): string {
+  return createHmac("sha256", providerVerificationSecret(config)).update("byok-verification\0" + apiKey, "utf8").digest("hex");
 }
 
 function projectSummary(project: Project): Record<string, unknown> {
@@ -408,15 +412,15 @@ async function discardUnverifiedConnections(
   await Promise.all(removed.map((connection) => store.keys.clear(owner.owner_id, connection.connection_id)));
   const selected = decodeModelSelector(settings.model);
   if (selected && removedIds.has(selected.connectionId)) settings.model = "";
-  settings.model = effectiveModelSelector(config, store, owner, settings, settings.model);
+  settings.model = await effectiveModelSelector(config, store, owner, settings, settings.model);
   await store.saveSettings(owner.owner_id, settings);
 }
 
 async function settingsResponse(config: ServerConfig, store: ProductStore, owner: Owner, settings: ProviderSettings): Promise<Record<string, unknown>> {
   config = await runtimeConfig(config, store);
-  const options = availableModels(config, store, owner, settings);
-  const selected = effectiveModelSelector(config, store, owner, settings);
-  const personalConnections = settings.connections.map((connection) => ({
+  const options = await availableModels(config, store, owner, settings);
+  const selected = await effectiveModelSelector(config, store, owner, settings);
+  const personalConnections = await Promise.all(settings.connections.map(async (connection) => ({
     ...connection,
     base_url: connection.base_url ?? presetBaseUrl(connection.provider),
     custom_models: hasTrustedProviderModels(connection)
@@ -424,25 +428,26 @@ async function settingsResponse(config: ServerConfig, store: ProductStore, owner
       : [],
     models_source: hasTrustedProviderModels(connection) ? connection.models_source : null,
     retired: !CONFIGURABLE_PROVIDER_IDS.includes(connection.provider),
-    has_api_key: Boolean(store.keys.get(owner.owner_id, connection.connection_id)),
-    api_key_masked: store.keys.masked(owner.owner_id, connection.connection_id),
+    has_api_key: await store.keys.has(owner.owner_id, connection.connection_id),
+    api_key_masked: await store.keys.masked(owner.owner_id, connection.connection_id),
     verify_error: safeProviderVerificationMessage(connection.verify_error),
-  }));
+  })));
   const selectedConnection = decodeModelSelector(selected)?.connectionId;
   const selectedKey = selectedConnection
-    ? store.keys.get(owner.owner_id, selectedConnection)
+    ? await store.keys.has(owner.owner_id, selectedConnection)
     : null;
   return {
     model: selected,
     thinking_level: settings.thinking_level,
     api_key_management: "interactive",
+    api_key_storage: "server-encrypted",
     model_options: options,
     available_models: options.map((option) => option.selector),
     providers: personalConnections,
     provider_presets: publicProviderPresets(),
     selected_model_option: options.find((option) => option.selector === selected) ?? null,
     has_api_key: Boolean(selectedKey),
-    api_key_masked: selectedConnection ? store.keys.masked(owner.owner_id, selectedConnection) : null,
+    api_key_masked: selectedConnection ? await store.keys.masked(owner.owner_id, selectedConnection) : null,
     last_verified_at: selectedConnection
       ? settings.connections.find((connection) => connection.connection_id === selectedConnection)?.last_verified_at ?? null
       : null,
@@ -475,6 +480,7 @@ async function ownerFromRequest(request: FastifyRequest, store: ProductStore, co
 async function requiredOwner(request: FastifyRequest, store: ProductStore, config: ServerConfig): Promise<Owner> {
   const owner = await ownerFromRequest(request, store, config);
   if (!owner) throw httpError(401, "请先登录或选择访客体验");
+  bindByokOwner(owner.owner_id);
   return owner;
 }
 
@@ -509,7 +515,7 @@ function providerEndpoint(
 
 function customProviderBaseUrl(value: string): string {
   const normalized = safePublicHttpsUrl(value);
-  if (!normalized) throw httpError(400, "自定义 Provider 的 Base URL 必须是 HTTPS 公网地址");
+  if (!normalized || new URL(value).search || new URL(value).hash) throw httpError(400, "自定义 Provider 的 Base URL 必须是 HTTPS 公网地址，且不能包含查询参数或片段");
   return normalized;
 }
 
@@ -539,7 +545,7 @@ function parseConnectionInput(body: Record<string, unknown>): ConnectionInput {
   const baseUrl = provider === "custom"
     ? customProviderBaseUrl(textField(body, "base_url", 500))
     : null;
-  const apiKey = textField(body, "api_key", 500);
+  const apiKey = byokDraftKey();
   if (!apiKey) throw httpError(400, "请填写 API Key");
   return {
     connection: {
@@ -569,7 +575,7 @@ function matchingVerificationTicket(
   return ticket && ticket.owner_id === owner.owner_id && ticket.provider === connection.provider
     && ticket.label === connection.label && ticket.base_url === connection.base_url
     && (!connection.last_verified_at || ticket.issued_at >= Date.parse(connection.last_verified_at))
-    && ticket.key_digest === providerKeyDigest(apiKey) ? ticket : null;
+    && ticket.key_digest === providerKeyDigest(apiKey, config) ? ticket : null;
 }
 
 function selectedVerifiedModels(raw: unknown, allowed: string[], allowEmpty = false): string[] {
@@ -659,6 +665,8 @@ async function verifyProvider(
     }
     const discovered = discoverProviderModels(payload, { provider, base_url: baseUrl });
     if (!discovered.valid) return { ok: false, models: [], supported: true, message: "验证失败：Provider 模型列表格式不可用" };
+    const redactor = credentialRedactor([apiKey]);
+    if (redactor.contains(JSON.stringify(discovered))) return { ok: false, models: [], supported: true, message: "验证失败：Provider 模型列表格式不可用" };
     models = discovered.models;
     if (!models.length) {
       return {
@@ -710,14 +718,14 @@ async function discoverConnectionModels(
   };
 }
 
-function applyVerificationResult(
+async function applyVerificationResult(
   config: ServerConfig,
   store: ProductStore,
   owner: Owner,
   settings: ProviderSettings,
   connection: ProviderConnectionSettings,
   result: ProviderVerificationResult,
-): void {
+): Promise<void> {
   // Network/format failures have no authoritative negative metadata. A valid
   // all-retired response, however, must invalidate cached manual models too.
   if (result.excludedModels === undefined) return;
@@ -727,7 +735,7 @@ function applyVerificationResult(
   result.ok = result.models.length > 0;
   if (result.ok) result.message = `验证成功，已读取 ${result.models.length} 个可对话模型`;
   setConnectionModels(connection, result.models, connection.manually_verified_models ?? []);
-  settings.model = effectiveModelSelector(config, store, owner, settings, settings.model);
+  settings.model = await effectiveModelSelector(config, store, owner, settings, settings.model);
 }
 
 export function progressPayload(event: PiRunEvent): Record<string, unknown> {
@@ -963,6 +971,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     taskQueue: dependencies.taskQueue,
   });
   const app = Fastify({ logger: false });
+  registerByokBoundary(app);
   const requestStartedAt = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {
     requestStartedAt.set(request, performance.now());
@@ -1369,7 +1378,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const existing = existingId ? settings.connections.find(item => item.connection_id === existingId) : undefined;
     if (existingId && !existing) throw httpError(404, "模型连接不存在");
     const { connection, apiKey } = existing
-      ? { connection: existing, apiKey: store.keys.get(owner.owner_id, existing.connection_id) ?? "" }
+      ? { connection: existing, apiKey: byokDraftKey() || await store.keys.get(owner.owner_id, existing.connection_id) || "" }
       : parseConnectionInput(body);
     if (!apiKey) throw httpError(400, "请先填写 API Key");
     if (!existing && hasConnectionLabel(settings, connection.label)) {
@@ -1403,11 +1412,11 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
         await connectionMutationMutex.runExclusive(owner.owner_id, async () => {
           const currentSettings = await store.loadSettings(owner.owner_id);
           const current = currentSettings.connections.find(item => item.connection_id === existing.connection_id);
-          if (!current || store.keys.get(owner.owner_id, current.connection_id) !== apiKey) return;
+          if (!current || await store.keys.get(owner.owner_id, current.connection_id) !== apiKey) return;
           const retained = mergeDiscoveredModelIds({ models: [], excludedModels: verification.excludedModels }, current.custom_models, current);
           if (retained.length === current.custom_models.length) return;
           setConnectionModels(current, retained, current.manually_verified_models ?? []);
-          currentSettings.model = effectiveModelSelector(config, store, owner, currentSettings, currentSettings.model);
+          currentSettings.model = await effectiveModelSelector(config, store, owner, currentSettings, currentSettings.model);
           await store.saveSettings(owner.owner_id, currentSettings);
         });
       }
@@ -1434,7 +1443,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
         provider: connection.provider,
         label: connection.label,
         base_url: connection.base_url,
-        key_digest: providerKeyDigest(apiKey),
+        key_digest: providerKeyDigest(apiKey, config),
         issued_at: Date.now(),
         models: verification.models,
         manual_models: manual.filter(id => verification.models.includes(id)),
@@ -1467,9 +1476,29 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       }
       connection.connection_id = connectionId;
       setConnectionModels(connection, models, ticket.manual_models);
+      if (settings.connections.length >= 16) throw httpError(400, "模型连接最多保留 16 个");
       settings.connections.push(connection);
       await store.keys.set(owner.owner_id, apiKey, connectionId);
-      settings.model = effectiveModelSelector(config, store, owner, settings, settings.model);
+      settings.model = await effectiveModelSelector(config, store, owner, settings, settings.model);
+      await store.saveSettings(owner.owner_id, settings);
+      return { ...await settingsResponse(config, store, owner, settings), created_connection_id: connectionId };
+    });
+  });
+  app.put("/api/settings/connections/:connectionId/key", async (request: RequestWithBody) => {
+    const owner = await requiredOwner(request, store, config);
+    if (owner.kind !== 'github') throw httpError(403, '访客不能管理个人 API Key');
+    const { connectionId } = request.params as { connectionId: string };
+    const body = objectBody(request), apiKey = byokDraftKey();
+    if (!apiKey) throw httpError(400, '请填写 API Key');
+    return connectionMutationMutex.runExclusive(owner.owner_id, async () => {
+      const settings = await store.loadSettings(owner.owner_id);
+      const connection = settings.connections.find(row => row.connection_id === connectionId);
+      if (!connection) throw httpError(404, '模型连接不存在');
+      const ticket = matchingVerificationTicket(body, connection, apiKey, owner, config);
+      if (!ticket) throw httpError(409, '请先获取或验证模型', 'connection_verification_required');
+      const models = selectedVerifiedModels(body.models, ticket.models);
+      setConnectionModels(connection, models, ticket.manual_models);
+      await store.keys.set(owner.owner_id, apiKey, connectionId);
       await store.saveSettings(owner.owner_id, settings);
       return settingsResponse(config, store, owner, settings);
     });
@@ -1486,7 +1515,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       const settings = await store.loadSettings(owner.owner_id);
       const connection = settings.connections.find(item => item.connection_id === connectionId);
       if (!connection) throw httpError(404, "模型连接不存在");
-      const apiKey = store.keys.get(owner.owner_id, connectionId) ?? "";
+      const apiKey = await store.keys.get(owner.owner_id, connectionId) ?? "";
       const ticket = matchingVerificationTicket(body, connection, apiKey, owner, config);
       // A fresh proof is the authoritative draft. Do not union excluded old
       // models back into it via the stored list.
@@ -1494,7 +1523,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
         ?? (hasTrustedProviderModels(connection) ? connection.custom_models : []), connection);
       const models = selectedVerifiedModels(body.models, allowed);
       setConnectionModels(connection, models, [...(connection.manually_verified_models ?? []), ...(ticket?.manual_models ?? [])]);
-      settings.model = effectiveModelSelector(config, store, owner, settings, settings.model);
+      settings.model = await effectiveModelSelector(config, store, owner, settings, settings.model);
       await store.saveSettings(owner.owner_id, settings);
       return settingsResponse(config, store, owner, settings);
     });
@@ -1510,7 +1539,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     if (settings.connections.length === before) throw httpError(404, "模型连接不存在");
     await store.keys.clear(owner.owner_id, connectionId);
     if (decodeModelSelector(settings.model)?.connectionId === connectionId) settings.model = "";
-    settings.model = effectiveModelSelector(config, store, owner, settings, settings.model);
+    settings.model = await effectiveModelSelector(config, store, owner, settings, settings.model);
     await store.saveSettings(owner.owner_id, settings);
     return reply.send(await settingsResponse(config, store, owner, settings));
   });
@@ -1519,7 +1548,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const body = objectBody(request);
     const settings = await store.loadSettings(owner.owner_id);
     await discardUnverifiedConnections(owner, store, settings, config);
-    const options = availableModels(config, store, owner, settings);
+    const options = await availableModels(config, store, owner, settings);
     const requestedModel = textField(body, "model", 500);
     const model = requestedModel
       || settings.model
@@ -1555,7 +1584,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       || settings.connections[0]?.connection_id
       || "legacy";
     const connection = settings.connections.find((item) => item.connection_id === connectionId);
-    const apiKey = store.keys.get(owner.owner_id, connectionId);
+    const apiKey = await store.keys.get(owner.owner_id, connectionId);
     if (!apiKey) throw httpError(400, "请先填写 API Key");
     try {
       if (!connection) throw new Error("connection_not_found");
@@ -1563,7 +1592,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
         connection,
         apiKey,
       );
-      applyVerificationResult(config, store, owner, settings, connection, result);
+      await applyVerificationResult(config, store, owner, settings, connection, result);
       await store.saveSettings(owner.owner_id, settings);
       return {
         ok: result.ok,
@@ -1573,7 +1602,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       };
     } catch {
       if (connection) {
-        applyVerificationResult(config, store, owner, settings, connection, {
+        await applyVerificationResult(config, store, owner, settings, connection, {
           ok: false,
           models: [],
           supported: false,
@@ -1596,13 +1625,13 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const settings = await store.loadSettings(owner.owner_id);
     const connection = settings.connections.find((item) => item.connection_id === connectionId);
     if (!connection) throw httpError(404, "模型连接不存在");
-    const apiKey = store.keys.get(owner.owner_id, connectionId);
+    const apiKey = await store.keys.get(owner.owner_id, connectionId);
     if (!apiKey) throw httpError(400, "请先填写 API Key");
     const result = await discoverConnectionModels(
       connection,
       apiKey,
     );
-    applyVerificationResult(config, store, owner, settings, connection, result);
+    await applyVerificationResult(config, store, owner, settings, connection, result);
     await store.saveSettings(owner.owner_id, settings);
     return { ...result, models_endpoint_supported: result.supported, settings: await settingsResponse(config, store, owner, settings) };
   });
