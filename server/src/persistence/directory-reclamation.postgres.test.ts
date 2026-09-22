@@ -131,3 +131,55 @@ test('current and in-flight directories survive reclamation, and maintenance loc
     } finally {await other.query('ROLLBACK');other.release();}
   });
 });
+
+test('finalization rollback retains work and restores pooled planner policy', {skip:!databaseUrl,timeout:60_000}, async () => {
+  await fixture(async (store,key,oldId,base) => {
+    await store.savePublicSnapshot({...base,analysis:{fact_graph:{nodes:[],edges:[]}}});
+    const worker=new Pool({connectionString:databaseUrl!,max:1});
+    const settings=`SELECT current_setting('enable_seqscan') AS seq,current_setting('enable_bitmapscan') AS bitmap,
+      current_setting('plan_cache_mode') AS cache,current_setting('jit') AS jit,
+      current_setting('enable_indexonlyscan') AS idxonly,current_setting('statement_timeout') AS timeout`;
+    const name='finalize_fail_'+key.slice(0,12);
+    try {
+      while ((await store.pool.query('SELECT table_index FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0].table_index<9) {
+        assert.equal((await reclaimSnapshotDirectoryBatch(worker,{batchRows:5000})).status,'progress');
+      }
+      const before=(await worker.query(settings)).rows[0];
+      await store.pool.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        RAISE EXCEPTION 'finalization-fault-private-text'; END $$;
+        CREATE TRIGGER ${name} AFTER DELETE ON snapshot_directory_generations FOR EACH ROW
+        WHEN(OLD.directory_id=${oldId}) EXECUTE FUNCTION ${name}()`);
+      try {
+        const result=await reclaimSnapshotDirectoryBatch(worker);
+        assert.equal(result.status,'retry'); assert.equal(result.errorCode,'P0001');
+        const row=(await store.pool.query('SELECT * FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0];
+        assert.equal(row.table_index,9); assert.equal(row.rows_deleted,'2005');
+        assert.equal(row.attempts,1); assert.doesNotMatch(JSON.stringify(row),/private-text/);
+        assert.deepEqual((await worker.query(settings)).rows[0],before);
+      } finally {
+        await store.pool.query(`DROP TRIGGER ${name} ON snapshot_directory_generations; DROP FUNCTION ${name}()`);
+      }
+      await store.pool.query('UPDATE snapshot_directory_reclamation SET available_at=clock_timestamp() WHERE directory_id=$1',[oldId]);
+      assert.equal((await reclaimSnapshotDirectoryBatch(worker)).status,'finished');
+      assert.deepEqual((await worker.query(settings)).rows[0],before);
+    } finally {await worker.end();}
+  });
+});
+
+test('finalization refuses unreviewed foreign keys instead of running unbounded cascades', {skip:!databaseUrl,timeout:60_000}, async () => {
+  await fixture(async (store,key,oldId,base) => {
+    await store.savePublicSnapshot({...base,analysis:{fact_graph:{nodes:[],edges:[]}}});
+    while ((await store.pool.query('SELECT table_index FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0].table_index<9) {
+      assert.equal((await reclaimSnapshotDirectoryBatch(store.pool,{batchRows:5000})).status,'progress');
+    }
+    const name='unexpected_reference_'+key.slice(0,12);
+    await store.pool.query(`CREATE TABLE ${name}(generation bigint REFERENCES snapshot_directory_generations(directory_id) ON DELETE CASCADE)`);
+    try {
+      const result=await reclaimSnapshotDirectoryBatch(store.pool);
+      assert.equal(result.status,'retry'); assert.equal(result.errorCode,'directory_finalization_schema_mismatch');
+      assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE directory_id=$1',[oldId])).rowCount,1);
+    } finally {await store.pool.query(`DROP TABLE ${name}`);}
+    await store.pool.query('UPDATE snapshot_directory_reclamation SET available_at=clock_timestamp() WHERE directory_id=$1',[oldId]);
+    assert.equal((await reclaimSnapshotDirectoryBatch(store.pool)).status,'finished');
+  });
+});

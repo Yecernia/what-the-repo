@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { prepareDirectoryFinalization } from './directory-reclamation-finalization.js';
 
 export const RECLAMATION_TABLES = [
   'evidence_links', 'projection_edges', 'projection_nodes', 'overlay_memberships',
@@ -21,7 +22,7 @@ const limit = (value: number | undefined, fallback: number, max: number) =>
   Number.isFinite(value) ? Math.max(1, Math.min(max, Math.floor(value!))) : fallback;
 const errorCode = (value: unknown) => {
   const code = (value as { code?: unknown })?.code;
-  return typeof code === 'string' && ['57014','55P03','40P01','23503','23514','P0001'].includes(code) ? code : 'database_error';
+  return typeof code === 'string' && ['57014','55P03','40P01','23503','23514','P0001','directory_finalization_schema_mismatch'].includes(code) ? code : 'database_error';
 };
 
 /** Only explicitly queued retired IDs are eligible; each call is one bounded transaction. */
@@ -86,6 +87,7 @@ export async function reclaimSnapshotDirectoryBatch(pool: Pick<Pool,'connect'>,
           attempts=0,last_error_code=NULL,available_at=clock_timestamp(),updated_at=clock_timestamp() WHERE directory_id=$1`,
           [work.directory_id,complete ? work.table_index+1 : work.table_index,deletedRows,complete ? null : batch.cursor]);
       } else {
+        await prepareDirectoryFinalization(client, RECLAMATION_TABLES);
         // Never let a final cascading delete hide an unexpectedly nonempty table.
         const checks = RECLAMATION_TABLES.map(name => `EXISTS(SELECT 1 FROM snapshot_directory_${name} WHERE directory_id=$1)`);
         const remaining = await client.query('SELECT ' + checks.join(' OR ') + ' AS remaining', [work.directory_id]);
