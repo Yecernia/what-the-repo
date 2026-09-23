@@ -61,6 +61,8 @@ import {
 } from "../domain/snapshot-query.js";
 import {
   assembleAnalysisPayload,
+  assembleIncrementalBasePayload,
+  visitAnalysisFactGraph,
   defaultAnalysisChunkKey,
   prepareStoredAnalysisPayload,
   mergePreparedAnalysisCache,
@@ -75,6 +77,7 @@ import {
   type AnalysisLeaseFence,
   type ProductStore,
   type PublicSnapshotBundle,
+  type IncrementalSnapshotBase,
   type ProviderKeyVault,
   type QuotaLimits,
   type RepositoryIdentityInput,
@@ -342,14 +345,16 @@ export class FileStore implements ProductStore {
   }
 
   private async loadAnalysisPayload(directory: string, value: unknown): Promise<unknown> {
-    return assembleAnalysisPayload(value, async (key) => {
+    return assembleAnalysisPayload(value, key => this.readAnalysisChunk(directory, key));
+  }
+
+  private async readAnalysisChunk(directory: string, key: string): Promise<Uint8Array | null> {
       try {
         return await readFile(this.analysisChunkPath(directory, key));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
         throw error;
       }
-    });
   }
 
   private async replaceSourceSnapshotWithAnalysisLease(
@@ -936,6 +941,16 @@ export class FileStore implements ProductStore {
     analysisConfigDigest: string;
     excludeCommitSha?: string;
   }): Promise<PublicSnapshotBundle<T> | null> {
+    const key = await this.latestPublicSnapshotKey(input);
+    return key ? this.loadPublicSnapshot<T>(key) : null;
+  }
+
+  private async latestPublicSnapshotKey(input: {
+    repository: string;
+    analyzerBundleVersion: string;
+    analysisConfigDigest: string;
+    excludeCommitSha?: string;
+  }): Promise<string | null> {
     const { readdir } = await import("node:fs/promises");
     const names = await readdir(this.dirs.publicSnapshots).catch(() => [] as string[]);
     let selected: { publicKey: string; createdAt: string } | null = null;
@@ -954,7 +969,35 @@ export class FileStore implements ProductStore {
       const createdAt = typeof metadata?.created_at === "string" ? metadata.created_at : "";
       if (!selected || createdAt > selected.createdAt) selected = { publicKey, createdAt };
     }
-    return selected ? this.loadPublicSnapshot<T>(selected.publicKey) : null;
+    return selected?.publicKey ?? null;
+  }
+
+  async loadLatestPublicSnapshotIncrementalBase(input: {
+    repository: string;
+    analyzerBundleVersion: string;
+    analysisConfigDigest: string;
+    excludeCommitSha?: string;
+  }): Promise<IncrementalSnapshotBase | null> {
+    const key = await this.latestPublicSnapshotKey(input);
+    if (!key) return null;
+    const directory = join(this.dirs.publicSnapshots, safePublicKey(key));
+    const [metadata, stored] = await Promise.all([
+      readJson<Record<string, unknown>>(join(directory, "metadata.json")),
+      readJson<unknown>(join(directory, "analysis.json")),
+    ]);
+    if (!metadata || stored === null) throw new Error("public_snapshot_payload_missing");
+    const base = await assembleIncrementalBasePayload(stored, chunk => this.readAnalysisChunk(directory, chunk));
+    return { metadata, analysisCache: base.analysis_cache, nodePaths: base.node_paths,
+      factGraphAvailable: base.fact_graph_available };
+  }
+
+  async visitPublicSnapshotFactGraph(publicKey: string, visitor: {
+    node: (value: unknown) => void; edge: (value: unknown) => void;
+  }): Promise<void> {
+    const directory = join(this.dirs.publicSnapshots, safePublicKey(publicKey));
+    const stored = await readJson<unknown>(join(directory, "analysis.json"));
+    if (stored === null) throw new Error("public_snapshot_payload_missing");
+    await visitAnalysisFactGraph(stored, chunk => this.readAnalysisChunk(directory, chunk), visitor);
   }
 
   /** Local file storage publishes by moving its source directory at final commit. */

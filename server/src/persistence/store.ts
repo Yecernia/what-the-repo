@@ -96,6 +96,13 @@ export interface PublicSnapshotBundle<T = Record<string, unknown>> {
 
 export type PublicSnapshotView<T = Record<string, unknown>> = Pick<PublicSnapshotBundle<T>, 'metadata' | 'view'>;
 
+export interface IncrementalSnapshotBase {
+  metadata: Record<string, unknown>;
+  analysisCache: unknown;
+  nodePaths: Array<{ id: string; path: string | null }>;
+  factGraphAvailable: boolean;
+}
+
 export interface RepositoryIdentityInput {
   repository: string;
   analyzerBundleVersion: string;
@@ -184,6 +191,16 @@ export interface ProductStore {
     analysisConfigDigest: string;
     excludeCommitSha?: string;
   }): Promise<PublicSnapshotBundle<T> | null>;
+  loadLatestPublicSnapshotIncrementalBase(input: {
+    repository: string;
+    analyzerBundleVersion: string;
+    analysisConfigDigest: string;
+    excludeCommitSha?: string;
+  }): Promise<IncrementalSnapshotBase | null>;
+  visitPublicSnapshotFactGraph(publicKey: string, visitor: {
+    node: (value: unknown) => void;
+    edge: (value: unknown) => void;
+  }): Promise<void>;
   savePublicSnapshot(input: {
     publicKey: string;
     repository: string;

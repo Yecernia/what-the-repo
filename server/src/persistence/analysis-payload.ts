@@ -432,6 +432,91 @@ export async function assembleAnalysisPayload(
   return result;
 }
 
+/** Load only the previous compiler cache and fact graph needed for an update.
+ * The publication view and per-file static facts can dwarf these inputs and
+ * must not be resident while the new source is compiled.
+ */
+export async function assembleIncrementalBasePayload(
+  value: unknown,
+  loadChunk: (key: string) => Promise<Uint8Array | null>,
+): Promise<{ analysis_cache: unknown; node_paths: Array<{ id: string; path: string | null }>; fact_graph_available: boolean }> {
+  const envelope = parseAnalysisPayloadEnvelope(value);
+  const root = record(envelope?.payload ?? value);
+  if (!root) throw new Error("public_snapshot_payload_missing");
+  const cache = { ...(record(root.analysis_cache) ?? {}) };
+  const nodes: Array<{ id: string; path: string | null }> = [];
+  const appendNodes = (items: unknown[]) => {
+    for (const item of items) {
+      const node = record(item);
+      if (!node || typeof node.id !== "string") throw new Error("analysis_payload_chunk_invalid");
+      const attributes = record(node.attributes);
+      const evidence = Array.isArray(node.evidence) ? record(node.evidence[0]) : null;
+      const members = Array.isArray(node.members) ? record(node.members[0]) : null;
+      const path = typeof attributes?.path === "string" && attributes.path
+        ? attributes.path : typeof evidence?.path === "string" && evidence.path
+          ? evidence.path : members?.path;
+      nodes.push({ id: node.id, path: typeof path === "string" && path ? path : null });
+    }
+  };
+  const inlineNodes = record(root.fact_graph)?.nodes;
+  const inlineEdges = record(root.fact_graph)?.edges;
+  const factGraphAvailable = (Array.isArray(inlineNodes)
+    || envelope?.chunks.some(chunk => chunk.path === "fact_graph.nodes") === true)
+    && (Array.isArray(inlineEdges)
+      || envelope?.chunks.some(chunk => chunk.path === "fact_graph.edges") === true);
+  if (Array.isArray(inlineNodes)) appendNodes(inlineNodes);
+  if (!envelope) return { analysis_cache: cache, node_paths: nodes, fact_graph_available: factGraphAvailable };
+  for (const descriptor of envelope.chunks) {
+    if (descriptor.path !== "fact_graph.nodes" && !descriptor.path.startsWith("analysis_cache.")) continue;
+    let items: unknown;
+    try {
+      items = JSON.parse(Buffer.from(verifiedChunkBody(await loadChunk(descriptor.key), descriptor)).toString("utf8"));
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("analysis_payload_chunk_")) throw error;
+      throw new Error("analysis_payload_chunk_invalid");
+    }
+    if (!Array.isArray(items) || items.length !== descriptor.count) throw new Error("analysis_payload_chunk_invalid");
+    if (descriptor.path === "fact_graph.nodes") appendNodes(items);
+    else {
+      const { child } = pathParts(descriptor.path);
+      const rows = Array.isArray(cache[child]) ? cache[child] as unknown[] : [];
+      rows.push(...items);
+      cache[child] = rows;
+    }
+  }
+  return { analysis_cache: cache, node_paths: nodes, fact_graph_available: factGraphAvailable };
+}
+
+/** Verify old fact chunks one at a time so publication need not hold the full
+ * previous graph beside the current one. */
+export async function visitAnalysisFactGraph(
+  value: unknown,
+  loadChunk: (key: string) => Promise<Uint8Array | null>,
+  visitor: { node: (value: unknown) => void; edge: (value: unknown) => void },
+): Promise<void> {
+  const envelope = parseAnalysisPayloadEnvelope(value);
+  const graph = record(record(envelope?.payload ?? value)?.fact_graph);
+  // An envelope validates per-path indexes but does not promise that node
+  // descriptors precede edge descriptors. The selector needs every old node
+  // path before it evaluates edge tombstones.
+  for (const path of ["fact_graph.nodes", "fact_graph.edges"] as const) {
+    const inline = graph?.[path === "fact_graph.nodes" ? "nodes" : "edges"];
+    const visit = path === "fact_graph.nodes" ? visitor.node : visitor.edge;
+    if (Array.isArray(inline)) for (const item of inline) visit(item);
+    for (const descriptor of envelope?.chunks.filter(chunk => chunk.path === path) ?? []) {
+      let items: unknown;
+      try {
+        items = JSON.parse(Buffer.from(verifiedChunkBody(await loadChunk(descriptor.key), descriptor)).toString("utf8"));
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("analysis_payload_chunk_")) throw error;
+        throw new Error("analysis_payload_chunk_invalid");
+      }
+      if (!Array.isArray(items) || items.length !== descriptor.count) throw new Error("analysis_payload_chunk_invalid");
+      for (const item of items) visit(item);
+    }
+  }
+}
+
 export function analysisPayloadChunkKeys(value: unknown): string[] {
   return parseAnalysisPayloadEnvelope(value)?.chunks.map((chunk) => chunk.key) ?? [];
 }

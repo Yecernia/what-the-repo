@@ -6,6 +6,7 @@ import { assertValidEvidenceSnapshot } from '../domain/snapshot-validation.js';
 import { snapshotPublicView } from '../domain/snapshot-public-view.js';
 import type { AnalysisCache } from './incremental.js';
 import type { PreparedAnalysisCache } from '../persistence/analysis-payload.js';
+import type { IncrementalHistoryProjection } from './incremental-history.js';
 
 /** Upload the bulky compiler cache before allocating publication intermediates. */
 export async function preparePublicationCache(cache: AnalysisCache | undefined,
@@ -21,7 +22,7 @@ export async function preparePublicationCache(cache: AnalysisCache | undefined,
 /** The caller transfers ownership of current fact rows; previous snapshots stay immutable. */
 export function preparePublicationSnapshot(input: {
   snapshot: BuiltSnapshot;
-  previousFactGraph: BuiltSnapshot['fact_graph'] | null;
+  previousFactGraph: BuiltSnapshot['fact_graph'] | IncrementalHistoryProjection | null;
   plan?: IncrementalPlan;
   currentParsedFiles: Pick<ParsedFile, 'path' | 'digest' | 'parseError' | 'semanticComplete'>[];
   displayLanguage: string;

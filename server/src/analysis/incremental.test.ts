@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { LspRunResult, ParsedFile, SourceFileManifest } from "./facts.js";
 import { buildSnapshot } from "./graph.js";
+import { assembleIncrementalBasePayload } from "../persistence/analysis-payload.js";
 import {
   activeFactFingerprint,
   applyIncrementalProvenance,
@@ -56,7 +57,7 @@ test("classifies added, modified, deleted and unambiguous renamed files", () => 
   ]);
 });
 
-test("syntax reuse is separate from conservative semantic project invalidation", () => {
+test("syntax reuse is separate from conservative semantic project invalidation", async () => {
   const previousFiles = [
     parsed("main.ts", SHA_A, { imports: [{ source: "./helper", line: 1, resolvedPath: "helper.ts", status: "static" }] }),
     parsed("helper.ts", SHA_B),
@@ -74,9 +75,10 @@ test("syntax reuse is separate from conservative semantic project invalidation",
     ["helper.ts", SHA_C],
     ["unrelated.ts", SHA_C],
   ]);
+  const previousCache = createAnalysisCache({ manifest: previousFiles.map(toManifest), parsedFiles: previousFiles, lspResults: [] });
   const plan = buildIncrementalPlan({
     parentSnapshotId: previousSnapshot.snapshot_id,
-    previousCache: createAnalysisCache({ manifest: previousFiles.map(toManifest), parsedFiles: previousFiles, lspResults: [] }),
+    previousCache,
     previousFactGraph: previousSnapshot.fact_graph,
     currentManifest,
     currentCompleteness: { inventoryComplete: true, knownSourceFiles: currentManifest.length, omitted: [], reasons: [] },
@@ -85,6 +87,11 @@ test("syntax reuse is separate from conservative semantic project invalidation",
   assert.deepEqual(plan.recomputePaths, ["helper.ts"]);
   assert.deepEqual(plan.reusedPaths, ["main.ts", "unrelated.ts"]);
   assert.deepEqual(plan.affectedPaths, ["helper.ts", "main.ts", "unrelated.ts"]);
+  const projected = await assembleIncrementalBasePayload({ fact_graph: previousSnapshot.fact_graph,
+    analysis_cache: previousCache }, async () => null);
+  assert.deepEqual(buildIncrementalPlan({ parentSnapshotId: previousSnapshot.snapshot_id,
+    previousCache, previousNodePaths: projected.node_paths, currentManifest,
+    currentCompleteness: { inventoryComplete: true, knownSourceFiles: currentManifest.length, omitted: [], reasons: [] } }), plan);
 });
 
 test("incremental facts match a same-commit full build and retain explicit tombstones", () => {

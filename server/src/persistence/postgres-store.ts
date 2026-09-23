@@ -74,6 +74,8 @@ import { PostgresPermitStore, type PermitStore } from '../scheduling/permits.js'
 import {
   analysisPayloadChunkKeys,
   assembleAnalysisPayload,
+  assembleIncrementalBasePayload,
+  visitAnalysisFactGraph,
   defaultAnalysisChunkKey,
   prepareStoredAnalysisPayload,
   mergePreparedAnalysisCache,
@@ -107,6 +109,7 @@ import {
   type AnalysisLeaseFence,
   type QuotaLimits,
   type PublicSnapshotBundle,
+  type IncrementalSnapshotBase,
   type RepositoryIdentityInput,
   type RepositoryUpdatePublication,
   type SnapshotLanguageOverlayPublication,
@@ -1256,6 +1259,16 @@ export class PostgresStore extends FileStore {
     analysisConfigDigest: string;
     excludeCommitSha?: string;
   }): Promise<PublicSnapshotBundle<T> | null> {
+    const publicKey = await this.latestPublicSnapshotKeyFromDb(input);
+    return publicKey ? this.loadPublicSnapshot<T>(publicKey) : null;
+  }
+
+  private async latestPublicSnapshotKeyFromDb(input: {
+    repository: string;
+    analyzerBundleVersion: string;
+    analysisConfigDigest: string;
+    excludeCommitSha?: string;
+  }): Promise<string | null> {
     const result = await this.pool.query<{ public_snapshot_key: string }>(
       `SELECT public_snapshot_key
        FROM canonical_public_repository_snapshots
@@ -1272,8 +1285,30 @@ export class PostgresStore extends FileStore {
         input.excludeCommitSha ?? null,
       ],
     );
-    const publicKey = result.rows[0]?.public_snapshot_key;
-    return publicKey ? this.loadPublicSnapshot<T>(publicKey) : null;
+    return result.rows[0]?.public_snapshot_key ?? null;
+  }
+
+  override async loadLatestPublicSnapshotIncrementalBase(input: {
+    repository: string;
+    analyzerBundleVersion: string;
+    analysisConfigDigest: string;
+    excludeCommitSha?: string;
+  }): Promise<IncrementalSnapshotBase | null> {
+    const publicKey = await this.latestPublicSnapshotKeyFromDb(input);
+    if (!publicKey) return null;
+    const stored = await this.readPublicSnapshotParts(publicKey, 'analysis', false);
+    if (!stored?.analysis) throw new Error('public_snapshot_payload_missing');
+    const base = await assembleIncrementalBasePayload(stored.analysis, key => this.snapshotObjects.get(key));
+    return { metadata: stored.metadata, analysisCache: base.analysis_cache, nodePaths: base.node_paths,
+      factGraphAvailable: base.fact_graph_available };
+  }
+
+  override async visitPublicSnapshotFactGraph(publicKey: string, visitor: {
+    node: (value: unknown) => void; edge: (value: unknown) => void;
+  }): Promise<void> {
+    const stored = await this.readPublicSnapshotParts(publicKey, 'analysis', false);
+    if (!stored?.analysis) throw new Error('public_snapshot_payload_missing');
+    await visitAnalysisFactGraph(stored.analysis, key => this.snapshotObjects.get(key), visitor);
   }
 
   override async preparePublicSnapshotSource(input: {

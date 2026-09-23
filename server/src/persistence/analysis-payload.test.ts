@@ -4,6 +4,8 @@ import {
   ANALYSIS_PAYLOAD_CHUNK_SIZE,
   ANALYSIS_PAYLOAD_CHUNK_BYTES,
   assembleAnalysisPayload,
+  assembleIncrementalBasePayload,
+  visitAnalysisFactGraph,
   parseAnalysisPayloadEnvelope,
   prepareAnalysisPayload,
   prepareStoredAnalysisPayload,
@@ -11,6 +13,40 @@ import {
   readStaticFileFacts,
 } from "./analysis-payload.js";
 import { snapshotObjectDigest } from './snapshot-object-store.js';
+
+test('incremental reads project old node paths and cache without hydrating edges or static files', async () => {
+  const nodes = Array.from({ length: 2050 }, (_, index) => ({ id: `n${index}`,
+    attributes: index === 0 ? {} : { path: `src/${index}.ts` },
+    evidence: index === 0 ? [{ path: 'fallback.ts' }] : [], members: [] }));
+  const edges = Array.from({ length: 2050 }, (_, index) => ({ id: `e${index}`, source: 'n0', target: 'n1' }));
+  const value = { fact_graph: { nodes, edges }, analysis_cache: { manifest: [{ path: 'a.ts' }] },
+    static_analysis: { files: Array.from({ length: 64 }, (_, index) => ({ path: `src/${index}.ts` })) } };
+  const prepared = prepareAnalysisPayload(value, (path, index, sha) => `analysis-chunks/${path}-${index}-${sha}`);
+  const bodies = new Map(prepared.chunks.map(chunk => [chunk.descriptor.key, chunk.body]));
+  const reads: string[] = [];
+  const load = async (key: string) => { reads.push(key); return bodies.get(key) ?? null; };
+  const base = await assembleIncrementalBasePayload(prepared.value, load);
+  assert.equal(base.fact_graph_available, true);
+  assert.deepEqual(base.analysis_cache, value.analysis_cache);
+  assert.equal(base.node_paths.length, nodes.length);
+  assert.deepEqual(base.node_paths[0], { id: 'n0', path: 'fallback.ts' });
+  assert.ok(reads.every(key => !key.includes('fact_graph.edges') && !key.includes('static_analysis.files')));
+  reads.length = 0;
+  const visited: string[] = [];
+  const envelope = parseAnalysisPayloadEnvelope(prepared.value)!;
+  const reordered = { ...envelope, chunks: [...envelope.chunks].sort((a, b) =>
+    (a.path === 'fact_graph.edges' ? 0 : a.path === 'fact_graph.nodes' ? 1 : 2)
+      - (b.path === 'fact_graph.edges' ? 0 : b.path === 'fact_graph.nodes' ? 1 : 2)
+      || a.index - b.index) };
+  await visitAnalysisFactGraph(reordered, load, {
+    node: row => visited.push((row as { id: string }).id),
+    edge: row => visited.push((row as { id: string }).id),
+  });
+  assert.equal(visited.filter(id => id.startsWith('n')).length, nodes.length);
+  assert.equal(visited.filter(id => id.startsWith('e')).length, edges.length);
+  assert.ok(visited.indexOf('e0') > visited.lastIndexOf('n2049'));
+  assert.ok(reads.every(key => !key.includes('static_analysis.files')));
+});
 
 test('preuploaded compiler cache composes the same payload and rejects cross-snapshot binding', async () => {
   const bodies = new Map<string, Uint8Array>();

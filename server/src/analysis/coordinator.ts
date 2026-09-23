@@ -31,6 +31,7 @@ import { createAnalysisExecutionBudget } from "./execution-budget.js";
 import type { SemanticBatchContext } from "./semantic-worker.js";
 import { fetchPublicGithubSource, type GithubSource } from "./github.js";
 import { buildSnapshot, type BuiltSnapshot } from "./graph.js";
+import { createIncrementalHistorySelector } from "./incremental-history.js";
 import { analyzeStaticSource } from "./static-kernel.js";
 import { resolveAnalysisExecution, resolveAnalysisProvider } from "./execution-identity.js";
 export { resolveAnalysisProvider } from "./execution-identity.js";
@@ -56,7 +57,7 @@ import {
   type AnalysisCache,
   type IncrementalPlan,
 } from "./incremental.js";
-import type { EvidenceSnapshot } from "../domain/snapshot.js";
+import type { EvidenceSnapshot, SnapshotNode, SnapshotEdge } from "../domain/snapshot.js";
 import type { RevisionRedirect } from "../domain/lifecycle.js";
 import {
   SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
@@ -662,7 +663,9 @@ export class AnalysisCoordinator {
         ? await this.store.loadRepositoryUpdateForProject(project.project_id)
         : null;
       const targetCommitSha = update?.update_id === job.repository_update_id ? update?.target_commit_sha : null;
-      if (checkpoint && targetCommitSha && checkpoint.checkpoint.commit_sha?.toLowerCase() !== targetCommitSha.toLowerCase()) {
+      if (checkpoint && (targetCommitSha && checkpoint.checkpoint.commit_sha?.toLowerCase() !== targetCommitSha.toLowerCase()
+        || update && update.update_id === job.repository_update_id
+          && checkpoint.checkpoint.analysis_config_digest !== update.analysis_config_digest)) {
         await this.store.clearAnalysisCheckpoint(project.project_id);
         checkpoint = null;
       }
@@ -785,28 +788,32 @@ export class AnalysisCoordinator {
         await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
         return;
       }
-      const previous = resumingSemantic ? null : await this.store.loadLatestPublicSnapshot({
+      const previous = resumingSemantic ? null : await this.store.loadLatestPublicSnapshotIncrementalBase({
         repository,
         analyzerBundleVersion: ANALYZER_BUNDLE_VERSION,
         analysisConfigDigest,
         excludeCommitSha: fetched.commitSha,
       });
-      const previousCache = readAnalysisCache(previous?.analysis.analysis_cache);
-      const previousFactGraph = asFactGraph(previous?.analysis.fact_graph);
+      let previousCache = readAnalysisCache(previous?.analysisCache);
+      if (previous) previous.analysisCache = null;
+      const previousFactGraph = checkpoint?.checkpoint.previous_fact_graph ?? null;
       const previousSnapshotId = typeof previous?.metadata.analysis_snapshot_id === "string"
         ? previous.metadata.analysis_snapshot_id
         : null;
+      const previousPublicKey = typeof previous?.metadata.public_snapshot_key === "string"
+        ? previous.metadata.public_snapshot_key : null;
       const plan = resumingSemantic && checkpoint?.checkpoint.plan
         ? checkpoint.checkpoint.plan
-        : previousCache && previousFactGraph && previousSnapshotId
+        : previousCache && previous?.factGraphAvailable && previousSnapshotId
           ? buildIncrementalPlan({
               parentSnapshotId: previousSnapshotId,
               previousCache,
-              previousFactGraph,
+              previousNodePaths: previous.nodePaths,
               currentManifest: fetched.manifest,
               currentCompleteness: fetched.completeness,
             })
           : buildFullPlan(fetched.manifest);
+      if (previous) previous.nodePaths = [];
       const analysisKind = plan.mode === "incremental" ? "incremental_analysis" : "full_analysis";
       await this.recordAnalysisPhase(job, fence, "comparing_versions", "completed", { strategy: plan.mode });
       let parsed: ParsedFile[];
@@ -850,6 +857,7 @@ export class AnalysisCoordinator {
           plan,
           signal,
         );
+        previousCache = null;
         await this.recordAnalysisPhase(job, fence, "resolving_relations", "completed");
         const lspDurationMs = performance.now() - lspStarted;
         await this.recordAnalysisPhase(job, fence, "building_fact_graph", "running");
@@ -885,8 +893,7 @@ export class AnalysisCoordinator {
           parsed,
           syntax_files: syntaxFiles,
           lsp_results: lspResults,
-          previous_fact_graph: previousFactGraph,
-          from_public_key: typeof previous?.metadata.public_snapshot_key === 'string' ? previous.metadata.public_snapshot_key : null,
+          from_public_key: previousPublicKey,
         } satisfies AnalysisCheckpoint, structuralSnapshot);
         checkpointPersisted = true;
       }
@@ -1033,7 +1040,8 @@ export class AnalysisCoordinator {
         repository,
         commit_sha: fetched.commitSha,
         plan,
-        ...(this.executionStage === 'semantic' ? {} : { parsed, syntax_files: syntaxFiles, lsp_results: lspResults, previous_fact_graph: previousFactGraph }),
+        from_public_key: checkpoint?.checkpoint.from_public_key ?? previousPublicKey,
+        ...(this.executionStage === 'semantic' ? {} : { parsed, syntax_files: syntaxFiles, lsp_results: lspResults }),
         display_language: displayLanguage,
         provenance_applied: false,
         redirects,
@@ -1055,8 +1063,12 @@ export class AnalysisCoordinator {
         delete checkpoint.checkpoint.parsed; delete checkpoint.checkpoint.syntax_files;
         delete checkpoint.checkpoint.lsp_results;
       }
+      const publicationPrevious = previousFactGraph ?? await loadIncrementalHistory({
+        store: this.store, publicKey: checkpoint?.checkpoint.from_public_key ?? previousPublicKey,
+        snapshot: semantic.snapshot, plan, currentParsedFiles: preparedCache.files,
+      });
       const preparation = preparePublicationSnapshot({
-        snapshot: semantic.snapshot, previousFactGraph, plan,
+        snapshot: semantic.snapshot, previousFactGraph: publicationPrevious, plan,
         currentParsedFiles: preparedCache.files, displayLanguage,
       });
       const { view, languageOverlay, overlayStatus } = preparation;
@@ -1281,10 +1293,17 @@ export class AnalysisCoordinator {
     if ((publication.snapshot as BuiltSnapshot).snapshot_id !== input.checkpoint.snapshot_id) throw new Error('analysis_checkpoint_identity_mismatch');
     const graphLoadTimings = { preparation_graph_load_ms: performance.now() - graphLoadStarted,
       preparation_graph_load_rss_bytes: process.memoryUsage().rss };
+    const plan = input.checkpoint.plan
+      ?? (input.checkpoint.provenance_applied ? undefined : buildFullPlan(input.checkpoint.fetched.manifest));
+    const publicationPrevious = asFactGraph(publication.previousFactGraph)
+      ?? (!input.checkpoint.provenance_applied && plan ? await loadIncrementalHistory({
+        store: this.store, publicKey: input.checkpoint.from_public_key ?? null,
+        snapshot: publication.snapshot as BuiltSnapshot, plan, currentParsedFiles: preparedCache.files,
+      }) : null);
     const preparation = preparePublicationSnapshot({
       snapshot: publication.snapshot as BuiltSnapshot,
-      previousFactGraph: asFactGraph(publication.previousFactGraph),
-      plan: input.checkpoint.plan ?? (input.checkpoint.provenance_applied ? undefined : buildFullPlan(input.checkpoint.fetched.manifest)),
+      previousFactGraph: publicationPrevious,
+      plan,
       currentParsedFiles: preparedCache.files,
       provenanceApplied: input.checkpoint.provenance_applied,
       displayLanguage,
@@ -1485,6 +1504,24 @@ function asFactGraph(value: unknown): NonNullable<EvidenceSnapshot["fact_graph"]
   const row = value as Record<string, unknown>;
   if (!Array.isArray(row.nodes) || !Array.isArray(row.edges)) return null;
   return row as unknown as NonNullable<EvidenceSnapshot["fact_graph"]>;
+}
+
+async function loadIncrementalHistory(input: {
+  store: ProductStore;
+  publicKey: string | null;
+  snapshot: BuiltSnapshot;
+  plan: IncrementalPlan;
+  currentParsedFiles: Pick<ParsedFile, 'path' | 'digest' | 'parseError' | 'semanticComplete'>[];
+}) {
+  if (input.plan.mode !== 'incremental') return null;
+  if (!input.publicKey) throw new Error('analysis_previous_fact_graph_missing');
+  const selector = createIncrementalHistorySelector({ snapshot: input.snapshot,
+    plan: input.plan, currentParsedFiles: input.currentParsedFiles });
+  await input.store.visitPublicSnapshotFactGraph(input.publicKey, {
+    node: value => selector.addNode(value as SnapshotNode),
+    edge: value => selector.addEdge(value as SnapshotEdge),
+  });
+  return selector.finish();
 }
 
 function revisionRedirects(input: {

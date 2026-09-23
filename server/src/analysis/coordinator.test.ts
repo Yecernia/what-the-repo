@@ -1,7 +1,7 @@
 import { ANALYZER_BUNDLE_VERSION, ANALYSIS_CONFIG_DIGEST } from "./identity.js";
 import { resolveAnalysisExecution } from "./execution-identity.js";
 import assert from "node:assert/strict";
-import { buildFullPlan, createAnalysisCache } from './incremental.js';
+import { buildFullPlan, buildIncrementalPlan, createAnalysisCache } from './incremental.js';
 import { decodeSource } from './source-input.js';
 import type { LspRunResult, ParsedFile } from './facts.js';
 import test from "node:test";
@@ -433,6 +433,7 @@ test("a repository checkpoint for the queued commit still resumes", async () => 
       updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },
       loadAnalysisCheckpoint: async () => ({ checkpoint: {
         analyzer_bundle_version: ANALYZER_BUNDLE_VERSION, static_identity: ANALYSIS_CONFIG_DIGEST,
+        analysis_config_digest: analysisConfigDigest,
         stage: "source", source_root: root, commit_sha: target, snapshot_id: "saved-source",
         fetched: { owner: "example", repo: "repo", commitSha: target, files: ["README.md"], manifest: [] },
       } }),
@@ -597,4 +598,51 @@ test('deferred publication waits for cache persistence and never loads the graph
       } else { await run; assert.deepEqual(events, ['cache-start', 'cache-finished', 'graph', 'publish', 'clear']); }
     } finally { await rm(sourceRoot, { recursive: true, force: true }); }
   }
+});
+
+test('incremental assembly reloads prior facts through the saved public key', async () => {
+  const sourceRoot = await mkdtemp(join(tmpdir(), 'analysis-incremental-assembly-'));
+  try {
+    const oldFile = decodeSource('src/a.py', Buffer.from('def run(): pass\n')).file;
+    const currentFile = decodeSource('src/a.py', Buffer.from('def run(): pass\n')).file;
+    const manifest = [{ path: currentFile.path, bytes: currentFile.bytes, digest: currentFile.digest }];
+    const previous = buildSnapshot({ snapshotId: 'old-snapshot', repository: 'example/incremental',
+      commitSha: 'a'.repeat(40), files: [oldFile], sourceRoot });
+    const snapshot = buildSnapshot({ snapshotId: 'new-snapshot', repository: 'example/incremental',
+      commitSha: 'b'.repeat(40), files: [currentFile], sourceRoot });
+    const plan = buildIncrementalPlan({ parentSnapshotId: previous.snapshot_id,
+      previousCache: createAnalysisCache({ manifest, parsedFiles: [oldFile], lspResults: [] }),
+      previousFactGraph: previous.fact_graph, currentManifest: manifest });
+    const previousKey = canonicalPublicSnapshotKey(snapshot.repository, previous.commit_sha, 'analyzer', 'config');
+    const publicKey = canonicalPublicSnapshotKey(snapshot.repository, snapshot.commit_sha, 'analyzer', 'config');
+    const checkpoint = { stage: 'assembly', source_root: sourceRoot, repository: snapshot.repository,
+      commit_sha: snapshot.commit_sha, snapshot_id: snapshot.snapshot_id, public_key: publicKey,
+      from_public_key: previousKey, analysis_config_digest: 'config', analyzer_bundle_version: 'analyzer',
+      fetched: { manifest }, parsed: [currentFile], syntax_files: [currentFile], lsp_results: [],
+      plan, provenance_applied: false };
+    const project = createProject('guest:incremental', 'https://github.com/example/incremental', 'Incremental', null);
+    let visited = 0;
+    let published: Record<string, unknown> | null = null;
+    const store = {
+      preparePublicSnapshotAnalysisCache: async () => ({ publicKey, snapshotId: snapshot.snapshot_id,
+        payload: { value: {}, envelope: null, chunks: [] } }),
+      visitPublicSnapshotFactGraph: async (key: string, visitor: { node: (row: unknown) => void; edge: (row: unknown) => void }) => {
+        assert.equal(key, previousKey);
+        for (const node of previous.fact_graph.nodes) { visitor.node(node); visited++; }
+        for (const edge of previous.fact_graph.edges) { visitor.edge(edge); visited++; }
+      },
+      savePublicSnapshot: async (input: { analysis: Record<string, unknown> }) => { published = input.analysis; },
+      saveSnapshotLanguageOverlay: async () => {}, loadProject: async () => project,
+      updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },
+      finishAnalysisJob: async () => {}, saveTrace: async () => {}, clearAnalysisCheckpoint: async () => {},
+    } as unknown as ProductStore;
+    const coordinator = new AnalysisCoordinator(store, config(1)) as unknown as {
+      resumeAssemblyFromCheckpoint(input: Record<string, unknown>): Promise<void>;
+    };
+    await coordinator.resumeAssemblyFromCheckpoint({ checkpoint, project, job: job('incremental-assembly'),
+      signal: new AbortController().signal, fence: {},
+      loadPublication: async () => ({ snapshot, previousFactGraph: null }) });
+    assert.ok(visited > 0);
+    assert.equal((published as Record<string, unknown> | null)?.incremental !== undefined, true);
+  } finally { await rm(sourceRoot, { recursive: true, force: true }); }
 });

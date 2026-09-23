@@ -5,6 +5,7 @@ import type {
   SnapshotNode,
 } from "../domain/snapshot.js";
 import type { BuiltSnapshot } from "./graph.js";
+import type { HistoricalFactIdentity, IncrementalHistoryProjection } from "./incremental-history.js";
 import {
   type LspRunResult,
   type ParsedFile,
@@ -204,7 +205,8 @@ export function buildFullPlan(current: SourceFileManifest[]): IncrementalPlan {
 export function buildIncrementalPlan(input: {
   parentSnapshotId: string;
   previousCache: AnalysisCache;
-  previousFactGraph: FactGraph;
+  previousFactGraph?: FactGraph;
+  previousNodePaths?: Array<{ id: string; path: string | null }>;
   currentManifest: SourceFileManifest[];
   currentCompleteness?: import("./facts.js").SourceCompleteness;
 }): IncrementalPlan {
@@ -224,13 +226,11 @@ export function buildIncrementalPlan(input: {
     if (change.kind === "deleted") tombstonePaths.add(change.path);
   }
 
-  const nodePaths = new Map(input.previousFactGraph.nodes.map((node) => [node.id, nodePath(node)]));
-  const affectedIds = new Set(input.previousFactGraph.nodes
-    .filter((node) => {
-      const path = nodePath(node);
-      return path !== null && changedPaths.has(path);
-    })
-    .map((node) => node.id));
+  const previousNodePaths = input.previousNodePaths
+    ?? input.previousFactGraph?.nodes.map(node => ({ id: node.id, path: nodePath(node) })) ?? [];
+  const affectedIds = new Set(previousNodePaths
+    .filter(node => node.path !== null && changedPaths.has(node.path))
+    .map(node => node.id));
   // Semantics may change without an old successful edge (new files, failed lookups,
   // declarations, package exports). Invalidate project domains, not just old edges.
   const affectedPaths = new Set(changedPaths);
@@ -240,7 +240,7 @@ export function buildIncrementalPlan(input: {
   for (const file of input.previousCache.parsed_files) {
     if (structural || projects.has(file.project?.id) || changedLanguages.has(file.language)) affectedPaths.add(file.path);
   }
-  for (const node of input.previousFactGraph.nodes) if (affectedPaths.has(nodePath(node) ?? '')) affectedIds.add(node.id);
+  for (const node of previousNodePaths) if (affectedPaths.has(node.path ?? '')) affectedIds.add(node.id);
   const currentPaths = new Set(input.currentManifest.map((item) => item.path));
   const recomputePaths = [...changedPaths].filter((path) => currentPaths.has(path)).sort();
   const reusedPaths = [...currentPaths].filter((path) => !changedPaths.has(path)).sort();
@@ -258,7 +258,7 @@ export function buildIncrementalPlan(input: {
 
 export function applyIncrementalProvenance(input: {
   snapshot: BuiltSnapshot;
-  previousFactGraph: FactGraph | null;
+  previousFactGraph: FactGraph | IncrementalHistoryProjection | null;
   plan: IncrementalPlan;
   currentParsedFiles: Pick<ParsedFile, 'path' | 'digest' | 'parseError' | 'semanticComplete'>[];
   /** Current rows are exclusively owned by publication, never the previous graph. */
@@ -319,12 +319,16 @@ export function applyIncrementalProvenance(input: {
     };
   }
 
-  const previousNodes = new Map((input.previousFactGraph?.nodes ?? [])
-    .filter(isActiveNode)
-    .map((node) => [node.id, node]));
-  const previousEdges = new Map((input.previousFactGraph?.edges ?? [])
-    .filter(isActiveEdge)
-    .map((edge) => [edge.id, edge]));
+  const projected = input.previousFactGraph && "kind" in input.previousFactGraph
+    && input.previousFactGraph.kind === "incremental-history-projection-v1"
+    ? input.previousFactGraph : null;
+  const fullPrevious = projected ? null : input.previousFactGraph as FactGraph | null;
+  const previousNodes = new Map<string, HistoricalFactIdentity>(projected
+    ? [...projected.matchedNodes, ...projected.tombstoneNodes].map(node => [node.id, node])
+    : (fullPrevious?.nodes ?? []).filter(isActiveNode).map(node => [node.id, node]));
+  const previousEdges = new Map<string, HistoricalFactIdentity>(projected
+    ? [...projected.matchedEdges, ...projected.tombstoneEdges].map(edge => [edge.id, edge])
+    : (fullPrevious?.edges ?? []).filter(isActiveEdge).map(edge => [edge.id, edge]));
   const changedByPath = new Map<string, FileChange>();
   for (const change of input.plan.changes) {
     changedByPath.set(change.path, change);
@@ -363,7 +367,7 @@ export function applyIncrementalProvenance(input: {
   });
   const activeNodeIds = new Set(nodes.map((node) => node.id));
   const tombstonePathSet = new Set(input.plan.tombstonePaths);
-  for (const previous of previousNodes.values()) {
+  for (const previous of projected?.tombstoneNodes ?? (fullPrevious?.nodes ?? []).filter(isActiveNode)) {
     if (activeNodeIds.has(previous.id)) continue;
     const path = nodePath(previous);
     const parsed = path ? parsedByPath.get(path) : undefined;
@@ -424,8 +428,9 @@ export function applyIncrementalProvenance(input: {
     });
   });
   const activeEdgeIds = new Set(edges.map((edge) => edge.id));
-  const previousNodePaths = new Map((input.previousFactGraph?.nodes ?? []).map((node) => [node.id, nodePath(node)]));
-  for (const previous of previousEdges.values()) {
+  const previousNodePaths = projected?.nodePaths
+    ?? new Map((fullPrevious?.nodes ?? []).map((node) => [node.id, nodePath(node)]));
+  for (const previous of projected?.tombstoneEdges ?? (fullPrevious?.edges ?? []).filter(isActiveEdge)) {
     if (activeEdgeIds.has(previous.id)) continue;
     const sourcePath = previousNodePaths.get(previous.source) ?? null;
     const targetPath = previousNodePaths.get(previous.target) ?? null;
