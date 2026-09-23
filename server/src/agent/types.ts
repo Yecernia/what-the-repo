@@ -109,8 +109,8 @@ export interface PiRunFinalization<T> {
 
 export interface PiModelRuntime {
   roleRuntimes?: Readonly<Partial<Record<ProductSkillId, PiModelRuntime>>>;
-  /** Reserve one analysis request before dispatch; the job owns persistence and limits. */
-  beforeWorkerRequest?: (identity: import("./worker-diagnostics.js").WorkerDiagnosticIdentity | undefined) => Promise<void>;
+  /** Reserve one analysis request before dispatch; remaining counts include the reserved request. */
+  beforeWorkerRequest?: (identity: import("./worker-diagnostics.js").WorkerDiagnosticIdentity | undefined) => Promise<void | WorkerRequestAllowance>;
   /** Skills selected once for this analysis, shared by identity, budgets and execution. */
   skills?: Readonly<Partial<Record<ProductSkillId, ProductSkill>>>;
   models: Models;
@@ -127,6 +127,11 @@ export interface PiModelRuntime {
   attribution?: import('./provider-budget.js').UsageAttribution;
   ownerId?: string;
   metrics?: RuntimeMetrics;
+}
+
+export interface WorkerRequestAllowance {
+  batchRemaining: number;
+  jobRemaining: number;
 }
 
 export interface PiAgentRunOptions {

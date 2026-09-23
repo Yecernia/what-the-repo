@@ -149,6 +149,24 @@ test("deadline interrupts an in-flight provider and remains a time limit instead
   } finally { budget.dispose(); }
 });
 
+test("reservation reports inclusive remaining grants after recovery and honors the job boundary", async () => {
+  const f = fixture();
+  await f.start("a"); await f.start("b");
+  const settings = { store: f.store, fence: f.fence, signal: new AbortController().signal,
+    limits: { batchCalls: 40, jobCalls: 39, attemptMs: 10_000 } };
+  const first = await createAnalysisExecutionBudget(settings);
+  try {
+    for (let index = 0; index < 35; index++) await first.beforeRequest(f.identity("a"));
+  } finally { first.dispose(); }
+  const resumed = await createAnalysisExecutionBudget(settings);
+  try {
+    assert.deepEqual(await resumed.beforeRequest(f.identity("b")), { batchRemaining: 40, jobRemaining: 4 });
+    assert.deepEqual(await resumed.beforeRequest(f.identity("a")), { batchRemaining: 5, jobRemaining: 3 });
+    assert.equal(f.saved.get("a")?.checkpoint.execution_requests, 36);
+    assert.equal(f.saved.get("b")?.checkpoint.execution_requests, 1);
+  } finally { resumed.dispose(); }
+});
+
 test('analysis capacity wait does not consume execution time; running provider still has a deadline', async () => {
   const f = fixture();
   const budget = await createAnalysisExecutionBudget({ store: f.store, fence: f.fence, signal: new AbortController().signal,

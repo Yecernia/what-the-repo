@@ -15,6 +15,8 @@ export interface WorkerDiagnosticIdentity {
 export interface ProviderRequestDiagnostic {
   sequence: number;
   startedAt: string;
+  phase?: "explore" | "converge" | "submit";
+  remaining?: number;
   contextBytes: number;
   gateWaitMs: number;
   budgetWaitMs: number;

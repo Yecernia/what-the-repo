@@ -237,6 +237,87 @@ test("structured worker returns validation errors to the same agent and accepts 
   assert.ok((result.diagnostics?.durationMs ?? 0) > 0);
 });
 
+test("value endgame narrows schemas, blocks old exploration calls, and permits a corrected submission", async () => {
+  const faux = fauxProvider({ provider: "value-endgame-fixture" });
+  const models = createModels(); models.setProvider(faux.provider);
+  let reads = 0, confirmations = 0, allowanceIndex = 0;
+  const prompts: string[] = [];
+  const tools = skillMetadata("repository-value-discovery").allowedTools
+    .filter(name => !["submit_result", "repair_result_text"].includes(name))
+    .map(name => ({ name, label: name, description: name, parameters: Type.Object({}), execute: async () => {
+      if (name === "get_repository_evidence") confirmations++;
+      else reads++;
+      return { content: [{ type: "text" as const, text: "verified" }], details: {} };
+    } }));
+  const schemas: string[][] = [];
+  faux.setResponses([
+    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("get_repository_evidence", {})); },
+    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("get_repository_evidence", {})); },
+    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("read_repository_source", {})); },
+    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("submit_result", { answer: "English" })); },
+    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("submit_result", { answer: "已核实" })); },
+  ]);
+  const result = await runStructuredWorker({
+    skillId: "repository-value-discovery", ...semanticRunContract("repository-value-discovery"),
+    systemPrompt: "基于证据提交。", userPrompt: "分析", schema: Type.Object({ answer: Type.String() }),
+    repairTextFields: ["answer"], tools,
+    explorationEndgame: { evidenceToolName: "get_repository_evidence" },
+    modelRuntime: { models, model: faux.getModel() as Model<Api>, beforeWorkerRequest: async () => ({
+      batchRemaining: 20 - allowanceIndex++, jobRemaining: [5, 4, 3, 2, 1][allowanceIndex - 1]!,
+    }) },
+    validateSubmitted: value => /[\u3400-\u9fff]/u.test(value.answer) ? null : "language_mismatch: use Chinese",
+  });
+  assert.deepEqual(result.value, { answer: "已核实" });
+  assert.equal(result.stopReason, "completed");
+  assert.equal(result.diagnostics?.rejectedSubmissions, 1);
+  assert.deepEqual(result.diagnostics?.requests.map(row => [row.phase, row.remaining]),
+    [["converge", 5], ["submit", 4], ["submit", 3], ["submit", 2], ["submit", 1]]);
+  assert.ok(schemas[0]?.includes("search_web"), "convergence keeps evidence tools available");
+  for (const names of schemas.slice(1)) assert.deepEqual(names?.sort(), ["get_repository_evidence", "repair_result_text", "submit_result"].sort());
+  assert.ok(prompts.every(prompt => prompt.split("本批次或整个任务最多还可进行").length === 2), "phase hints must not accumulate");
+  assert.equal(reads, 0, "hidden tools must not execute even if the model calls them from history");
+  assert.equal(confirmations, 2);
+});
+
+test("value endgame uses its local 40-call limit when a legacy reservation hook returns void", async () => {
+  const faux = fauxProvider({ provider: "value-endgame-void-hook" });
+  const models = createModels(); models.setProvider(faux.provider);
+  let reservations = 0, executions = 0;
+  const tools = skillMetadata("repository-value-discovery").allowedTools
+    .filter(name => !["submit_result", "repair_result_text"].includes(name))
+    .map(name => ({ name, label: name, description: name, parameters: Type.Object({}),
+      execute: async () => { executions++; return { content: [], details: {} }; } }));
+  faux.setResponses(Array.from({ length: 41 }, () => fauxAssistantMessage(fauxToolCall("get_repository_evidence", {}))));
+  const result = await runStructuredWorker({
+    skillId: "repository-value-discovery", ...semanticRunContract("repository-value-discovery"),
+    systemPrompt: "提交结果。", userPrompt: "分析", schema: Type.Object({ answer: Type.String() }), tools,
+    explorationEndgame: { evidenceToolName: "get_repository_evidence" },
+    modelRuntime: { models, model: faux.getModel() as Model<Api>, beforeWorkerRequest: async () => { reservations++; } },
+  });
+  assert.equal(result.value, null);
+  assert.equal(result.stopReason, "analysis_batch_call_limit_exceeded");
+  assert.equal(result.diagnostics?.requestCount, 40);
+  assert.equal(reservations, 40);
+  assert.equal(executions, 40);
+  assert.equal(faux.getPendingResponseCount(), 1);
+});
+
+test("ordinary structured workers leave a void reservation hook in charge of its own limit", async () => {
+  const { faux, options } = textRepairRuntime("ordinary-void-hook");
+  let reservations = 0;
+  const toolName = options.tools[0]!.name;
+  faux.setResponses([
+    ...Array.from({ length: 41 }, () => fauxAssistantMessage(fauxToolCall(toolName, {}))),
+    fauxAssistantMessage(fauxToolCall("submit_result", { components: [] })),
+  ]);
+  const result = await runStructuredWorker({ ...options,
+    modelRuntime: { ...options.modelRuntime, beforeWorkerRequest: async () => { reservations++; } },
+  });
+  assert.equal(result.stopReason, "completed");
+  assert.equal(result.diagnostics?.requestCount, 42);
+  assert.equal(reservations, 42);
+});
+
 test("structured worker records SDK argument rejection and unknown tools without retaining content", async () => {
   const faux = fauxProvider({ provider: "structured-dispatch-retry-test" });
   const models = createModels();

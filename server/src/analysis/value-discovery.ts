@@ -22,6 +22,8 @@ import { semanticInputBudget } from "./semantic-input-budget.js";
 import { WEB_SEARCH_VERSION } from "./web-research-client.js";
 import { searchInitialRepositoryResearch, restoreWebResearchState, type InitialWebResearch } from "./initial-web-research.js";
 
+export const VALUE_DISCOVERY_ENDGAME_VERSION = "value-discovery-endgame-v1";
+
 export function mergeResearchPages(...groups: RepositoryResearchPage[][]): RepositoryResearchPage[] {
   const result: RepositoryResearchPage[] = [];
   for (const page of groups.flat()) {
@@ -173,7 +175,7 @@ export async function discoverValues(input: {
       snapshot_id: input.snapshot.snapshot_id,
       phase: "value_discovery",
       ordinal: 30_000,
-      input: semanticBatchInputIdentity({ workerInput, web_search: input.webResearch?.identity ?? `${WEB_SEARCH_VERSION}:unconfigured` }, input.modelRuntime, "repository-value-discovery", productSkill),
+      input: semanticBatchInputIdentity({ workerInput, web_search: input.webResearch?.identity ?? `${WEB_SEARCH_VERSION}:unconfigured`, endgame: VALUE_DISCOVERY_ENDGAME_VERSION }, input.modelRuntime, "repository-value-discovery", productSkill),
     },
     context: input.batchContext,
     run: async (): Promise<RecordedValueResult> => {
@@ -200,6 +202,7 @@ export async function discoverValues(input: {
         schema: VALUE_DISCOVERY_RESULT,
         repairTextFields: ["title", "claim", "problem", "implementation", "tradeoffs", "transfer_conditions"],
         tools,
+        explorationEndgame: { evidenceToolName: "get_repository_evidence" },
         systemPrompt,
         userPrompt: JSON.stringify(researchedInput.input),
         validateSubmitted: (value) => [...validateValueReferences(value, allowed, repository.state.exposedEvidence),

@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
-import type { PiModelRuntime, PiUsageSummary } from "./types.js";
+import type { PiModelRuntime, PiUsageSummary, WorkerRequestAllowance } from "./types.js";
 import { streamWithProviderPermit } from "./model-runtime.js";
 import { runtimeForSkill } from "./role-models.js";
 import { DEFAULT_WORKER_MAX_REQUESTS, WorkerExecutionError, workerFailureCode, providerFailureReason, type WorkerFailureCode } from "./worker-failure.js";
@@ -33,6 +33,19 @@ export interface StructuredWorkerResult<T> {
   evalSuite: string;
   validationErrors: string[];
   diagnostics?: WorkerDiagnostics;
+}
+
+type ExplorationPhase = "explore" | "converge" | "submit";
+
+function explorationPhase(remaining: number): ExplorationPhase {
+  return remaining <= 4 ? "submit" : remaining <= 10 ? "converge" : "explore";
+}
+
+function phaseInstruction(phase: ExplorationPhase, remaining: number): string {
+  const budget = `本批次或整个任务最多还可进行 ${remaining} 次模型请求（含本次）。上限是保护措施，不是探索目标；证据足够时立即提交。`;
+  if (phase === "submit") return `${budget}\n现在进入提交修正阶段。只用已有且已核实的候选、组件和证据 ID 调用 submit_result；可用 repair_result_text 局部修正，或 get_repository_evidence 确认已有 ID。不要开始新研究。若证据不足，按现有未核实规则处理，不编造证据。提交校验反馈后只修对应字段并再次提交。`;
+  if (phase === "converge") return `${budget}\n现在收敛候选：核实已有候选的关键机制、证据和边界，完成 official_design_review，准备提交；不要开启新的研究方向或广泛检索。证据足够时立即调用 submit_result，按校验反馈局部修正。`;
+  return `${budget}\n逐步探索并维护可提交的候选；证据足够时立即调用 submit_result，不必用完额度。`;
 }
 
 function usage(messages: readonly unknown[]): PiUsageSummary {
@@ -72,6 +85,8 @@ export async function runStructuredWorker<T extends TSchema>(options: {
   maxSubmitAttempts?: number;
   repairTextFields?: readonly string[];
   diagnosticIdentity?: WorkerDiagnosticIdentity;
+  /** Explicit opt-in for bounded exploration; only value discovery enables it. */
+  explorationEndgame?: { evidenceToolName: string };
 }): Promise<StructuredWorkerResult<Static<T>>> {
   options = { ...options, modelRuntime: runtimeForSkill(options.modelRuntime, options.skillId) };
   const productSkill = options.productSkill ?? options.modelRuntime.skills?.[options.skillId] ?? await loadProductSkill(options.skillId);
@@ -90,6 +105,16 @@ export async function runStructuredWorker<T extends TSchema>(options: {
   let submitted: Static<T> | null = null;
   let localFailure: WorkerFailureCode | null = null;
   const diagnostics = createWorkerDiagnostics(options.diagnosticIdentity);
+  let phase: ExplorationPhase = "explore";
+  const toolAllowed = (name: string): boolean => !options.explorationEndgame || phase !== "submit"
+    || name === options.explorationEndgame.evidenceToolName;
+  const guardedTools = workerTools.map(tool => ({ ...tool, execute: async (...args: Parameters<typeof tool.execute>) => {
+    if (!toolAllowed(tool.name)) return {
+      content: [{ type: "text" as const, text: "收尾阶段请提交或修正已有结果；当前探索工具不可用。" }],
+      details: {},
+    };
+    return tool.execute(...args);
+  } }));
   if (textRepair) diagnostics.data.textRepair = textRepair.stats;
   let validationErrors: string[] = [];
   let submitAttempts = 0;
@@ -162,9 +187,30 @@ export async function runStructuredWorker<T extends TSchema>(options: {
     streamFn: async (candidate, context, streamOptions) => {
       try {
         options.signal?.throwIfAborted();
-        if (options.modelRuntime.beforeWorkerRequest) await options.modelRuntime.beforeWorkerRequest(options.diagnosticIdentity);
-        else if (["component-explanation", "architecture-planning", "repository-value-discovery", "snapshot-language-overlay"].includes(options.skillId)
+        if (options.explorationEndgame && diagnostics.data.requestCount >= DEFAULT_WORKER_MAX_REQUESTS)
+          throw new WorkerExecutionError("analysis_batch_call_limit_exceeded");
+        const allowance: void | WorkerRequestAllowance = await options.modelRuntime.beforeWorkerRequest?.(options.diagnosticIdentity);
+        if ((!options.modelRuntime.beforeWorkerRequest || (options.explorationEndgame && !allowance))
+          && ["component-explanation", "architecture-planning", "repository-value-discovery", "snapshot-language-overlay"].includes(options.skillId)
           && diagnostics.data.requestCount >= DEFAULT_WORKER_MAX_REQUESTS) throw new WorkerExecutionError("analysis_batch_call_limit_exceeded");
+        if (options.explorationEndgame) {
+          const remaining = allowance
+            ? Math.min(allowance.batchRemaining, allowance.jobRemaining)
+            : DEFAULT_WORKER_MAX_REQUESTS - diagnostics.data.requestCount;
+          phase = explorationPhase(remaining);
+          const requestContext = {
+            ...context,
+            systemPrompt: `${context.systemPrompt}\n${phaseInstruction(phase, remaining)}`,
+            tools: context.tools?.filter(tool => tool.name === "submit_result" || tool.name === TEXT_REPAIR_TOOL || toolAllowed(tool.name)),
+          };
+          const request = diagnostics.request(requestContext);
+          request.phase = phase;
+          request.remaining = remaining;
+          return streamWithProviderPermit(options.modelRuntime, candidate as typeof model, requestContext, {
+            ...streamOptions,
+            ...(options.modelRuntime.networkTimeoutMs ? { timeoutMs: options.modelRuntime.networkTimeoutMs } : {}),
+          }, request);
+        }
       } catch (error) {
         localFailure = workerFailureCode(error) ?? workerFailureCode(options.signal?.reason)
           ?? (options.signal?.aborted ? null : "worker_internal_error");
@@ -185,7 +231,7 @@ export async function runStructuredWorker<T extends TSchema>(options: {
       model,
       thinkingLevel: options.thinkingLevel ?? "medium",
       messages: [],
-      tools: [...workerTools, ...repairTools].map((tool) => diagnostics.wrapTool(tool)).concat(submit),
+      tools: [...guardedTools, ...repairTools].map((tool) => diagnostics.wrapTool(tool)).concat(submit),
     },
   });
   const registeredToolNames = new Set([...workerTools, ...repairTools, submit].map((tool) => tool.name));

@@ -91,6 +91,9 @@ export async function createAnalysisExecutionBudget(input: {
         counts.set(identity.batchId, count + 1);
         total++;
         signal.throwIfAborted();
+        // Include this already-reserved call, so the worker can use the final
+        // grant to submit instead of discovering the limit on its next turn.
+        return { batchRemaining: limits.batchCalls - count, jobRemaining: limits.jobCalls - total + 1 };
       } catch (error) {
         if (input.signal.aborted) throw input.signal.reason;
         const reason = error instanceof WorkerExecutionError || error instanceof AnalysisLeaseLostError
