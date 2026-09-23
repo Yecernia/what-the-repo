@@ -52,6 +52,7 @@ import type { RepositoryResearch } from "../domain/snapshot.js";
 import type { WebResearchClient } from "../agent/web-research-tools.js";
 import {
   applySnapshotLanguageOverlay,
+  applyOwnedSnapshotLanguageOverlay,
   extractSnapshotLanguageOverlay,
   stripSnapshotLanguage,
 } from "../domain/snapshot-language.js";
@@ -1959,6 +1960,25 @@ test("different value points sharing evidence survive language storage independe
   const withoutIndependent = applyValueDiscoveryResult(base, { official_design_review: emptyOfficialReview, value_points: [input.value_points[0]!, input.value_points[2]!] });
   assert.deepEqual(withoutIndependent.value_points.map((value) => value.stable_id), [ids[0], ids[2]]);
   assert.equal(applyValueDiscoveryResult(base, { official_design_review: emptyOfficialReview, value_points: [input.value_points[1]!] }).value_points[0]!.stable_id, ids[1]);
+});
+
+test("owned language overlay preserves evidence storage while matching the isolated overlay", () => {
+  const input = architectureSnapshot(2);
+  const overlay = extractSnapshotLanguageOverlay(input, "en");
+  overlay.components[0]!.name = "Translated component";
+  const before = structuredClone(input);
+  const expected = applySnapshotLanguageOverlay(input, overlay);
+  assert.deepEqual(input, before);
+  const owned = structuredClone(input);
+  const evidence = owned.graph.nodes[0]!.evidence;
+  const members = owned.graph.nodes[0]!.members;
+  const actual = applyOwnedSnapshotLanguageOverlay(owned, overlay);
+  assert.equal(actual, owned);
+  assert.equal(actual.graph.nodes[0]!.evidence, evidence);
+  assert.equal(actual.graph.nodes[0]!.members, members);
+  assert.deepEqual(actual, expected);
+  expected.graph.nodes[0]!.evidence[0]!.path = "independent.ts";
+  assert.deepEqual(input, before);
 });
 
 test("language overlay strips shared prose and restores per-edge fact counts", async () => {

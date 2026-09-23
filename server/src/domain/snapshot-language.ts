@@ -155,7 +155,14 @@ export function applySnapshotLanguageOverlay(
   snapshot: EvidenceSnapshot,
   overlay: SnapshotLanguageOverlayPayload,
 ): EvidenceSnapshot {
-  const clone = structuredClone(snapshot);
+  return applyOwnedSnapshotLanguageOverlay(structuredClone(snapshot), overlay);
+}
+
+/** Consume a freshly deserialized, exclusively owned view without copying its evidence arrays. */
+export function applyOwnedSnapshotLanguageOverlay(
+  clone: EvidenceSnapshot,
+  overlay: SnapshotLanguageOverlayPayload,
+): EvidenceSnapshot {
   clone.display_language = overlay.language;
   const components = new Map(overlay.components.map((item) => [item.id, item]));
   const layers = new Map(overlay.layers.map((item) => [item.id, item]));

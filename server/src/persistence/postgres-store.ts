@@ -49,7 +49,7 @@ import type {
 import { resolveRevisionRedirectChain, snapshotLanguageOverlayKey } from "../domain/lifecycle.js";
 import type { SnapshotLanguageOverlayPayload } from "../domain/snapshot-language.js";
 import {
-  applySnapshotLanguageOverlay,
+  applyOwnedSnapshotLanguageOverlay,
   asSnapshotLanguageOverlayPayload,
 } from "../domain/snapshot-language.js";
 import { asEvidenceSnapshot } from "../domain/snapshot.js";
@@ -774,7 +774,8 @@ export class PostgresStore extends FileStore {
         const overlay = await this.loadSnapshotLanguageOverlay(publicKey, language);
         const payload = asSnapshotLanguageOverlayPayload(overlay?.payload);
         if (!overlay || !payload || (overlay.status !== "ready" && overlay.status !== "degraded")) continue;
-        const assembled = applySnapshotLanguageOverlay(snapshot, payload);
+        // readPublicSnapshotParts returns a fresh JSON object, never a shared cache entry.
+        const assembled = applyOwnedSnapshotLanguageOverlay(snapshot, payload);
         assembled.language_overlay_status = overlay.status;
         return assembled as T;
       }
