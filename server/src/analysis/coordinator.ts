@@ -1281,32 +1281,11 @@ export class AnalysisCoordinator {
     }
     await this.recordAnalysisPhase(input.job, input.fence, "validating_analysis", "running", { stage: "interpreting" });
     const displayLanguage = input.checkpoint.display_language ?? normalizeDisplayLanguage(input.project.display_language);
-    const previousFactGraph = input.checkpoint.previous_fact_graph ?? null;
-    const preparedCache = await preparePublicationCache(takeCheckpointAnalysisCache(input.checkpoint),
-      cache => this.store.preparePublicSnapshotAnalysisCache({ publicKey: input.checkpoint.public_key,
-        snapshotId: input.checkpoint.snapshot_id, cache, fence: input.fence }));
-    input.signal.throwIfAborted();
-    const graphLoadStarted = performance.now();
-    const publication = input.loadPublication ? await input.loadPublication()
-      : { snapshot: input.snapshot, previousFactGraph };
-    input.signal.throwIfAborted();
-    if (!publication.snapshot) throw new Error('analysis_checkpoint_snapshot_missing');
-    if ((publication.snapshot as BuiltSnapshot).snapshot_id !== input.checkpoint.snapshot_id) throw new Error('analysis_checkpoint_identity_mismatch');
-    const graphLoadTimings = { preparation_graph_load_ms: performance.now() - graphLoadStarted,
-      preparation_graph_load_rss_bytes: process.memoryUsage().rss };
-    const plan = input.checkpoint.plan
-      ?? (input.checkpoint.provenance_applied ? undefined : buildFullPlan(input.checkpoint.fetched.manifest));
-    const publicationPrevious = asFactGraph(publication.previousFactGraph)
-      ?? (!input.checkpoint.provenance_applied && plan ? await loadIncrementalHistory({
-        store: this.store, publicKey: input.checkpoint.from_public_key ?? null,
-        snapshot: publication.snapshot as BuiltSnapshot, plan, currentParsedFiles: preparedCache.files,
-      }) : null);
-    const preparation = preparePublicationSnapshot({
-      snapshot: publication.snapshot as BuiltSnapshot,
-      previousFactGraph: publicationPrevious,
-      plan,
-      currentParsedFiles: preparedCache.files,
-      provenanceApplied: input.checkpoint.provenance_applied,
+    // Release the loaded snapshot and historical projection before the large
+    // object-store publication starts. Only the prepared current facts escape.
+    const { preparedCache, preparation, graphLoadTimings } = await prepareAssemblyPublication({
+      store: this.store, checkpoint: input.checkpoint, snapshot: input.snapshot,
+      loadPublication: input.loadPublication, fence: input.fence, signal: input.signal,
       displayLanguage,
     });
     const { view, languageOverlay, overlayStatus } = preparation;
@@ -1498,6 +1477,47 @@ export class AnalysisCoordinator {
       fence,
     });
   }
+}
+
+/** Bound historical state to preparation; publication only needs current facts. */
+async function prepareAssemblyPublication(input: {
+  store: ProductStore;
+  checkpoint: AnalysisCheckpoint;
+  snapshot?: BuiltSnapshot;
+  loadPublication?: LoadedAnalysisCheckpoint<AnalysisCheckpoint>['loadPublication'];
+  fence: AnalysisLeaseFence;
+  signal: AbortSignal;
+  displayLanguage: string;
+}) {
+  const previousFactGraph = input.checkpoint.previous_fact_graph ?? null;
+  const preparedCache = await preparePublicationCache(takeCheckpointAnalysisCache(input.checkpoint),
+    cache => input.store.preparePublicSnapshotAnalysisCache({ publicKey: input.checkpoint.public_key,
+      snapshotId: input.checkpoint.snapshot_id, cache, fence: input.fence }));
+  input.signal.throwIfAborted();
+  const graphLoadStarted = performance.now();
+  const publication = input.loadPublication ? await input.loadPublication()
+    : { snapshot: input.snapshot, previousFactGraph };
+  input.signal.throwIfAborted();
+  if (!publication.snapshot) throw new Error('analysis_checkpoint_snapshot_missing');
+  if ((publication.snapshot as BuiltSnapshot).snapshot_id !== input.checkpoint.snapshot_id) throw new Error('analysis_checkpoint_identity_mismatch');
+  const graphLoadTimings = { preparation_graph_load_ms: performance.now() - graphLoadStarted,
+    preparation_graph_load_rss_bytes: process.memoryUsage().rss };
+  const plan = input.checkpoint.plan
+    ?? (input.checkpoint.provenance_applied ? undefined : buildFullPlan(input.checkpoint.fetched.manifest));
+  const publicationPrevious = asFactGraph(publication.previousFactGraph)
+    ?? (!input.checkpoint.provenance_applied && plan ? await loadIncrementalHistory({
+      store: input.store, publicKey: input.checkpoint.from_public_key ?? null,
+      snapshot: publication.snapshot as BuiltSnapshot, plan, currentParsedFiles: preparedCache.files,
+    }) : null);
+  const preparation = preparePublicationSnapshot({
+    snapshot: publication.snapshot as BuiltSnapshot,
+    previousFactGraph: publicationPrevious,
+    plan,
+    currentParsedFiles: preparedCache.files,
+    provenanceApplied: input.checkpoint.provenance_applied,
+    displayLanguage: input.displayLanguage,
+  });
+  return { preparedCache, preparation, graphLoadTimings };
 }
 
 function asFactGraph(value: unknown): NonNullable<EvidenceSnapshot["fact_graph"]> | null {
