@@ -7,7 +7,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { PostgresStore } from './postgres-store.js';
 import { asEvidenceSnapshot } from '../domain/snapshot.js';
 import { buildSnapshotQueryDirectory, querySnapshotQueryDirectory, type SnapshotQueryInput, type SnapshotQueryResult } from '../domain/snapshot-query.js';
-import { readSnapshotQuery } from './snapshot-query-reader.js';
+import { neighborEndpointKeys, readSnapshotQuery } from './snapshot-query-reader.js';
 import type { Pool } from 'pg';
 const url = process.env.WTR_STORAGE_TEST_DATABASE_URL ?? process.env.WTR_ADMIN_TEST_DATABASE_URL;
 function canonical(result: SnapshotQueryResult) {
@@ -39,6 +39,75 @@ async function withQueryFixture(task: (store: PostgresStore, key: string, snapsh
     await store.close();await rm(root,{recursive:true,force:true});
   }
 }
+
+test('neighbor endpoint expansion exactly matches raw keys and stripped IDs from directory endpoints', () => {
+  const endpoints=['component:shared','fact:shared','component:symbol:with:colon',
+    'component:component:shared','fact:fact:shared','component:missing'];
+  for (const ids of [[],['shared'],['component:shared'],['symbol:with:colon'],
+    ['shared','component:shared','shared'],['unknown']]) {
+    const expanded=new Set(neighborEndpointKeys(ids));
+    const selected=new Set(ids);
+    const expected=endpoints.filter(key=>selected.has(key)||selected.has(key.replace(/^[^:]+:/,'')));
+    assert.deepEqual(endpoints.filter(key=>expanded.has(key)),expected,JSON.stringify(ids));
+  }
+  assert.deepEqual(neighborEndpointKeys(['shared','shared']),['shared','component:shared','fact:shared']);
+});
+
+test('PostgreSQL neighbors match the in-memory oracle for endpoint identities, filters and paging', {skip:!url}, async () => {
+  await withQueryFixture(async (store,key,snapshotId,view,analysis) => {
+    const node=(id:string,path:string)=>({...structuredClone(view.graph.nodes[1]!),id,name:id,label:id,
+      parent_entity_id:null,depth:0,members:[],evidence:[],attributes:{path,language:'typescript'}});
+    const edge=(id:string,source:string,target:string,relationKind='calls')=>({...structuredClone(view.graph.edges[0]!),
+      id,source,target,relation_kind:relationKind,label:id,description:'neighbor '+id,weight:1,evidence:[]});
+    view.graph.nodes.push(node('shared','src/shared.ts'),node('symbol:with:colon','src/colon.ts'),
+      node('component:shared','src/double.ts'),node('neighbor','src/neighbor.ts'));
+    view.graph.edges.push(edge('shared-neighbor','shared','neighbor'),edge('shared-neighbor-duplicate','shared','neighbor'),
+      edge('shared-loop','shared','shared'),edge('colon-neighbor','symbol:with:colon','neighbor','imports'),
+      edge('dangling-neighbor','ghost','neighbor'));
+    analysis.fact_graph={nodes:[node('shared','src/fact-shared.ts'),node('fact-only','src/fact-only.ts')],
+      edges:[edge('fact-shared','shared','fact-only'),edge('fact-loop','shared','shared')]};
+    await store.savePublicSnapshot({publicKey:key,repository:'test/query-'+key.slice(0,8),commitSha:'a'.repeat(40),snapshotId,view,analysis});
+    const directory=buildSnapshotQueryDirectory(key,snapshotId,view,analysis);
+
+    // A matching edge in another directory must not add C to this snapshot's
+    // shared-neighbor scope. Keep a second publication live during every query.
+    const foreignKey=createHash('sha256').update(randomUUID()).digest('hex');
+    const foreignSnapshotId='snap:'+foreignKey.slice(0,12);
+    const foreignView=asEvidenceSnapshot({snapshot_id:foreignSnapshotId,summary:{file_count:0,symbol_count:0,call_count:1},
+      graph:{nodes:[],edges:[edge('foreign','shared','C')],layers:[],unassigned_component_ids:[]},
+      value_points:[],languages:[],learning_plan:{steps:[]}})!;
+    try {
+      await mkdir(store.publicSourceSnapshotRoot(foreignKey,foreignSnapshotId),{recursive:true});
+      await store.savePublicSnapshot({publicKey:foreignKey,repository:'test/query-'+foreignKey.slice(0,8),
+        commitSha:'b'.repeat(40),snapshotId:foreignSnapshotId,view:foreignView,analysis:{fact_graph:{nodes:[],edges:[]}}});
+      const cases:SnapshotQueryInput[]=[
+        {entity_ids:['shared'],scope:'neighbors'}, {component_ids:['shared'],scope:'neighbors'},
+        {entity_ids:['component:shared'],scope:'neighbors'}, {entity_ids:['fact:shared'],scope:'neighbors'},
+        {entity_ids:['symbol:with:colon'],scope:'neighbors'}, {entity_ids:['component:symbol:with:colon'],scope:'neighbors'},
+        {entity_ids:['ghost'],scope:'neighbors'}, {entity_ids:['unknown'],scope:'neighbors'},
+        {entity_ids:['shared','shared'],scope:'neighbors'}, {entity_ids:['shared'],scope:'neighbors',paths:['src/neighbor.ts']},
+        {entity_ids:['shared'],scope:'neighbors',text:'neighbor'},
+        {entity_ids:['shared'],scope:'neighbors',relation_kinds:['calls']},
+        {entity_ids:['symbol:with:colon'],scope:'neighbors',relation_kinds:['imports'],text:'colon'},
+        {entity_ids:['shared'],scope:'neighbors',expand_hops:1},
+      ];
+      let pages=0;
+      for(const base of cases){let cursor:string|null=null;const visited=new Set<string>();
+        for(let page=0;page<30;page++){
+          const query:SnapshotQueryInput={...base,limit:1,cursor};
+          const expected=querySnapshotQueryDirectory(directory,query);
+          const actual=await store.queryPublicSnapshot({publicKey:key,snapshotId,query});
+          assert.deepEqual(canonical(actual),canonical(expected),JSON.stringify(query));pages++;
+          cursor=actual.next_cursor;if(!cursor)break;
+          assert.ok(!visited.has(cursor),'cursor must advance');visited.add(cursor);
+        }
+      }
+      assert.ok(pages>cases.length,'neighbor pagination must visit multiple items');
+    } finally {
+      await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[foreignKey]).catch(()=>undefined);
+    }
+  });
+});
 
 test('PostgreSQL ranked pages match the in-memory contract for filters, scopes, cycles, budgets and continuation', {skip:!url}, async () => {
   await withQueryFixture(async (store,key,snapshotId,view,analysis) => {

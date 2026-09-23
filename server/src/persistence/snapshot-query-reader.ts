@@ -13,6 +13,17 @@ const EDGE_FIELDS = "public_snapshot_key,snapshot_id,edge_key,edge_id,edge_kind,
 type Request = { publicKey: string; snapshotId: string; query: SnapshotQueryInput; signal?: AbortSignal };
 const limitOf = (n?: number) => Number.isFinite(n) ? Math.max(1, Math.min(100, Math.floor(n!))) : 20;
 
+/** Directory edge endpoints are nodeKey(kind, id) for component or fact nodes. */
+export function neighborEndpointKeys(ids: readonly string[]): string[] {
+  const keys = new Set<string>();
+  for (const id of ids) {
+    keys.add(id);
+    keys.add(`component:${id}`);
+    keys.add(`fact:${id}`);
+  }
+  return [...keys];
+}
+
 /** Rank scalar candidate keys inside PostgreSQL; hydrate only a page and its evidence. */
 export async function readSnapshotQuery(pool: Pool, input: Request): Promise<SnapshotQueryResult | null> {
   const db = await connectWithAbort<PoolClient>(pool, input.signal);
@@ -87,15 +98,24 @@ async function rankedCandidates(db: PoolClient, request: Request, directoryId: s
   const nodeBase='n.directory_id=$1';
   const edgeBase='e.directory_id=$1';
   const ids=[...new Set([...(input.entity_ids??[]),...(input.component_ids??[])])];
-  const idParam=ids.length?bind(ids,'text[]'):null;
+  const idParam=ids.length?bind(input.scope==='neighbors'?neighborEndpointKeys(ids):ids,'text[]'):null;
   const nodeConditions=[nodeBase];
   const scopes:string[]=[];
   if(idParam){
     const matches=`(n.node_id=ANY(${idParam}) OR n.node_key=ANY(${idParam}))`;
     if(!input.scope||input.scope==='self')nodeConditions.push(matches);
     else if(input.scope==='neighbors'){
-      scopes.push(`scope_nodes AS (SELECT DISTINCT unnest(ARRAY[e.source_node_key,e.target_node_key]) AS node_key FROM snapshot_directory_edges e WHERE ${edgeBase} AND
-        (e.source_node_key=ANY(${idParam}) OR e.target_node_key=ANY(${idParam}) OR regexp_replace(e.source_node_key,'^[^:]+:','')=ANY(${idParam}) OR regexp_replace(e.target_node_key,'^[^:]+:','')=ANY(${idParam})))`);
+      // Input may be a raw node key or an ID (including an ID containing ':').
+      // Probe both endpoint indexes, then deduplicate endpoints of all matching
+      // edges. Do not join nodes here: a dangling endpoint can still select its
+      // existing neighbor, as in the in-memory directory query.
+      scopes.push(`scope_nodes AS (SELECT DISTINCT endpoint.node_key FROM unnest(${idParam}) AS candidate(node_key)
+        CROSS JOIN LATERAL (
+          SELECT e.source_node_key,e.target_node_key FROM snapshot_directory_edges e WHERE ${edgeBase} AND e.source_node_key=candidate.node_key
+          UNION ALL
+          SELECT e.source_node_key,e.target_node_key FROM snapshot_directory_edges e WHERE ${edgeBase} AND e.target_node_key=candidate.node_key
+        ) hit
+        CROSS JOIN LATERAL unnest(ARRAY[hit.source_node_key,hit.target_node_key]) AS endpoint(node_key))`);
       nodeConditions.push('n.node_key IN (SELECT node_key FROM scope_nodes)');
     }else{
       scopes.push(`scope_nodes AS (SELECT n.node_key,n.node_id,n.parent_entity_id FROM snapshot_directory_nodes n WHERE ${nodeBase} AND ${matches}
