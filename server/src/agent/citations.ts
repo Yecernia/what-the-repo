@@ -18,6 +18,21 @@ interface ReferencedPathToken {
   directory?: string | null;
 }
 
+const INLINE_REFERENCE = /`([^`\r\n]+)`/gu;
+const PLAIN_PATH = /(?<![A-Za-z0-9_@+$~./-])(?:[A-Za-z0-9_@+$~.-]+\/)+[A-Za-z0-9_@+$~.-]+\.[A-Za-z0-9_-]+(?:(?::\d{1,7}(?:-\d{1,7})?)|(?:#L\d+(?:-L?\d+)?))?/giu;
+
+function withoutCodeFences(text: string): string {
+  return text.replace(/```[\s\S]*?```/gu, (block) => " ".repeat(block.length));
+}
+
+/** Conservative prefilter: unknown basenames in inline code may still be citations. */
+export function hasPotentialCitation(text: string): boolean {
+  const candidate = withoutCodeFences(text);
+  for (const _ of candidate.matchAll(INLINE_REFERENCE)) return true;
+  for (const _ of candidate.matchAll(PLAIN_PATH)) return true;
+  return false;
+}
+
 const KNOWN_BARE_FILE_NAMES = new Set([
   ".dockerignore",
   ".env",
@@ -132,11 +147,11 @@ function referencedPathTokens(
 
   // Inline code is the required format for a basename; fenced code is source,
   // not a user-facing citation, and must not create evidence chips.
-  const withoutFences = text.replace(/```[\s\S]*?```/gu, (block) => " ".repeat(block.length));
+  const withoutFences = withoutCodeFences(text);
   const inlineRanges: Array<[number, number]> = [];
   let directory: string | null = null;
   let previousEnd = 0;
-  for (const match of withoutFences.matchAll(/`([^`\r\n]+)`/gu)) {
+  for (const match of withoutFences.matchAll(INLINE_REFERENCE)) {
     const offset = match.index;
     if (/\n\s*\n/u.test(withoutFences.slice(previousEnd, offset))) directory = null;
     const value = match[1] ?? "";
@@ -150,8 +165,7 @@ function referencedPathTokens(
 
   // Keep legacy plain full paths working, while requiring inline code for a
   // short basename so symbols such as Field.eval stay inert.
-  const plainPath = /(?<![A-Za-z0-9_@+$~./-])(?:[A-Za-z0-9_@+$~.-]+\/)+[A-Za-z0-9_@+$~.-]+\.[A-Za-z0-9_-]+(?:(?::\d{1,7}(?:-\d{1,7})?)|(?:#L\d+(?:-L?\d+)?))?/giu;
-  for (const match of withoutFences.matchAll(plainPath)) {
+  for (const match of withoutFences.matchAll(PLAIN_PATH)) {
     if (!inlineRanges.some(([start, end]) => match.index >= start && match.index < end)) {
       add(match[0] ?? "", match.index, null);
     }
@@ -178,12 +192,18 @@ function toMessageEvidence(
 export async function validateAnswerCitations(input: {
   text: string;
   snapshot: EvidenceSnapshot | null;
+  getSnapshot?: () => Promise<EvidenceSnapshot | null>;
+  snapshotId?: string | null;
   exposed: Map<string, SnapshotEvidence>;
   projectId: string;
   store: ProductStore;
 }): Promise<CitationValidation> {
-  if (!input.snapshot) return { text: input.text, unresolved: [], evidence: [], errors: [] };
-  const snapshot = input.snapshot;
+  if (input.getSnapshot && input.snapshotId && !hasPotentialCitation(input.text)) {
+    return { text: input.text, unresolved: [], errors: [], evidence: [...input.exposed.values()].slice(0, 6)
+      .map((row) => toMessageEvidence(row, input.snapshotId!)) };
+  }
+  const snapshot = input.getSnapshot ? await input.getSnapshot() : input.snapshot;
+  if (!snapshot) return { text: input.text, unresolved: [], evidence: [], errors: [] };
   const rows = [...allEvidence(snapshot), ...input.exposed.values()];
   const byPath = new Map<string, SnapshotEvidence[]>();
   for (const row of rows) {

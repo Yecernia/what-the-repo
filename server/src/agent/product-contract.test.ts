@@ -456,6 +456,38 @@ test("citation existence accepts shared names, resolves directory context and ig
   }
 });
 
+test('lazy citation validation skips ordinary text and preserves custom paths and inline references', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-citation-lazy-'));
+  try {
+    const { context, snapshot, store } = await fixture(root);
+    const source = store.publicSourceSnapshotRoot('c'.repeat(64), snapshot.snapshot_id);
+    await mkdir(join(source, 'src'), { recursive: true });
+    await writeFile(join(source, 'src/module.qxx'), 'custom language\n');
+    const exposed = new Map([["fact:file:entry", snapshot.graph.nodes[0]!.evidence[0]!]]);
+    for (const text of ['普通聊天没有源码引用。', '这里只提到 entry.ts 但没有引用格式。',
+      '旧格式参见 src/module.qxx:1。', '入口参见 `entry.ts:2`。', '这里是 `Field.eval` 符号。']) {
+      let reads = 0;
+      const eager = await validateAnswerCitations({ text, snapshot, exposed, projectId: context.project.project_id, store });
+      const lazy = await validateAnswerCitations({ text, snapshot: null, snapshotId: snapshot.snapshot_id,
+        getSnapshot: async () => { reads++; return snapshot; }, exposed, projectId: context.project.project_id, store });
+      assert.deepEqual(lazy, eager, text);
+      assert.equal(reads, text.includes('`') || text.includes('src/module.qxx') ? 1 : 0, text);
+    }
+    const failed = new Error('view read failed');
+    await assert.rejects(validateAnswerCitations({ text: '参见 `entry.ts:2`', snapshot: null,
+      snapshotId: snapshot.snapshot_id, getSnapshot: async () => { throw failed; }, exposed,
+      projectId: context.project.project_id, store }), error => error === failed);
+    let emptyReads = 0;
+    const oldEmpty = await validateAnswerCitations({ text: '普通聊天。', snapshot: null,
+      snapshotId: null, getSnapshot: async () => { emptyReads++; return null; }, exposed,
+      projectId: context.project.project_id, store });
+    assert.deepEqual(oldEmpty, { text: '普通聊天。', unresolved: [], evidence: [], errors: [] });
+    assert.equal(emptyReads, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("conversation service keeps the displayed unverified reply in the next Pi requests", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-visible-history-"));
   try {
@@ -486,6 +518,12 @@ test("conversation service keeps the displayed unverified reply in the next Pi r
       agentModels: Object.fromEntries(["understanding-assessment", "citation-review", "memory-maintenance"].map(role => [role, { model: `test-${role}` }])) } as ServerConfig;
     const service = new ConversationService(config, store, sessions, new PiMemoryStore(join(root, "memory")));
     const owner = { owner_id: context.project.owner_id, kind: "guest" as const };
+    const originalLoadSnapshot = store.loadSnapshot.bind(store);
+    let fullViewReads = 0;
+    store.loadSnapshot = async <T = Record<string, unknown>>(projectId: string, language?: string): Promise<T | null> => {
+      fullViewReads++;
+      return originalLoadSnapshot<T>(projectId, language);
+    };
     let visible = "";
     faux.setResponses([
       fauxAssistantMessage("这个文件可能是 `missing.ts`，尚未核实。"),
@@ -507,10 +545,13 @@ test("conversation service keeps the displayed unverified reply in the next Pi r
     assert.ok(first);
     visible = first.assistant_message.content;
     assert.deepEqual(first.validation_errors, ["unknown_path:missing.ts"]);
+    assert.equal(fullViewReads, 1, 'the cited answer needs one complete view');
     assert.equal(first.assistant_message.context_eligible, false); // Not promoted to trusted long-term memory.
     const second = await service.run({ owner, projectId: context.project.project_id, content: "午饭吃什么", displayLanguage: "en" });
     assert.equal(second?.assistant_message.content, "午饭可以吃面。");
+    assert.equal(fullViewReads, 1, 'ordinary uncited chat does not open the view');
     await service.run({ owner, projectId: context.project.project_id, content: "你好", displayLanguage: "en" });
+    assert.equal(fullViewReads, 1);
     const persisted = await store.loadProject(context.project.project_id, owner.owner_id);
     assert.equal(persisted?.messages[1]?.content, visible);
     const identity = { sessionId: projectSessionId(owner.owner_id, context.project.project_id, context.project.analysis.snapshot_id),

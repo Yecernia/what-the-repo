@@ -176,6 +176,96 @@ test("conversation source reads require exposed evidence and stay bound to the s
   assert.equal(payload.next_offset, 3);
 });
 
+test('canonical evidence, source and static facts use captured identity without opening the full view', async () => {
+  let fullReads = 0;
+  const requests: unknown[][] = [];
+  const staticFile = { path: evidence.path, language: 'typescript', syntax_completed: true,
+    semantic_completed: true, diagnostics: [], imports: [], calls: [] };
+  const ctx = context({ snapshot: null, snapshotId: 'snapshot:tools', publicSnapshotKey: 'canonical',
+    getSnapshot: async () => { fullReads++; throw new Error('unexpected full view'); },
+    store: {
+      queryPublicSnapshot: async (input: unknown) => {
+        requests.push(['query', input]);
+        return { nodes: [{ node_key: 'node:key', node_id: 'component:entry', name: '入口',
+          responsibility: '接收请求', layer_name: '应用层', certainty: 'verified' }], edges: [],
+          evidence: [{ ...evidence, evidence_id: evidence.stable_id }],
+          evidence_links: [{ owner_kind: 'node', owner_key: 'node:key', evidence_id: evidence.stable_id }],
+          next_cursor: null, truncated: false };
+      },
+      readSourceLines: async (...args: unknown[]) => {
+        requests.push(['source', ...args]); return { lines: ['export function entry() {}'], truncated: false };
+      },
+      readStaticFile: async (...args: unknown[]) => { requests.push(['static', ...args]); return staticFile; },
+    } as unknown as ProductStore,
+  });
+  const tools = createConversationTools(ctx);
+  const run = (name: string, params: Record<string, unknown>) => tools.find(tool => tool.name === name)!.execute(name, params);
+  await assert.rejects(run('read_source_excerpt', { path: evidence.path }), /请先通过证据/);
+  await assert.rejects(run('get_static_file_facts', { path: evidence.path, kind: 'calls' }), /请先通过证据/);
+  assert.equal(requests.length, 0);
+  const query = await run('query_code_evidence', { text: 'entry' });
+  assert.equal(JSON.parse((query.content[0] as { text: string }).text).nodes.length, 1);
+  assert.ok(ctx.exposedPaths.has(evidence.path));
+  await run('read_source_excerpt', { path: evidence.path });
+  const facts = await run('get_static_file_facts', { path: evidence.path, kind: 'calls' });
+  assert.equal(JSON.parse((facts.content[0] as { text: string }).text).path, evidence.path);
+  assert.equal(fullReads, 0);
+  assert.deepEqual(requests.map(row => row[0]), ['query', 'source', 'static']);
+  assert.deepEqual(requests[1]!.slice(1, 4), [ctx.project.project_id, 'snapshot:tools', evidence.path]);
+  assert.deepEqual(requests[2]!.slice(1), [ctx.project.project_id, 'snapshot:tools', evidence.path]);
+  const changed = new Error('snapshot_changed');
+  ctx.assertSnapshotBinding = async () => { throw changed; };
+  await assert.rejects(run('query_code_evidence', { text: 'entry' }), error => error === changed);
+  assert.equal(requests.length, 3, 'changed binding is rejected before indexed reads');
+});
+
+test('canonical static facts match the full-view inline result and complex tools share one reader', async () => {
+  const file = { path: evidence.path, language: 'typescript', syntax_completed: true,
+    semantic_completed: true, diagnostics: [], imports: [], calls: [] };
+  const full = snapshot();
+  full.static_analysis = { files: [file] } as unknown as typeof full.static_analysis;
+  const direct = context({ snapshot: full, exposedPaths: new Set([evidence.path]) });
+  const directTool = createConversationTools(direct).find(tool => tool.name === 'get_static_file_facts')!;
+  const oldResult = await directTool.execute('old', { path: evidence.path, kind: 'calls' });
+  let reads = 0;
+  let memo: Promise<EvidenceSnapshot> | undefined;
+  const lazy = context({ snapshot: null, snapshotId: full.snapshot_id, publicSnapshotKey: 'canonical',
+    exposedPaths: new Set([evidence.path]),
+    getSnapshot: () => memo ??= Promise.resolve().then(() => { reads++; return full; }),
+    store: { readStaticFile: async () => file } as unknown as ProductStore,
+  });
+  const tools = createConversationTools(lazy);
+  const newResult = await tools.find(tool => tool.name === 'get_static_file_facts')!
+    .execute('new', { path: evidence.path, kind: 'calls' });
+  assert.deepEqual(JSON.parse((newResult.content[0] as { text: string }).text),
+    JSON.parse((oldResult.content[0] as { text: string }).text));
+  assert.equal(reads, 0);
+  const [overview, component, learning] = await Promise.all([
+    tools.find(tool => tool.name === 'get_project_overview')!.execute('overview', {}),
+    tools.find(tool => tool.name === 'get_component_context')!.execute('component', { component_id: 'component:entry' }),
+    tools.find(tool => tool.name === 'get_learning_context')!.execute('learning', {}),
+  ]);
+  assert.ok(overview.content.length && component.content.length && learning.content.length);
+  assert.equal(reads, 1);
+});
+
+test('canonical static facts fall back to the full view only for an absent per-file index', async () => {
+  const file = { path: evidence.path, language: 'typescript', syntax_completed: true,
+    semantic_completed: true, diagnostics: [], imports: [], calls: [] };
+  const full = snapshot();
+  full.static_analysis = { files: [file] } as unknown as typeof full.static_analysis;
+  let reads = 0;
+  const ctx = context({ snapshot: null, snapshotId: full.snapshot_id, publicSnapshotKey: 'canonical',
+    exposedPaths: new Set([evidence.path]),
+    getSnapshot: async () => { reads++; return full; },
+    store: { readStaticFile: async () => null } as unknown as ProductStore,
+  });
+  const result = await createConversationTools(ctx).find(tool => tool.name === 'get_static_file_facts')!
+    .execute('legacy', { path: evidence.path, kind: 'calls' });
+  assert.equal(JSON.parse((result.content[0] as { text: string }).text).path, evidence.path);
+  assert.equal(reads, 1);
+});
+
 test("propose_learning_action creates a pending card without changing study state", async () => {
   const ctx = context();
   const before = structuredClone(ctx.project.study);

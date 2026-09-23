@@ -19,7 +19,7 @@ import {
   type Project,
 } from "../domain/conversation.js";
 import { asEvidenceSnapshot } from "../domain/snapshot.js";
-import { loadConversationSnapshot } from "./conversation-snapshot.js";
+import { createConversationSnapshotReader } from "./conversation-snapshot.js";
 import { createModelRuntime } from "../agent/model-runtime.js";
 import { runtimeForSkill } from "../agent/role-models.js";
 import type { ProviderGateFactory } from "../agent/provider-gate.js";
@@ -428,7 +428,20 @@ export class ConversationService {
     // Chat helpers always follow this conversation's selected model and payer.
     const modelRuntime = createModelRuntime(provider, runtimeOptions);
     const primarySkill = await loadProductSkill(PRIMARY_SKILL_ID);
-    const snapshot = await loadConversationSnapshot(this.store, input.projectId, Boolean(project.analysis.canonical_snapshot_key));
+    const capturedSnapshotId = project.analysis.snapshot_id;
+    const capturedPublicKey = project.analysis.canonical_snapshot_key;
+    const assertSnapshotBinding = async () => {
+      input.signal?.throwIfAborted();
+      const current = await this.store.loadProject(input.projectId, input.owner.owner_id);
+      if (!current || current.analysis.snapshot_id !== capturedSnapshotId
+        || current.analysis.canonical_snapshot_key !== capturedPublicKey) {
+        throw serviceError('snapshot_changed', '项目快照已更新，请刷新后重试。', 409);
+      }
+    };
+    const getSnapshot = createConversationSnapshotReader(this.store, {
+      projectId: input.projectId, ownerId: input.owner.owner_id,
+      snapshotId: capturedSnapshotId, publicSnapshotKey: capturedPublicKey, signal: input.signal,
+    });
     const agentMemories = await this.memories.list(input.owner.owner_id);
     const profile = await this.store.loadProfile(input.owner.owner_id);
     if (profile.memory_summary_mode !== "edited") {
@@ -458,7 +471,11 @@ export class ConversationService {
     const tools = [
       ...createConversationTools({
       project,
-      snapshot,
+      snapshot: null,
+      getSnapshot,
+      snapshotId: capturedSnapshotId,
+      publicSnapshotKey: capturedPublicKey,
+      assertSnapshotBinding,
       profile,
       agentMemories,
       store: this.store,
@@ -490,8 +507,9 @@ export class ConversationService {
       if (input.signal?.aborted && /lease_lost|maintenance_connection_lost/.test(String(input.signal.reason))) input.signal.throwIfAborted();
       if (!turnStarted) throw serviceError(result.stopReason, failureMessage(result.stopReason), result.stopReason === "cancelled" ? 409 : 503);
       const explicitAdvance = isExplicitAdvanceRequest(content);
-      if (explicitAdvance && snapshot && pendingLearningAction.value?.action !== "advance_learning_step") {
-        try {
+      if (explicitAdvance && pendingLearningAction.value?.action !== "advance_learning_step") {
+        const snapshot = await getSnapshot();
+        if (snapshot) try {
           pendingLearningAction.value = createLearningActionProposal(project, snapshot, {
             action: "advance_learning_step",
             targetKind: "learning_step",
@@ -537,7 +555,9 @@ export class ConversationService {
         : result.text, skipNotice].filter(Boolean).join("\n\n");
       const validation = await validateAnswerCitations({
         text: visibleText,
-        snapshot,
+        snapshot: null,
+        getSnapshot,
+        snapshotId: capturedSnapshotId,
         exposed: exposedEvidence,
         projectId: input.projectId,
         store: this.store,

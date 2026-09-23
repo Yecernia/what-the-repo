@@ -95,6 +95,10 @@ type ToolDetails = {
 export interface ConversationToolContext {
   project: Project;
   snapshot: EvidenceSnapshot | null;
+  getSnapshot?: () => Promise<EvidenceSnapshot | null>;
+  snapshotId?: string | null;
+  publicSnapshotKey?: string | null;
+  assertSnapshotBinding?: () => Promise<void>;
   profile: LearnerProfile;
   agentMemories: PiMemoryRecord[];
   store: ProductStore;
@@ -252,10 +256,9 @@ function makeTool<T extends typeof EMPTY_INPUT>(
 
 function componentPayload(
   context: ConversationToolContext,
+  snapshot: EvidenceSnapshot,
   node: SnapshotNode,
 ): Record<string, unknown> {
-  const snapshot = context.snapshot;
-  if (!snapshot) return {};
   const evidence = expose(context, bounded(nodeEvidence(node), 12));
   const adjacent = snapshot.graph.edges
     .filter((edge) => edge.source === node.id || edge.target === node.id)
@@ -300,6 +303,10 @@ function componentPayload(
 export function createConversationTools(
   context: ConversationToolContext,
 ): AgentTool[] {
+  const fullSnapshot = () => context.getSnapshot ? context.getSnapshot() : Promise.resolve(context.snapshot);
+  const snapshotId = context.snapshotId ?? context.snapshot?.snapshot_id ?? context.project.analysis.snapshot_id;
+  const publicSnapshotKey = context.publicSnapshotKey === undefined
+    ? context.project.analysis.canonical_snapshot_key : context.publicSnapshotKey;
   const call = <T extends typeof EMPTY_INPUT>(
     name: string,
     label: string,
@@ -338,7 +345,7 @@ export function createConversationTools(
     "读取项目规模、语言质量、组件和已有价值点。普通聊天不需要调用。",
     EMPTY_INPUT,
     async () => {
-      const snapshot = context.snapshot;
+      const snapshot = await fullSnapshot();
       if (!snapshot) return errorResult("get_project_overview", "项目分析尚未完成。");
       const points = bounded(snapshot.value_points, 8).map((point) => ({
         stable_id: point.stable_id,
@@ -382,7 +389,7 @@ export function createConversationTools(
     "列出分析快照中全部已发现的价值点；数量由仓库内容决定。",
     VALUE_POINT_INPUT,
     async (_id, params, signal) => {
-      const snapshot = context.snapshot;
+      const snapshot = await fullSnapshot();
       if (!snapshot) return errorResult("list_value_points", "项目分析尚未完成。");
       const limit = Number((params as { limit?: number }).limit ?? (snapshot.value_points.length || 1));
       const rows = bounded(snapshot.value_points, Math.min(limit, 8)).map((point) => ({
@@ -403,8 +410,11 @@ export function createConversationTools(
     "按关键词、路径、语言、组件或关系查询证据图谱。回答仓库事实前先调用。",
     EVIDENCE_QUERY_INPUT,
     async (_id, params, signal) => {
-      const snapshot = context.snapshot;
-      if (!snapshot) return errorResult("query_code_evidence", "完整证据图谱暂不可用。");
+      const snapshot = publicSnapshotKey && snapshotId ? null : await fullSnapshot();
+      if (!(publicSnapshotKey && snapshotId) && !snapshot) {
+        return errorResult("query_code_evidence", "完整证据图谱暂不可用。");
+      }
+      if (publicSnapshotKey && snapshotId) await context.assertSnapshotBinding?.();
       const input = params as {
         text?: string;
         paths?: string[];
@@ -426,11 +436,11 @@ export function createConversationTools(
         evidence_budget_tokens:input.evidence_budget_tokens ?? 4000,
         entity_kinds:input.entity_kinds as SnapshotQueryInput['entity_kinds'],limit:Math.min(Number(input.limit??8),12),
       };
-      const result = context.project.analysis.canonical_snapshot_key
-        ? await context.store.queryPublicSnapshot({publicKey:context.project.analysis.canonical_snapshot_key,
-          snapshotId:snapshot.snapshot_id,query:queryInput,signal})
+      const result = publicSnapshotKey && snapshotId
+        ? await context.store.queryPublicSnapshot({publicKey:publicSnapshotKey,
+          snapshotId,query:queryInput,signal})
         : querySnapshotQueryDirectory(buildSnapshotQueryDirectory('local:'+context.project.project_id,
-          snapshot.snapshot_id,snapshot,{fact_graph:snapshot.fact_graph}),queryInput);
+          snapshot!.snapshot_id,snapshot!,{fact_graph:snapshot!.fact_graph}),queryInput);
         const evidenceById = new Map(result.evidence.map((row) => [row.evidence_id, {
           stable_id: row.evidence_id,
           label: row.label,
@@ -490,7 +500,7 @@ export function createConversationTools(
     "读取当前图选择的组件或精确关系；不会读取任意源码。",
     COMPONENT_INPUT,
     async (_id, params) => {
-      const snapshot = context.snapshot;
+      const snapshot = await fullSnapshot();
       if (!snapshot) return errorResult("get_component_context", "项目分析尚未完成。");
       const input = params as { component_id?: string; relation_id?: string };
       const selected = context.selected?.snapshot_id === snapshot.snapshot_id
@@ -505,7 +515,7 @@ export function createConversationTools(
         if (!node) return errorResult("get_component_context", "找不到这个组件。");
         return textResult(
           "get_component_context",
-          { ok: true, component: componentPayload(context, node) },
+          { ok: true, component: componentPayload(context, snapshot, node) },
           { evidence_ids: nodeEvidence(node).map((row) => row.stable_id) },
         );
       }
@@ -556,8 +566,10 @@ export function createConversationTools(
           "请先通过证据或组件工具取得这个文件路径。",
         );
       }
-      const snapshot = context.snapshot;
-      if (!snapshot) return errorResult("read_source_excerpt", "源码快照暂不可用。");
+      const currentSnapshotId = publicSnapshotKey && snapshotId
+        ? snapshotId : (await fullSnapshot())?.snapshot_id;
+      if (!currentSnapshotId) return errorResult("read_source_excerpt", "源码快照暂不可用。");
+      if (publicSnapshotKey) await context.assertSnapshotBinding?.();
       try {
         const result = await readSourcePage({
           path: normalized,
@@ -566,7 +578,7 @@ export function createConversationTools(
           readLines: async (sourcePath, start, end) => (
             await context.store.readSourceLines(
               context.project.project_id,
-              snapshot.snapshot_id,
+              currentSnapshotId,
               sourcePath,
               start,
               end,
@@ -595,11 +607,19 @@ export function createConversationTools(
     async (_id, params) => {
       const input = params as Static<typeof STATIC_FILE_INPUT>;
       const path = input.path.replaceAll("\\", "/");
-      if (!context.snapshot || !context.exposedPaths.has(path) || path.startsWith("/") || path.split("/").includes("..")) {
+      if (!context.exposedPaths.has(path) || path.startsWith("/") || path.split("/").includes("..")) {
         return errorResult("get_static_file_facts", "请先通过证据或组件工具取得这个文件路径。");
       }
-      const file = context.snapshot.static_analysis?.files.find(file => file.path === path)
-        ?? await context.store.readStaticFile(context.project.project_id, context.snapshot.snapshot_id, path);
+      const snapshot = publicSnapshotKey && snapshotId ? null : await fullSnapshot();
+      const currentSnapshotId = publicSnapshotKey && snapshotId ? snapshotId : snapshot?.snapshot_id;
+      if (!currentSnapshotId) return errorResult("get_static_file_facts", "请先通过证据或组件工具取得这个文件路径。");
+      if (publicSnapshotKey) await context.assertSnapshotBinding?.();
+      const indexed = snapshot?.static_analysis?.files.find(file => file.path === path)
+        ?? await context.store.readStaticFile(context.project.project_id, currentSnapshotId, path);
+      // Legacy published views may hold inline facts that predate the per-file index.
+      const file = indexed ?? (publicSnapshotKey
+        ? (await fullSnapshot())?.static_analysis?.files.find(file => file.path === path) ?? null
+        : null);
       return textResult("get_static_file_facts", staticFilePage(file, { ...input, path }), { paths: [path] });
     },
   );
@@ -610,7 +630,7 @@ export function createConversationTools(
     "读取持久化学习进度；读取本身不会修改状态。",
     EMPTY_INPUT,
     async () => {
-      const snapshot = context.snapshot;
+      const snapshot = await fullSnapshot();
       if (!snapshot) return errorResult("get_learning_context", "学习路线尚未生成。");
       const plan = {
         ...snapshot.learning_plan,
@@ -622,9 +642,9 @@ export function createConversationTools(
       const current = plan.steps[context.project.study.current_step] ?? null;
       const refs = [...new Set(current?.evidence_refs ?? [])].slice(0, 10);
       const missing = refs.filter(id => !byId.has(id));
-      if (missing.length && context.project.analysis.canonical_snapshot_key) {
+      if (missing.length && publicSnapshotKey) {
         const rows = await context.store.readPublicSnapshotEvidence({
-          publicKey: context.project.analysis.canonical_snapshot_key,
+          publicKey: publicSnapshotKey,
           snapshotId: snapshot.snapshot_id,
           evidenceIds: missing,
         });
@@ -693,7 +713,7 @@ export function createConversationTools(
     "仅在用户回答当前学习步骤的理解检验时调用。原始回答由程序绑定；评估只返回判断，不推进课程。",
     ASSESSMENT_INPUT,
     async (_id, params, signal) => {
-      const snapshot = context.snapshot;
+      const snapshot = await fullSnapshot();
       if (!snapshot) return errorResult("assess_understanding", "学习路线尚未生成。");
       if (
         !context.project.study.dynamic_learning_plan?.length
@@ -761,7 +781,7 @@ export function createConversationTools(
     "提出开始路线、切换目标、进入下一步或停止引导的动作建议；开始路线、切换目标和停止引导需要确认卡。用户已经明确要求直接进入下一步时，Supervisor 会把该建议记录为 skipped_steps 并直接推进；工具本身不生成路线、不评估理解、不修改状态。",
     LEARNING_ACTION_INPUT,
     async (_id, params) => {
-      const snapshot = context.snapshot;
+      const snapshot = await fullSnapshot();
       if (!snapshot) return errorResult("propose_learning_action", "项目分析尚未完成。");
       if (context.pendingLearningAction.value) {
         return errorResult(

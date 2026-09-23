@@ -1,5 +1,6 @@
 import { asEvidenceSnapshot } from '../domain/snapshot.js';
 import type { ProductStore } from '../persistence/store.js';
+import { serviceError } from './errors.js';
 
 export async function loadConversationSnapshot(store: ProductStore, projectId: string, canonical: boolean) {
   const snapshot = asEvidenceSnapshot(await store.loadSnapshot(projectId));
@@ -12,4 +13,35 @@ export async function loadConversationSnapshot(store: ProductStore, projectId: s
     }
   }
   return snapshot;
+}
+
+/** One reader per turn. Concurrent callers share both success and failure. */
+export function createConversationSnapshotReader(store: ProductStore, input: {
+  projectId: string;
+  ownerId: string;
+  snapshotId: string | null;
+  publicSnapshotKey: string | null;
+  signal?: AbortSignal;
+}) {
+  let promise: ReturnType<typeof loadConversationSnapshot> | undefined;
+  return () => {
+    promise ??= (async () => {
+      const assertBound = async () => {
+        input.signal?.throwIfAborted();
+        const current = await store.loadProject(input.projectId, input.ownerId);
+        if (!current || current.analysis.snapshot_id !== input.snapshotId
+          || current.analysis.canonical_snapshot_key !== input.publicSnapshotKey) {
+          throw serviceError('snapshot_changed', '项目快照已更新，请刷新后重试。', 409);
+        }
+      };
+      await assertBound();
+      const snapshot = await loadConversationSnapshot(store, input.projectId, Boolean(input.publicSnapshotKey));
+      if (snapshot && input.snapshotId && snapshot.snapshot_id !== input.snapshotId) {
+        throw serviceError('snapshot_changed', '项目快照已更新，请刷新后重试。', 409);
+      }
+      await assertBound();
+      return snapshot;
+    })();
+    return promise;
+  };
 }
