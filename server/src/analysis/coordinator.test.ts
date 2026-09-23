@@ -1,4 +1,5 @@
 import { ANALYZER_BUNDLE_VERSION, ANALYSIS_CONFIG_DIGEST } from "./identity.js";
+import { resolveAnalysisExecution } from "./execution-identity.js";
 import assert from "node:assert/strict";
 import { buildFullPlan, createAnalysisCache } from './incremental.js';
 import { decodeSource } from './source-input.js';
@@ -18,6 +19,7 @@ import type { ProductStore } from "../persistence/store.js";
 import { createSemanticBatch, type SemanticBatch } from "../domain/semantic-batch.js";
 import { createWorkerDiagnostics } from "../agent/worker-diagnostics.js";
 import { mkdtemp, rm } from "node:fs/promises";
+import { strToU8, zipSync } from "fflate";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { createProject } from "../domain/conversation.js";
@@ -354,6 +356,101 @@ test("unreadable analysis checkpoint fails recovery before source or model work"
     assert.equal(status, "failed");
     assert.equal(project.analysis.error, "analysis_checkpoint_payload_digest_mismatch");
   } finally {
+    assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a new repository target discards an older checkpoint before any stage can resume", async () => {
+  const root = await mkdtemp(join(tmpdir(), "analysis-new-commit-"));
+  const originalFetch = globalThis.fetch;
+  const previous = "a".repeat(40), target = "b".repeat(40);
+  const serverConfig = { ...config(1), dataDir: root,
+    githubGatewayUrl: "https://gateway.example", githubGatewaySharedSecret: "test",
+  } as ServerConfig;
+  const analysisConfigDigest = (await resolveAnalysisExecution(serverConfig)).digest;
+  try {
+    for (const stage of ["source", "semantic", "assembly"] as const) {
+      const project = createProject("guest:new-commit", "https://github.com/example/repo", "New commit", null);
+      let cleared = 0;
+      let saved = 0;
+      let failure = "";
+      const requests: Array<{ kind: string; ref?: string }> = [];
+      const store = {
+        root,
+        loadProject: async () => project,
+        listRepositoryUpdateProjects: async () => [project],
+        updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },
+        loadAnalysisCheckpoint: async () => ({ checkpoint: {
+          analyzer_bundle_version: ANALYZER_BUNDLE_VERSION, static_identity: ANALYSIS_CONFIG_DIGEST,
+          stage, source_root: root, commit_sha: previous, snapshot_id: "previous-snapshot",
+          fetched: { owner: "example", repo: "repo", commitSha: previous, files: ["README.md"], manifest: [] },
+        } }),
+        loadRepositoryUpdateForProject: async () => ({ update_id: "new-update", target_commit_sha: target, analysis_config_digest: analysisConfigDigest }),
+        clearAnalysisCheckpoint: async () => { cleared++; },
+        saveAnalysisCheckpoint: async () => { saved++; throw new Error("new_source_selected"); },
+        failRepositoryUpdate: async (_id: string, error: string) => { failure = error; },
+      } as unknown as ProductStore;
+      globalThis.fetch = (async (_input, init) => {
+        const request = JSON.parse(String(init?.body)) as { kind: string; ref?: string };
+        requests.push(request);
+        if (request.kind === "metadata") return Response.json({ default_branch: "main" });
+        if (request.kind === "commit") return Response.json({ sha: target });
+        if (request.kind === "tree") return Response.json({ tree: [{ path: "README.md", type: "blob", size: 6 }] });
+        if (request.kind === "archive") return new Response(new Uint8Array(zipSync({ "repo/README.md": strToU8("source") })).buffer);
+        throw new Error("unexpected_request");
+      }) as typeof fetch;
+      const coordinator = new AnalysisCoordinator(store, serverConfig) as unknown as { processClaimedJob: (job: AnalysisJob, signal: AbortSignal) => Promise<void> };
+      await coordinator.processClaimedJob({ ...job(`new-commit-${stage}`), project_id: project.project_id,
+        repository_update_id: "new-update", execution_role: "leader" }, new AbortController().signal);
+      assert.equal(cleared, 1, stage);
+      assert.equal(saved, 1, stage);
+      assert.equal(failure, "new_source_selected", stage);
+      assert.deepEqual(requests.map(request => request.kind), ["metadata", "commit", "tree", "archive"], stage);
+      assert.ok(requests.filter(request => request.ref).every(request => request.ref === target), stage);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a repository checkpoint for the queued commit still resumes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "analysis-same-commit-"));
+  const originalFetch = globalThis.fetch;
+  const target = "a".repeat(40);
+  const serverConfig = { ...config(1), dataDir: root } as ServerConfig;
+  const analysisConfigDigest = (await resolveAnalysisExecution(serverConfig)).digest;
+  const project = createProject("guest:same-commit", "https://github.com/example/repo", "Same commit", null);
+  let cleared = 0, requested = 0, failure = "";
+  try {
+    globalThis.fetch = (async () => { requested++; throw new Error("unexpected_github_fetch"); }) as typeof fetch;
+    const store = {
+      root,
+      loadProject: async () => project,
+      listRepositoryUpdateProjects: async () => [project],
+      updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },
+      loadAnalysisCheckpoint: async () => ({ checkpoint: {
+        analyzer_bundle_version: ANALYZER_BUNDLE_VERSION, static_identity: ANALYSIS_CONFIG_DIGEST,
+        stage: "source", source_root: root, commit_sha: target, snapshot_id: "saved-source",
+        fetched: { owner: "example", repo: "repo", commitSha: target, files: ["README.md"], manifest: [] },
+      } }),
+      loadRepositoryUpdateForProject: async () => ({ update_id: "same-update", target_commit_sha: target, analysis_config_digest: analysisConfigDigest }),
+      clearAnalysisCheckpoint: async () => { cleared++; },
+      saveAnalysisCheckpoint: async () => { throw new Error("checkpoint_source_reused"); },
+      failRepositoryUpdate: async (_id: string, error: string) => { failure = error; },
+    } as unknown as ProductStore;
+    const coordinator = new AnalysisCoordinator(store, serverConfig) as unknown as {
+      processClaimedJob: (job: AnalysisJob, signal: AbortSignal) => Promise<void>;
+    };
+    await coordinator.processClaimedJob({ ...job("same-commit"), project_id: project.project_id,
+      repository_update_id: "same-update", execution_role: "leader" }, new AbortController().signal);
+    assert.equal(cleared, 0);
+    assert.equal(requested, 0);
+    assert.equal(failure, "checkpoint_source_reused");
+  } finally {
+    globalThis.fetch = originalFetch;
     assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep));
     await rm(root, { recursive: true, force: true });
   }

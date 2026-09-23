@@ -658,6 +658,14 @@ export class AnalysisCoordinator {
       // recovery instead of silently discarding completed work and model cost.
       checkpoint = await this.store.loadAnalysisCheckpoint<AnalysisCheckpoint>(project.project_id, { omitStatic: this.executionStage === 'semantic', deferPublication: this.executionStage !== 'semantic', signal });
       if (checkpoint && (checkpoint.checkpoint.analyzer_bundle_version !== ANALYZER_BUNDLE_VERSION || checkpoint.checkpoint.static_identity !== ANALYSIS_CONFIG_DIGEST)) throw new Error("analysis_checkpoint_version_mismatch");
+      const update = job.repository_update_id
+        ? await this.store.loadRepositoryUpdateForProject(project.project_id)
+        : null;
+      const targetCommitSha = update?.update_id === job.repository_update_id ? update?.target_commit_sha : null;
+      if (checkpoint && targetCommitSha && checkpoint.checkpoint.commit_sha?.toLowerCase() !== targetCommitSha.toLowerCase()) {
+        await this.store.clearAnalysisCheckpoint(project.project_id);
+        checkpoint = null;
+      }
       checkpointPersisted = Boolean(checkpoint);
       if (checkpoint?.checkpoint.source_root) temporary = checkpoint.checkpoint.source_root;
       const checkpointStage = checkpoint?.checkpoint.stage ?? "fetching";
@@ -706,13 +714,9 @@ export class AnalysisCoordinator {
         clearError: true,
       });
       signal.throwIfAborted();
-      const update = job.repository_update_id
-        ? await this.store.loadRepositoryUpdateForProject(project.project_id)
-        : null;
       if (update && update.update_id === job.repository_update_id && update.analysis_config_digest !== analysisConfigDigest) {
         throw new Error("analysis_configuration_changed");
       }
-      const targetCommitSha = update?.update_id === job.repository_update_id ? update?.target_commit_sha : null;
       const fetched = checkpoint?.checkpoint.fetched
         ? checkpoint.checkpoint.fetched
         : await fetchPublicGithubSource(
