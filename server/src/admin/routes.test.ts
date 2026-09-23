@@ -10,6 +10,7 @@ import { buildApp } from '../api/app.js';
 import { loadConfig } from '../config.js';
 import { PiSessionStore } from '../agent/session-store.js';
 import { PiMemoryStore } from '../agent/memory-store.js';
+import { beijingBudgetDay, LocalProviderUsageBudget, type UsageBusiness } from '../agent/provider-budget.js';
 import {
   signGithubGatewayPayload,
   parseGithubGatewayStartGrant,
@@ -51,12 +52,18 @@ for (const backend of ['file', 'postgres'])
             })
           : new FileStore(root);
       await store.init();
+      const providerBudget = new LocalProviderUsageBudget({
+        maxCallsPerMinute: 100,
+        minimumReservationUsd: 0,
+      });
       const app = buildApp({
         config,
         store,
         sessions: new PiSessionStore(config.sessionDir),
         memories: new PiMemoryStore(config.memoryDir),
+        providerBudget,
       });
+      const fixtureUsageEventIds: string[] = [];
       try {
         const paths = [
           'overview',
@@ -156,6 +163,53 @@ for (const backend of ['file', 'postgres'])
         )!;
         const signedCookies = { [session.name]: session.value };
         const csrf = confirmed.json().csrf;
+        {
+          const readBudgets = async () => {
+            const response = await app.inject({
+              url: '/api/admin/budgets', cookies: signedCookies,
+            });
+            assert.equal(response.statusCode, 200);
+            return response.json();
+          };
+          const byKey = (data: { budgets: Array<{ key: string; cacheHitRate: number | null }> }) =>
+            Object.fromEntries(data.budgets.map(row => [row.key, row.cacheHitRate]));
+          assert.equal(byKey(await readBudgets()).chat_daily, null, 'zero input has no hit rate');
+          const addUsage = async (business: UsageBusiness, payer: 'platform' | 'user', input: number,
+            cached: number, write: number, usageKnown = true, startedAt = Date.now()) => {
+            const eventId = randomUUID();
+            if (store instanceof PostgresStore) {
+              await store.pool.query(
+                `INSERT INTO provider_usage_events(event_id,owner_id,provider,model,started_at,status,reserved_cost_usd,cost_usd,input_tokens,output_tokens,cached_tokens,cache_write_tokens,business,payer,usage_known)
+                 VALUES($1,'admin-cache-fixture','test','test',$2,$3,$4,0,$5,0,$6,$7,$8,$9,$10)`,
+                [eventId, new Date(startedAt).toISOString(), usageKnown ? 'completed' : 'failed',
+                  usageKnown ? 0 : 1, input, cached, write, business, payer, usageKnown],
+              );
+              fixtureUsageEventIds.push(eventId);
+            } else {
+              providerBudget.events.push({
+                eventId, ownerId: 'owner', provider: 'test', model: 'test',
+                startedAt, reservedCostUsd: 1,
+                attribution: { business, payer }, settled: true,
+                report: { usageKnown, inputTokens: input, cachedTokens: cached,
+                  cacheWriteTokens: write, outputTokens: 0, costUsd: 0,
+                  status: usageKnown ? 'completed' : 'failed' },
+              });
+            }
+          };
+          await addUsage('chat', 'platform', 1, 9, 0);
+          await addUsage('chat', 'platform', 59, 1, 30);
+          await addUsage('chat', 'platform', 0, 1000, 0, false);
+          await addUsage('chat', 'user', 0, 1000, 0);
+          await addUsage('analysis', 'platform', 40, 60, 0);
+          await addUsage('evolution', 'platform', 0, 0, 0);
+          await addUsage('chat', 'platform', 0, 1000, 0, true, beijingBudgetDay().start - 60_000);
+          const budgetData = await readBudgets();
+          const rates = byKey(budgetData);
+          assert.equal(rates.chat_daily, 0.1, 'token weighted; unknown, BYOK and prior day excluded');
+          assert.equal(rates.analysis_daily, 0.6, 'businesses stay separate');
+          assert.equal(rates.evolution_daily, null, 'known zero input has no hit rate');
+          assert.equal(rates.evolution_task, null, 'all-day rate does not represent one task');
+        }
         assert.equal((await app.inject({method:'POST',url:'/api/admin/repositories/delete',cookies:signedCookies,headers,payload:{repository:'org/repo',confirm:'org/repo'}})).statusCode,403);
         for (const path of paths)
           assert.equal(
@@ -234,6 +288,9 @@ for (const backend of ['file', 'postgres'])
         );
       } finally {
         await app.close();
+        if (store instanceof PostgresStore && fixtureUsageEventIds.length) {
+          await store.pool.query('DELETE FROM provider_usage_events WHERE event_id=ANY($1::text[])', [fixtureUsageEventIds]);
+        }
         await store.close();
         await rm(root, { recursive: true, force: true });
       }

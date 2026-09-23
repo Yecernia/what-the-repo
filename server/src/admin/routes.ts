@@ -389,7 +389,7 @@ export function registerAdminRoutes(
         const rows = docs.pool
           ? (
               await docs.pool.query(
-                `SELECT business,payer,agent_role,connection_id,config_version,task_id,COUNT(*)::int AS calls,COUNT(*) FILTER(WHERE usage_known IS DISTINCT FROM true)::int AS unknown_calls,COALESCE(SUM(cost_usd) FILTER(WHERE usage_known),0)::float8 AS used,COALESCE(SUM(reserved_cost_usd) FILTER(WHERE usage_known IS DISTINCT FROM true),0)::float8 AS reserved FROM provider_usage_events WHERE started_at >= $1 GROUP BY business,payer,agent_role,connection_id,config_version,task_id`,
+                `SELECT business,payer,agent_role,connection_id,config_version,task_id,COUNT(*)::int AS calls,COUNT(*) FILTER(WHERE usage_known IS DISTINCT FROM true)::int AS unknown_calls,COALESCE(SUM(cost_usd) FILTER(WHERE usage_known),0)::float8 AS used,COALESCE(SUM(reserved_cost_usd) FILTER(WHERE usage_known IS DISTINCT FROM true),0)::float8 AS reserved,COALESCE(SUM(input_tokens) FILTER(WHERE usage_known),0)::float8 AS input_tokens,COALESCE(SUM(cached_tokens) FILTER(WHERE usage_known),0)::float8 AS cached_tokens,COALESCE(SUM(cache_write_tokens) FILTER(WHERE usage_known),0)::float8 AS cache_write_tokens FROM provider_usage_events WHERE started_at >= $1 GROUP BY business,payer,agent_role,connection_id,config_version,task_id`,
                 [new Date(day.start).toISOString()],
               )
             ).rows
@@ -407,6 +407,9 @@ export function registerAdminRoutes(
                   unknown_calls: e.report?.usageKnown ? 0 : 1,
                   used: e.report?.usageKnown ? e.report.costUsd : 0,
                   reserved: e.report?.usageKnown ? 0 : e.reservedCostUsd,
+                  input_tokens: e.report?.usageKnown ? e.report.inputTokens : 0,
+                  cached_tokens: e.report?.usageKnown ? e.report.cachedTokens : 0,
+                  cache_write_tokens: e.report?.usageKnown ? e.report.cacheWriteTokens : 0,
                 }))
             : [];
         const taskRows = docs.pool
@@ -480,11 +483,19 @@ export function registerAdminRoutes(
                 key === 'evolution_task'
                   ? null
                   : relevant.reduce((s, r) => s + Number(r.reserved), 0);
+            const tokens = relevant.reduce((total, row) => ({
+              input: total.input + Number(row.input_tokens ?? 0),
+              cached: total.cached + Number(row.cached_tokens ?? 0),
+              write: total.write + Number(row.cache_write_tokens ?? 0),
+            }), { input: 0, cached: 0, write: 0 });
+            const totalInputTokens = tokens.input + tokens.cached + tokens.write;
             return {
               key,
               limit: policies[key],
               used,
               reserved,
+              cacheHitRate: key === 'evolution_task' || totalInputTokens <= 0
+                ? null : tokens.cached / totalInputTokens,
               remaining:
                 policies[key] === null || used === null
                   ? null

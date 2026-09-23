@@ -64,6 +64,8 @@ interface Version {
 }
 const money = (v: unknown) =>
   v === null || v === undefined ? '未知' : `$${Number(v).toFixed(4)}`;
+const cacheHitRate = (v: unknown) =>
+  typeof v === 'number' && Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
 const time = (v: unknown) =>
   v
     ? new Date(String(v)).toLocaleString('zh-CN', {
@@ -666,7 +668,7 @@ function Budgets({
     <>
       <p className="admin-description">
         每日额度按北京时间自然日重置，下次重置 {time(data.resetAt)}
-        。金额单位为美元。
+        。金额单位为美元。输入缓存命中率按今日平台已知用量统计。
       </p>
       <div className="admin-budget-grid">
         {rows(data.budgets).map((row) => {
@@ -731,6 +733,12 @@ function Budgets({
                         : money(row.remaining)}
                   </dd>
                 </div>
+                {key !== 'evolution_task' && (
+                  <div>
+                    <dt>输入缓存命中率</dt>
+                    <dd>{cacheHitRate(row.cacheHitRate)}</dd>
+                  </div>
+                )}
               </dl>
               {Number(row.unknownCalls) > 0 && (
                 <p className="admin-warning">
