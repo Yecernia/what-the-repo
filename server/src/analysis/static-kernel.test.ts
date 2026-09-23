@@ -203,6 +203,32 @@ test("compiler config inheritance uses config-relative paths and separates indep
   assert.equal(other.imports[0]?.resolvedPath, null);
   assert.notEqual(app.project?.id, other.project?.id);
 });
+test("a many-call project leaves the following project's call facts unchanged", async () => {
+  const later = {
+    "b/tsconfig.json": '{"include":["*.ts"]}',
+    "b/main.ts": "function finish() {} finish(); finish();",
+  };
+  const large = Object.fromEntries(
+    Array.from({ length: 80 }, (_, index) => [
+      `a/file${index}.ts`,
+      `export function f${index}() {} ${`f${index}();`.repeat(20)}`,
+    ]),
+  );
+  const combined = await tsFiles({
+    "a/tsconfig.json": '{"include":["*.ts"]}',
+    ...large,
+    ...later,
+  });
+  assert.equal(
+    combined.filter((file) => file.path.startsWith("a/"))
+      .reduce((sum, file) => sum + file.calls.length, 0),
+    80 * 20,
+  );
+  const afterLarge = combined.find((file) => file.path === "b/main.ts")!;
+  const alone = (await tsFiles(later)).find((file) => file.path === "b/main.ts")!;
+  assert.deepEqual(afterLarge.calls, alone.calls);
+  assert.deepEqual(afterLarge.symbols, alone.symbols);
+});
 test("positions are UTF-16 half-open with non-BMP text, Chinese names, CRLF and same-line declarations", async () => {
   const source =
     'const text="😀"; function 中文() {} function run() { 中文(); }\r\n';

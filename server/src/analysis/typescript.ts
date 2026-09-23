@@ -543,6 +543,359 @@ export async function analyzeTypeScript(
     }
   return analyzeTypeScriptTexts(files, texts, signal);
 }
+type ProjectCompilation = {
+  project: CompilerProject;
+  owned: string[];
+  contextInputs: string[];
+  keyFor: (inputs: string[]) => string;
+};
+/** Let each compiler Program, checker and AST index leave the call stack before
+ * the next project starts. Only plain ParsedFile facts escape this function. */
+function compileTypeScriptProject(input: ProjectCompilation & {
+  workspace: ReturnType<typeof createCompilerWorkspace>;
+  originals: Map<string, ParsedFile>;
+  outputs: Map<string, ParsedFile>;
+  texts: ReadonlyMap<string, string>;
+  resolutionDomain: string;
+  signal?: AbortSignal;
+}): void {
+  const { project, owned, contextInputs, keyFor, workspace, originals, outputs,
+    texts, resolutionDomain, signal } = input;
+  const { all, canonical, directories, configHost } = workspace;
+  signal?.throwIfAborted();
+  const options = {
+    ...project.parsed.options,
+    noEmit: true,
+    skipLibCheck: true,
+    disableSizeLimit: false,
+    plugins: undefined,
+  };
+  const sourceCache = new Map<string, ts.SourceFile>();
+  const host: ts.CompilerHost = {
+    ...configHost,
+    readDirectory: (...args) => [...configHost.readDirectory(...args)],
+    getSourceFile: (name, target) => {
+      signal?.throwIfAborted();
+      const path = canonical(name),
+        text = all.get(path);
+      if (text === undefined) return undefined;
+      let source = sourceCache.get(path);
+      if (!source) {
+        source = ts.createSourceFile(path, text, target, true);
+        sourceCache.set(path, source);
+      }
+      return source;
+    },
+    getDefaultLibFileName: () =>
+      `/toolchain/${ts.getDefaultLibFileName(options)}`,
+    getDefaultLibLocation: () => "/toolchain",
+    getParsedCommandLine: workspace.getParsedCommandLine,
+    getCurrentDirectory: () => ROOT,
+    getCanonicalFileName: canonical,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+    writeFile: () => {
+      throw new Error("typescript_emit_forbidden");
+    },
+    realpath: canonical,
+    directoryExists: workspace.directoryExists,
+    getDirectories: (name) => [
+      ...(directories.get(canonical(name))?.directories ?? []),
+    ],
+  };
+  const program = ts.createProgram({
+    rootNames: project.parsed.fileNames,
+    options,
+    host,
+    projectReferences: project.parsed.projectReferences,
+  });
+  const checker = program.getTypeChecker();
+  const sources = program
+    .getSourceFiles()
+    .filter((s) => originals.has(s.fileName))
+    .sort((a, b) => a.fileName.localeCompare(b.fileName));
+  const model = extract(sources, originals, checker, signal);
+  const mutated = new Set<ts.Symbol>();
+  for (const source of sources) {
+    for (const node of preorder(source, signal)) {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ) {
+        const symbol = checker.getSymbolAtLocation(node.left);
+        if (symbol) mutated.add(symbol);
+      }
+    }
+  }
+  const unalias = (symbol: ts.Symbol): ts.Symbol =>
+    symbol.flags & ts.SymbolFlags.Alias
+      ? checker.getAliasedSymbol(symbol)
+      : symbol;
+  const targetFor = (
+    expression: ts.Expression,
+    seen = new Set<ts.Symbol>(),
+  ): {
+    entity?: StaticSymbolFact;
+    declaration?: ts.Declaration;
+    dynamic?: boolean;
+  } => {
+    if (ts.isParenthesizedExpression(expression))
+      return targetFor(expression.expression, seen);
+    if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression))
+      return {
+        entity: model.entities.get(expression),
+        declaration: expression,
+      };
+    const at = ts.isPropertyAccessExpression(expression)
+      ? expression.name
+      : expression;
+    let sym = checker.getSymbolAtLocation(at);
+    if (!sym) return {};
+    sym = unalias(sym);
+    if (seen.has(sym)) return {};
+    seen.add(sym);
+    const declarations = sym.declarations ?? [];
+    if (
+      mutated.has(sym) ||
+      declarations.filter((d) => (d as ts.FunctionLikeDeclaration).body)
+        .length > 1
+    )
+      return {};
+    const declaration =
+      declarations.find((d) => (d as ts.FunctionLikeDeclaration).body) ??
+      sym.valueDeclaration ??
+      declarations[0];
+    if (!declaration) return {};
+    if (ts.isParameter(declaration)) return {};
+    if (
+      ts.isPropertyDeclaration(declaration) &&
+      declaration.initializer &&
+      !ts.isArrowFunction(declaration.initializer) &&
+      !ts.isFunctionExpression(declaration.initializer)
+    )
+      return {};
+    if (ts.isVariableDeclaration(declaration)) {
+      if (
+        !(ts.getCombinedNodeFlags(declaration.parent) & ts.NodeFlags.Const) ||
+        !declaration.initializer
+      )
+        return {};
+      return targetFor(declaration.initializer, seen);
+    }
+    if (
+      ts.isPropertyAccessExpression(expression) &&
+      checker.getTypeAtLocation(expression.expression).isUnion()
+    )
+      return { dynamic: true };
+    return {
+      entity: model.entities.get(declaration),
+      declaration,
+      dynamic:
+        ts.isMethodDeclaration(declaration) ||
+        ts.isMethodSignature(declaration) ||
+        ts.isGetAccessorDeclaration(declaration),
+    };
+  };
+  const resolutionCache = ts.createModuleResolutionCache(
+    ROOT,
+    canonical,
+    options,
+  );
+  for (const source of sources) {
+    const file = model.files.get(source.fileName)!;
+    const moduleSymbol = checker.getSymbolAtLocation(source);
+    file.exports = moduleSymbol
+      ? checker.getExportsOfModule(moduleSymbol).map((exported) => {
+          const symbol = unalias(exported);
+          const declaration =
+            symbol.valueDeclaration ?? symbol.declarations?.[0];
+          return {
+            name: exported.name,
+            entityId: declaration
+              ? (model.entities.get(declaration)?.stableId ?? null)
+              : null,
+            typeOnly: !(symbol.flags & ts.SymbolFlags.Value),
+          };
+        })
+      : [];
+    for (const node of preorder(source, signal)) {
+      let expression: ts.Expression | undefined,
+        typeOnly = false,
+        kind: "imports" | "type_imports" | "reexports" | "dynamic_imports" =
+          "imports";
+      if (ts.isImportDeclaration(node)) {
+        expression = node.moduleSpecifier;
+        typeOnly =
+          node.importClause?.isTypeOnly === true ||
+          !!(
+            node.importClause?.namedBindings &&
+            ts.isNamedImports(node.importClause.namedBindings) &&
+            !node.importClause.name &&
+            node.importClause.namedBindings.elements.length &&
+            node.importClause.namedBindings.elements.every(
+              (e) => e.isTypeOnly,
+            )
+          );
+      }
+      if (ts.isExportDeclaration(node)) {
+        expression = node.moduleSpecifier;
+        typeOnly = node.isTypeOnly;
+        kind = "reexports";
+      }
+      if (
+        ts.isImportEqualsDeclaration(node) &&
+        ts.isExternalModuleReference(node.moduleReference)
+      )
+        expression = node.moduleReference.expression;
+      if (
+        ts.isCallExpression(node) &&
+        (isDynamicImport(node.expression) ||
+          (ts.isIdentifier(node.expression) &&
+            node.expression.text === "require" &&
+            !checker
+              .getSymbolAtLocation(node.expression)
+              ?.declarations?.some((d) =>
+                inside(d.getSourceFile().fileName),
+              )))
+      ) {
+        expression = node.arguments[0];
+        kind =
+          isDynamicImport(node.expression)
+            ? "dynamic_imports"
+            : "imports";
+      }
+      if (expression && ts.isStringLiteralLike(expression)) {
+        const resolved = ts.resolveModuleName(
+          expression.text,
+          source.fileName,
+          options,
+          host,
+          resolutionCache,
+        );
+        const path =
+          resolved.resolvedModule &&
+          canonical(resolved.resolvedModule.resolvedFileName);
+        const internal = path && originals.has(path),
+          site = range(expression);
+        file.imports.push({
+          source: expression.text,
+          line: site.startLine,
+          column: site.startColumn,
+          range: site,
+          typeOnly,
+          kind: typeOnly ? "type_imports" : kind,
+          resolvedPath: internal ? relativePath(path) : null,
+          status: internal
+            ? "static"
+            : path
+              ? "external"
+              : expression.text.startsWith(".")
+                ? "unresolved"
+                : "missing_dependency",
+          // The semantic key covers this entire path domain. Persisting every
+          // attempted node_modules path per import duplicates large compiler
+          // lookup caches without improving invalidation correctness.
+          resolutionDomain,
+        });
+      }
+      if (ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node))
+        for (const clause of node.heritageClauses ?? [])
+          for (const base of clause.types) {
+            const target = targetFor(base.expression).entity,
+              owner = model.entities.get(node);
+            if (target && owner)
+              file.heritage!.push({
+                sourceId: owner.stableId,
+                targetId: target.stableId,
+                kind:
+                  clause.token === ts.SyntaxKind.ImplementsKeyword
+                    ? "implements"
+                    : "inherits",
+                range: range(base),
+              });
+          }
+    }
+  }
+  for (const [node, { file, owner }] of model.calls) {
+    // The AST remains in the Program for binding, but this lookup entry is no
+    // longer needed after its call fact has been emitted.
+    model.calls.delete(node);
+    const call = node as ts.CallExpression;
+    if (isDynamicImport(call.expression)) continue;
+    const target = targetFor(call.expression),
+      declaration = target.declaration;
+    const site = range(node),
+      library = declaration
+        ?.getSourceFile()
+        .fileName.startsWith("/toolchain/");
+    const entity = target.entity;
+    file.calls.push({
+      id: `call:${stableDigest(`${file.path}:${node.getStart()}:${node.end}`)}`,
+      callerStableId: owner,
+      callee: call.expression.getText(),
+      argumentCount: call.arguments?.length ?? 0,
+      line: site.startLine,
+      column: site.startColumn,
+      range: site,
+      target:
+        entity && entity.valid
+          ? {
+              path: entity.path,
+              line: entity.startLine,
+              column: entity.startColumn,
+              symbolId: entity.stableId,
+            }
+          : null,
+      status: entity && !entity.valid
+        ? "unresolved"
+        : entity
+        ? target.dynamic
+          ? "candidate"
+          : "static"
+        : library
+          ? "standard_library"
+          : declaration && !inside(declaration.getSourceFile().fileName)
+            ? "external"
+            : "unresolved",
+      meaning: entity && !entity.valid
+        ? "syntax"
+        : target.dynamic
+        ? "dynamic_dispatch"
+        : entity?.declarations?.some((d) => d.role === "definition")
+          ? "implementation"
+          : "declaration",
+    });
+  }
+  const inputs = [
+      ...new Set([...contextInputs, ...sources.map((s) => s.fileName)]),
+    ].sort(),
+    semanticKey = keyFor(inputs);
+  for (const path of owned) {
+    // The compiler may intentionally omit a root (for example foo.js beside foo.ts).
+    // Preserve its syntax and an explicit gap, and cache that decision too. Otherwise
+    // one omitted root makes the entire project miss its semantic cache forever.
+    const extracted = model.files.get(path),
+      original = originals.get(path);
+    if (!original) continue;
+    const file =
+      extracted ??
+      extractTypeScriptSyntax(original, texts.get(path)!, signal);
+    if (!extracted)
+      file.diagnostics!.push({ code: "source_omitted_by_compiler" });
+    file.semanticComplete =
+      !!extracted &&
+      !file.parseError &&
+      !project.context.diagnostics.some((d) => d.code.startsWith("config_"));
+    file.relationBinding = "typescript";
+    file.project = { ...project.context, files: [] };
+    file.semanticKey = semanticKey;
+    file.semanticInputs = path === owned[0] ? inputs : undefined;
+    file.diagnostics!.push(...project.context.diagnostics);
+    outputs.set(path, file);
+  }
+
+}
 export async function analyzeTypeScriptTexts(
   files: ParsedFile[],
   texts: ReadonlyMap<string, string>,
@@ -636,336 +989,9 @@ export async function analyzeTypeScriptTexts(
     }
     cacheOwnership.releasePrevious(owned.map(relativePath));
   }
-  for (const { project, owned, contextInputs, keyFor } of projectsToCompile) {
-    signal?.throwIfAborted();
-    const options = {
-      ...project.parsed.options,
-      noEmit: true,
-      skipLibCheck: true,
-      disableSizeLimit: false,
-      plugins: undefined,
-    };
-    const sourceCache = new Map<string, ts.SourceFile>();
-    const host: ts.CompilerHost = {
-      ...configHost,
-      readDirectory: (...args) => [...configHost.readDirectory(...args)],
-      getSourceFile: (name, target) => {
-        signal?.throwIfAborted();
-        const path = canonical(name),
-          text = all.get(path);
-        if (text === undefined) return undefined;
-        let source = sourceCache.get(path);
-        if (!source) {
-          source = ts.createSourceFile(path, text, target, true);
-          sourceCache.set(path, source);
-        }
-        return source;
-      },
-      getDefaultLibFileName: () =>
-        `/toolchain/${ts.getDefaultLibFileName(options)}`,
-      getDefaultLibLocation: () => "/toolchain",
-      getParsedCommandLine: workspace.getParsedCommandLine,
-      getCurrentDirectory: () => ROOT,
-      getCanonicalFileName: canonical,
-      useCaseSensitiveFileNames: () => true,
-      getNewLine: () => "\n",
-      writeFile: () => {
-        throw new Error("typescript_emit_forbidden");
-      },
-      realpath: canonical,
-      directoryExists: workspace.directoryExists,
-      getDirectories: (name) => [
-        ...(directories.get(canonical(name))?.directories ?? []),
-      ],
-    };
-    const program = ts.createProgram({
-      rootNames: project.parsed.fileNames,
-      options,
-      host,
-      projectReferences: project.parsed.projectReferences,
-    });
-    const checker = program.getTypeChecker();
-    const sources = program
-      .getSourceFiles()
-      .filter((s) => originals.has(s.fileName))
-      .sort((a, b) => a.fileName.localeCompare(b.fileName));
-    const model = extract(sources, originals, checker, signal);
-    const mutated = new Set<ts.Symbol>();
-    for (const source of sources) {
-      for (const node of preorder(source, signal)) {
-        if (
-          ts.isBinaryExpression(node) &&
-          node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-          node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-        ) {
-          const symbol = checker.getSymbolAtLocation(node.left);
-          if (symbol) mutated.add(symbol);
-        }
-      }
-    }
-    const unalias = (symbol: ts.Symbol): ts.Symbol =>
-      symbol.flags & ts.SymbolFlags.Alias
-        ? checker.getAliasedSymbol(symbol)
-        : symbol;
-    const targetFor = (
-      expression: ts.Expression,
-      seen = new Set<ts.Symbol>(),
-    ): {
-      entity?: StaticSymbolFact;
-      declaration?: ts.Declaration;
-      dynamic?: boolean;
-    } => {
-      if (ts.isParenthesizedExpression(expression))
-        return targetFor(expression.expression, seen);
-      if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression))
-        return {
-          entity: model.entities.get(expression),
-          declaration: expression,
-        };
-      const at = ts.isPropertyAccessExpression(expression)
-        ? expression.name
-        : expression;
-      let sym = checker.getSymbolAtLocation(at);
-      if (!sym) return {};
-      sym = unalias(sym);
-      if (seen.has(sym)) return {};
-      seen.add(sym);
-      const declarations = sym.declarations ?? [];
-      if (
-        mutated.has(sym) ||
-        declarations.filter((d) => (d as ts.FunctionLikeDeclaration).body)
-          .length > 1
-      )
-        return {};
-      const declaration =
-        declarations.find((d) => (d as ts.FunctionLikeDeclaration).body) ??
-        sym.valueDeclaration ??
-        declarations[0];
-      if (!declaration) return {};
-      if (ts.isParameter(declaration)) return {};
-      if (
-        ts.isPropertyDeclaration(declaration) &&
-        declaration.initializer &&
-        !ts.isArrowFunction(declaration.initializer) &&
-        !ts.isFunctionExpression(declaration.initializer)
-      )
-        return {};
-      if (ts.isVariableDeclaration(declaration)) {
-        if (
-          !(ts.getCombinedNodeFlags(declaration.parent) & ts.NodeFlags.Const) ||
-          !declaration.initializer
-        )
-          return {};
-        return targetFor(declaration.initializer, seen);
-      }
-      if (
-        ts.isPropertyAccessExpression(expression) &&
-        checker.getTypeAtLocation(expression.expression).isUnion()
-      )
-        return { dynamic: true };
-      return {
-        entity: model.entities.get(declaration),
-        declaration,
-        dynamic:
-          ts.isMethodDeclaration(declaration) ||
-          ts.isMethodSignature(declaration) ||
-          ts.isGetAccessorDeclaration(declaration),
-      };
-    };
-    const resolutionCache = ts.createModuleResolutionCache(
-      ROOT,
-      canonical,
-      options,
-    );
-    for (const source of sources) {
-      const file = model.files.get(source.fileName)!;
-      const moduleSymbol = checker.getSymbolAtLocation(source);
-      file.exports = moduleSymbol
-        ? checker.getExportsOfModule(moduleSymbol).map((exported) => {
-            const symbol = unalias(exported);
-            const declaration =
-              symbol.valueDeclaration ?? symbol.declarations?.[0];
-            return {
-              name: exported.name,
-              entityId: declaration
-                ? (model.entities.get(declaration)?.stableId ?? null)
-                : null,
-              typeOnly: !(symbol.flags & ts.SymbolFlags.Value),
-            };
-          })
-        : [];
-      for (const node of preorder(source, signal)) {
-        let expression: ts.Expression | undefined,
-          typeOnly = false,
-          kind: "imports" | "type_imports" | "reexports" | "dynamic_imports" =
-            "imports";
-        if (ts.isImportDeclaration(node)) {
-          expression = node.moduleSpecifier;
-          typeOnly =
-            node.importClause?.isTypeOnly === true ||
-            !!(
-              node.importClause?.namedBindings &&
-              ts.isNamedImports(node.importClause.namedBindings) &&
-              !node.importClause.name &&
-              node.importClause.namedBindings.elements.length &&
-              node.importClause.namedBindings.elements.every(
-                (e) => e.isTypeOnly,
-              )
-            );
-        }
-        if (ts.isExportDeclaration(node)) {
-          expression = node.moduleSpecifier;
-          typeOnly = node.isTypeOnly;
-          kind = "reexports";
-        }
-        if (
-          ts.isImportEqualsDeclaration(node) &&
-          ts.isExternalModuleReference(node.moduleReference)
-        )
-          expression = node.moduleReference.expression;
-        if (
-          ts.isCallExpression(node) &&
-          (isDynamicImport(node.expression) ||
-            (ts.isIdentifier(node.expression) &&
-              node.expression.text === "require" &&
-              !checker
-                .getSymbolAtLocation(node.expression)
-                ?.declarations?.some((d) =>
-                  inside(d.getSourceFile().fileName),
-                )))
-        ) {
-          expression = node.arguments[0];
-          kind =
-            isDynamicImport(node.expression)
-              ? "dynamic_imports"
-              : "imports";
-        }
-        if (expression && ts.isStringLiteralLike(expression)) {
-          const resolved = ts.resolveModuleName(
-            expression.text,
-            source.fileName,
-            options,
-            host,
-            resolutionCache,
-          );
-          const path =
-            resolved.resolvedModule &&
-            canonical(resolved.resolvedModule.resolvedFileName);
-          const internal = path && originals.has(path),
-            site = range(expression);
-          file.imports.push({
-            source: expression.text,
-            line: site.startLine,
-            column: site.startColumn,
-            range: site,
-            typeOnly,
-            kind: typeOnly ? "type_imports" : kind,
-            resolvedPath: internal ? relativePath(path) : null,
-            status: internal
-              ? "static"
-              : path
-                ? "external"
-                : expression.text.startsWith(".")
-                  ? "unresolved"
-                  : "missing_dependency",
-            // The semantic key covers this entire path domain. Persisting every
-            // attempted node_modules path per import duplicates large compiler
-            // lookup caches without improving invalidation correctness.
-            resolutionDomain,
-          });
-        }
-        if (ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node))
-          for (const clause of node.heritageClauses ?? [])
-            for (const base of clause.types) {
-              const target = targetFor(base.expression).entity,
-                owner = model.entities.get(node);
-              if (target && owner)
-                file.heritage!.push({
-                  sourceId: owner.stableId,
-                  targetId: target.stableId,
-                  kind:
-                    clause.token === ts.SyntaxKind.ImplementsKeyword
-                      ? "implements"
-                      : "inherits",
-                  range: range(base),
-                });
-            }
-      }
-    }
-    for (const [node, { file, owner }] of model.calls) {
-      const call = node as ts.CallExpression;
-      if (isDynamicImport(call.expression)) continue;
-      const target = targetFor(call.expression),
-        declaration = target.declaration;
-      const site = range(node),
-        library = declaration
-          ?.getSourceFile()
-          .fileName.startsWith("/toolchain/");
-      const entity = target.entity;
-      file.calls.push({
-        id: `call:${stableDigest(`${file.path}:${node.getStart()}:${node.end}`)}`,
-        callerStableId: owner,
-        callee: call.expression.getText(),
-        argumentCount: call.arguments?.length ?? 0,
-        line: site.startLine,
-        column: site.startColumn,
-        range: site,
-        target:
-          entity && entity.valid
-            ? {
-                path: entity.path,
-                line: entity.startLine,
-                column: entity.startColumn,
-                symbolId: entity.stableId,
-              }
-            : null,
-        status: entity && !entity.valid
-          ? "unresolved"
-          : entity
-          ? target.dynamic
-            ? "candidate"
-            : "static"
-          : library
-            ? "standard_library"
-            : declaration && !inside(declaration.getSourceFile().fileName)
-              ? "external"
-              : "unresolved",
-        meaning: entity && !entity.valid
-          ? "syntax"
-          : target.dynamic
-          ? "dynamic_dispatch"
-          : entity?.declarations?.some((d) => d.role === "definition")
-            ? "implementation"
-            : "declaration",
-      });
-    }
-    const inputs = [
-        ...new Set([...contextInputs, ...sources.map((s) => s.fileName)]),
-      ].sort(),
-      semanticKey = keyFor(inputs);
-    for (const path of owned) {
-      // The compiler may intentionally omit a root (for example foo.js beside foo.ts).
-      // Preserve its syntax and an explicit gap, and cache that decision too. Otherwise
-      // one omitted root makes the entire project miss its semantic cache forever.
-      const extracted = model.files.get(path),
-        original = originals.get(path);
-      if (!original) continue;
-      const file =
-        extracted ??
-        extractTypeScriptSyntax(original, texts.get(path)!, signal);
-      if (!extracted)
-        file.diagnostics!.push({ code: "source_omitted_by_compiler" });
-      file.semanticComplete =
-        !!extracted &&
-        !file.parseError &&
-        !project.context.diagnostics.some((d) => d.code.startsWith("config_"));
-      file.relationBinding = "typescript";
-      file.project = { ...project.context, files: [] };
-      file.semanticKey = semanticKey;
-      file.semanticInputs = path === owned[0] ? inputs : undefined;
-      file.diagnostics!.push(...project.context.diagnostics);
-      outputs.set(path, file);
-    }
+  for (const compilation of projectsToCompile) {
+    compileTypeScriptProject({ ...compilation, workspace, originals, outputs,
+      texts, resolutionDomain, signal });
     await setImmediate();
     signal?.throwIfAborted();
   }
