@@ -8,6 +8,7 @@ import type {
   LearningActionCard,
   Project,
 } from "../domain/conversation.js";
+import { conversationSummaryFromSource, type ConversationSummary } from '../domain/conversation-summary.js';
 import type {
   EvidenceSnapshot,
   SnapshotEdge,
@@ -96,6 +97,7 @@ export interface ConversationToolContext {
   project: Project;
   snapshot: EvidenceSnapshot | null;
   getSnapshot?: () => Promise<EvidenceSnapshot | null>;
+  getSummary?: () => Promise<ConversationSummary | null>;
   snapshotId?: string | null;
   publicSnapshotKey?: string | null;
   assertSnapshotBinding?: () => Promise<void>;
@@ -304,6 +306,8 @@ export function createConversationTools(
   context: ConversationToolContext,
 ): AgentTool[] {
   const fullSnapshot = () => context.getSnapshot ? context.getSnapshot() : Promise.resolve(context.snapshot);
+  const compactSummary = async () => context.getSummary
+    ? context.getSummary() : conversationSummaryFromSource(await fullSnapshot());
   const snapshotId = context.snapshotId ?? context.snapshot?.snapshot_id ?? context.project.analysis.snapshot_id;
   const publicSnapshotKey = context.publicSnapshotKey === undefined
     ? context.project.analysis.canonical_snapshot_key : context.publicSnapshotKey;
@@ -345,36 +349,28 @@ export function createConversationTools(
     "读取项目规模、语言质量、组件和已有价值点。普通聊天不需要调用。",
     EMPTY_INPUT,
     async () => {
-      const snapshot = await fullSnapshot();
-      if (!snapshot) return errorResult("get_project_overview", "项目分析尚未完成。");
-      const points = bounded(snapshot.value_points, 8).map((point) => ({
+      const summary = await compactSummary();
+      if (!summary) return errorResult("get_project_overview", "项目分析尚未完成。");
+      const points = bounded(summary.value_points, 8).map((point) => ({
         stable_id: point.stable_id,
         title: point.title,
         claim: point.claim,
         certainty: point.certainty,
         evidence: expose(context, bounded(point.evidence, 4)),
       }));
-      const components = snapshot.graph.nodes
-        .filter((node) => node.id.startsWith("component:"))
-        .slice(0, 20)
-        .map((node) => ({
-          id: node.id,
-          name: node.name,
-          responsibility: node.responsibility,
-          layer: node.architecture_layer_name,
-        }));
+      const components = summary.components;
       return textResult(
         "get_project_overview",
         {
           ok: true,
           repository: context.project.source.display_name,
-          summary: snapshot.summary,
-          languages: snapshot.languages,
-          source_completeness: snapshot.static_analysis?.completeness,
-          static_limitations: snapshot.static_analysis?.limitations,
+          summary: summary.summary,
+          languages: summary.languages,
+          source_completeness: summary.source_completeness,
+          static_limitations: summary.static_limitations,
           components,
           value_points: points,
-          semantic_mode: snapshot.graph.semantic_mode,
+          semantic_mode: summary.semantic_mode,
         },
         {
           evidence_ids: points.flatMap((item) => item.evidence.map((row) => row.stable_id)),
@@ -389,10 +385,10 @@ export function createConversationTools(
     "列出分析快照中全部已发现的价值点；数量由仓库内容决定。",
     VALUE_POINT_INPUT,
     async (_id, params, signal) => {
-      const snapshot = await fullSnapshot();
-      if (!snapshot) return errorResult("list_value_points", "项目分析尚未完成。");
-      const limit = Number((params as { limit?: number }).limit ?? (snapshot.value_points.length || 1));
-      const rows = bounded(snapshot.value_points, Math.min(limit, 8)).map((point) => ({
+      const summary = await compactSummary();
+      if (!summary) return errorResult("list_value_points", "项目分析尚未完成。");
+      const limit = Number((params as { limit?: number }).limit ?? (summary.value_points.length || 1));
+      const rows = bounded(summary.value_points, Math.min(limit, 8)).map((point) => ({
         ...point,
         evidence: expose(context, bounded(point.evidence, 6)),
       }));

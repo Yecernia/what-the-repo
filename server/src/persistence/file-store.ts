@@ -50,6 +50,7 @@ import {
   asSnapshotLanguageOverlayPayload,
 } from "../domain/snapshot-language.js";
 import { asEvidenceSnapshot } from "../domain/snapshot.js";
+import { conversationSummaryFromSource, type ConversationSummary } from "../domain/conversation-summary.js";
 import { boundedEvidenceIds, snapshotEvidence, type SnapshotEvidenceRequest } from "./snapshot-evidence.js";
 import { normalizeDisplayLanguage } from "../domain/display-language.js";
 import {
@@ -594,6 +595,27 @@ export class FileStore implements ProductStore {
       return null;
     }
     return readJson<T>(this.path("snapshots", projectId));
+  }
+  async loadConversationSummary(project: Project, displayLanguage?: string): Promise<ConversationSummary | null> {
+    const snapshotId = project.analysis.snapshot_id;
+    if (!snapshotId) return null;
+    const current = await this.loadProject(project.project_id);
+    if (!current) return null;
+    if (current.analysis.snapshot_id !== snapshotId
+      || current.analysis.canonical_snapshot_key !== project.analysis.canonical_snapshot_key) {
+      throw new Error("snapshot_not_bound");
+    }
+    const key = project.analysis.canonical_snapshot_key;
+    if (key) {
+      const metadata = await this.loadPublicSnapshotMetadata(key);
+      if (!metadata) return null;
+      if (metadata.public_snapshot_key !== key || metadata.analysis_snapshot_id !== snapshotId
+        || metadata.payload_purged_at) throw new Error("snapshot_not_bound");
+    }
+    const snapshot = asEvidenceSnapshot(await this.loadSnapshot(project.project_id, displayLanguage));
+    if (!snapshot) return null;
+    if (snapshot.snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
+    return conversationSummaryFromSource(snapshot);
   }
   async saveAnalysisResult(projectId: string, payload: unknown): Promise<void> { await writeJson(this.path("analysisResults", projectId), payload); }
   async readStaticFile(projectId: string, snapshotId: string, path: string): Promise<StaticFileFacts | null> {

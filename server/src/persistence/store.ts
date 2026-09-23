@@ -6,6 +6,7 @@ import type {
 import type { AnalysisJob } from "../domain/jobs.js";
 import type { SemanticBatch } from "../domain/semantic-batch.js";
 import type { SnapshotEvidence } from "../domain/snapshot.js";
+import type { ConversationSummary } from "../domain/conversation-summary.js";
 import type { SnapshotEvidenceRequest } from "./snapshot-evidence.js";
 import type { StoredSourceSnapshot } from "./snapshot-object-store.js";
 import type { PreparedAnalysisCache } from './analysis-payload.js';
@@ -151,6 +152,7 @@ export interface ProductStore {
 
   saveSnapshot(projectId: string, payload: unknown): Promise<void>;
   loadSnapshot<T = Record<string, unknown>>(projectId: string, displayLanguage?: string): Promise<T | null>;
+  loadConversationSummary(project: Project, displayLanguage?: string): Promise<ConversationSummary | null>;
   snapshotAvailable(project: Project, displayLanguage?: string): Promise<boolean>;
   saveAnalysisResult(projectId: string, payload: unknown): Promise<void>;
   loadAnalysisResult<T = Record<string, unknown>>(projectId: string): Promise<T | null>;

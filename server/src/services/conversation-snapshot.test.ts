@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ProductStore } from '../persistence/store.js';
 import { createProject } from '../domain/conversation.js';
-import { createConversationSnapshotReader, loadConversationSnapshot } from './conversation-snapshot.js';
+import { conversationSummaryFromSource } from '../domain/conversation-summary.js';
+import { createConversationSnapshotReader, createConversationSummaryReader, loadConversationSnapshot } from './conversation-snapshot.js';
 
 test('canonical chat loads only the view, while local snapshots retain their fact graph', async () => {
   let reads = 0;
@@ -79,4 +80,52 @@ test('deferred view refuses a changed binding or returned snapshot and retains r
   await assert.rejects(unreadable(), error => error === failed);
   await assert.rejects(unreadable(), error => error === failed);
   assert.equal(reads, 2);
+});
+
+test('summary reader stays idle, shares parallel reads, and never opens a full view', async () => {
+  const project = createProject('owner', 'https://github.com/example/repo', 'Example', 'free:test');
+  project.analysis.snapshot_id = 'snapshot:test';
+  const summary = conversationSummaryFromSource({ snapshot_id: 'snapshot:test', summary: {}, languages: [],
+    graph: { semantic_mode: 'provider_supported', nodes: [] }, value_points: [] })!;
+  let reads = 0;
+  const store = { loadConversationSummary: async () => { reads++; await Promise.resolve(); return summary; },
+    loadSnapshot: async () => { throw new Error('unexpected full view'); } } as unknown as ProductStore;
+  const getSummary = createConversationSummaryReader(store, {
+    project, snapshotId: 'snapshot:test', assertSnapshotBinding: async () => undefined,
+  });
+  assert.equal(reads, 0);
+  const [a, b] = await Promise.all([getSummary(), getSummary()]);
+  assert.strictEqual(a, b);
+  assert.equal(reads, 1);
+  assert.strictEqual(await getSummary(), a);
+});
+
+test('summary reader keeps null, wrong identity, binding and storage failures distinct', async () => {
+  const project = createProject('owner', 'https://github.com/example/repo', 'Example', 'free:test');
+  project.analysis.snapshot_id = 'snapshot:test';
+  let reads = 0;
+  const store = { loadConversationSummary: async () => { reads++; return null; } } as unknown as ProductStore;
+  const input = { project, snapshotId: 'snapshot:test', assertSnapshotBinding: async () => undefined };
+  const missing = createConversationSummaryReader(store, input);
+  assert.equal(await missing(), null);
+  assert.equal(await missing(), null);
+  assert.equal(reads, 1);
+  store.loadConversationSummary = async () => { reads++; return conversationSummaryFromSource({
+    snapshot_id: 'snapshot:other', summary: {}, languages: [],
+    graph: { semantic_mode: 'provider_supported', nodes: [] }, value_points: [],
+  }); };
+  const stale = createConversationSummaryReader(store, input);
+  await assert.rejects(stale(), { code: 'snapshot_changed' });
+  await assert.rejects(stale(), { code: 'snapshot_changed' });
+  assert.equal(reads, 2);
+  const failed = new Error('summary storage unavailable');
+  store.loadConversationSummary = async () => { reads++; throw failed; };
+  const unreadable = createConversationSummaryReader(store, input);
+  await assert.rejects(unreadable(), error => error === failed);
+  await assert.rejects(unreadable(), error => error === failed);
+  assert.equal(reads, 3);
+  const rebound = createConversationSummaryReader(store, { ...input,
+    assertSnapshotBinding: async () => { throw new Error('binding changed'); } });
+  await assert.rejects(rebound(), /binding changed/);
+  assert.equal(reads, 3);
 });

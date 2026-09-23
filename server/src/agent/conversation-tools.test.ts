@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createProject, emptyProfile } from "../domain/conversation.js";
+import { conversationSummaryFromSource } from '../domain/conversation-summary.js';
 import type { EvidenceSnapshot } from "../domain/snapshot.js";
 import type { ProductStore } from "../persistence/store.js";
 import { createConversationTools, type ConversationToolContext } from "./conversation-tools.js";
@@ -264,6 +265,66 @@ test('canonical static facts fall back to the full view only for an absent per-f
     .execute('legacy', { path: evidence.path, kind: 'calls' });
   assert.equal(JSON.parse((result.content[0] as { text: string }).text).path, evidence.path);
   assert.equal(reads, 1);
+});
+
+test('overview and value points share a summary and preserve payload and evidence exposure', async () => {
+  const full = snapshot();
+  const originalPoint = full.value_points[0]!;
+  full.value_points = Array.from({ length: 10 }, (_, pointIndex) => ({
+    ...originalPoint, stable_id: `value:${pointIndex}`, tradeoffs: `tradeoff:${pointIndex}`,
+    evidence: Array.from({ length: 8 }, (_, evidenceIndex) => ({
+      ...evidence, stable_id: `fact:file:${pointIndex}:${evidenceIndex}`,
+      path: `src/file-${pointIndex}-${evidenceIndex}.ts`,
+    })),
+  }));
+  const projected = conversationSummaryFromSource(full)!;
+  let summaryReads = 0;
+  let fullReads = 0;
+  let pending: Promise<typeof projected> | undefined;
+  const oldContext = context({ snapshot: full });
+  const newContext = context({ snapshot: null,
+    getSnapshot: async () => { fullReads++; throw new Error('unexpected full view'); },
+    getSummary: () => pending ??= Promise.resolve().then(() => { summaryReads++; return projected; }),
+  });
+  const oldTools = createConversationTools(oldContext);
+  const newTools = createConversationTools(newContext);
+  const oldOverview = await oldTools.find(tool => tool.name === 'get_project_overview')!.execute('old-overview', {});
+  const oldValues = await oldTools.find(tool => tool.name === 'list_value_points')!.execute('old-values', { limit: 8 });
+  const [newOverview, newValues] = await Promise.all([
+    newTools.find(tool => tool.name === 'get_project_overview')!.execute('new-overview', {}),
+    newTools.find(tool => tool.name === 'list_value_points')!.execute('new-values', { limit: 8 }),
+  ]);
+  const body = (result: typeof newOverview) => JSON.parse((result.content[0] as { text: string }).text);
+  assert.deepEqual(body(newOverview), body(oldOverview));
+  assert.deepEqual(body(newValues), body(oldValues));
+  assert.equal(body(newOverview).value_points[0].evidence.length, 4);
+  assert.equal(body(newValues).value_points[0].evidence.length, 6);
+  assert.equal(body(newOverview).value_points.length, 8);
+  assert.equal(body(newValues).value_points.length, 8);
+  assert.equal(body(newValues).value_points[2].tradeoffs, 'tradeoff:2');
+  const limited = await newTools.find(tool => tool.name === 'list_value_points')!
+    .execute('limited', { limit: 3 });
+  assert.deepEqual(body(limited).value_points.map((point: { stable_id: string }) => point.stable_id),
+    ['value:0', 'value:1', 'value:2']);
+  assert.deepEqual([...newContext.exposedEvidence.keys()], [...oldContext.exposedEvidence.keys()]);
+  assert.deepEqual([...newContext.exposedPaths], [...oldContext.exposedPaths]);
+  assert.equal(summaryReads, 1);
+  assert.equal(fullReads, 0);
+});
+
+test('missing or failed summaries never silently widen overview to the full view', async () => {
+  let fullReads = 0;
+  const ctx = context({ snapshot: null,
+    getSnapshot: async () => { fullReads++; return snapshot(); },
+    getSummary: async () => null,
+  });
+  const overview = createConversationTools(ctx).find(tool => tool.name === 'get_project_overview')!;
+  await assert.rejects(overview.execute('missing', {}), /项目分析尚未完成/);
+  assert.equal(fullReads, 0);
+  const failed = new Error('summary unavailable');
+  ctx.getSummary = async () => { throw failed; };
+  await assert.rejects(overview.execute('failed', {}), error => error === failed);
+  assert.equal(fullReads, 0);
 });
 
 test("propose_learning_action creates a pending card without changing study state", async () => {

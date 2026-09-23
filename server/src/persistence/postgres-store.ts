@@ -53,7 +53,8 @@ import {
   asSnapshotLanguageOverlayPayload,
   SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
 } from "../domain/snapshot-language.js";
-import { asEvidenceSnapshot } from "../domain/snapshot.js";
+import { asEvidenceSnapshot, EVIDENCE_GRAPH_SCHEMA_VERSION } from "../domain/snapshot.js";
+import { conversationSummaryFromSource, type ConversationSummary, type ConversationSummarySource } from "../domain/conversation-summary.js";
 import { normalizeDisplayLanguage } from "../domain/display-language.js";
 import {
   buildSnapshotQueryDirectory,
@@ -842,6 +843,157 @@ export class PostgresStore extends FileStore {
       [projectId],
     );
     return local.rows[0] ? jsonObject<T>(local.rows[0].view_payload) : null;
+  }
+
+  override async loadConversationSummary(project: Project, displayLanguage?: string): Promise<ConversationSummary | null> {
+    const snapshotId = project.analysis.snapshot_id;
+    if (!snapshotId) return null;
+    const publicKey = project.analysis.canonical_snapshot_key;
+    const fallback = async (): Promise<ConversationSummary | null> => {
+      const snapshot = asEvidenceSnapshot(await this.loadSnapshot(project.project_id, displayLanguage));
+      if (!snapshot) return null;
+      if (snapshot.snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
+      return conversationSummaryFromSource(snapshot);
+    };
+    // PostgreSQL builds only the bounded projection. The full view stays in the
+    // database (or object storage) on the normal canonical path.
+    const result = await this.pool.query<{
+      current_snapshot_id: string | null; current_public_key: string | null;
+      public_snapshot_key: string | null; analysis_snapshot_id: string | null;
+      payload_purged_at: Date | string | null; view_storage_key: string | null;
+      inline_view: boolean | null; language_overlay_version: string | null;
+      summary_payload: unknown;
+    }>(
+      `SELECT p.payload #>> '{analysis,snapshot_id}' AS current_snapshot_id,
+              p.payload #>> '{analysis,canonical_snapshot_key}' AS current_public_key,
+              b.public_snapshot_key, s.analysis_snapshot_id, s.payload_purged_at,
+              s.view_storage_key, (s.view_payload IS NOT NULL) AS inline_view,
+              s.language_overlay_version,
+              CASE WHEN b.public_snapshot_key = $3::text
+                AND s.analysis_snapshot_id = $2 AND s.payload_purged_at IS NULL
+                AND root.snapshot_id = to_jsonb($2::text)
+                AND jsonb_typeof(root.summary) = 'object'
+                AND jsonb_typeof(root.languages) = 'array'
+                AND jsonb_typeof(root.graph) = 'object'
+                AND graph.schema_version = to_jsonb($4::text)
+                AND jsonb_typeof(graph.nodes) = 'array'
+                AND jsonb_typeof(graph.edges) = 'array'
+                AND jsonb_typeof(graph.semantic_mode) = 'string'
+                AND jsonb_typeof(root.value_points) = 'array'
+                AND COALESCE(components.normalized, true)
+                AND COALESCE(vals.normalized, true)
+              THEN jsonb_build_object(
+                'snapshot_id', root.snapshot_id,
+                'summary', root.summary,
+                'languages', root.languages,
+                'static_analysis', CASE WHEN jsonb_typeof(root.static_analysis) = 'object'
+                  THEN jsonb_strip_nulls(jsonb_build_object(
+                    'completeness', stat.completeness,
+                    'limitations', stat.limitations))
+                  ELSE NULL END,
+                'graph', jsonb_build_object(
+                  'semantic_mode', graph.semantic_mode,
+                  'nodes', COALESCE(components.items, '[]'::jsonb)),
+                'value_points', COALESCE(vals.items, '[]'::jsonb))
+              ELSE NULL END AS summary_payload
+       FROM projects AS p
+       LEFT JOIN project_public_snapshot_bindings AS b ON b.project_id = p.project_id
+       LEFT JOIN canonical_public_repository_snapshots AS s ON s.public_snapshot_key = b.public_snapshot_key
+       LEFT JOIN LATERAL jsonb_to_record(CASE WHEN jsonb_typeof(s.view_payload) = 'object'
+         THEN s.view_payload ELSE '{}'::jsonb END) AS root(
+           snapshot_id jsonb, summary jsonb, languages jsonb, static_analysis jsonb,
+           graph jsonb, value_points jsonb) ON TRUE
+       LEFT JOIN LATERAL jsonb_to_record(CASE WHEN jsonb_typeof(root.graph) = 'object'
+         THEN root.graph ELSE '{}'::jsonb END) AS graph(
+           schema_version jsonb, semantic_mode jsonb, nodes jsonb, edges jsonb) ON TRUE
+       LEFT JOIN LATERAL jsonb_to_record(CASE WHEN jsonb_typeof(root.static_analysis) = 'object'
+         THEN root.static_analysis ELSE '{}'::jsonb END) AS stat(completeness jsonb, limitations jsonb) ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(jsonb_build_object(
+           'id', node.item->'id', 'name', node.item->'name',
+           'responsibility', node.item->'responsibility',
+           'architecture_layer_id', node.item->'architecture_layer_id',
+           'architecture_layer_name', node.item->'architecture_layer_name') ORDER BY node.ordinal) AS items,
+           bool_and(COALESCE(jsonb_typeof(node.item) = 'object'
+             AND jsonb_typeof(node.item->'id') = 'string'
+             AND jsonb_typeof(node.item->'name') = 'string'
+             AND jsonb_typeof(node.item->'responsibility') = 'string'
+             AND jsonb_typeof(node.item->'architecture_layer_id') IN ('string', 'null')
+             AND jsonb_typeof(node.item->'architecture_layer_name') IN ('string', 'null'), false)) AS normalized
+         FROM (SELECT item, ordinal
+           FROM jsonb_array_elements(CASE WHEN jsonb_typeof(graph.nodes) = 'array'
+             THEN graph.nodes ELSE '[]'::jsonb END) WITH ORDINALITY AS entries(item, ordinal)
+           WHERE item->>'id' LIKE 'component:%'
+           ORDER BY ordinal LIMIT 20) AS node) AS components ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(jsonb_set(CASE WHEN jsonb_typeof(point.item) = 'object'
+           THEN point.item ELSE '{}'::jsonb END, '{evidence}', COALESCE((
+           SELECT jsonb_agg(ev.item ORDER BY ev.ordinal)
+           FROM jsonb_array_elements(CASE WHEN jsonb_typeof(point.item->'evidence') = 'array'
+             THEN point.item->'evidence' ELSE '[]'::jsonb END)
+             WITH ORDINALITY AS ev(item, ordinal)
+           WHERE ev.ordinal <= 6), '[]'::jsonb), true) ORDER BY point.ordinal) AS items,
+           bool_and(COALESCE(jsonb_typeof(point.item) = 'object'
+             AND jsonb_typeof(point.item->'evidence') = 'array', false)) AS normalized
+         FROM jsonb_array_elements(CASE WHEN jsonb_typeof(root.value_points) = 'array'
+           THEN root.value_points ELSE '[]'::jsonb END) WITH ORDINALITY AS point(item, ordinal)
+         WHERE point.ordinal <= 8) AS vals ON TRUE
+       WHERE p.project_id = $1`,
+      [project.project_id, snapshotId, publicKey, EVIDENCE_GRAPH_SCHEMA_VERSION],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    if (row.current_snapshot_id !== snapshotId || row.current_public_key !== publicKey) throw new Error("snapshot_not_bound");
+    if (!row.public_snapshot_key) return publicKey ? null : fallback();
+    if (row.public_snapshot_key !== publicKey) throw new Error("snapshot_not_bound");
+    if (!row.analysis_snapshot_id) return null;
+    if (row.analysis_snapshot_id !== snapshotId || row.payload_purged_at) throw new Error("snapshot_not_bound");
+    if (!row.inline_view && !row.view_storage_key) return null;
+    const source = row.summary_payload ? jsonObject<ConversationSummarySource>(row.summary_payload) : null;
+    if (!source || !conversationSummaryFromSource(source)) return fallback();
+    if (source.snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
+    if (!row.language_overlay_version) return conversationSummaryFromSource(source);
+    const componentIds = source.graph.nodes.map(node => node.id);
+    const layerIds = [...new Set(source.graph.nodes.map(node => node.architecture_layer_id).filter((id): id is string => Boolean(id)))];
+    const valueIds = source.value_points.map(point => point.stable_id);
+    for (const language of new Set([
+      normalizeDisplayLanguage(displayLanguage ?? project.display_language),
+      normalizeDisplayLanguage(project.display_language),
+    ])) {
+      const translated = await this.pool.query<{ status: SnapshotLanguageOverlay["status"]; payload: unknown }>(
+        `SELECT o.status,
+                CASE WHEN o.payload->>'schema_version' = $6
+                  AND jsonb_typeof(o.payload->'language') = 'string'
+                  AND jsonb_typeof(o.payload->'components') = 'array'
+                  AND jsonb_typeof(o.payload->'layers') = 'array'
+                  AND jsonb_typeof(o.payload->'relations') = 'array'
+                  AND jsonb_typeof(o.payload->'value_points') = 'array'
+                THEN jsonb_build_object(
+                  'schema_version', o.payload->'schema_version',
+                  'language', o.payload->'language',
+                  'generated_at', o.payload->'generated_at',
+                  'components', COALESCE((SELECT jsonb_agg(item ORDER BY ordinal)
+                    FROM jsonb_array_elements(o.payload->'components') WITH ORDINALITY AS component(item, ordinal)
+                    WHERE item->>'id' = ANY($3::text[])), '[]'::jsonb),
+                  'layers', COALESCE((SELECT jsonb_agg(item ORDER BY ordinal)
+                    FROM jsonb_array_elements(o.payload->'layers') WITH ORDINALITY AS layer(item, ordinal)
+                    WHERE item->>'id' = ANY($4::text[])), '[]'::jsonb),
+                  'relations', '[]'::jsonb,
+                  'value_points', COALESCE((SELECT jsonb_agg(item ORDER BY ordinal)
+                    FROM jsonb_array_elements(o.payload->'value_points') WITH ORDINALITY AS value(item, ordinal)
+                    WHERE item->>'stable_id' = ANY($5::text[])), '[]'::jsonb))
+                ELSE NULL END AS payload
+         FROM public_snapshot_language_overlays AS o
+         WHERE o.public_snapshot_key = $1 AND o.language = $2`,
+        [publicKey, language.toLowerCase(), componentIds, layerIds, valueIds, SNAPSHOT_LANGUAGE_OVERLAY_VERSION],
+      );
+      const overlay = translated.rows[0];
+      const payload = asSnapshotLanguageOverlayPayload(overlay?.payload);
+      if (payload && (overlay.status === "ready" || overlay.status === "degraded")) {
+        return conversationSummaryFromSource(source, payload);
+      }
+    }
+    return null;
   }
 
   override async saveAnalysisResult(projectId: string, payload: unknown): Promise<void> {

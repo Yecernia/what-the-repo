@@ -19,7 +19,7 @@ import {
   type Project,
 } from "../domain/conversation.js";
 import { asEvidenceSnapshot } from "../domain/snapshot.js";
-import { createConversationSnapshotReader } from "./conversation-snapshot.js";
+import { createConversationSnapshotReader, createConversationSummaryReader } from "./conversation-snapshot.js";
 import { createModelRuntime } from "../agent/model-runtime.js";
 import { runtimeForSkill } from "../agent/role-models.js";
 import type { ProviderGateFactory } from "../agent/provider-gate.js";
@@ -442,6 +442,9 @@ export class ConversationService {
       projectId: input.projectId, ownerId: input.owner.owner_id,
       snapshotId: capturedSnapshotId, publicSnapshotKey: capturedPublicKey, signal: input.signal,
     });
+    const getSummary = createConversationSummaryReader(this.store, {
+      project, snapshotId: capturedSnapshotId, assertSnapshotBinding,
+    });
     const agentMemories = await this.memories.list(input.owner.owner_id);
     const profile = await this.store.loadProfile(input.owner.owner_id);
     if (profile.memory_summary_mode !== "edited") {
@@ -473,6 +476,7 @@ export class ConversationService {
       project,
       snapshot: null,
       getSnapshot,
+      getSummary,
       snapshotId: capturedSnapshotId,
       publicSnapshotKey: capturedPublicKey,
       assertSnapshotBinding,

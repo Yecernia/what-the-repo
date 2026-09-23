@@ -4,12 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createProject, emptyProfile } from "../domain/conversation.js";
+import { conversationSummaryFromSource } from '../domain/conversation-summary.js';
 import type { EvidenceSnapshot } from "../domain/snapshot.js";
 import { FileStore } from "../persistence/file-store.js";
 import { validateAnswerCitations, withCitationNotice } from "./citations.js";
 import { createConversationTools, type ConversationToolContext } from "./conversation-tools.js";
 import { createModels } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { PiConversationRuntime } from "./runtime.js";
 import { PiSessionStore, projectSessionId } from "./session-store.js";
 import { PiMemoryStore } from "./memory-store.js";
@@ -562,6 +563,43 @@ test("conversation service keeps the displayed unverified reply in the next Pi r
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('a real chat turn serves parallel overview and value tools with one summary and no full view', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-summary-turn-'));
+  try {
+    const { context, store, snapshot } = await fixture(root);
+    const faux = fauxProvider({ provider: 'summary-turn-test' });
+    const models = createModels(); models.setProvider(faux.provider);
+    const originalRun = PiConversationRuntime.prototype.run;
+    t.mock.method(PiConversationRuntime.prototype, 'run', function(this: PiConversationRuntime, options: PiAgentRunOptions,
+      finalize: (result: PiRunResult) => Promise<PiRunFinalization<unknown>>) {
+      return originalRun.call(this, { ...options, modelRuntime: { models, model: faux.getModel() } }, finalize);
+    });
+    t.mock.method(MemoryMaintenance.prototype, 'schedule', () => {});
+    t.mock.method(FeedbackAnalysisWorker.prototype, 'schedule', () => {});
+    const config = { root, dataDir: root, nodeEnv: 'test', sessionSecret: 'test-only-secret',
+      freeProviderBaseUrl: 'https://api.deepseek.com', freeProviderModel: 'deepseek-chat',
+      freeProviderApiKey: 'never-used', keyEncryptionSecret: 'test-only-secret' } as ServerConfig;
+    let summaryReads = 0;
+    let fullReads = 0;
+    store.loadConversationSummary = async () => { summaryReads++; return conversationSummaryFromSource(snapshot); };
+    store.loadSnapshot = async () => { fullReads++; throw new Error('unexpected full view'); };
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall('get_project_overview', {}, { id: 'parallel-overview' }),
+        fauxToolCall('list_value_points', { limit: 8 }, { id: 'parallel-values' }),
+      ]),
+      fauxAssistantMessage('项目概览已读取。'),
+    ]);
+    const service = new ConversationService(config, store, new PiSessionStore(join(root, 'sessions')),
+      new PiMemoryStore(join(root, 'memory')));
+    const result = await service.run({ owner: { owner_id: context.project.owner_id, kind: 'guest' },
+      projectId: context.project.project_id, content: '请看项目概览', displayLanguage: 'zh-CN' });
+    assert.equal(result?.assistant_message.content, '项目概览已读取。');
+    assert.equal(summaryReads, 1);
+    assert.equal(fullReads, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 function evidence(stableId: string, path: string, start: number, end: number) {

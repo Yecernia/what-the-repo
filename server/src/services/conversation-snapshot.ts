@@ -1,4 +1,6 @@
 import { asEvidenceSnapshot } from '../domain/snapshot.js';
+import type { Project } from '../domain/conversation.js';
+import type { ConversationSummary } from '../domain/conversation-summary.js';
 import type { ProductStore } from '../persistence/store.js';
 import { serviceError } from './errors.js';
 
@@ -41,6 +43,28 @@ export function createConversationSnapshotReader(store: ProductStore, input: {
       }
       await assertBound();
       return snapshot;
+    })();
+    return promise;
+  };
+}
+
+
+/** Independent per-turn bounded summary reader; canonical stores avoid the full graph. */
+export function createConversationSummaryReader(store: ProductStore, input: {
+  project: Project;
+  snapshotId: string | null;
+  assertSnapshotBinding: () => Promise<void>;
+}) {
+  let promise: Promise<ConversationSummary | null> | undefined;
+  return () => {
+    promise ??= (async () => {
+      await input.assertSnapshotBinding();
+      const summary = await store.loadConversationSummary(input.project);
+      if (summary && summary.snapshot_id !== input.snapshotId) {
+        throw serviceError('snapshot_changed', '项目快照已更新，请刷新后重试。', 409);
+      }
+      await input.assertSnapshotBinding();
+      return summary;
     })();
     return promise;
   };
