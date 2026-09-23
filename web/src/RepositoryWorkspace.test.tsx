@@ -1,8 +1,9 @@
 import { useState, type ComponentProps, type ComponentType, type ReactNode } from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Edge, Node } from '@xyflow/react';
 import { RepositoryWorkspace } from './RepositoryWorkspace';
+import { apiClient } from './api';
 import {
   buildComponentFlow,
   buildHumanProjectionFlow,
@@ -1393,4 +1394,63 @@ it('updates built-in graph control labels and memoized details with the interfac
     expect(labels()['controls.zoomIn.ariaLabel']).toBe('放大');
     expect(screen.getByTestId('component-details')).toHaveTextContent('相关代码');
   } finally { view.unmount(); act(() => setUiLanguage('zh-CN')); }
+});
+
+it('loads only the selected full detail and ignores a late response after selecting a relation', async () => {
+  type Detail = Awaited<ReturnType<typeof apiClient.getSnapshotDetail>>;
+  const pending = new Map<string, (detail: Detail) => void>();
+  const request = vi.spyOn(apiClient, 'getSnapshotDetail').mockImplementation((_project, _snapshot, _language, kind, id) =>
+    new Promise(resolve => { pending.set(`${kind}:${id}`, resolve); }));
+  const thin: Snapshot = { ...projectedSnapshot, view: 'workspace-v1', display_language: 'zh-CN', graph: {
+    ...projectedSnapshot.graph,
+    nodes: projectedSnapshot.graph.nodes.map(node => ({ ...node, detail_available: true, evidence_total: 2, members_total: 2 })),
+    edges: projectedSnapshot.graph.edges.map(edge => ({ ...edge, detail_available: true, evidence_total: 2 })),
+  } };
+  const view = render(<RepositoryWorkspace snapshot={thin} project={project}
+    onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+  try {
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('正在加载完整代码参考…')).toBeVisible();
+    act(() => setUiLanguage('en'));
+    expect(screen.getByText('Loading all code references…')).toBeVisible();
+    act(() => setUiLanguage('zh-CN'));
+    expect(screen.queryByTestId('component-details')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '显示所有关系' }));
+    fireEvent.click(screen.getByRole('button', { name: 'edge:2 条关系' }));
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    await act(async () => pending.get('component:component:entry')?.({
+      snapshot_id: thin.snapshot_id, display_language: 'zh-CN', kind: 'component',
+      item: { ...thin.graph.nodes[0], members: [evidence, { ...evidence, stable_id: 'extra' }] },
+    }));
+    expect(screen.queryByTestId('component-details')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('relation-details')).not.toBeInTheDocument();
+    await act(async () => pending.get('relation:relation:entry-domain')?.({
+      snapshot_id: thin.snapshot_id, display_language: 'zh-CN', kind: 'relation',
+      item: { ...thin.graph.edges[0], evidence: [evidence, { ...evidence, stable_id: 'extra', path: 'extra.py' }] },
+    }));
+    await waitFor(() => expect(screen.getByTestId('relation-details')).toHaveTextContent('extra.py'));
+    expect(request).toHaveBeenLastCalledWith('project-1', 'snapshot-projection', 'zh-CN', 'relation', 'relation:entry-domain');
+  } finally { view.unmount(); request.mockRestore(); act(() => setUiLanguage('zh-CN')); }
+});
+
+it('shows detail load failure and retries the selected entity', async () => {
+  const thin: Snapshot = { ...snapshot, view: 'workspace-v1', display_language: 'zh-CN', graph: {
+    ...snapshot.graph, nodes: snapshot.graph.nodes.map(node => ({ ...node, detail_available: true })),
+  } };
+  const request = vi.spyOn(apiClient, 'getSnapshotDetail')
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce({ snapshot_id: thin.snapshot_id, display_language: 'zh-CN', kind: 'component',
+      item: { ...thin.graph.nodes[0], members: [evidence, { ...evidence, stable_id: 'extra', path: 'extra.py' }] } });
+  const view = render(<RepositoryWorkspace snapshot={thin} project={project}
+    onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+  try {
+    await waitFor(() => expect(screen.getByText('完整代码参考加载失败。')).toBeVisible());
+    act(() => setUiLanguage('en'));
+    expect(screen.getByText('Could not load all code references.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+    act(() => setUiLanguage('zh-CN'));
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(screen.getByTestId('component-details')).toHaveTextContent('extra.py'));
+    expect(request).toHaveBeenCalledTimes(2);
+  } finally { view.unmount(); request.mockRestore(); act(() => setUiLanguage('zh-CN')); }
 });

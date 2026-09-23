@@ -467,6 +467,8 @@ export const englishMessages: Record<string, string> = {
   '写入': 'Writes',
   '选择一个组件或关系': 'Select a component or relationship',
   "查看它的作用、相关代码和组件关系。": "See its purpose, related code, and component relationships.",
+  '正在加载完整代码参考…': 'Loading all code references…',
+  '完整代码参考加载失败。': 'Could not load all code references.',
   '组件': 'Component',
   "作用": "Purpose",
   "分组依据": "Grouping rationale",

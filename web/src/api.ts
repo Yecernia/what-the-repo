@@ -492,7 +492,11 @@ export const apiClient = {
     ),
 
   // snapshot
-  getSnapshot: (id: string, language: 'zh-CN' | 'en') => api<import('./types').Snapshot>(`/api/projects/${id}/snapshot?display_language=${language}`),
+  getSnapshot: (id: string, language: 'zh-CN' | 'en') => api<import('./types').Snapshot>(`/api/projects/${id}/snapshot?display_language=${language}&view=workspace`),
+  getSnapshotDetail: (id: string, snapshotId: string, language: 'zh-CN' | 'en', kind: 'component' | 'relation' | 'layer', entityId: string) =>
+    api<{ snapshot_id: string; display_language: 'zh-CN' | 'en'; kind: typeof kind; item: import('./types').GraphNode | import('./types').GraphEdge | import('./types').ArchitectureLayer }>(
+      `/api/projects/${encodeURIComponent(id)}/snapshot/detail?snapshot_id=${encodeURIComponent(snapshotId)}&display_language=${encodeURIComponent(language)}&kind=${kind}&id=${encodeURIComponent(entityId)}`,
+    ),
 
   // source
   getSource: (id: string, snapshotId: string, path: string, start: number, end: number, stableId?: string | null) =>

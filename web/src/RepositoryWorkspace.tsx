@@ -38,6 +38,7 @@ import MessageSquarePlus from '@sketchyicons/react/icons/message-square-plus';
 import Route from '@sketchyicons/react/icons/route';
 import './workspace-split.css';
 import { useWorkspaceSplit } from './useWorkspaceSplit';
+import { apiClient } from './api';
 import { SplitGripIcon } from './WorkspaceSplitIcons';
 import { InkOutline } from './InkOutline';
 import { FieldIllustration } from './FieldIllustration';
@@ -462,10 +463,14 @@ function relationKindLabel(kind: string) {
 
 function DetailsPanel({
   selected,
+  detailStatus,
+  onRetryDetail,
   onOpenEvidence,
   onQueueTopic,
 }: {
   selected: SelectedItem | null;
+  detailStatus?: 'loading' | 'error';
+  onRetryDetail?: () => void;
   onOpenEvidence: (evidence: GraphEvidence) => void;
   onQueueTopic: (request: TopicRequest) => void;
 }) {
@@ -478,6 +483,14 @@ function DetailsPanel({
         <span>{t("查看它的作用、相关代码和组件关系。")}</span>
       </div>
     );
+  }
+
+  if ((selected.kind === 'component' || selected.kind === 'relation') && detailStatus) {
+    return <div className="workspace-details-scroll" role="status">
+      <div className="workspace-detail-heading"><h3>{selected.kind === 'component' ? selected.value.name : selected.value.label}</h3></div>
+      <p>{detailStatus === 'loading' ? t('正在加载完整代码参考…') : t('完整代码参考加载失败。')}</p>
+      {detailStatus === 'error' && <button type="button" className="btn btn-primary" onClick={onRetryDetail}>{t('重试')}</button>}
+    </div>;
   }
 
   if (selected.kind === 'component') {
@@ -1083,8 +1096,60 @@ export function RepositoryWorkspace({
   const detailsId = useId();
   const uiLanguage = useUiLanguage();
   const [selected, setSelected] = useState<SelectedItem | null>(() => firstTabSelection(snapshot, 'architecture'));
+  const detailCache = useRef(new Map<string, GraphNode | GraphEdge>());
+  const [detailResult, setDetailResult] = useState<{ key: string; item?: GraphNode | GraphEdge; error?: boolean } | null>(null);
+  const [detailAttempt, setDetailAttempt] = useState(0);
   const previousSnapshotId = useRef(snapshot.snapshot_id);
   const tabSelections = useRef<Partial<Record<WorkspaceTab, SelectedItem>>>({});
+
+  const detailLanguage = snapshot.display_language === 'en' ? 'en' : 'zh-CN';
+  useEffect(() => {
+    detailCache.current.clear();
+    setDetailResult(null);
+  }, [project.project_id, snapshot.snapshot_id, detailLanguage]);
+  const detailKind = selected?.kind === 'component' || selected?.kind === 'relation' ? selected.kind : null;
+  const detailKey = (selected?.kind === 'component' || selected?.kind === 'relation') && selected.value.detail_available
+    ? JSON.stringify([project.project_id, snapshot.snapshot_id, detailLanguage, detailKind, selected.value.id])
+    : null;
+  useEffect(() => {
+    if (!detailKey || !detailKind || !selected || (selected.kind !== 'component' && selected.kind !== 'relation')) return;
+    const cached = detailCache.current.get(detailKey);
+    if (cached) {
+      detailCache.current.delete(detailKey);
+      detailCache.current.set(detailKey, cached);
+      setDetailResult({ key: detailKey, item: cached });
+      return;
+    }
+    let active = true;
+    setDetailResult({ key: detailKey });
+    apiClient.getSnapshotDetail(project.project_id, snapshot.snapshot_id, detailLanguage, detailKind, selected.value.id)
+      .then(result => {
+        if (!active) return;
+        if (result.snapshot_id !== snapshot.snapshot_id || result.display_language !== detailLanguage
+          || result.kind !== detailKind || result.item.id !== selected.value.id) throw new Error('Snapshot detail mismatch');
+        const item = result.item as GraphNode | GraphEdge;
+        detailCache.current.delete(detailKey);
+        detailCache.current.set(detailKey, item);
+        while (detailCache.current.size > 32) {
+          const oldest = detailCache.current.keys().next().value;
+          if (oldest === undefined) break;
+          detailCache.current.delete(oldest);
+        }
+        setDetailResult({ key: detailKey, item });
+      })
+      .catch(() => { if (active) setDetailResult({ key: detailKey, error: true }); });
+    return () => { active = false; };
+  }, [detailKey, detailKind, detailLanguage, detailAttempt, project.project_id, selected, snapshot.snapshot_id]);
+
+  const detailSelected: SelectedItem | null = detailKey && detailResult?.key === detailKey && detailResult.item && selected
+    ? { ...selected, value: detailResult.item } as SelectedItem : selected;
+  const detailStatus = !detailKey || (detailResult?.key === detailKey && detailResult.item)
+    ? undefined
+    : detailResult?.key === detailKey && detailResult.error ? 'error' : 'loading';
+  const retryDetail = useCallback(() => {
+    if (detailKey) detailCache.current.delete(detailKey);
+    setDetailAttempt(attempt => attempt + 1);
+  }, [detailKey]);
 
   useEffect(() => {
     const snapshotChanged = previousSnapshotId.current !== snapshot.snapshot_id;
@@ -1190,7 +1255,9 @@ export function RepositoryWorkspace({
           {...split.separatorProps}><SplitGripIcon /></div>
         <aside id={detailsId} className="workspace-details" aria-hidden={split.collapsed || undefined} inert={split.collapsed}>
           <MemoDetailsPanel
-            selected={selected}
+            selected={detailSelected}
+            detailStatus={detailStatus}
+            onRetryDetail={retryDetail}
             onOpenEvidence={onOpenEvidence}
             onQueueTopic={onQueueTopic}
           />

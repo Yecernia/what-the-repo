@@ -231,6 +231,55 @@ test("snapshot language query is read-only, validates language and preserves own
   } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
 });
 
+test('workspace detail requires owner, current snapshot, exact language and a real entity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-snapshot-detail-'));
+  const store = new FileStore(root);
+  await store.init();
+  const app = buildApp({ config: config(root), store,
+    sessions: new PiSessionStore(join(root, 'pi-sessions')), memories: new PiMemoryStore(join(root, 'pi-memory')) });
+  try {
+    const guest = await browserInject(app, { method: 'POST', url: '/api/auth/guest' });
+    const cookie = guest.headers['set-cookie']!;
+    const headers = { cookie: (Array.isArray(cookie) ? cookie[0]! : cookie).split(';')[0]! };
+    const project = createProject(guest.json<{ owner_id: string }>().owner_id, 'https://github.com/example/repo', 'Example', 'free:test');
+    project.analysis.snapshot_id = 'current';
+    project.display_language = 'en';
+    await store.saveProject(project);
+    const evidence = { stable_id: 'ev1', label: 'file', path: 'src/file.ts', start_line: 1, end_line: 2, kind: 'file' };
+    const snapshot = { snapshot_id: 'current', display_language: 'en', summary: {}, graph: {
+      semantic_mode: 'provider_supported', nodes: [{ id: 'node', evidence: [evidence, { ...evidence, stable_id: 'ev2' }], members: [evidence, { ...evidence, stable_id: 'ev2' }] }],
+      edges: [{ id: 'edge', evidence: [evidence] }], layers: [{ id: 'layer', evidence: [evidence] }],
+      unassigned_component_ids: [],
+    }, value_points: [], languages: [], learning_plan: { snapshot_id: 'current', selected_value_point: null, steps: [] } } as unknown as EvidenceSnapshot;
+    store.loadSnapshot = async <T>() => snapshot as T;
+    const base = `/api/projects/${project.project_id}/snapshot`;
+    const view = await browserInject(app, { method: 'GET', url: `${base}?view=workspace&display_language=en`, headers });
+    assert.equal(view.statusCode, 200);
+    assert.equal(view.json().graph.nodes[0].evidence.length, 1);
+    assert.equal(view.json().graph.nodes[0].evidence_total, 2);
+    project.analysis.snapshot_id = null;
+    await store.saveProject(project);
+    const legacy = await browserInject(app, { method: 'GET', url: `${base}?view=workspace&display_language=en`, headers });
+    assert.equal(legacy.statusCode, 200);
+    assert.equal(legacy.json().view, undefined);
+    assert.equal(legacy.json().graph.nodes[0].evidence.length, 2);
+    project.analysis.snapshot_id = 'current';
+    await store.saveProject(project);
+    const detail = `${base}/detail?snapshot_id=current&display_language=en&kind=component&id=node`;
+    const full = await browserInject(app, { method: 'GET', url: detail, headers });
+    assert.equal(full.statusCode, 200);
+    assert.equal(full.json().item.evidence.length, 2);
+    assert.equal(full.json().item.members.length, 2);
+    assert.equal((await browserInject(app, { method: 'GET', url: detail })).statusCode, 401);
+    assert.equal((await browserInject(app, { method: 'GET', url: detail.replace('current', 'old'), headers })).statusCode, 409);
+    assert.equal((await browserInject(app, { method: 'GET', url: detail.replace('display_language=en', 'display_language=zh-CN'), headers })).statusCode, 409);
+    assert.equal((await browserInject(app, { method: 'GET', url: detail.replace('id=node', 'id=missing'), headers })).statusCode, 404);
+    const outsider = createProject('guest:other', 'https://github.com/example/other', 'Other', 'free:test');
+    await store.saveProject(outsider);
+    assert.equal((await browserInject(app, { method: 'GET', url: detail.replace(project.project_id, outsider.project_id), headers })).statusCode, 404);
+  } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("reanalyze reuses an active job and the user cancellation route is gone", async () => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-api-analysis-reuse-"));
   try {

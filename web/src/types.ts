@@ -294,6 +294,9 @@ export interface GraphEvidence {
 }
 
 export interface GraphNode {
+  detail_available?: boolean;
+  evidence_total?: number;
+  members_total?: number;
   id: string;
   entity_kind?: 'repository' | 'system' | 'subsystem' | 'domain' | 'module' | 'component' | 'fact';
   parent_entity_id?: string | null;
@@ -319,6 +322,8 @@ export interface GraphNode {
 }
 
 export interface GraphEdge {
+  detail_available?: boolean;
+  evidence_total?: number;
   id: string;
   source: string;
   target: string;
@@ -332,6 +337,7 @@ export interface GraphEdge {
 }
 
 export interface SnapshotOverlay {
+  evidence_total?: number;
   id: string;
   kind: 'community' | 'architecture_layer' | 'process' | 'runtime';
   name: string;
@@ -343,6 +349,7 @@ export interface SnapshotOverlay {
 }
 
 export interface SnapshotProjectionNode {
+  evidence_total?: number;
   projection_node_id: string;
   entity_id: string;
   parent_projection_node_id: string | null;
@@ -353,6 +360,7 @@ export interface SnapshotProjectionNode {
 }
 
 export interface SnapshotProjectionEdge {
+  evidence_total?: number;
   projection_edge_id: string;
   relation_id: string | null;
   source_projection_node_id: string;
@@ -375,6 +383,8 @@ export interface SnapshotProjection {
 }
 
 export interface ArchitectureLayer {
+  detail_available?: boolean;
+  evidence_total?: number;
   id: string;
   name: string;
   responsibility: string;
@@ -424,6 +434,7 @@ export interface LearningPlan {
 }
 
 export interface Snapshot {
+  view?: 'workspace-v1';
   snapshot_id: string;
   display_language?: 'zh-CN' | 'en';
   summary: SnapshotSummary;
@@ -441,7 +452,7 @@ export interface Snapshot {
     schema_version?: string;
     hierarchy?: { root_entity_ids: string[]; max_depth: number };
     overlays?: SnapshotOverlay[];
-    projections?: { human: SnapshotProjection; agent: SnapshotProjection };
+    projections?: { human: SnapshotProjection; agent?: SnapshotProjection };
   };
   value_points: ValuePoint[];
   languages: LanguageRow[];

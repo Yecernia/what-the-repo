@@ -17,6 +17,8 @@ import {
   type ProviderSettings,
 } from "../domain/conversation.js";
 import { DEFAULT_DISPLAY_LANGUAGE, normalizeDisplayLanguage } from "../domain/display-language.js";
+import type { EvidenceSnapshot } from "../domain/snapshot.js";
+import { workspaceSnapshot, workspaceSnapshotDetail, type WorkspaceDetailKind } from "../domain/workspace-snapshot.js";
 import type { AnalysisJob } from "../domain/jobs.js";
 import type { OwnerMergeSummary } from "../domain/lifecycle.js";
 import type { PiRunEvent } from "../agent/types.js";
@@ -1923,11 +1925,35 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const { projectId } = request.params as { projectId: string };
     const project = await store.loadProject(projectId, owner.owner_id);
     if (!project) throw httpError(404, "项目不存在");
-    const { display_language: language } = request.query as { display_language?: string };
+    const { display_language: language, view } = request.query as { display_language?: string; view?: string };
     if (language !== undefined && language !== "zh-CN" && language !== "en") throw httpError(400, "不支持的显示语言");
-    const snapshot = await store.loadSnapshot<Record<string, unknown>>(projectId, language);
+    if (view !== undefined && view !== 'workspace') throw httpError(400, "不支持的快照视图");
+    const snapshot = await store.loadSnapshot<EvidenceSnapshot>(projectId, language);
     if (!snapshot) throw httpError(404, "项目图谱尚未完成");
-    return { ...snapshot, display_language: snapshot.display_language ?? normalizeDisplayLanguage(project.display_language) };
+    const displayed = { ...snapshot, display_language: snapshot.display_language ?? normalizeDisplayLanguage(project.display_language) };
+    // Legacy records without a current snapshot binding cannot use the detail route.
+    return view === 'workspace' && project.analysis.snapshot_id === snapshot.snapshot_id
+      ? workspaceSnapshot(displayed) : displayed;
+  });
+  app.get("/api/projects/:projectId/snapshot/detail", async (request) => {
+    const owner = await requiredOwner(request, store, config);
+    const { projectId } = request.params as { projectId: string };
+    const project = await store.loadProject(projectId, owner.owner_id);
+    if (!project) throw httpError(404, "项目不存在");
+    const query = request.query as { snapshot_id?: string; kind?: string; id?: string; display_language?: string };
+    if (!query.snapshot_id || !query.id || !query.display_language
+      || !['component', 'relation', 'layer'].includes(query.kind ?? '')
+      || (query.display_language !== 'zh-CN' && query.display_language !== 'en')) {
+      throw httpError(400, "详情参数无效");
+    }
+    if (project.analysis.snapshot_id !== query.snapshot_id) throw httpError(409, "详情与当前快照不匹配");
+    const snapshot = await store.loadSnapshot<EvidenceSnapshot>(projectId, query.display_language);
+    if (!snapshot || snapshot.snapshot_id !== query.snapshot_id) throw httpError(409, "详情与当前快照不匹配");
+    const displayedLanguage = snapshot.display_language ?? normalizeDisplayLanguage(project.display_language);
+    if (displayedLanguage !== query.display_language) throw httpError(409, "详情与显示语言不匹配");
+    const item = workspaceSnapshotDetail(snapshot, query.kind as WorkspaceDetailKind, query.id);
+    if (!item) throw httpError(404, "详情对象不存在");
+    return { snapshot_id: snapshot.snapshot_id, display_language: displayedLanguage, kind: query.kind, item };
   });
   app.get("/api/projects/:projectId/source", async (request) => {
     const owner = await requiredOwner(request, store, config);

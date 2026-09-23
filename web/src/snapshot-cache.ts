@@ -43,9 +43,9 @@ export function getMemorySnapshot(projectId: string, snapshotId?: string | null,
 function openDatabase(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
   return new Promise(resolve => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, 3);
     request.onupgradeneeded = () => {
-      // Discard the old cache: it did not identify the stored language.
+      // Discard full snapshots saved before the workspace projection was introduced.
       if (request.result.objectStoreNames.contains(STORE_NAME)) request.result.deleteObjectStore(STORE_NAME);
       request.result.createObjectStore(STORE_NAME, { keyPath: 'cacheKey' });
     };
