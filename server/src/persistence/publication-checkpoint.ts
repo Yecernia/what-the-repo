@@ -59,7 +59,13 @@ export async function loadDeferredPublicationCheckpoint<T>(mainSource: Checkpoin
   const needsCompiler = checkpoint.provenance_applied !== true;
   if (needsCompiler && !compiler) throw new Error('analysis_checkpoint_static_missing');
   const plan = checkpoint.plan === undefined ? undefined : object(checkpoint.plan);
-  const loadPublication = publicationLoader(main, compiler, needsCompiler && plan?.mode === 'incremental', signal);
+  const fromPublicKey = checkpoint.from_public_key;
+  const hasPreviousKey = typeof fromPublicKey === 'string' && /^[a-f0-9]{64}$/.test(fromPublicKey);
+  if (fromPublicKey != null && !hasPreviousKey) throw new Error('analysis_checkpoint_payload_invalid');
+  // New incremental checkpoints retain the immutable previous public key, and
+  // the assembly stage streams only the history rows needed for provenance.
+  const loadPublication = publicationLoader(main, compiler,
+    needsCompiler && plan?.mode === 'incremental' && !hasPreviousKey, signal);
   if (compiler) {
     const cache = object(await readCheckpointRecords(compiler.path, compiler,
       { includeRootFields: COMPILER_FIELDS, signal }));

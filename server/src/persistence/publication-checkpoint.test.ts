@@ -139,6 +139,13 @@ test('incremental publication requires its previous graph while provenanced snap
     await env.store.saveAnalysisCheckpoint('project', checkpoint, value.snapshot);
     const loaded = await env.store.loadAnalysisCheckpoint('project', { deferPublication: true });
     await assert.rejects(loaded!.loadPublication!(), /analysis_checkpoint_previous_graph_missing/);
+    const keyed = { ...checkpoint, from_public_key: 'a'.repeat(64) };
+    await env.store.saveAnalysisCheckpoint('project', keyed, value.snapshot);
+    const keyedLoad = await env.store.loadAnalysisCheckpoint('project', { deferPublication: true });
+    assert.equal(keyedLoad?.checkpoint.from_public_key, keyed.from_public_key);
+    assert.deepEqual(await keyedLoad!.loadPublication!(), { snapshot: value.snapshot, previousFactGraph: null });
+    await env.store.saveAnalysisCheckpoint('project', { ...keyed, from_public_key: 'invalid' }, value.snapshot);
+    await assert.rejects(env.store.loadAnalysisCheckpoint('project', { deferPublication: true }), /payload_invalid/);
     await env.store.saveAnalysisCheckpoint('standalone', { stage: 'assembly', provenance_applied: true }, value.snapshot);
     const standalone = await env.store.loadAnalysisCheckpoint('standalone', { deferPublication: true });
     assert.deepEqual(await standalone!.loadPublication!(), { snapshot: value.snapshot, previousFactGraph: null });

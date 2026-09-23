@@ -16,6 +16,7 @@ import {
 import type { AnalysisJob } from "../domain/jobs.js";
 import type { ServerConfig } from "../config.js";
 import type { ProductStore } from "../persistence/store.js";
+import { FileStore } from "../persistence/file-store.js";
 import { createSemanticBatch, type SemanticBatch } from "../domain/semantic-batch.js";
 import { createWorkerDiagnostics } from "../agent/worker-diagnostics.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -602,6 +603,7 @@ test('deferred publication waits for cache persistence and never loads the graph
 
 test('incremental assembly reloads prior facts through the saved public key', async () => {
   const sourceRoot = await mkdtemp(join(tmpdir(), 'analysis-incremental-assembly-'));
+  let checkpointStore: FileStore | undefined;
   try {
     const oldFile = decodeSource('src/a.py', Buffer.from('def run(): pass\n')).file;
     const currentFile = decodeSource('src/a.py', Buffer.from('def run(): pass\n')).file;
@@ -620,6 +622,13 @@ test('incremental assembly reloads prior facts through the saved public key', as
       from_public_key: previousKey, analysis_config_digest: 'config', analyzer_bundle_version: 'analyzer',
       fetched: { manifest }, parsed: [currentFile], syntax_files: [currentFile], lsp_results: [],
       plan, provenance_applied: false };
+    checkpointStore = new FileStore(join(sourceRoot, 'checkpoint-storage'));
+    await checkpointStore.init();
+    await checkpointStore.saveAnalysisCheckpoint('incremental-assembly', checkpoint, snapshot);
+    const deferred = await checkpointStore.loadAnalysisCheckpoint<typeof checkpoint>(
+      'incremental-assembly', { deferPublication: true });
+    assert.ok(deferred?.loadPublication);
+    assert.equal(deferred.checkpoint.from_public_key, previousKey);
     const project = createProject('guest:incremental', 'https://github.com/example/incremental', 'Incremental', null);
     let visited = 0;
     let published: Record<string, unknown> | null = null;
@@ -639,10 +648,13 @@ test('incremental assembly reloads prior facts through the saved public key', as
     const coordinator = new AnalysisCoordinator(store, config(1)) as unknown as {
       resumeAssemblyFromCheckpoint(input: Record<string, unknown>): Promise<void>;
     };
-    await coordinator.resumeAssemblyFromCheckpoint({ checkpoint, project, job: job('incremental-assembly'),
-      signal: new AbortController().signal, fence: {},
-      loadPublication: async () => ({ snapshot, previousFactGraph: null }) });
+    await coordinator.resumeAssemblyFromCheckpoint({ checkpoint: deferred.checkpoint, project,
+      job: job('incremental-assembly'), signal: new AbortController().signal, fence: {},
+      loadPublication: deferred.loadPublication });
     assert.ok(visited > 0);
     assert.equal((published as Record<string, unknown> | null)?.incremental !== undefined, true);
-  } finally { await rm(sourceRoot, { recursive: true, force: true }); }
+  } finally {
+    await checkpointStore?.close();
+    await rm(sourceRoot, { recursive: true, force: true });
+  }
 });
