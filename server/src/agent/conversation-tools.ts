@@ -1,5 +1,6 @@
 import { runAbortCode } from '../services/execution-error.js';
 import { failureMessage } from './provider-error.js';
+import { buildSnapshotQueryDirectory, querySnapshotQueryDirectory, type SnapshotQueryInput } from '../domain/snapshot-query.js';
 import { Type, type Static } from "typebox";
 import type { AgentTool, AgentToolResult, ToolExecutionMode } from "@earendil-works/pi-agent-core";
 import type {
@@ -401,7 +402,7 @@ export function createConversationTools(
     "正在检索代码证据",
     "按关键词、路径、语言、组件或关系查询证据图谱。回答仓库事实前先调用。",
     EVIDENCE_QUERY_INPUT,
-    async (_id, params) => {
+    async (_id, params, signal) => {
       const snapshot = context.snapshot;
       if (!snapshot) return errorResult("query_code_evidence", "完整证据图谱暂不可用。");
       const input = params as {
@@ -420,28 +421,16 @@ export function createConversationTools(
         cursor?: string;
         limit?: number;
       };
-      if (context.project.analysis.canonical_snapshot_key) {
-        const result = await context.store.queryPublicSnapshot({
-          publicKey: context.project.analysis.canonical_snapshot_key,
-          snapshotId: snapshot.snapshot_id,
-          query: {
-            include_metadata: false,
-            text: input.text,
-            paths: input.paths,
-            languages: input.languages,
-            component_ids: input.component_ids,
-            entity_ids: input.entity_ids,
-            entity_kinds: input.entity_kinds as any,
-            scope: input.scope,
-            depth: input.depth,
-            projection: input.projection,
-            personalized_entity_ids: input.personalized_entity_ids,
-            evidence_budget_tokens: input.evidence_budget_tokens,
-            relation_kinds: input.relation_kinds,
-            cursor: input.cursor,
-            limit: Math.min(Number(input.limit ?? 8), 12),
-          },
-        });
+      const queryInput: SnapshotQueryInput = {
+        ...input, include_metadata:false, include_payload:false, evidence_per_owner:{node:8,edge:4},
+        evidence_budget_tokens:input.evidence_budget_tokens ?? 4000,
+        entity_kinds:input.entity_kinds as SnapshotQueryInput['entity_kinds'],limit:Math.min(Number(input.limit??8),12),
+      };
+      const result = context.project.analysis.canonical_snapshot_key
+        ? await context.store.queryPublicSnapshot({publicKey:context.project.analysis.canonical_snapshot_key,
+          snapshotId:snapshot.snapshot_id,query:queryInput,signal})
+        : querySnapshotQueryDirectory(buildSnapshotQueryDirectory('local:'+context.project.project_id,
+          snapshot.snapshot_id,snapshot,{fact_graph:snapshot.fact_graph}),queryInput);
         const evidenceById = new Map(result.evidence.map((row) => [row.evidence_id, {
           stable_id: row.evidence_id,
           label: row.label,
@@ -452,10 +441,9 @@ export function createConversationTools(
           source_id: row.source_id ?? undefined,
           target_id: row.target_id ?? undefined,
         }]));
-        const linked = (ownerKind: "node" | "edge", ownerKey: string) => result.evidence_links
-          .filter((link) => link.owner_kind === ownerKind && link.owner_key === ownerKey)
-          .map((link) => evidenceById.get(link.evidence_id))
-          .filter((row): row is NonNullable<typeof row> => Boolean(row));
+        const linked = (ownerKind: "node" | "edge", ownerKey: string) => [...new Set(result.evidence_links
+          .filter(link => link.owner_kind === ownerKind && link.owner_key === ownerKey).map(link => link.evidence_id))]
+          .map(id => evidenceById.get(id)).filter((row): row is NonNullable<typeof row> => Boolean(row));
         const nodes = result.nodes.map((row) => ({
           id: row.node_id,
           name: row.name,
@@ -486,77 +474,13 @@ export function createConversationTools(
             estimated_tokens: result.estimated_tokens,
             budget_tokens: result.budget_tokens,
             returned_evidence_count: result.returned_evidence_count,
+            evidence_truncated:result.evidence_truncated,
             truncation_reason: result.truncation_reason,
           },
           {
             evidence_ids: [...nodes, ...relations].flatMap((row) => row.evidence.map((item) => item.stable_id)),
           },
         );
-      }
-      const text = (input.text ?? "").toLowerCase().trim();
-      const paths = input.paths ?? [];
-      const languages = input.languages ?? [];
-      const componentIds = new Set(input.component_ids ?? []);
-      const searchableNodes = [
-        ...snapshot.graph.nodes,
-        ...(snapshot.fact_graph?.nodes.filter((node) =>
-          node.lifecycle_status !== "tombstoned" && node.lifecycle_status !== "superseded") ?? []),
-      ];
-      const searchableEdges = [
-        ...snapshot.graph.edges,
-        ...(snapshot.fact_graph?.edges.filter((edge) =>
-          edge.lifecycle_status !== "tombstoned" && edge.lifecycle_status !== "superseded") ?? []),
-      ];
-      const nodes = searchableNodes.filter((node) => {
-        const haystack = [
-          node.id,
-          node.name,
-          node.label,
-          node.responsibility,
-          node.members.map((row) => row.path).join(" "),
-        ].join(" ").toLowerCase();
-        const pathOk = !paths.length || node.members.some((row) =>
-          paths.some((path) => row.path.includes(path)));
-        const languageOk = !languages.length || node.members.some((row) =>
-          languages.some((language) =>
-            row.path.toLowerCase().endsWith("." + language.toLowerCase())));
-        const componentOk = !componentIds.size || componentIds.has(node.id);
-        return pathOk && languageOk && componentOk && (!text || haystack.includes(text));
-      });
-      const edges = searchableEdges.filter((edge) => {
-        const kindOk = !input.relation_kinds?.length
-          || input.relation_kinds.includes(edge.relation_kind);
-        const haystack = [edge.id, edge.label, edge.description, edge.source, edge.target]
-          .join(" ").toLowerCase();
-        return kindOk && (!text || haystack.includes(text));
-      });
-      const limit = Number(input.limit ?? 8);
-      const nodeRows = bounded(nodes, limit).map((node) => ({
-        id: node.id,
-        name: node.name,
-        responsibility: node.responsibility,
-        layer: node.architecture_layer_name,
-        certainty: node.certainty,
-        evidence: expose(context, bounded(nodeEvidence(node), 8)),
-      }));
-      const edgeRows = bounded(edges, limit).map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        relation_kind: edge.relation_kind,
-        label: edge.label,
-        description: edge.description,
-        certainty: edge.certainty,
-        evidence: expose(context, bounded(edge.evidence, 4)),
-      }));
-      return textResult(
-        "query_code_evidence",
-        { ok: true, nodes: nodeRows, relations: edgeRows, matched: nodeRows.length + edgeRows.length },
-        {
-          evidence_ids: [...nodeRows, ...edgeRows]
-            .flatMap((row) => row.evidence.map((item) => item.stable_id)),
-        },
-      );
     },
   );
 

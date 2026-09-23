@@ -129,6 +129,7 @@ test("PostgreSQL snapshot queries apply the shared expand_hops semantics", async
       if (sql.includes("FROM snapshot_query_overlay_memberships")) return { rows: [], rowCount: 0 };
       if (sql.includes("FROM snapshot_query_projection_nodes")) return { rows: [], rowCount: 0 };
       if (sql.includes("FROM snapshot_query_projection_edges")) return { rows: [], rowCount: 0 };
+      if (sql.startsWith('SET LOCAL')) return {rows:[],rowCount:0};
       throw new Error(`unexpected query: ${sql}`);
     },
   };

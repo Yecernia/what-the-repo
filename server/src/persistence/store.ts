@@ -164,6 +164,7 @@ export interface ProductStore {
     publicKey: string;
     snapshotId: string;
     query: SnapshotQueryInput;
+    signal?: AbortSignal;
   }): Promise<SnapshotQueryResult>;
   sourceSnapshotRoot(projectId: string, snapshotId: string): string;
   publicSourceSnapshotRoot(publicKey: string, snapshotId: string): string;

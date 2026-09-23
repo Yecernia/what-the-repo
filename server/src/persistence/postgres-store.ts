@@ -1351,7 +1351,7 @@ export class PostgresStore extends FileStore {
     return ids.flatMap(id => { const row = byId.get(id); return row ? [snapshotEvidence(row)] : []; });
   }
 
-  override async queryPublicSnapshot(input: { publicKey: string; snapshotId: string; query: SnapshotQueryInput }): Promise<SnapshotQueryResult> {
+  override async queryPublicSnapshot(input: { publicKey: string; snapshotId: string; query: SnapshotQueryInput; signal?: AbortSignal }): Promise<SnapshotQueryResult> {
     const result = await readSnapshotQuery(this.pool, input);
     if (result) return result;
     // Legacy snapshots without a materialized directory still retain their complete object data.

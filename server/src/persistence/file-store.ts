@@ -493,7 +493,9 @@ export class FileStore implements ProductStore {
     ownerId: string,
     mutate: (project: Project) => void,
     fence?: AnalysisLeaseFence,
+    sessionFence?: import("./store.js").SessionWriteFence,
   ): Promise<Project | null> {
+    if (sessionFence) throw new Error("session_write_fence_backend_mismatch");
     return this.withAnalysisLease(fence, () => this.updateProjectLocked(projectId, ownerId, mutate, fence));
   }
 
@@ -754,6 +756,7 @@ export class FileStore implements ProductStore {
     publicKey: string;
     snapshotId: string;
     query: SnapshotQueryInput;
+    signal?: AbortSignal;
   }): Promise<SnapshotQueryResult> {
     const bundle = await this.loadPublicSnapshot(input.publicKey);
     if (!bundle || String(bundle.metadata.analysis_snapshot_id ?? "") !== input.snapshotId) {

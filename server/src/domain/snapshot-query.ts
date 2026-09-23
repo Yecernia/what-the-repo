@@ -159,6 +159,9 @@ export interface SnapshotQueryDirectory {
 export interface SnapshotQueryInput {
   /** Internal callers can omit context metadata they never expose to the model/API. */
   include_metadata?: boolean;
+  /** Internal projection used by Agent tools; full API queries remain complete. */
+  include_payload?: boolean;
+  evidence_per_owner?: { node: number; edge: number };
   text?: string;
   paths?: string[];
   languages?: string[];
@@ -192,6 +195,7 @@ export interface SnapshotQueryResult {
   estimated_tokens?: number;
   budget_tokens?: number | null;
   returned_evidence_count?: number;
+  evidence_truncated?: boolean;
   truncation_reason?: "limit" | "token_budget" | "item_exceeds_budget" | null;
   next_cursor: string | null;
   truncated: boolean;
@@ -647,6 +651,15 @@ export function edgeMatches(row: SnapshotQueryEdgeRow, input: SnapshotQueryInput
     && (!kinds.size || kinds.has(row.relation_kind));
 }
 
+/** Structural filters scope edges to incident selected nodes, including empty matches.
+ * Text-only and relation-only queries remain graph-wide. Explicit expansion may
+ * traverse outside the seed filters, as before. */
+export function hasNodeScope(input: SnapshotQueryInput): boolean {
+  return Boolean(input.entity_ids?.length || input.component_ids?.length || input.paths?.length
+    || input.languages?.length || input.symbol_ids?.length || input.entity_kinds?.length
+    || input.depth !== undefined || input.projection);
+}
+
 export function selectSnapshotQueryCandidates(
   directory: SnapshotQueryDirectory,
   input: SnapshotQueryInput,
@@ -670,8 +683,7 @@ export function selectSnapshotQueryCandidates(
   }
   let edges = directory.edges.filter((row) => edgeMatches(row, input));
   const matchedNodeKeys = new Set(nodes.map((row) => row.node_key));
-  const requestedEntityIds = new Set([...(input.entity_ids ?? []), ...(input.component_ids ?? [])]);
-  if (requestedEntityIds.size || input.depth !== undefined || input.projection) {
+  if (hasNodeScope(input)) {
     edges = edges.filter((edge) => matchedNodeKeys.has(edge.source_node_key) || matchedNodeKeys.has(edge.target_node_key));
   }
   const expand = Math.max(0, Math.min(2, Math.floor(input.expand_hops ?? 0)));
@@ -707,7 +719,9 @@ export function pageSnapshotQueryCandidates(directory: SnapshotQueryDirectory, i
   const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 20)));
   const after = cursorKey(input.cursor);
   const afterIndex = after ? combined.findIndex((item) => item.key === after) : -1;
-  const filtered = afterIndex >= 0 ? combined.slice(afterIndex + 1) : combined;
+  let filtered = afterIndex >= 0 ? combined.slice(afterIndex + 1) : combined;
+  if (input.include_payload === false) filtered = filtered.map(item => ({...item,row:{...item.row,payload:{}}} as QueryItem));
+  if (input.evidence_per_owner) directory = boundQueryEvidence(directory,filtered.slice(0,limit),input.evidence_per_owner);
   const budget = input.evidence_budget_tokens !== undefined
     ? Math.max(256, Math.floor(input.evidence_budget_tokens))
     : null;
@@ -773,6 +787,7 @@ export function pageSnapshotQueryCandidates(directory: SnapshotQueryDirectory, i
     estimated_tokens: estimateQueryTokens({ nodes: pageNodes, edges: pageEdges, evidence: returnedEvidence }),
     budget_tokens: budget,
     returned_evidence_count: returnedEvidence.length,
+    ...(input.evidence_per_owner ? {evidence_truncated:Boolean((directory as SnapshotQueryDirectory & {evidence_truncated?:boolean}).evidence_truncated)} : {}),
     truncation_reason: truncationReason,
   };
 }
@@ -780,4 +795,22 @@ export function pageSnapshotQueryCandidates(directory: SnapshotQueryDirectory, i
 export function querySnapshotQueryDirectory(directory: SnapshotQueryDirectory, input: SnapshotQueryInput): SnapshotQueryResult {
   const { nodes, edges } = selectSnapshotQueryCandidates(directory, input);
   return pageSnapshotQueryCandidates(directory, input, rankSnapshotQueryCandidates(nodes, edges, input));
+}
+
+/** Match the Agent's visible evidence allowance before payload hydration. */
+export function boundQueryEvidence(directory: SnapshotQueryDirectory, items: QueryItem[],
+  limits: { node: number; edge: number }): SnapshotQueryDirectory & { evidence_truncated: boolean } {
+  const links: SnapshotQueryEvidenceLinkRow[] = [];
+  let truncated = Boolean((directory as { evidence_truncated?: boolean }).evidence_truncated);
+  for (const item of items) {
+    const ownerKey = item.kind === 'node' ? (item.row as SnapshotQueryNodeRow).node_key : (item.row as SnapshotQueryEdgeRow).edge_key;
+    const candidates = directory.evidence_links.filter(link => link.owner_kind === item.kind && link.owner_key === ownerKey);
+    const ids = [...new Set(candidates.map(link => link.evidence_id))].sort((a,b) => Buffer.compare(Buffer.from(a),Buffer.from(b)));
+    const count = Math.max(0,Math.min(100,Math.floor(limits[item.kind])));
+    truncated ||= ids.length > count;
+    const selected = new Set(ids.slice(0,count));
+    links.push(...candidates.filter(link => selected.has(link.evidence_id)));
+  }
+  const ids = new Set(links.map(link => link.evidence_id));
+  return {...directory,evidence_links:links,evidence:directory.evidence.filter(row=>ids.has(row.evidence_id)),evidence_truncated:truncated};
 }
