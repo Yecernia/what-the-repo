@@ -1454,3 +1454,25 @@ it('shows detail load failure and retries the selected entity', async () => {
     expect(request).toHaveBeenCalledTimes(2);
   } finally { view.unmount(); request.mockRestore(); act(() => setUiLanguage('zh-CN')); }
 });
+
+it('defers the default full detail while the desktop pane is folded and resumes from its cache', async () => {
+  const thin: Snapshot = { ...snapshot, view: 'workspace-v1', display_language: 'zh-CN', graph: {
+    ...snapshot.graph, nodes: snapshot.graph.nodes.map(node => ({ ...node, detail_available: true })),
+  } };
+  const request = vi.spyOn(apiClient, 'getSnapshotDetail').mockResolvedValue({
+    snapshot_id: thin.snapshot_id, display_language: 'zh-CN', kind: 'component',
+    item: { ...thin.graph.nodes[0], members: [evidence, { ...evidence, stable_id: 'extra', path: 'extra.py' }] },
+  });
+  const props = { snapshot: thin, project, onOpenEvidence: vi.fn(), onQueueTopic: vi.fn(), onSelectionChange: vi.fn() };
+  const view = render(<RepositoryWorkspace {...props} detailsVisible={false} />);
+  try {
+    expect(request).not.toHaveBeenCalled();
+    view.rerender(<RepositoryWorkspace {...props} detailsVisible />);
+    await waitFor(() => expect(screen.getByTestId('component-details')).toHaveTextContent('extra.py'));
+    expect(request).toHaveBeenCalledTimes(1);
+    view.rerender(<RepositoryWorkspace {...props} detailsVisible={false} />);
+    view.rerender(<RepositoryWorkspace {...props} detailsVisible />);
+    expect(screen.getByTestId('component-details')).toHaveTextContent('extra.py');
+    expect(request).toHaveBeenCalledTimes(1);
+  } finally { view.unmount(); request.mockRestore(); }
+});

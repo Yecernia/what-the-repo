@@ -3630,6 +3630,7 @@ export default function App() {
                 }}><Suspense fallback={<div className="workspace-loading"><div className="spinner" /></div>}><RepositoryWorkspace
                   snapshot={snapshot}
                   project={project}
+                  detailsVisible={repositoryOpen}
                   onOpenEvidence={openEvidence}
                   onQueueTopic={queueTopic}
                   onSelectionChange={setConversationSelection}

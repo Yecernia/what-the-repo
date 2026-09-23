@@ -51,6 +51,7 @@ import type { SnapshotLanguageOverlayPayload } from "../domain/snapshot-language
 import {
   applyOwnedSnapshotLanguageOverlay,
   asSnapshotLanguageOverlayPayload,
+  SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
 } from "../domain/snapshot-language.js";
 import { asEvidenceSnapshot } from "../domain/snapshot.js";
 import { normalizeDisplayLanguage } from "../domain/display-language.js";
@@ -748,6 +749,61 @@ export class PostgresStore extends FileStore {
          updated_at = now()`,
       [projectId, String(snapshot.snapshot_id ?? "pending"), JSON.stringify(snapshot)],
     );
+  }
+
+  override async snapshotAvailable(project: Project, displayLanguage?: string): Promise<boolean> {
+    const snapshotId = project.analysis.snapshot_id;
+    if (!snapshotId) return false;
+    const languages = [...new Set([
+      normalizeDisplayLanguage(displayLanguage ?? project.display_language),
+      normalizeDisplayLanguage(project.display_language),
+    ])].map(language => language.toLowerCase());
+    // Read only scalar metadata. A view_payload column here would deserialize the
+    // full published graph merely to answer a boolean request.
+    const binding = await this.pool.query<{
+      public_snapshot_key: string;
+      analysis_snapshot_id: string | null;
+      payload_purged_at: Date | null;
+      view_available: boolean;
+      language_overlay_version: string | null;
+      overlay_available: boolean;
+    }>(
+      `SELECT b.public_snapshot_key, s.analysis_snapshot_id, s.payload_purged_at,
+              (s.view_storage_key IS NOT NULL OR s.view_payload IS NOT NULL) AS view_available,
+              s.language_overlay_version,
+              EXISTS (SELECT 1 FROM public_snapshot_language_overlays o
+                WHERE o.public_snapshot_key = b.public_snapshot_key
+                  AND o.language = ANY($3::text[])
+                  AND o.status IN ('ready', 'degraded')
+                  AND o.payload->>'schema_version' = $4
+                  AND jsonb_typeof(o.payload->'language') = 'string'
+                  AND jsonb_typeof(o.payload->'components') = 'array'
+                  AND jsonb_typeof(o.payload->'layers') = 'array'
+                  AND jsonb_typeof(o.payload->'relations') = 'array'
+                  AND jsonb_typeof(o.payload->'value_points') = 'array') AS overlay_available
+       FROM project_public_snapshot_bindings b
+       LEFT JOIN canonical_public_repository_snapshots s
+         ON s.public_snapshot_key = b.public_snapshot_key AND s.analysis_snapshot_id = $2
+       WHERE b.project_id = $1`,
+      [project.project_id, snapshotId, languages, SNAPSHOT_LANGUAGE_OVERLAY_VERSION],
+    );
+    const row = binding.rows[0];
+    if (row) return Boolean(row.public_snapshot_key === project.analysis.canonical_snapshot_key
+      && row.analysis_snapshot_id === snapshotId && !row.payload_purged_at && row.view_available
+      && (!row.language_overlay_version || row.overlay_available));
+    // A project that still names a canonical snapshot must have its binding.
+    // Falling through to a local checkpoint could advertise stale data.
+    if (project.analysis.canonical_snapshot_key) return false;
+    const local = await this.pool.query<{ available: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM project_snapshots
+         WHERE project_id = $1 AND analysis_snapshot_id = $2
+           AND view_payload->>'snapshot_id' = $2
+           AND jsonb_typeof(view_payload->'graph') = 'object'
+           AND jsonb_typeof(view_payload#>'{graph,nodes}') = 'array'
+           AND jsonb_typeof(view_payload#>'{graph,edges}') = 'array') AS available`,
+      [project.project_id, snapshotId],
+    );
+    return local.rows[0]?.available === true;
   }
 
   override async loadSnapshot<T = Record<string, unknown>>(projectId: string, displayLanguage?: string): Promise<T | null> {

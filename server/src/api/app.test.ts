@@ -176,8 +176,12 @@ test("TypeScript API keeps guest project/profile contracts", async () => {
     assert.equal(createdProject.project.model_override, null);
     assert.deepEqual(project.json().project.chat_limits, { max_rounds: 12, max_content_bytes: 3456 });
     const projectId = createdProject.project.project_id;
+    const loadSnapshot = store.loadSnapshot;
+    store.loadSnapshot = async () => { throw new Error('project detail must not load the full view'); };
     const refreshed = await browserInject(app, { method: 'GET', url: `/api/projects/${projectId}`, headers: { cookie: cookieHeader } });
+    store.loadSnapshot = loadSnapshot;
     assert.equal(refreshed.statusCode, 200);
+    assert.equal(refreshed.json().snapshot_available, false);
     assert.deepEqual(refreshed.json().project.chat_limits, { max_rounds: 12, max_content_bytes: 3456 });
     assert.equal('chat_limits' in (await store.loadProject(projectId))!, false);
     const renamed = await browserInject(app, {

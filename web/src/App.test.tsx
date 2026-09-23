@@ -271,6 +271,7 @@ vi.mock('./RepositoryWorkspace', () => ({
     onQueueTopic,
     onOpenEvidence,
     onSelectionChange,
+    detailsVisible,
   }: {
     snapshot: Snapshot;
     project: Project;
@@ -281,8 +282,9 @@ vi.mock('./RepositoryWorkspace', () => ({
     }) => void;
     onOpenEvidence: (evidence: GraphEvidence) => void;
     onSelectionChange: (selection: ConversationSelection) => void;
+    detailsVisible?: boolean;
   }) => (
-    <div data-testid="repository-workspace">
+    <div data-testid="repository-workspace" data-details-visible={String(detailsVisible)}>
       <span>snapshot:{snapshot.snapshot_id}</span>
       <span>language:{snapshot.display_language ?? 'unknown'}</span>
       <span>selected:{project.study.selected_value_point ?? 'none'}</span>
@@ -1037,10 +1039,12 @@ describe('App project state synchronization', () => {
     const projectView = await screen.findByRole('button', { name: '展开项目视图' });
     expect(screen.getByTestId('repository-workspace').closest('.repository-pane'))
       .toHaveClass('collapsed');
+    expect(screen.getByTestId('repository-workspace')).toHaveAttribute('data-details-visible', 'false');
     expect(document.querySelector('.msg-avatar')).not.toBeInTheDocument();
     await userEvent.click(projectView);
     const repositoryPane = screen.getByTestId('repository-workspace').closest('.repository-pane');
     expect(repositoryPane).toHaveClass('open');
+    expect(screen.getByTestId('repository-workspace')).toHaveAttribute('data-details-visible', 'true');
     expect(repositoryPane).toHaveStyle({
       width: '760px',
       maxWidth: 'calc(100% - 435px)',
@@ -1050,6 +1054,8 @@ describe('App project state synchronization', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '收起项目栏' }));
     expect(screen.getByRole('button', { name: '展开项目栏' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '收起项目视图' }));
+    expect(screen.getByTestId('repository-workspace')).toHaveAttribute('data-details-visible', 'false');
   });
 
   it('renames projects from the three-dot menu and keeps the sidebar title-only', async () => {

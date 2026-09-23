@@ -535,6 +535,38 @@ export class FileStore implements ProductStore {
   }
 
   async saveSnapshot(projectId: string, payload: unknown): Promise<void> { await writeJson(this.path("snapshots", projectId), payload); }
+  async snapshotAvailable(project: Project, displayLanguage?: string): Promise<boolean> {
+    const snapshotId = project.analysis.snapshot_id;
+    if (!snapshotId) return false;
+    const key = project.analysis.canonical_snapshot_key;
+    if (!key) {
+      // Local snapshots have no separate metadata. Validate this legacy file rather
+      // than treating the analysis-only '{}' placeholder as a published view.
+      const view = await readJson<Record<string, unknown>>(this.path("snapshots", project.project_id));
+      const graph = view?.graph as Record<string, unknown> | undefined;
+      return view?.snapshot_id === snapshotId && Boolean(graph
+        && Array.isArray(graph.nodes) && Array.isArray(graph.edges));
+    }
+    const directory = join(this.dirs.publicSnapshots, safePublicKey(key));
+    const metadata = await readJson<Record<string, unknown>>(join(directory, "metadata.json"));
+    if (!metadata || metadata.analysis_snapshot_id !== snapshotId || metadata.payload_purged_at) return false;
+    const viewInfo = await stat(join(directory, "view.json")).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!viewInfo?.isFile() || viewInfo.size <= 3) return false;
+    if (!metadata.language_overlay_version) return true;
+    const languages = new Set([
+      normalizeDisplayLanguage(displayLanguage ?? project.display_language),
+      normalizeDisplayLanguage(project.display_language),
+    ]);
+    for (const language of languages) {
+      const overlay = await this.loadSnapshotLanguageOverlay(key, language);
+      if ((overlay?.status === "ready" || overlay?.status === "degraded")
+        && asSnapshotLanguageOverlayPayload(overlay.payload)) return true;
+    }
+    return false;
+  }
   async loadSnapshot<T = Record<string, unknown>>(projectId: string, displayLanguage?: string): Promise<T | null> {
     const project = await this.loadProject(projectId);
     const key = project?.analysis.canonical_snapshot_key;

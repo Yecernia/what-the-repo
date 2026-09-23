@@ -1081,12 +1081,14 @@ export function RepositoryWorkspace({
   onOpenEvidence,
   onQueueTopic,
   onSelectionChange,
+  detailsVisible = true,
 }: {
   snapshot: Snapshot;
   project: Project;
   onOpenEvidence: (evidence: GraphEvidence) => void;
   onQueueTopic: (request: TopicRequest) => void;
   onSelectionChange: (selection: ConversationSelection | null) => void;
+  detailsVisible?: boolean;
 }) {
   const [tab, setTab] = useState<WorkspaceTab>('architecture');
   const split = useWorkspaceSplit(tab === 'architecture');
@@ -1112,7 +1114,7 @@ export function RepositoryWorkspace({
     ? JSON.stringify([project.project_id, snapshot.snapshot_id, detailLanguage, detailKind, selected.value.id])
     : null;
   useEffect(() => {
-    if (!detailKey || !detailKind || !selected || (selected.kind !== 'component' && selected.kind !== 'relation')) return;
+    if (!detailsVisible || !detailKey || !detailKind || !selected || (selected.kind !== 'component' && selected.kind !== 'relation')) return;
     const cached = detailCache.current.get(detailKey);
     if (cached) {
       detailCache.current.delete(detailKey);
@@ -1139,7 +1141,7 @@ export function RepositoryWorkspace({
       })
       .catch(() => { if (active) setDetailResult({ key: detailKey, error: true }); });
     return () => { active = false; };
-  }, [detailKey, detailKind, detailLanguage, detailAttempt, project.project_id, selected, snapshot.snapshot_id]);
+  }, [detailKey, detailKind, detailLanguage, detailAttempt, detailsVisible, project.project_id, selected, snapshot.snapshot_id]);
 
   const detailSelected: SelectedItem | null = detailKey && detailResult?.key === detailKey && detailResult.item && selected
     ? { ...selected, value: detailResult.item } as SelectedItem : selected;

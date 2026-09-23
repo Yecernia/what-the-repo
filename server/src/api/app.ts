@@ -1295,7 +1295,10 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const { projectId } = request.params as { projectId: string };
     const project = await repository.refreshMigrationNotice(owner.owner_id, projectId);
     if (!project) throw httpError(404, "项目不存在");
-    return projectDetail(project, await store.latestJob(projectId), Boolean(await store.loadSnapshot(projectId)), config);
+    const [job, snapshotAvailable] = await Promise.all([
+      store.latestJob(projectId), store.snapshotAvailable(project),
+    ]);
+    return projectDetail(project, job, snapshotAvailable, config);
   });
   app.patch("/api/projects/:projectId", async (request: RequestWithBody) => {
     const owner = await requiredOwner(request, store, config);

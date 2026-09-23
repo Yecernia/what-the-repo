@@ -151,6 +151,7 @@ export interface ProductStore {
 
   saveSnapshot(projectId: string, payload: unknown): Promise<void>;
   loadSnapshot<T = Record<string, unknown>>(projectId: string, displayLanguage?: string): Promise<T | null>;
+  snapshotAvailable(project: Project, displayLanguage?: string): Promise<boolean>;
   saveAnalysisResult(projectId: string, payload: unknown): Promise<void>;
   loadAnalysisResult<T = Record<string, unknown>>(projectId: string): Promise<T | null>;
   readStaticFile(projectId: string, snapshotId: string, path: string): Promise<import("./analysis-payload.js").StaticFileFacts | null>;
