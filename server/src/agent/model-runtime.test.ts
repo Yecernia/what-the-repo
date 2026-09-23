@@ -675,6 +675,90 @@ test("cancelled HTTP streaming without final usage retains the reservation and r
   } finally { diagnostics.finish(); }
 });
 
+test("only explicit HTTP rejections release an unbilled stream reservation", async (t) => {
+  t.mock.method(dns, "lookup", async () => [{ address: "93.184.216.34", family: 4 }]);
+  const originalFetch = globalThis.fetch;
+  const cases: Array<{ statuses: Array<number | 'network'>; known: boolean; evidence: ProviderUsageReport['settlementEvidence']; retries?: number }> = [
+    { statuses: [402], known: true, evidence: 'explicit_rejection' },
+    { statuses: [429, 429], known: true, evidence: 'explicit_rejection', retries: 1 },
+    { statuses: [429, 200], known: false, evidence: 'unknown', retries: 1 },
+    { statuses: ['network', 429], known: false, evidence: 'unknown', retries: 1 },
+    { statuses: [500], known: false, evidence: 'unknown' },
+    { statuses: [200], known: false, evidence: 'unknown' },
+  ];
+  try {
+    for (const item of cases) {
+      let attempt = 0;
+      globalThis.fetch = async () => {
+        const status = item.statuses[attempt++];
+        if (status === undefined) throw new Error('unexpected transport attempt');
+        if (status === 'network') throw Object.assign(new TypeError('secret transport detail'), { code: 'ECONNRESET' });
+        if (status === 200) return new Response('data: [DONE]\n\n', { status, headers: { 'content-type': 'text/event-stream' } });
+        return new Response(JSON.stringify({ error: { message: 'secret provider detail' } }), {
+          status, headers: { 'content-type': 'application/json', 'retry-after-ms': '1' },
+        });
+      };
+      const reports: ProviderUsageReport[] = [];
+      const runtime = createModelRuntime({ provider: 'custom', connectionId: 'rejection-test', baseUrl: 'https://provider.example/v1',
+        apiKey: 'test-key', model: 'test', modelId: 'test', modelSelector: 'test', api: 'openai-completions', builtin: false,
+        thinkingLevel: 'off', cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } },
+      { ownerId: 'owner', providerBudget: { async acquire() {
+        return { async release(report?: ProviderUsageReport) { if (report) reports.push(report); } };
+      } } });
+      const context = { messages: [{ role: 'user' as const, content: 'ping', timestamp: 1 }] };
+      for await (const _event of streamWithProviderPermit(runtime, runtime.model, context,
+        { apiKey: runtime.apiKey, maxRetries: item.retries ?? 0 })) { /* Mocked HTTP only. */ }
+      assert.equal(attempt, item.statuses.length);
+      assert.deepEqual(reports.map(report => [report.usageKnown, report.costUsd, report.settlementEvidence]),
+        [[item.known, 0, item.evidence]]);
+      assert.doesNotMatch(JSON.stringify(reports), /secret|test-key|provider\.example/);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("built-in provider direct Models calls also observe HTTP rejection without diagnostics", async (t) => {
+  let attempts = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    attempts++;
+    return new Response(JSON.stringify({ error: { message: 'not allowed' } }), {
+      status: 403, headers: { 'content-type': 'application/json' },
+    });
+  });
+  const reports: ProviderUsageReport[] = [];
+  const runtime = createModelRuntime({ provider: 'deepseek', connectionId: 'builtin-rejection-test',
+    baseUrl: 'https://api.deepseek.com', apiKey: 'test-key', model: 'deepseek-v4-flash', modelId: 'deepseek-v4-flash',
+    modelSelector: 'test', api: 'openai-completions', builtin: true, thinkingLevel: 'off' },
+  { ownerId: 'owner', providerBudget: { async acquire() {
+    return { async release(report?: ProviderUsageReport) { if (report) reports.push(report); } };
+  } } });
+  const result = await runtime.models.completeSimple(runtime.model, {
+    messages: [{ role: 'user', content: 'ping', timestamp: 1 }],
+  }, { apiKey: runtime.apiKey });
+  assert.equal(result.stopReason, 'error');
+  assert.equal(attempts, 1);
+  assert.deepEqual(reports.map(report => [report.usageKnown, report.settlementEvidence]),
+    [[true, 'explicit_rejection']]);
+});
+
+test("caller-supplied transport cannot prove that its final rejection was its only attempt", async () => {
+  const reports: ProviderUsageReport[] = [];
+  const runtime = createModelRuntime({ provider: 'deepseek', connectionId: 'opaque-transport-test',
+    baseUrl: 'https://api.deepseek.com', apiKey: 'test-key', model: 'deepseek-v4-flash', modelId: 'deepseek-v4-flash',
+    modelSelector: 'test', api: 'openai-completions', builtin: true, thinkingLevel: 'off' },
+  { ownerId: 'owner', providerBudget: { async acquire() {
+    return { async release(report?: ProviderUsageReport) { if (report) reports.push(report); } };
+  } } });
+  const opaqueFetch = async () => new Response(JSON.stringify({ error: { message: 'rejected' } }), {
+    status: 429, headers: { 'content-type': 'application/json' },
+  });
+  const result = await runtime.models.completeSimple(runtime.model, {
+    messages: [{ role: 'user', content: 'ping', timestamp: 1 }],
+  }, { apiKey: runtime.apiKey, fetch: opaqueFetch });
+  assert.equal(result.stopReason, 'error');
+  assert.deepEqual(reports.map(report => [report.usageKnown, report.settlementEvidence]),
+    [[false, 'unknown']]);
+});
+
 test("cancellation after admission but before either provider entry releases a known zero reservation", async () => {
   for (const streaming of [false, true]) {
     const abort = new AbortController();

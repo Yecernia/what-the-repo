@@ -16,6 +16,7 @@ import {
   waitForRetentionLeadership,
 } from "./retention-leadership.js";
 import { createDirectoryReclamationTask } from './directory-reclamation-scheduler.js';
+import { recoverExpiredProviderReservations } from './provider-budget-recovery.js';
 import { RetentionScheduler } from "./retention-scheduler.js";
 
 const config = loadConfig();
@@ -41,6 +42,7 @@ const memories = store instanceof PostgresStore
   : new PiMemoryStore(config.memoryDir);
 let scheduler: RetentionScheduler | null = null;
 let directoryScheduler: RetentionScheduler | null = null;
+let budgetRecoveryScheduler: RetentionScheduler | null = null;
 let leadershipLease: RetentionLeadershipLease | null = null;
 let shuttingDown = false;
 const leadershipAbort = new AbortController();
@@ -58,7 +60,7 @@ const shutdown = async (exitCode = 0): Promise<void> => {
   stopObservations();
   leadershipAbort.abort();
   defaultRuntimeMetrics.setGauge(METRIC_NAMES.retentionLeader, 0);
-  await Promise.all([scheduler?.stop(), directoryScheduler?.stop()]);
+  await Promise.all([scheduler?.stop(), directoryScheduler?.stop(), budgetRecoveryScheduler?.stop()]);
   await leadershipLease?.release().catch(() => undefined);
   await metricsServer?.close();
   await store.close();
@@ -92,6 +94,10 @@ try {
     if (store instanceof PostgresStore) {
       directoryScheduler = new RetentionScheduler(createDirectoryReclamationTask(store.pool, defaultRuntimeMetrics), 100);
       directoryScheduler.start({ keepProcessAlive: true });
+      budgetRecoveryScheduler = new RetentionScheduler(
+        async () => { await recoverExpiredProviderReservations(store.pool); }, 60_000);
+      await budgetRecoveryScheduler.runNow();
+      budgetRecoveryScheduler.start({ keepProcessAlive: true });
     }
     scheduler = new RetentionScheduler(async () => {
       const finish = defaultRuntimeMetrics.time(METRIC_NAMES.retentionDuration);

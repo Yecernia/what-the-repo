@@ -175,7 +175,7 @@ test('PostgreSQL uses atomic reservation, Beijing boundaries, full attribution a
     },
   };
   const budget = new PostgresProviderUsageBudget(pool, limits());
-  const permit = await budget.acquire(input);
+  const permit = await budget.acquire({ ...input, budgetLease: { namespace: 'model-test', id: 'lease-test' } });
   await assert.rejects(() => permit.release(report));
   await permit.release(report);
   assert.ok(queries.some((q) => q.params[0] === 'provider-budget-global'));
@@ -186,12 +186,16 @@ test('PostgreSQL uses atomic reservation, Beijing boundaries, full attribution a
   assert.ok(insert?.params.includes('analysis'));
   assert.ok(insert?.params.includes('component-explanation'));
   assert.ok(insert?.params.includes(2));
+  assert.ok(insert?.sql.includes('lease_namespace,lease_id'));
+  assert.deepEqual(insert?.params.slice(-2), ['model-test', 'lease-test']);
   assert.equal(
     queries.filter(
       (q) => q.sql.startsWith('UPDATE') && q.sql.includes("status='reserved'"),
     ).length,
     2,
   );
+  assert.ok(queries.filter((q) => q.sql.startsWith('UPDATE')).every((q) =>
+    q.sql.includes('settlement_evidence=$9') && q.params[8] === 'unknown'));
 });
 test('legacy mixed frequency limits are disabled by default', async () => {
   const budget = new LocalProviderUsageBudget({

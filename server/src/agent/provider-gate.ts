@@ -16,6 +16,8 @@ export interface ProviderDbPool {
 
 export interface ProviderPermit {
   signal?: AbortSignal;
+  /** PostgreSQL model permit backing a budget reservation. */
+  budgetLease?: { namespace: string; id: string };
   release(): Promise<void>;
 }
 
@@ -100,7 +102,10 @@ export class PostgresProviderCallGate implements ProviderCallGate {
     this.scheduler = new CapacityScheduler(new PostgresPermitStore(pool as Pool), 'model:' + key,
       { running: limit, waiting: 128, waitMs: 60_000 });
   }
-  acquire(signal?: AbortSignal): Promise<ProviderPermit> { return this.scheduler.acquire('', '', signal); }
+  async acquire(signal?: AbortSignal): Promise<ProviderPermit> {
+    const permit = await this.scheduler.acquire('', '', signal);
+    return { ...permit, budgetLease: { namespace: this.scheduler.namespace, id: permit.id } };
+  }
 }
 
 export type ProviderGateFactory = (provider: ProviderConfig, business?: string, identity?: { ownerId: string; taskId: string }) => ProviderCallGate;
@@ -130,9 +135,14 @@ export function createProviderGateFactory(input: {
         || !rule.credentialHashes.includes(providerGateKey(provider)) || (rule.model && rule.model !== provider.modelId)) continue;
       demands[`upstream:${rule.account}:${rule.model ?? '*'}`] = { units: 1, limit: rule.concurrency };
     }
-    return { acquire: signal => scheduler.acquire({ owner: identity?.ownerId ?? providerGateKey(provider),
-      task: identity?.taskId ?? '', demands, signal,
-      // Accepted analysis waits until scheduled or its job is stopped. Queuing is not provider failure.
-      ...(category === 'chat' ? { waitMs: 30_000 } : {}) }) };
+    return { acquire: async signal => {
+      const permit = await scheduler.acquire({ owner: identity?.ownerId ?? providerGateKey(provider),
+        task: identity?.taskId ?? '', demands, signal,
+        // Accepted analysis waits until scheduled or its job is stopped. Queuing is not provider failure.
+        ...(category === 'chat' ? { waitMs: 30_000 } : {}) });
+      return input.pool
+        ? { ...permit, budgetLease: { namespace: 'resource-admission-v1', id: permit.id } }
+        : permit;
+    } };
   };
 }

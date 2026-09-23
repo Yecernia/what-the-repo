@@ -16,6 +16,8 @@ export interface UsageAttribution {
 }
 export interface ProviderUsageReport {
   usageKnown: boolean;
+  /** Discrete accounting evidence; legacy reports may omit it. */
+  settlementEvidence?: 'provider_reported' | 'not_started' | 'explicit_rejection' | 'unknown' | 'lease_expired';
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
@@ -33,6 +35,7 @@ export interface ProviderBudgetInput {
   model: string;
   estimatedCostUsd?: number;
   pricingKnown?: boolean;
+  budgetLease?: { namespace: string; id: string };
   signal?: AbortSignal;
   /** Wait only for active reservations, never for spent/unknown settled usage. */
   reservationWaitMs?: number;
@@ -384,7 +387,7 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
       }
       if (busy) throw busy;
       await client.query(
-        `INSERT INTO provider_usage_events(event_id,owner_id,provider,model,started_at,status,reserved_cost_usd,cost_usd,input_tokens,output_tokens,cached_tokens,cache_write_tokens,business,payer,agent_role,connection_id,config_version,task_id) VALUES($1,$2,$3,$4,clock_timestamp(),'reserved',$5,0,0,0,0,0,$6,$7,$8,$9,$10,$11)`,
+        `INSERT INTO provider_usage_events(event_id,owner_id,provider,model,started_at,status,reserved_cost_usd,cost_usd,input_tokens,output_tokens,cached_tokens,cache_write_tokens,business,payer,agent_role,connection_id,config_version,task_id,lease_namespace,lease_id) VALUES($1,$2,$3,$4,clock_timestamp(),'reserved',$5,0,0,0,0,0,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           eventId,
           input.ownerId,
@@ -397,6 +400,8 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
           a.connectionId ?? null,
           a.configVersion ?? null,
           a.taskId ?? null,
+          input.budgetLease?.namespace ?? null,
+          input.budgetLease?.id ?? null,
         ],
       );
       await client.query('COMMIT');
@@ -413,7 +418,7 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
         try {
           // Persisted predicate permits settlement retry after a connection failure and prevents duplicate callbacks.
           await update.query(
-            `UPDATE provider_usage_events SET completed_at=clock_timestamp(),status=$2,reserved_cost_usd=CASE WHEN $8 THEN $3 ELSE reserved_cost_usd END,cost_usd=$3,usage_known=$8,input_tokens=$4,output_tokens=$5,cached_tokens=$6,cache_write_tokens=$7 WHERE event_id=$1 AND status='reserved'`,
+            `UPDATE provider_usage_events SET completed_at=clock_timestamp(),status=$2,reserved_cost_usd=CASE WHEN $8 THEN $3 ELSE reserved_cost_usd END,cost_usd=$3,usage_known=$8,input_tokens=$4,output_tokens=$5,cached_tokens=$6,cache_write_tokens=$7,settlement_evidence=$9 WHERE event_id=$1 AND (status='reserved' OR (status='failed' AND settlement_evidence='lease_expired' AND $8 AND $9 IN ('provider_reported','explicit_rejection','not_started')))`,
             [
               eventId,
               report?.status ?? 'failed',
@@ -423,6 +428,7 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
               Math.floor(amount(report?.cachedTokens)),
               Math.floor(amount(report?.cacheWriteTokens)),
               report?.usageKnown ?? false,
+              report?.settlementEvidence ?? 'unknown',
             ],
           );
         } finally {

@@ -196,6 +196,7 @@ function configuredBuiltinProvider(config: ProviderConfig): Provider {
 // Only our observer around this exact fenced transport may replace it. Arbitrary
 // per-call fetch options must never bypass the provider's public-network policy.
 const observedFetchBases = new WeakMap<FetchFunction, FetchFunction>();
+const fencedProviderFetches = new WeakSet<FetchFunction>();
 function providerFetch(base: FetchFunction, requested?: FetchFunction): FetchFunction {
   return requested && observedFetchBases.get(requested) === base ? requested : base;
 }
@@ -276,6 +277,7 @@ function customProvider(config: ProviderConfig, fetch: FetchFunction): Provider 
 
 export function createModelRuntime(config: ProviderConfig, options: ModelRuntimeOptions = {}): PiModelRuntime {
   const publicFetch = !config.builtin || options.attribution?.payer === "user" ? createPublicFetch() : undefined;
+  if (publicFetch) fencedProviderFetches.add(publicFetch);
   const provider = config.builtin
     ? configuredBuiltinProvider(config)
     : customProvider(config, publicFetch as FetchFunction);
@@ -372,9 +374,12 @@ function usageReport(
   status: ProviderUsageReport["status"],
   operationStarted: boolean,
   pricingKnown=true,
+  provenZeroUsage=false,
 ): ProviderUsageReport {
   return {
-    usageKnown: usage !== null && (pricingKnown || usage.cost > 0) || !operationStarted,
+    usageKnown: usage !== null && (pricingKnown || usage.cost > 0) || !operationStarted || provenZeroUsage,
+    settlementEvidence: usage !== null ? 'provider_reported'
+      : !operationStarted ? 'not_started' : provenZeroUsage ? 'explicit_rejection' : 'unknown',
     inputTokens: usage?.input ?? 0,
     outputTokens: usage?.output ?? 0,
     cachedTokens: usage?.cacheRead ?? 0,
@@ -383,6 +388,11 @@ function usageReport(
     status,
   };
 }
+
+// These statuses reject the request before model generation. Every attempt
+// must be a rejection; a success, ambiguous server error or transport failure
+// disqualifies the whole operation.
+const ZERO_USAGE_HTTP_REJECTIONS = new Set([400, 401, 402, 403, 404, 413, 422, 429]);
 
 // Keep a useful transport cause without recording URLs, headers or provider text.
 const TRANSPORT_ERROR_CODES = new Set([
@@ -406,6 +416,7 @@ async function acquireBudget(
   runtime: PiModelRuntime,
   signal: AbortSignal | undefined,
   reservation = estimatedProviderReservation(runtime),
+  budgetLease?: { namespace: string; id: string },
 ): Promise<ProviderBudgetPermit | undefined> {
   if (!runtime.providerBudget || !runtime.ownerId) return undefined;
   return runtime.providerBudget.acquire({
@@ -416,6 +427,7 @@ async function acquireBudget(
     estimatedCostUsd: reservation,
     reservationWaitMs: 30_000,
     pricingKnown: Object.values(runtime.model.cost).some(value=>typeof value==='number'&&value>0),
+    budgetLease,
     signal,
   });
 }
@@ -436,7 +448,7 @@ export async function withProviderPermit<T>(
     if (permit?.signal) signal = signal ? AbortSignal.any([signal, permit.signal]) : permit.signal;
     recordGateWait(runtime, performance.now() - acquireStarted);
     try {
-      budgetPermit = await acquireBudget(runtime, signal);
+      budgetPermit = await acquireBudget(runtime, signal, estimatedProviderReservation(runtime), permit?.budgetLease);
     } catch (error) {
       if (error instanceof ProviderBudgetExceededError) {
         runtime.metrics?.increment(METRIC_NAMES.providerBudgetRejects, 1, {
@@ -514,6 +526,10 @@ export function streamWithProviderPermit(
     let usageStatus: ProviderUsageReport["status"] = "failed";
     let terminal: AssistantMessageEvent | undefined;
     let callStarted = performance.now();
+    let transportAttempts = 0;
+    let onlyExplicitRejections = true;
+    let sawContent = false;
+    let allAttemptsObservable = false;
     try {
       permit = await runtime.providerGate?.acquire(streamOptions?.signal);
       if (permit?.signal) streamOptions = { ...streamOptions, signal: streamOptions?.signal
@@ -523,7 +539,7 @@ export function streamWithProviderPermit(
       const budgetStarted = performance.now();
       try {
         budgetPermit = await acquireBudget(runtime, streamOptions?.signal,
-          providerReservation(candidate, context, Boolean(streamOptions?.onPayload)));
+          providerReservation(candidate, context, Boolean(streamOptions?.onPayload)), permit?.budgetLease);
         if (diagnostic) {
           diagnostic.budgetWaitMs = performance.now() - budgetStarted;
           diagnostic.usageEventId = budgetPermit?.eventId ?? null;
@@ -544,29 +560,32 @@ export function streamWithProviderPermit(
       active = true;
       callStarted = performance.now();
       if (diagnostic) diagnostic.requestStartedAt = new Date().toISOString();
-      const baseFetch = runtime.fetch ?? streamOptions?.fetch ?? (diagnostic ? globalThis.fetch : undefined);
-      const observedFetch: FetchFunction | undefined = diagnostic && baseFetch
-        ? async (...args) => {
+      const baseFetch = runtime.fetch ?? streamOptions?.fetch ?? globalThis.fetch;
+      // A caller-supplied transport can hide retries before returning one status.
+      allAttemptsObservable = baseFetch === globalThis.fetch || fencedProviderFetches.has(baseFetch);
+      const observedFetch: FetchFunction = async (...args) => {
+          transportAttempts++;
           const started = performance.now();
           let status: number | null = null;
           let errorCode: string | undefined;
           try {
             const response = await baseFetch(...args);
             status = response.status;
+            if (!ZERO_USAGE_HTTP_REJECTIONS.has(status)) onlyExplicitRejections = false;
             return response;
           } catch (error) {
+            onlyExplicitRejections = false;
             errorCode = transportErrorCode(error);
             throw error;
           } finally {
-            if (diagnostic.transport.length < 32) diagnostic.transport.push({ headersMs: performance.now() - started, status, ...(errorCode ? { errorCode } : {}) });
+            if (diagnostic && diagnostic.transport.length < 32) diagnostic.transport.push({ headersMs: performance.now() - started, status, ...(errorCode ? { errorCode } : {}) });
           }
-        }
-        : baseFetch;
-      if (observedFetch && baseFetch && observedFetch !== baseFetch) observedFetchBases.set(observedFetch, baseFetch);
+        };
+      observedFetchBases.set(observedFetch, baseFetch);
       const models = rawModels.get(runtime.models) ?? runtime.models;
       const source = (mode === 'api' ? models.stream.bind(models) : models.streamSimple.bind(models))(candidate, context, {
         ...streamOptions,
-        ...(observedFetch ? { fetch: observedFetch } : {}),
+        fetch: observedFetch,
         ...(diagnostic ? { onPayload: async (payload: unknown, requestModel: typeof candidate) => {
           const replacement = await streamOptions?.onPayload?.(payload, requestModel);
           const effective = replacement ?? payload;
@@ -587,6 +606,8 @@ export function streamWithProviderPermit(
         } } : {}),
       });
       for await (const event of credentialSafeEvents(source, [runtime.apiKey ?? "", streamOptions?.apiKey ?? ""])) {
+        if ((event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta")
+          && event.delta.length > 0) sawContent = true;
         if (diagnostic
           && (event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta")
           && event.delta.length > 0) {
@@ -646,16 +667,19 @@ export function streamWithProviderPermit(
       finalUsage = usageFrom(error) ?? finalUsage;
     } finally {
       if (!active && !budgetRejected) outcome = streamOptions?.signal?.aborted ? "aborted" : "gate_error";
+      const provenZeroUsage = active && outcome === "error" && finalUsage === null
+        && !sawContent && allAttemptsObservable && transportAttempts > 0 && onlyExplicitRejections;
+      const report = usageReport(finalUsage, usageStatus, active, estimatedProviderReservation(runtime)>0, provenZeroUsage);
       if (diagnostic) {
         diagnostic.durationMs = performance.now() - callStarted;
         diagnostic.status = budgetRejected ? "budget_rejected" : outcome;
-        diagnostic.usage = usageReport(finalUsage, usageStatus, active, estimatedProviderReservation(runtime)>0);
+        diagnostic.usage = report;
       }
       if (!budgetRejected) {
         recordProviderCall(runtime, outcome, performance.now() - callStarted, finalUsage);
       }
       if (active) runtime.metrics?.addGauge(METRIC_NAMES.providerActive, -1, providerLabels(runtime));
-      await settleProviderUsage(runtime, budgetPermit, usageReport(finalUsage, usageStatus, active, estimatedProviderReservation(runtime)>0));
+      await settleProviderUsage(runtime, budgetPermit, report);
       try { await permit?.release(); }
       catch { runtime.metrics?.increment(METRIC_NAMES.providerBudgetRecordErrors, 1, providerLabels(runtime)); }
       finally {
