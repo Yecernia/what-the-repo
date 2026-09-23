@@ -6,7 +6,7 @@ import { createWorkerDiagnostics } from "./worker-diagnostics.js";
 import { providerReservation } from "./provider-reservation.js";
 import { withProviderPermit } from "./model-runtime.js";
 import { LocalProviderUsageBudget, ProviderBudgetExceededError, type ProviderUsageReport } from "./provider-budget.js";
-import { createModels } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, createModels, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { normalizeSettings } from "../domain/conversation.js";
@@ -895,6 +895,180 @@ test("transport failures retain an allowlisted cause without leaking provider me
     }
     assert.equal(calls, cases.length);
   } finally { diagnostics.finish(); }
+});
+
+function failureLogRuntime(reports: ProviderUsageReport[]) {
+  const config: Parameters<typeof createModelRuntime>[0] = {
+    provider: "deepseek", connectionId: "safe-connection", baseUrl: "https://api.deepseek.com",
+    apiKey: "test-key", model: "deepseek-v4-flash", modelId: "deepseek-v4-flash",
+    modelSelector: "test", api: "openai-completions", builtin: true, thinkingLevel: "off",
+  };
+  return createModelRuntime(config, {
+    ownerId: "safe-owner",
+    attribution: { business: "analysis", payer: "platform", taskId: "safe-task" },
+    providerBudget: { async acquire() {
+      return { eventId: "safe-event", async release(report) { if (report) reports.push(report); } };
+    } },
+  });
+}
+
+function capturedFailureLog(lines: string[]): Record<string, unknown> {
+  const matching = lines.filter((line) => line.startsWith('{"event":"provider_transport_failure"'));
+  assert.equal(matching.length, 1);
+  return JSON.parse(matching[0]!) as Record<string, unknown>;
+}
+
+test("undecorated model failure logs only an allowlisted connection cause and keeps unknown settlement", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "warn", (...args: unknown[]) => { lines.push(args.map(String).join(" ")); });
+  let requestBytes = 0;
+  let requestChars = 0;
+  t.mock.method(globalThis, "fetch", async (_input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
+    const body = init?.body;
+    assert.ok(typeof body === "string");
+    requestBytes = Buffer.byteLength(body, "utf8");
+    requestChars = body.length;
+    throw new TypeError("secret-url secret-key", { cause: Object.assign(new Error("secret-body"), { code: "ECONNRESET" }) });
+  });
+  const reports: ProviderUsageReport[] = [];
+  const runtime = failureLogRuntime(reports);
+  const result = await streamWithProviderPermit(runtime, runtime.model, { systemPrompt: "测😀", messages: [] }, { apiKey: runtime.apiKey }).result();
+  assert.equal(result.stopReason, "error");
+  const logged = capturedFailureLog(lines);
+  assert.deepEqual({ usageEventId: logged.usageEventId, taskId: logged.taskId, provider: logged.provider,
+    model: logged.model, business: logged.business, attempts: logged.attempts, sawContent: logged.sawContent,
+    receivedUsage: logged.receivedUsage, failurePhase: logged.failurePhase },
+  { usageEventId: "safe-event", taskId: "safe-task", provider: "deepseek", model: "deepseek-v4-flash",
+    business: "analysis", attempts: 1, sawContent: false, receivedUsage: false, failurePhase: "headers" });
+  assert.deepEqual((logged.last8 as Array<{ status: number | null; errorCode?: string; requestBytes: number | null }>).map(({ status, errorCode, requestBytes }) => ({ status, errorCode, requestBytes })),
+    [{ status: null, errorCode: "ECONNRESET", requestBytes }]);
+  assert.ok(requestBytes > requestChars, "UTF-8 byte count must include multibyte prompt characters");
+  assert.equal(typeof logged.durationMs, "number");
+  assert.deepEqual(reports.map((report) => [report.status, report.usageKnown, report.settlementEvidence]),
+    [["failed", false, "unknown"]]);
+  assert.doesNotMatch(lines.join("\n"), /secret-url|secret-key|secret-body|test-key/);
+});
+
+test("Request body is not read or guessed when no string init body is available", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "warn", (...args: unknown[]) => { lines.push(args.map(String).join(" ")); });
+  let deliveredBody = "";
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    assert.ok(input instanceof Request);
+    deliveredBody = await input.text();
+    return new Response("{}", { status: 503 });
+  });
+  const faux = fauxProvider({ provider: "request-body-probe" });
+  const probeProvider: typeof faux.provider = {
+    ...faux.provider,
+    streamSimple: (_model, _context, options) => {
+      const stream = createAssistantMessageEventStream();
+      void (async () => {
+        await options?.fetch?.(new Request("https://provider.example/v1", { method: "POST", body: "faux-body-😀" }));
+        const error = fauxAssistantMessage("", { stopReason: "error" });
+        stream.push({ type: "error", reason: "error", error });
+        stream.end();
+      })();
+      return stream;
+    },
+  };
+  const models = createModels();
+  models.setProvider(probeProvider);
+  const model = faux.getModel();
+  await streamWithProviderPermit({ models, model }, model, { messages: [] }, {}).result();
+  const logged = capturedFailureLog(lines);
+  assert.equal((logged.last8 as Array<{ requestBytes: number | null }>)[0]?.requestBytes, null);
+  assert.equal(deliveredBody, "faux-body-😀");
+  assert.doesNotMatch(lines.join("\n"), /faux-body/);
+});
+
+test("failure log redacts credentials embedded in configurable identifiers and bounds their length", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "warn", (...args: unknown[]) => { lines.push(args.map(String).join(" ")); });
+  t.mock.method(globalThis, "fetch", async () => { throw new TypeError("secret-network-message"); });
+  const reports: ProviderUsageReport[] = [];
+  const runtime = failureLogRuntime(reports);
+  runtime.attribution!.taskId = `task-test-key-${"x".repeat(300)}`;
+  const candidate = { ...runtime.model, id: `model-test-key-${"y".repeat(300)}` };
+  await streamWithProviderPermit(runtime, candidate, { messages: [] }, { apiKey: runtime.apiKey }).result();
+  const logged = capturedFailureLog(lines);
+  assert.match(String(logged.taskId), /\[redacted\]/);
+  assert.match(String(logged.model), /\[redacted\]/);
+  assert.ok(String(logged.taskId).length <= 160);
+  assert.ok(String(logged.model).length <= 160);
+  assert.doesNotMatch(lines.join("\n"), /test-key|secret-network-message/);
+  assert.equal(reports.length, 1);
+});
+
+test("HTTP rejection logs status without its body and retains explicit zero-usage evidence", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "warn", (...args: unknown[]) => { lines.push(args.map(String).join(" ")); });
+  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ error: { message: "secret-body" } }),
+    { status: 401, headers: { "content-type": "application/json", "x-secret": "secret-header" } }));
+  const reports: ProviderUsageReport[] = [];
+  const runtime = failureLogRuntime(reports);
+  await streamWithProviderPermit(runtime, runtime.model, { messages: [] }, { apiKey: runtime.apiKey }).result();
+  const logged = capturedFailureLog(lines);
+  assert.equal(logged.attempts, 1);
+  assert.equal(logged.failurePhase, "headers");
+  assert.deepEqual((logged.last8 as Array<{ status: number }>).map((row) => row.status), [401]);
+  assert.deepEqual(reports.map((report) => [report.usageKnown, report.settlementEvidence]), [[true, "explicit_rejection"]]);
+  assert.doesNotMatch(lines.join("\n"), /secret-body|secret-header|test-key/);
+});
+
+test("a stream error after HTTP 200 reports body phase and observed content", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "warn", (...args: unknown[]) => { lines.push(args.map(String).join(" ")); });
+  const chunk = { id: "test", object: "chat.completion.chunk", created: 1, model: "deepseek-v4-flash",
+    choices: [{ index: 0, delta: { content: "safe text" }, finish_reason: null }] };
+  let pulls = 0;
+  t.mock.method(globalThis, "fetch", async () => new Response(new ReadableStream({
+    pull(controller) {
+      if (pulls++ === 0) controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      else controller.error(new Error("secret-stream-error"));
+    },
+  }), { status: 200, headers: { "content-type": "text/event-stream" } }));
+  const reports: ProviderUsageReport[] = [];
+  const runtime = failureLogRuntime(reports);
+  let payloadCalls = 0;
+  let responseCalls = 0;
+  await streamWithProviderPermit(runtime, runtime.model, { messages: [] }, {
+    apiKey: runtime.apiKey,
+    onPayload: (payload) => { payloadCalls++; return payload; },
+    onResponse: () => { responseCalls++; },
+  }).result();
+  const logged = capturedFailureLog(lines);
+  assert.equal(logged.attempts, 1);
+  assert.equal(logged.failurePhase, "stream_or_sdk");
+  assert.equal(logged.sawContent, true);
+  assert.equal(logged.receivedUsage, false);
+  assert.deepEqual((logged.last8 as Array<{ status: number }>).map((row) => row.status), [200]);
+  assert.deepEqual([payloadCalls, responseCalls], [1, 1]);
+  assert.deepEqual(reports.map((report) => [report.usageKnown, report.settlementEvidence]), [[false, "unknown"]]);
+  assert.doesNotMatch(lines.join("\n"), /secret-stream-error|safe text|test-key/);
+});
+
+test("failure log keeps only the last eight mixed retry attempts without changing settlement", async (t) => {
+  const lines: string[] = [];
+  t.mock.method(console, "warn", (...args: unknown[]) => { lines.push(args.map(String).join(" ")); });
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls++;
+    return new Response(JSON.stringify({ error: { message: "secret-retry-body" } }),
+      { status: calls === 10 ? 401 : 500,
+        headers: { "content-type": "application/json", "retry-after-ms": "1" } });
+  });
+  const reports: ProviderUsageReport[] = [];
+  const runtime = failureLogRuntime(reports);
+  await streamWithProviderPermit(runtime, runtime.model, { messages: [] }, { apiKey: runtime.apiKey, maxRetries: 9 }).result();
+  const logged = capturedFailureLog(lines);
+  assert.equal(calls, 10);
+  assert.equal(logged.attempts, 10);
+  assert.equal((logged.last8 as unknown[]).length, 8);
+  assert.deepEqual((logged.last8 as Array<{ status: number }>).map((row) => row.status),
+    [500, 500, 500, 500, 500, 500, 500, 401]);
+  assert.deepEqual(reports.map((report) => [report.usageKnown, report.settlementEvidence]), [[false, "unknown"]]);
+  assert.doesNotMatch(lines.join("\n"), /secret-retry-body|test-key/);
 });
 
 test("GA DeepSeek Flash analysis and saved free selector preserve the real model and wire limits", async () => {

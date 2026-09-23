@@ -36,6 +36,7 @@ import {
   type RuntimeMetrics,
 } from "../observability/metrics.js";
 import { createPublicFetch } from "../security/outbound-url.js";
+import { credentialRedactor } from "../security/secret-redaction.js";
 import type { ProviderRequestDiagnostic } from "./worker-diagnostics.js";
 
 export interface ModelRuntimeOptions {
@@ -527,6 +528,7 @@ export function streamWithProviderPermit(
     let terminal: AssistantMessageEvent | undefined;
     let callStarted = performance.now();
     let transportAttempts = 0;
+    const recentTransport: Array<{ headersMs: number; status: number | null; errorCode?: string; requestBytes: number | null }> = [];
     let onlyExplicitRejections = true;
     let sawContent = false;
     let allAttemptsObservable = false;
@@ -566,6 +568,8 @@ export function streamWithProviderPermit(
       const observedFetch: FetchFunction = async (...args) => {
           transportAttempts++;
           const started = performance.now();
+          const body = args[1]?.body;
+          const requestBytes = typeof body === "string" ? Buffer.byteLength(body, "utf8") : null;
           let status: number | null = null;
           let errorCode: string | undefined;
           try {
@@ -578,7 +582,11 @@ export function streamWithProviderPermit(
             errorCode = transportErrorCode(error);
             throw error;
           } finally {
-            if (diagnostic && diagnostic.transport.length < 32) diagnostic.transport.push({ headersMs: performance.now() - started, status, ...(errorCode ? { errorCode } : {}) });
+            const headersMs = performance.now() - started;
+            const attempt = { headersMs, status, ...(errorCode ? { errorCode } : {}), requestBytes };
+            recentTransport.push(attempt);
+            if (recentTransport.length > 8) recentTransport.shift();
+            if (diagnostic && diagnostic.transport.length < 32) diagnostic.transport.push({ headersMs, status, ...(errorCode ? { errorCode } : {}) });
           }
         };
       observedFetchBases.set(observedFetch, baseFetch);
@@ -670,6 +678,32 @@ export function streamWithProviderPermit(
       const provenZeroUsage = active && outcome === "error" && finalUsage === null
         && !sawContent && allAttemptsObservable && transportAttempts > 0 && onlyExplicitRejections;
       const report = usageReport(finalUsage, usageStatus, active, estimatedProviderReservation(runtime)>0, provenZeroUsage);
+      if (active && outcome === "error") {
+        const lastAttempt = recentTransport.at(-1);
+        // Only fixed identifiers and transport metadata cross this logging boundary.
+        // Logging must never replace the model result or budget settlement.
+        try {
+          const redactor = credentialRedactor([runtime.apiKey ?? "", streamOptions?.apiKey ?? ""]);
+          const identifier = (value: unknown): string | null =>
+            typeof value === "string" ? redactor.text(value).slice(0, 160) : null;
+          console.warn(JSON.stringify({
+            event: "provider_transport_failure",
+            usageEventId: identifier(budgetPermit?.eventId),
+            taskId: identifier(runtime.attribution?.taskId),
+            provider: identifier(candidate.provider),
+            model: identifier(candidate.id),
+            business: identifier(runtime.attribution?.business),
+            attempts: transportAttempts,
+            last8: recentTransport,
+            sawContent,
+            receivedUsage: finalUsage !== null,
+            durationMs: performance.now() - callStarted,
+            failurePhase: lastAttempt?.status !== null && lastAttempt?.status !== undefined
+              && lastAttempt.status >= 200 && lastAttempt.status < 300 && !lastAttempt.errorCode
+              ? "stream_or_sdk" : "headers",
+          }));
+        } catch { /* Observability cannot affect settlement. */ }
+      }
       if (diagnostic) {
         diagnostic.durationMs = performance.now() - callStarted;
         diagnostic.status = budgetRejected ? "budget_rejected" : outcome;
