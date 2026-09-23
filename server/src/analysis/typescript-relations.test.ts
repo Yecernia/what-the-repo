@@ -7,6 +7,7 @@ import test from "node:test";
 import type { ParsedFile } from "./facts.js";
 import { analyzeTypeScriptTexts as bindTypeScriptTexts, analyzeTypeScript as bindTypeScriptRelations, createCompilerWorkspace } from "./typescript.js";
 import { TreeSitterAnalyzer } from "./tree-sitter.js";
+import { decodeSource } from "./source-input.js";
 import { buildSnapshot } from "./graph.js";
 import { createAnalysisCache, readAnalysisCache } from "./incremental.js";
 
@@ -20,6 +21,37 @@ function filesFor(sources: Record<string, string>): ParsedFile[] {
 async function bind(sources: Record<string, string>) {
   return bindTypeScriptTexts(filesFor(sources), new Map(Object.entries(sources).map(([path, content]) => ["/repository/" + path, content])));
 }
+
+test("deferred import expressions are module dependencies rather than callable symbols", async () => {
+  const files = await bind({
+    "main.ts": "export const deferred = import.defer('./other.js'); export const eager = import('./other.js');",
+    "other.ts": "export const answer = 42;",
+  });
+  const main = files.find(file => file.path === "main.ts")!;
+  assert.equal(main.parseError, null);
+  assert.equal(main.imports.length, 2);
+  assert.ok(main.imports.every(row => row.kind === "dynamic_imports" && row.resolvedPath === "other.ts"));
+  assert.equal(main.calls.length, 0);
+});
+
+test("deep binary expressions preserve syntax ownership, imports and heritage without call-stack recursion", async () => {
+  const expression = Array.from({length:18_000},()=>"1").join(" + ");
+  const text = `import { target, Base } from './other.js';
+    export function outer() { const sum = ${expression}; return target(sum); }
+    export class Derived extends Base { run() { return target(1); } }`;
+  const syntax = await new TreeSitterAnalyzer().analyzeDecoded(decodeSource('main.ts',Buffer.from(text)));
+  assert.equal(syntax.parseError,null);
+  const outer = syntax.symbols.find(row=>row.name==='outer')!;
+  assert.ok(outer);
+  assert.equal(syntax.calls.find(row=>row.callee==='target')?.callerStableId,outer.stableId);
+  const files = await bind({'main.ts':text,'other.ts':'export function target(x: number) { return x; } export class Base {}'});
+  const main=files.find(file=>file.path==='main.ts')!;
+  assert.equal(main.parseError,null);
+  assert.equal(main.imports[0]?.resolvedPath,'other.ts');
+  assert.equal(main.calls.filter(call=>call.target?.path==='other.ts').length,2);
+  assert.equal(main.heritage?.length,1);
+  assert.equal(main.symbols.find(row=>row.name==='outer')?.stableId,outer.stableId);
+});
 
 test("compiler directory lookup retains virtual outputs and snapshot-only config resolution", () => {
   const texts = new Map([

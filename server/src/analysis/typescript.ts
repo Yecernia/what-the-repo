@@ -21,6 +21,25 @@ const relativePath = (name: string): string => name.slice(ROOT.length + 1);
 const normalize = (name: string): string =>
   posix.normalize(name.replaceAll("\\", "/"));
 const inside = (name: string): boolean => name.startsWith(ROOT + "/");
+function isDynamicImport(expression: ts.Expression): boolean {
+  return expression.kind === ts.SyntaxKind.ImportKeyword ||
+    (ts.isMetaProperty(expression) && expression.keywordToken === ts.SyntaxKind.ImportKeyword && expression.name.text === "defer");
+}
+function childrenOf(node: ts.Node): ts.Node[] {
+  const children: ts.Node[] = [];
+  ts.forEachChild(node, child => { children.push(child); });
+  return children;
+}
+function* preorder(root: ts.Node, signal?: AbortSignal): Generator<ts.Node> {
+  const pending = [root];
+  while (pending.length) {
+    signal?.throwIfAborted();
+    const node = pending.pop()!;
+    yield node;
+    const children = childrenOf(node);
+    for (let i = children.length - 1; i >= 0; i--) pending.push(children[i]!);
+  }
+}
 const range = (node: ts.Node): SourceRange => {
   const file = node.getSourceFile(),
     start = file.getLineAndCharacterOfPosition(node.getStart(file)),
@@ -112,12 +131,13 @@ function extract(
       })),
     };
     result.files.set(source.fileName, file);
-    const visit = (
-      node: ts.Node,
-      lexical: string,
-      parent: StaticSymbolFact | null,
-      execution: string | null,
-    ): void => {
+    // Deep binary expressions are valid input. Keep lexical/execution context
+    // on a heap stack instead of consuming the JavaScript call stack per node.
+    const pending: Array<{node: ts.Node; lexical: string; parent: StaticSymbolFact | null; execution: string | null}> = [
+      {node: source, lexical: "", parent: null, execution: null},
+    ];
+    while (pending.length) {
+      const {node, lexical, parent, execution} = pending.pop()!;
       signal?.throwIfAborted();
       const kind = kindOf(node),
         named = nameOf(node);
@@ -221,19 +241,17 @@ function extract(
       }
       if (ts.isCallExpression(node) || ts.isNewExpression(node))
         result.calls.set(node, { file, owner: nextExecution });
-      ts.forEachChild(node, (child) =>
-        visit(
-          child,
-          nextLexical,
-          owner,
-          ts.isDecorator(child) ||
+      const children = childrenOf(node);
+      for (let i = children.length - 1; i >= 0; i--) {
+        const child = children[i]!;
+        pending.push({node: child, lexical: nextLexical, parent: owner,
+          execution: ts.isDecorator(child) ||
             (child === named && ts.isComputedPropertyName(child))
             ? execution
             : nextExecution,
-        ),
-      );
-    };
-    visit(source, "", null, null);
+        });
+      }
+    }
   }
   return result;
 }
@@ -645,7 +663,7 @@ export async function analyzeTypeScriptTexts(
     const model = extract(sources, originals, checker, signal);
     const mutated = new Set<ts.Symbol>();
     for (const source of sources) {
-      const scan = (node: ts.Node): void => {
+      for (const node of preorder(source, signal)) {
         if (
           ts.isBinaryExpression(node) &&
           node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
@@ -654,9 +672,7 @@ export async function analyzeTypeScriptTexts(
           const symbol = checker.getSymbolAtLocation(node.left);
           if (symbol) mutated.add(symbol);
         }
-        ts.forEachChild(node, scan);
-      };
-      scan(source);
+      }
     }
     const unalias = (symbol: ts.Symbol): ts.Symbol =>
       symbol.flags & ts.SymbolFlags.Alias
@@ -749,7 +765,7 @@ export async function analyzeTypeScriptTexts(
             };
           })
         : [];
-      const visitImports = (node: ts.Node): void => {
+      for (const node of preorder(source, signal)) {
         let expression: ts.Expression | undefined,
           typeOnly = false,
           kind: "imports" | "type_imports" | "reexports" | "dynamic_imports" =
@@ -780,7 +796,7 @@ export async function analyzeTypeScriptTexts(
           expression = node.moduleReference.expression;
         if (
           ts.isCallExpression(node) &&
-          (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (isDynamicImport(node.expression) ||
             (ts.isIdentifier(node.expression) &&
               node.expression.text === "require" &&
               !checker
@@ -791,7 +807,7 @@ export async function analyzeTypeScriptTexts(
         ) {
           expression = node.arguments[0];
           kind =
-            node.expression.kind === ts.SyntaxKind.ImportKeyword
+            isDynamicImport(node.expression)
               ? "dynamic_imports"
               : "imports";
         }
@@ -829,10 +845,6 @@ export async function analyzeTypeScriptTexts(
             resolutionDomain,
           });
         }
-        ts.forEachChild(node, visitImports);
-      };
-      visitImports(source);
-      const heritage = (node: ts.Node): void => {
         if (ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node))
           for (const clause of node.heritageClauses ?? [])
             for (const base of clause.types) {
@@ -849,13 +861,11 @@ export async function analyzeTypeScriptTexts(
                   range: range(base),
                 });
             }
-        ts.forEachChild(node, heritage);
-      };
-      heritage(source);
+      }
     }
     for (const [node, { file, owner }] of model.calls) {
       const call = node as ts.CallExpression;
-      if (call.expression.kind === ts.SyntaxKind.ImportKeyword) continue;
+      if (isDynamicImport(call.expression)) continue;
       const target = targetFor(call.expression),
         declaration = target.declaration;
       const site = range(node),
