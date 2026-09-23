@@ -16,10 +16,19 @@ const identity: PiSessionIdentity = {
 
 test('a cancelled Session pool wait ends immediately and releases a connection returned later', async () => {
   let deliver!: (client: PoolClient) => void;
+  let requested!: () => void;
+  const connecting = new Promise<void>(resolve => { requested = resolve; });
   let released=0, entered=0;
-  const pool = { connect: () => new Promise<PoolClient>(resolve => deliver=resolve) } as unknown as Pool;
+  const pool = { connect: () => {
+    const pending = new Promise<PoolClient>(resolve => { deliver = resolve; });
+    requested();
+    return pending;
+  } } as unknown as Pool;
   const controller = new AbortController();
   const task = new PostgresPiSessionBackend(pool).withSession(identity,async () => { entered++; },{signal:controller.signal});
+  // Permit requests now enter a microtask batch before asking the Pool for a
+  // connection. Wait for the actual connection request to exercise late return.
+  await connecting;
   controller.abort(new Error('cancelled waiting'));
   await assert.rejects(task,/cancelled waiting/);
   deliver({release:()=>released++} as unknown as PoolClient);

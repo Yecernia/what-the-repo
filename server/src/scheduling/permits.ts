@@ -5,6 +5,7 @@ import { serviceError } from '../services/errors.js';
 import { controlFailure } from '../services/execution-error.js';
 import { controlPoolFor } from '../persistence/control-pool.js';
 import { defaultRuntimeMetrics as metrics } from '../observability/metrics.js';
+import { changePostgresPermit } from './postgres-permit-batcher.js';
 
 export interface PermitRow {
   id: string; owner: string; resource: string; state: 'waiting' | 'running';
@@ -75,8 +76,7 @@ export class PostgresPermitStore implements PermitStore {
     const bounded = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
     const started = performance.now();
     try {
-      if (this.pool.waitingCount >= 128) throw serviceError('database_control_busy','database_control_busy',503);
-      const result = await this.changeBounded(namespace, fn, bounded, phase);
+      const result = await changePostgresPermit(this.pool, namespace, fn, bounded, phase);
       metrics.increment('what_the_repo_control_operations_total',1,{outcome:'success'});
       return result;
     } catch (error) {
@@ -89,55 +89,6 @@ export class PostgresPermitStore implements PermitStore {
       metrics.observe('what_the_repo_control_operation_duration_ms',performance.now()-started);
       metrics.setGauge('what_the_repo_control_pool_waiting',this.pool.waitingCount ?? 0);
     }
-  }
-  private async changeBounded<T>(namespace: string, fn: (rows: PermitRow[], now: number) => T, signal: AbortSignal, phase: {acquiring:boolean}): Promise<T> {
-    phase.acquiring=true;
-    const client = await connectWithAbort<PoolClient>(this.pool, signal);
-    phase.acquiring=false;
-    let released = false;
-    const release = (destroy = false) => { if (!released) { released = true; client.release(destroy); } };
-    const abort = () => release(true);
-    signal?.addEventListener('abort', abort, { once: true });
-    try {
-      signal?.throwIfAborted();
-      await client.query('BEGIN');
-      await client.query("SET LOCAL statement_timeout='2s'; SET LOCAL lock_timeout='100ms'");
-      // Try rather than queue a connection behind a long database lock.
-      const lock = await client.query<{ acquired: boolean }>(
-        'SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired', [`admission:${namespace}`]);
-      if (!lock.rows[0]?.acquired) {
-        await client.query('ROLLBACK');
-      } else {
-        signal?.throwIfAborted();
-        const loaded = await client.query<{ payload: PermitRow }>('SELECT payload FROM runtime_permits WHERE namespace=$1', [namespace]);
-        const clock = await client.query<{ now: string }>('SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint AS now');
-        const before = new Map(loaded.rows.map(row => [row.payload.id, JSON.stringify(row.payload)]));
-        const rows = loaded.rows.map(row => row.payload);
-        const result = fn(rows, Number(clock.rows[0]!.now));
-        const remaining = new Set(rows.map(row => row.id));
-        const removed = [...before.keys()].filter(id => !remaining.has(id));
-        if (removed.length) await client.query('DELETE FROM runtime_permits WHERE namespace=$1 AND permit_id=ANY($2::text[])', [namespace, removed]);
-        for (const row of rows) {
-          const payload = JSON.stringify(row);
-          if (before.get(row.id) === payload) continue;
-          await client.query(`INSERT INTO runtime_permits(namespace,permit_id,payload) VALUES($1,$2,$3::jsonb)
-            ON CONFLICT(namespace,permit_id) DO UPDATE SET payload=EXCLUDED.payload`, [namespace, row.id, payload]);
-        }
-        signal?.throwIfAborted();
-        await client.query('COMMIT');
-        return result;
-      }
-    } catch (error) {
-      if (!released) await client.query('ROLLBACK').catch(() => undefined);
-      if (signal?.aborted) throw signal.reason;
-      // A fenced answer/session commit can briefly lock its own permit row.
-      // Yield the control connection and retry within the same operation budget;
-      // do not turn a transient row conflict into a lost execution immediately.
-      if ((error as {code?:string})?.code !== '55P03') throw error;
-      metrics.increment('what_the_repo_control_lock_retries_total',1);
-    } finally { signal?.removeEventListener('abort', abort); release(); }
-    await delay(25, signal);
-    return this.changeBounded(namespace, fn, signal, phase);
   }
 }
 
