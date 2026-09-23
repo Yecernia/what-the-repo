@@ -38,6 +38,9 @@ export async function analyzeStaticSource(input: {
   sourceRoot: string;
   previous: AnalysisCache | null;
   signal?: AbortSignal;
+  /** Caller exclusively owns this hydrated cache; release old compiler rows
+   * once their reuse decisions have been made. Persisted data is untouched. */
+  takePreviousCache?: boolean;
 }) {
   if (
     input.manifest.length > 30_000 ||
@@ -54,6 +57,10 @@ export async function analyzeStaticSource(input: {
   const previousSemantic = new Map(
     (input.previous?.parsed_files ?? []).map((f) => [f.path, f]),
   );
+  if (input.takePreviousCache && input.previous) {
+    input.previous.parsed_files = [];
+    input.previous.syntax_files = [];
+  }
   const syntax: ParsedFile[] = [],
     texts = new Map<string, string>();
   let syntaxHits = 0;
@@ -88,6 +95,7 @@ export async function analyzeStaticSource(input: {
     await setImmediate();
   }
   const syntaxMs = performance.now() - started;
+  previousSyntax.clear();
   const candidates = syntax.map((file) => {
     const previous = previousSemantic.get(file.path);
     return previous &&
@@ -97,7 +105,9 @@ export async function analyzeStaticSource(input: {
       : file;
   });
   let files = assignSyntaxProjects(
-    await analyzeTypeScriptTexts(candidates, texts, input.signal),
+    await analyzeTypeScriptTexts(candidates, texts, input.signal,
+      input.takePreviousCache ? { syntaxFiles: syntax,
+        releasePrevious: paths => { for (const path of paths) previousSemantic.delete(path); } } : undefined),
   );
   const entityIds = new Set(
     files.flatMap((file) => file.symbols.map((symbol) => symbol.stableId)),

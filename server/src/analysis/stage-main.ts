@@ -9,6 +9,7 @@ import { configureProductSkillRegistry } from '../agent/skill-registry.js';
 import { adminDocuments } from '../admin/runtime-config.js';
 import { AnalysisCoordinator } from './coordinator.js';
 import { defaultRuntimeMetrics } from '../observability/metrics.js';
+import { getHeapStatistics } from 'node:v8';
 
 if (!process.send) throw new Error('analysis_stage_requires_parent');
 const controller = new AbortController();
@@ -24,7 +25,11 @@ process.on('message', async (message: { type: string; config?: ServerConfig; job
   let next: AnalysisExecutionStage | null = null;
   let failed = false;
   const send = (value: unknown) => { if (process.connected) process.send?.(value as never, () => undefined); };
-  const report = () => send({ type: 'rss', rss: process.memoryUsage().rss });
+  const report = () => {
+    const memory = process.memoryUsage();
+    send({ type: 'rss', rss: memory.rss, heapUsed: memory.heapUsed,
+      heapLimit: getHeapStatistics().heap_size_limit });
+  };
   const sample = setInterval(report, 250);
   const metricsSample = setInterval(() => send({ type: 'metrics', metrics: defaultRuntimeMetrics.snapshot() }), 1000);
   try {

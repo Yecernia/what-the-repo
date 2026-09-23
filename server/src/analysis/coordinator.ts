@@ -844,7 +844,8 @@ export class AnalysisCoordinator {
           row.source.commit_sha = fetched.commitSha;
         }, fence);
         await this.recordAnalysisPhase(job, fence, "parsing_source", "running");
-        const staticResult = await analyzeStaticSource({ manifest: fetched.manifest, sourceRoot: temporary, previous: previousCache, signal });
+        const staticResult = await analyzeStaticSource({ manifest: fetched.manifest, sourceRoot: temporary,
+          previous: previousCache, signal, takePreviousCache: true });
         parsed = staticResult.files;
         syntaxFiles = staticResult.syntaxFiles;
         await this.recordAnalysisPhase(job, fence, "parsing_source", "completed");

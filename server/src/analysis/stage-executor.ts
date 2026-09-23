@@ -114,10 +114,11 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
   signal.throwIfAborted();
   const entry = new URL(import.meta.url.endsWith('.ts') ? './stage-main.ts' : './stage-main.js', import.meta.url);
   return new Promise((resolve, reject) => {
+    const heapCapMb = Math.max(256, Math.floor(memoryMb * 0.8));
     const child = spawn(process.execPath, [...(entry.pathname.endsWith('.ts') ? ['--import', 'tsx'] : []),
       // RSS already bounds the whole process tree. Avoid imposing an unnecessarily
       // small JS heap in addition to that bound when most memory is JS graph data.
-      `--max-old-space-size=${Math.max(256, Math.floor(memoryMb * 0.8))}`, fileURLToPath(entry)], {
+      `--max-old-space-size=${heapCapMb}`, fileURLToPath(entry)], {
       windowsHide: true,
       detached: process.platform !== 'win32',
       // Inherit tsx's loader in development, but never the parent's test runner flags.
@@ -129,11 +130,19 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     let sampling = false;
     let previousMetrics: RuntimeMetricsSnapshot | undefined;
+    let memoryTrigger: 'process_tree_rss' | 'child_rss' | 'v8_heap' | 'child_report' | null = null;
+    let lastTreeRss = 0, peakTreeRss = 0, lastChildRss = 0, peakChildRss = 0;
+    let lastHeapUsed = 0, peakHeapUsed = 0, sampledHeapLimit = 0;
     const sample = setInterval(() => {
       if (sampling || !child.pid || process.platform !== 'linux') return;
       sampling = true;
       void processTreeRss(child.pid).then(bytes => {
-        if (!settled && bytes > memoryMb * 1048576) { failure = new Error('analysis_stage_memory_limit_exceeded'); stop(); }
+        if (settled || bytes <= 0) return;
+        lastTreeRss = bytes; peakTreeRss = Math.max(peakTreeRss, bytes);
+        if (bytes > memoryMb * 1048576) {
+          memoryTrigger ??= 'process_tree_rss';
+          failure = new Error('analysis_stage_memory_limit_exceeded'); stop();
+        }
       }).finally(() => { sampling = false; });
     }, 500);
     const stop = () => {
@@ -149,19 +158,33 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
     signal.addEventListener('abort', abort, { once: true });
     const memoryFailure = stageMemoryFailureDetector();
     child.stderr?.on('data', (chunk: Buffer) => {
-      if (memoryFailure(chunk)) failure ??= new Error('analysis_stage_memory_limit_exceeded');
+      if (memoryFailure(chunk)) {
+        memoryTrigger ??= 'v8_heap';
+        failure ??= new Error('analysis_stage_memory_limit_exceeded');
+      }
     });
     child.on('message', message => {
-      const value = message as { type?: string; next?: AnalysisExecutionStage | null; rss?: number; code?: string; metrics?: RuntimeMetricsSnapshot };
+      const value = message as { type?: string; next?: AnalysisExecutionStage | null; rss?: number;
+        heapUsed?: number; heapLimit?: number; code?: string; metrics?: RuntimeMetricsSnapshot };
       if (value.type === 'metrics' && value.metrics) {
         defaultRuntimeMetrics.mergeProcessSnapshot(value.metrics, previousMetrics);
         previousMetrics = value.metrics;
       }
       if (value.type === 'result' && (value.next === null || ['fetch', 'cpu', 'semantic', 'publish', 'overlay'].includes(value.next ?? ''))) result = value.next;
-      if (value.type === 'rss' && Number(value.rss) > memoryMb * 1048576) {
-        failure = new Error('analysis_stage_memory_limit_exceeded'); stop();
+      if (value.type === 'rss') {
+        const rss = Number(value.rss), heapUsed = Number(value.heapUsed), heapLimit = Number(value.heapLimit);
+        if (Number.isFinite(rss) && rss > 0) { lastChildRss = rss; peakChildRss = Math.max(peakChildRss, rss); }
+        if (Number.isFinite(heapUsed) && heapUsed > 0) { lastHeapUsed = heapUsed; peakHeapUsed = Math.max(peakHeapUsed, heapUsed); }
+        if (Number.isFinite(heapLimit) && heapLimit > 0) sampledHeapLimit = heapLimit;
+        if (rss > memoryMb * 1048576) {
+          memoryTrigger ??= 'child_rss';
+          failure = new Error('analysis_stage_memory_limit_exceeded'); stop();
+        }
       }
-      if (value.type === 'failure') failure ??= new Error(value.code === 'analysis_stage_memory_limit_exceeded' ? value.code : 'analysis_stage_execution_failed');
+      if (value.type === 'failure') {
+        if (value.code === 'analysis_stage_memory_limit_exceeded') memoryTrigger ??= 'child_report';
+        failure ??= new Error(value.code === 'analysis_stage_memory_limit_exceeded' ? value.code : 'analysis_stage_execution_failed');
+      }
     });
     let settled = false;
     const stopDescendants = () => {
@@ -175,6 +198,16 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
         defaultRuntimeMetrics.addGauge(gauge.name, -gauge.value, gauge.labels);
       // Native language tools inherit this dedicated process group.
       stopDescendants();
+      if (failure?.message === 'analysis_stage_memory_limit_exceeded') {
+        // Internal worker log only; no child diagnostics or repository data are
+        // returned to the project API. One bounded record per failed attempt.
+        console.warn(JSON.stringify({ event: 'analysis_stage_oom', job_id: job.job_id, stage,
+          trigger: memoryTrigger ?? 'unknown', allowance_mb: memoryMb, requested_heap_cap_mb: heapCapMb,
+          sampled_heap_limit_bytes: sampledHeapLimit, child_rss_last_bytes: lastChildRss,
+          child_rss_peak_bytes: peakChildRss, tree_rss_last_bytes: lastTreeRss,
+          tree_rss_peak_bytes: peakTreeRss, heap_used_last_bytes: lastHeapUsed,
+          heap_used_peak_bytes: peakHeapUsed }));
+      }
       if (failure) reject(failure);
       else if (code !== 0 || result === undefined) reject(new Error('analysis_stage_process_failed'));
       else resolve(result);

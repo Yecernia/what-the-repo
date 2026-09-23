@@ -312,6 +312,37 @@ test("incremental/full facts agree across unresolved imports becoming resolvable
     await rm(root, { recursive: true, force: true });
   }
 });
+test("owned incremental cache releases invalidated semantic rows before recompiling and preserves warm projects", async () => {
+  const root = await mkdtemp(join(tmpdir(), "wtr-kernel-owned-cache-"));
+  try {
+    const before = {
+      "a/tsconfig.json": '{"include":["*.ts"]}',
+      "a/main.ts": "export function changed() { return 1; }",
+      "b/tsconfig.json": '{"include":["*.ts"]}',
+      "b/main.ts": "export function stable() { return 2; }",
+    };
+    for (const [path, text] of Object.entries(before)) {
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      await writeFile(join(root, path), text);
+    }
+    const oldManifest = Object.entries(before).map(([path, text]) => ({ path,
+      bytes: Buffer.byteLength(text), digest: bytesDigest(text) }));
+    const old = await analyzeStaticSource({ manifest: oldManifest, sourceRoot: root, previous: null });
+    const current = { ...before, "a/main.ts": "export function changed() { return 3; }" };
+    await writeFile(join(root, "a/main.ts"), current["a/main.ts"]);
+    const manifest = Object.entries(current).map(([path, text]) => ({ path,
+      bytes: Buffer.byteLength(text), digest: bytesDigest(text) }));
+    const cache = createAnalysisCache({ manifest: oldManifest, parsedFiles: old.files,
+      syntaxFiles: old.syntaxFiles, lspResults: [] });
+    const incremental = await analyzeStaticSource({ manifest, sourceRoot: root, previous: cache,
+      takePreviousCache: true });
+    const full = await analyzeStaticSource({ manifest, sourceRoot: root, previous: null });
+    assert.equal(cache.parsed_files.length, 0);
+    assert.equal(cache.syntax_files.length, 0);
+    assert.equal(incremental.metrics.semantic_cache_hits, 1);
+    assert.equal(activeFactFingerprint(snapshot(incremental.files)), activeFactFingerprint(snapshot(full.files)));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 test("virtual configuration cannot read host paths or execute plugins", async () => {
   const files = await tsFiles({
     "tsconfig.json":

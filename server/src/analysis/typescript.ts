@@ -547,6 +547,10 @@ export async function analyzeTypeScriptTexts(
   files: ParsedFile[],
   texts: ReadonlyMap<string, string>,
   signal?: AbortSignal,
+  cacheOwnership?: {
+    syntaxFiles: ParsedFile[];
+    releasePrevious: (paths: string[]) => void;
+  },
 ): Promise<ParsedFile[]> {
   const workspace = createCompilerWorkspace(texts),
     { all, canonical, directories, configHost } = workspace;
@@ -554,6 +558,8 @@ export async function analyzeTypeScriptTexts(
     files.map((file) => [`${ROOT}/${file.path}`, file]),
   );
   const outputs = new Map(originals);
+  const syntaxByPath = cacheOwnership ? new Map(cacheOwnership.syntaxFiles.map(file => [`${ROOT}/${file.path}`, file])) : null;
+  const candidateIndex = cacheOwnership ? new Map(files.map((file, index) => [`${ROOT}/${file.path}`, index])) : null;
   // Package exports and workspace package names affect lookup across project roots.
   // Other config files are represented by effective compiler options; JSON modules
   // join the project's observed dependency inputs below.
@@ -572,6 +578,12 @@ export async function analyzeTypeScriptTexts(
     if (!digest) { digest = bytesDigest(texts.get(path) ?? ''); textDigests.set(path, digest); }
     return digest;
   };
+  const projectsToCompile: Array<{
+    project: (typeof workspace.projects)[number];
+    owned: string[];
+    contextInputs: string[];
+    keyFor: (inputs: string[]) => string;
+  }> = [];
   for (const project of workspace.projects) {
     signal?.throwIfAborted();
     const owned = [...workspace.owners]
@@ -609,6 +621,23 @@ export async function analyzeTypeScriptTexts(
       )
     )
       continue;
+    projectsToCompile.push({ project, owned, contextInputs, keyFor });
+  }
+  // Decide every project's reuse first, while old semantic keys are intact.
+  // Release every invalidated project's old rows before creating any program.
+  if (cacheOwnership) for (const { owned } of projectsToCompile) {
+    for (const path of owned) {
+      const syntax = syntaxByPath?.get(path);
+      const index = candidateIndex?.get(path);
+      if (!syntax || index === undefined) continue;
+      files[index] = syntax;
+      originals.set(path, syntax);
+      outputs.set(path, syntax);
+    }
+    cacheOwnership.releasePrevious(owned.map(relativePath));
+  }
+  for (const { project, owned, contextInputs, keyFor } of projectsToCompile) {
+    signal?.throwIfAborted();
     const options = {
       ...project.parsed.options,
       noEmit: true,
