@@ -837,3 +837,23 @@ test("GA DeepSeek Flash analysis and saved free selector preserve the real model
     assert.equal(body.reasoning_effort, "high");
   }
 });
+
+test('internal model permit aborts remain failures rather than user cancellations',async()=>{
+  const faux=fauxProvider({provider:'internal-permit-error'}),models=createModels();models.setProvider(faux.provider);
+  const controller=new AbortController();controller.abort(new Error('runtime_lease_lost'));
+  let releases=0;
+  const runtime={models,model:faux.getModel(),providerGate:{async acquire(){return {signal:controller.signal,async release(){releases++;}};}}};
+  const result=await streamWithProviderPermit(runtime,runtime.model,{messages:[]},{}).result();
+  assert.equal(result.stopReason,'error');assert.equal(result.errorMessage,'runtime_lease_lost');
+  assert.equal(faux.state.callCount,0);assert.equal(releases,1);
+});
+
+test('provider response after an internal lease loss cannot be accepted as success',async()=>{
+  const faux=fauxProvider({provider:'late-permit-error'}),models=createModels();models.setProvider(faux.provider);
+  const controller=new AbortController();let released=false;
+  const runtime={models,model:faux.getModel(),providerGate:{async acquire(){return {signal:controller.signal,async release(){released=true;}};}}};
+  await assert.rejects(withProviderPermit(runtime,undefined,async()=>{
+    controller.abort(new Error('runtime_lease_lost'));return {value:'too-late'};
+  }),{code:'runtime_lease_lost'});
+  assert.equal(released,true);
+});

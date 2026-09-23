@@ -1,3 +1,4 @@
+import { runAbortCode, executionErrorCode } from './execution-error.js';
 import { acquireRepositoryReadLease, type RepositoryReadLease } from '../persistence/repository-read-lease.js';
 import { runtimeConfig } from '../admin/runtime-config.js';
 import { assertChatHistoryCapacity } from './chat-history-limits.js';
@@ -480,9 +481,14 @@ export class ConversationService {
       contextBuilderId: "primary-conversation-context-v3",
     });
 
-    const finalize = async (result: PiRunResult) => {
+    const finalize = async (result: PiRunResult, runSignal?: AbortSignal, writeFence?: {permitId:string}) => {
+      const checkExecution = () => { for (const signal of [input.signal,runSignal]) {
+        if (signal?.aborted && !['cancelled','client_network_error'].includes(runAbortCode(signal.reason)))
+          throw serviceError(runAbortCode(signal.reason),failureMessage(runAbortCode(signal.reason)),503);
+      }};
+      checkExecution();
       if (input.signal?.aborted && /lease_lost|maintenance_connection_lost/.test(String(input.signal.reason))) input.signal.throwIfAborted();
-      if (!turnStarted) throw serviceError(result.stopReason === "cancelled" ? "cancelled" : "server_error", failureMessage(result.stopReason), 503);
+      if (!turnStarted) throw serviceError(result.stopReason, failureMessage(result.stopReason), result.stopReason === "cancelled" ? 409 : 503);
       const explicitAdvance = isExplicitAdvanceRequest(content);
       if (explicitAdvance && snapshot && pendingLearningAction.value?.action !== "advance_learning_step") {
         try {
@@ -624,6 +630,7 @@ export class ConversationService {
       // Merge into the current row: feedback, analysis and settings may have
       // changed while the model was running. Never replay an old transcript.
       const saved = await this.store.updateProject(input.projectId, input.owner.owner_id, row => {
+        checkExecution();
         const currentUser = [...row.messages].reverse().find(message => message.role === 'user');
         if (currentUser?.message_id !== userMessage.message_id || currentUser.trace_id !== runId) {
           throw serviceError('last_message_changed', '只能编辑最后一条消息，请刷新后重试。', 409);
@@ -632,7 +639,7 @@ export class ConversationService {
         if (!isDeepStrictEqual(originalStudy, project.study) && isDeepStrictEqual(row.study, originalStudy)) {
           row.study = project.study;
         }
-      });
+      }, undefined, writeFence);
       if (!saved) throw serviceError('not_found', '项目不存在', 404);
       project.messages = saved.messages;
       project.study = saved.study;
@@ -744,8 +751,10 @@ export class ConversationService {
         replace: Boolean(input.replaceMessageId),
         previousMessages: visibleContextMessages(beforeTurn),
       },
-      beforePrompt: async () => {
+      beforePrompt: async (runSignal, writeFence) => {
+        runSignal?.throwIfAborted();
         const saved = await this.store.updateProject(input.projectId, input.owner.owner_id, row => {
+          runSignal?.throwIfAborted();
           if (input.replaceMessageId) {
             const latest = [...row.messages].reverse().find(message => message.role === "user");
             if (latest?.message_id !== input.replaceMessageId || latest.content !== previousUser?.content) {
@@ -756,7 +765,7 @@ export class ConversationService {
           assertChatHistoryCapacity(row.messages, content, input.replaceMessageId, this.config);
           if (input.replaceMessageId) row.messages = row.messages.slice(0, row.messages.findIndex(message => message.message_id === input.replaceMessageId));
           row.messages.push(userMessage);
-        });
+        }, undefined, writeFence);
         if (!saved) throw serviceError("not_found", "项目不存在", 404);
         turnStarted = true;
       },
@@ -766,11 +775,10 @@ export class ConversationService {
       runId,
       signal: input.signal,
       onEvent: event => input.onEvent?.({ ...event, sequence: event.sequence + admissionEvents }),
-      }, async (result) => {
-        return finalize(result);
-      });
+      }, finalize);
     } catch (error) {
-      if (controlSignal.aborted) throw serviceError('cancelled', '本轮回答已取消。', 409);
+      if (input.signal?.aborted) { const code=runAbortCode(input.signal.reason); throw serviceError(code,failureMessage(code),code==='cancelled'?409:503); }
+      const local = executionErrorCode(error); if (local) throw serviceError(local,failureMessage(local),503);
       if (error instanceof PiSessionWaitTimeoutError) {
         throw serviceError("session_busy", "上一轮仍在处理，请等待它结束或取消后再试", 409);
       }

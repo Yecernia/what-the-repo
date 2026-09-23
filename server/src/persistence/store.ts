@@ -56,6 +56,8 @@ export class QuotaExceededError extends Error {
  * Capability carried by an analysis worker when it writes derived data.
  * The storage layer validates it against the current job row before writing.
  */
+export interface SessionWriteFence { permitId: string; }
+
 export interface AnalysisLeaseFence {
   jobId: string;
   workerId: string;
@@ -141,6 +143,7 @@ export interface ProductStore {
     ownerId: string,
     mutate: (project: Project) => void,
     fence?: AnalysisLeaseFence,
+    sessionFence?: SessionWriteFence,
   ): Promise<Project | null>;
   deleteProject(projectId: string, ownerId: string): Promise<boolean>;
   createProjectWithJob(project: Project, job: AnalysisJob): Promise<void>;

@@ -1,3 +1,5 @@
+import { executionErrorCode } from '../services/execution-error.js';
+import { serviceError } from '../services/errors.js';
 import { performance } from "node:perf_hooks";
 import { credentialSafeEvents } from "./credential-stream.js";
 import { providerDiagnosticMessage } from "./provider-error.js";
@@ -452,18 +454,22 @@ export async function withProviderPermit<T>(
     try {
       const value = await operation(signal);
       finalUsage = usageFrom(value);
+      const localAbort = signal?.aborted ? executionErrorCode(signal.reason) : null;
+      if (localAbort) throw serviceError(localAbort,localAbort,503);
       status = "completed";
       recordProviderCall(runtime, "success", performance.now() - callStarted, finalUsage);
       return value;
     } catch (error) {
-      finalUsage = usageFrom(error);
-      status = signal?.aborted ? "cancelled" : "failed";
+      finalUsage = usageFrom(error) ?? finalUsage;
+      const internal = signal?.aborted ? executionErrorCode(signal.reason) : null;
+      status = signal?.aborted && !internal ? "cancelled" : "failed";
       recordProviderCall(
         runtime,
-        signal?.aborted ? "aborted" : "error",
+        signal?.aborted && !internal ? "aborted" : "error",
         performance.now() - callStarted,
         finalUsage,
       );
+      if (internal) throw serviceError(internal,internal,503);
       throw error;
     }
   } finally {
@@ -600,13 +606,20 @@ export function streamWithProviderPermit(
         if (event.type === 'done' || event.type === 'error') terminal = event;
         else wrapped.push(event);
       }
+      const localAbort = streamOptions?.signal?.aborted ? executionErrorCode(streamOptions.signal.reason) : null;
+      if (localAbort && terminal) {
+        const message = terminal.type === 'done' ? terminal.message : terminal.type === 'error' ? terminal.error : undefined;
+        if (message) terminal = {type:'error',reason:'error',error:{...message,stopReason:'error',errorMessage:localAbort}};
+        outcome = 'error';
+      }
       if (!terminal) throw new Error("provider_stream_incomplete");
       usageStatus = outcome === "success" ? "completed" : outcome === "aborted" ? "cancelled" : "failed";
     } catch (error) {
-      outcome = streamOptions?.signal?.aborted ? "aborted" : "error";
+      const localAbort = streamOptions?.signal?.aborted ? executionErrorCode(streamOptions.signal.reason) : null;
+      outcome = streamOptions?.signal?.aborted && !localAbort ? "aborted" : "error";
       if (diagnostic) diagnostic.completionReason = outcome;
       usageStatus = outcome === "aborted" ? "cancelled" : "failed";
-      const message = providerDiagnosticMessage(error);
+      const message = localAbort ?? providerDiagnosticMessage(error);
       const assistant: AssistantMessage = {
         role: "assistant",
         content: [],
@@ -621,7 +634,7 @@ export function streamWithProviderPermit(
           totalTokens: 0,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
-        stopReason: streamOptions?.signal?.aborted ? "aborted" : "error",
+        stopReason: outcome === "aborted" ? "aborted" : "error",
         errorMessage: message,
         timestamp: Date.now(),
       };

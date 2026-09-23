@@ -1,3 +1,5 @@
+import { runAbortCode } from '../services/execution-error.js';
+import { failureMessage } from './provider-error.js';
 import { Type, type Static } from "typebox";
 import type { AgentTool, AgentToolResult, ToolExecutionMode } from "@earendil-works/pi-agent-core";
 import type {
@@ -320,7 +322,7 @@ export function createConversationTools(
         return await fn(id, params, signal);
       } catch (error) {
         if (error instanceof ToolExecutionError) throw error;
-        if (signal?.aborted) throw new ToolExecutionError("这次工具调用已取消。", "cancelled");
+        if (signal?.aborted) { const code=runAbortCode(signal.reason); throw new ToolExecutionError(failureMessage(code),code); }
         // Pi Core converts unexpected tool failures to isError messages. Keep
         // the original error so the model can correct a bad call or choose a
         // different tool; HTTP/SSE projections still hide internal details.

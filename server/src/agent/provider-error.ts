@@ -1,5 +1,8 @@
+import { executionErrorCode } from '../services/execution-error.js';
+
 /** Public categories only. Never forward an upstream response body to the UI. */
 export function providerErrorCode(error: unknown, fallback = "provider_request_failed"): string {
+  const local = executionErrorCode(error); if (local) return local;
   if (typeof error === "string" && FAILURE_MESSAGES[error]) return error;
   const explicit = error && typeof error === "object" && "code" in error ? String(error.code) : "";
   if (FAILURE_MESSAGES[explicit]) return explicit;
@@ -24,7 +27,11 @@ export const FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   chat_owner_busy: '你已有多轮对话正在进行，请等待一轮结束或取消后再试。',
   chat_queue_full: '服务器繁忙，请稍后重试。',
   chat_wait_timeout: '等待处理超时，请稍后重试。',
-  runtime_lease_lost: '处理已中断，请重试。',
+  runtime_lease_lost: '处理凭证已失效，本轮已停止，请重试。',
+  database_pool_timeout: '数据库连接等待超时，请稍后重试。',
+  database_query_timeout: '数据库操作超时，本轮已停止，请稍后重试。',
+  database_control_unavailable: '服务端续期服务暂不可用，本轮已停止，请重试。',
+  database_control_busy: '服务端续期服务繁忙，请稍后重试。',
   analysis_owner_queue_full: '你的待分析任务已满，请等待已有任务完成后再试。',
   analysis_queue_full: '分析队列已满，请稍后重试。',
   model_capacity_busy: '服务器的模型处理容量已满，请稍后重试。',

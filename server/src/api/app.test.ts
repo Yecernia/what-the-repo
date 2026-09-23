@@ -1,3 +1,4 @@
+import { serviceError } from '../services/errors.js';
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -2170,4 +2171,27 @@ test('managed BYOK survives new API requests and replaces keys only after explic
     const cleared = await app.inject({ method: 'DELETE', url: '/api/settings/key', headers });
     assert.equal(cleared.statusCode, 200); assert.equal(await store.keys.get(owner.owner_id, 'managed'), null);
   } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('SSE preserves local failure categories without cancellation or unsafe error text',async(t)=>{
+  const root=await mkdtemp(join(tmpdir(),'wtr-api-internal-errors-'));
+  const store=new FileStore(root);await store.init();
+  const app=buildApp({config:config(root),store,sessions:new PiSessionStore(join(root,'sessions')),memories:new PiMemoryStore(join(root,'memory'))});
+  try {
+    await app.ready();
+    const guest=await browserInject(app,{method:'POST',url:'/api/auth/guest'});
+    const owner=guest.json();
+    const cookie=cookieValue(guest.headers['set-cookie'],'what_the_repo_identity');
+    const project=createProject(owner.owner_id,'https://github.com/example/errors','errors');await store.saveProject(project);
+    let failure='database_pool_timeout';
+    t.mock.method(store,'loadSettings',async()=>{throw serviceError(failure,'unsafe-error-secret-sentinel',503);});
+    for (const code of ['database_pool_timeout','runtime_lease_lost','database_control_unavailable']) {
+      failure=code;
+      const response=await app.inject({method:'POST',url:`/api/projects/${project.project_id}/messages/stream`,
+        headers:{cookie:`what_the_repo_identity=${cookie}`},payload:{content:'test'}});
+      assert.equal(response.statusCode,200);assert.match(response.body,new RegExp(code));
+      assert.match(response.body,/event: error/);assert.match(response.body,/event: done/);
+      assert.doesNotMatch(response.body,/run_cancelled|"code":"cancelled"|unsafe-error-secret-sentinel/);
+    }
+  } finally {await app.close();await rm(root,{recursive:true,force:true});}
 });

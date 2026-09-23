@@ -1,3 +1,5 @@
+import { assertSessionPermit } from '../scheduling/permits.js';
+import { registerControlPool } from './control-pool.js';
 import { EncryptedPostgresKeyVault } from "./encrypted-key-vault.js";
 import { readSnapshotQuery } from './snapshot-query-reader.js';
 import { boundedEvidenceIds, snapshotEvidence, type SnapshotEvidenceRequest } from './snapshot-evidence.js';
@@ -340,7 +342,7 @@ export class PostgresStore extends FileStore {
   private readonly migrationsRoot: string;
   private readonly limits: QuotaLimits;
   readonly snapshotObjects: SnapshotObjectStore;
-  private readonly objectAdmissionPool: Pool;
+  readonly controlPool: Pool;
   private readonly sourceManifestCache = new Map<string, CachedSourceManifest>();
 
   constructor(options: PostgresStoreOptions) {
@@ -364,12 +366,13 @@ export class PostgresStore extends FileStore {
     this.limits = limits;
     // Object reads/purges may run while an application transaction holds the only
     // ordinary pool connection. Admission must not nest a wait on that same pool.
-    this.objectAdmissionPool = new Pool({ connectionString: options.databaseUrl, max: 1,
-      application_name: postgresApplicationName('object-admission'), connectionTimeoutMillis: 5000,
+    this.controlPool = new Pool({ connectionString: options.databaseUrl, max: 1,
+      application_name: postgresApplicationName((options.applicationRole ?? 'api') + ':control'), connectionTimeoutMillis: 5000,
       idleTimeoutMillis: 10000 });
-    this.objectAdmissionPool.on('error', () => console.error('object_admission_database_unavailable'));
+    this.controlPool.on('error', () => console.error('database_control_unavailable'));
+    registerControlPool(pool, this.controlPool);
     this.snapshotObjects = boundedObjectStore(options.objectStore ?? new LocalSnapshotObjectStore(options.root),
-      new ResourceScheduler(options.objectAdmissionStore ?? new PostgresPermitStore(this.objectAdmissionPool)), options.objectStoreConcurrency ?? 8);
+      new ResourceScheduler(options.objectAdmissionStore ?? new PostgresPermitStore(this.controlPool)), options.objectStoreConcurrency ?? 8);
   }
 
   override async init(): Promise<void> {
@@ -393,7 +396,7 @@ export class PostgresStore extends FileStore {
   }
 
   override async close(): Promise<void> {
-    await Promise.all([this.pool.end(), this.objectAdmissionPool.end()]);
+    await Promise.all([this.pool.end(), this.controlPool.end()]);
   }
 
   override async checkHealth(): Promise<void> {
@@ -587,6 +590,7 @@ export class PostgresStore extends FileStore {
     ownerId: string,
     mutate: (project: Project) => void,
     fence?: AnalysisLeaseFence,
+    sessionFence?: import("./store.js").SessionWriteFence,
   ): Promise<Project | null> {
     const update = async (client: PoolClient): Promise<Project | null> => {
       await client.query("SELECT project_id FROM projects WHERE project_id = $1 FOR UPDATE", [projectId]);
@@ -594,6 +598,7 @@ export class PostgresStore extends FileStore {
       if (!project) return null;
       const previousMessages = structuredClone(project.messages);
       const previousMessageIds = previousMessages.map(message => message.message_id);
+      if (sessionFence) await assertSessionPermit(client,sessionFence.permitId);
       mutate(project);
       const retainedIds = new Set(project.messages.map(message => message.message_id));
       const removedIds = previousMessageIds.filter(id => !retainedIds.has(id));
@@ -603,6 +608,7 @@ export class PostgresStore extends FileStore {
       );
       project.updated_at = nowIso();
       await this.saveProjectWithClient(client, project, true, previousMessages);
+      if (sessionFence) await assertSessionPermit(client,sessionFence.permitId);
       return project;
     };
     if (fence) return this.withAnalysisLeaseTransaction(fence, update);

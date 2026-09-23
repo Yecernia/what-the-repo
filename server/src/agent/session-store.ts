@@ -35,6 +35,8 @@ function withoutThinking(message: AgentMessage): AgentMessage {
 }
 
 export interface PiSessionContext {
+  writeFence?: {permitId:string};
+  signal?: AbortSignal;
   session: Session<SessionMetadata>;
   entries: Entry[];
   messages: AgentMessage[];
@@ -61,7 +63,7 @@ export class PiSessionWaitTimeoutError extends Error {
 export interface PiSessionBackend {
   withSession<T>(
     identity: PiSessionIdentity,
-    task: (session: Session<SessionMetadata>) => Promise<T>,
+    task: (session: Session<SessionMetadata>, signal?: AbortSignal, writeFence?: {permitId:string}) => Promise<T>,
     options?: PiSessionBackendOptions,
   ): Promise<T>;
   delete(sessionId: string): Promise<void>;
@@ -132,7 +134,7 @@ class JsonlPiSessionBackend implements PiSessionBackend {
 
   async withSession<T>(
     identity: PiSessionIdentity,
-    task: (session: Session<SessionMetadata>) => Promise<T>,
+    task: (session: Session<SessionMetadata>, signal?: AbortSignal, writeFence?: {permitId:string}) => Promise<T>,
     options: PiSessionBackendOptions = {},
   ): Promise<T> {
     options.onAcquired?.();
@@ -151,7 +153,7 @@ class JsonlPiSessionBackend implements PiSessionBackend {
           skillVersion: identity.skillVersion,
         },
       });
-    return task(session as unknown as Session<SessionMetadata>);
+    return task(session as unknown as Session<SessionMetadata>, options.signal);
   }
 
   async delete(sessionId: string): Promise<void> {
@@ -202,6 +204,7 @@ export class PiSessionStore {
   ): Promise<T> {
     if (options.failFast && this.mutex.isLocked(identity.sessionId)) throw new PiSessionWaitTimeoutError();
     const waitController = new AbortController();
+    const sessionSignal = options.signal ? AbortSignal.any([options.signal, waitController.signal]) : waitController.signal;
     let waiting = true;
     const abortFromCaller = (): void => {
       waitController.abort(options.signal?.reason);
@@ -221,12 +224,12 @@ export class PiSessionStore {
     try {
       return await this.mutex.runExclusive(identity.sessionId, () => this.backend.withSession(
         identity,
-        async (session) => {
+        async (session, signal, writeFence) => {
           stopWaiting();
           const entries = await session.findEntriesOnBranch({ order: "oldestFirst" });
-          return task({ session, entries, messages: entryMessages(entries) });
+          return task({ session, entries, messages: entryMessages(entries), signal, writeFence });
         },
-        { signal: waitController.signal, onAcquired: stopWaiting },
+        { signal: sessionSignal, onAcquired: stopWaiting },
       ), { signal: waitController.signal });
     } finally {
       stopWaiting();

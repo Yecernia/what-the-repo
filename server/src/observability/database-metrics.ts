@@ -1,3 +1,4 @@
+import { registeredControlPool } from '../persistence/control-pool.js';
 import type { QueryResult, QueryResultRow } from "pg";
 import { POSTGRES_APPLICATION_PREFIX } from "../persistence/postgres-store.js";
 import { METRIC_NAMES, type RuntimeMetrics } from "./metrics.js";
@@ -44,6 +45,11 @@ export class DatabaseMetricsCollector {
 
   async refresh(): Promise<void> {
     this.recordLocalPool();
+    const control = registeredControlPool(this.options.pool);
+    if (control) for (const [state,value] of Object.entries({configured:1,total:control.totalCount,idle:control.idleCount,
+      active:control.totalCount-control.idleCount,waiting:control.waitingCount})) {
+      this.options.metrics.setGauge(METRIC_NAMES.databasePoolConnections,value,{role:this.options.localRole+':control',state});
+    }
     try {
       const result = await this.options.pool.query<DatabaseSnapshotRow>(
         `SELECT

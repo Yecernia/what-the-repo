@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { controlFailure } from '../services/execution-error.js';
 import { performance } from 'node:perf_hooks';
 import { delay, LEASE_MS, type PermitRow, type PermitStore, type CapacityPermit } from './permits.js';
 
@@ -22,6 +23,8 @@ export class ResourceScheduler {
     const signal = input.signal ? AbortSignal.any([input.signal, lost.signal]) : lost.signal;
     const deadline = input.waitMs === undefined ? undefined : AbortSignal.timeout(input.waitMs);
     const waitingSignal = deadline ? AbortSignal.any([signal, deadline]) : signal;
+    const renewalController = new AbortController();
+    const renewalSignal = AbortSignal.any([signal, renewalController.signal]);
     let admitted = false, released = false, renewing = false;
     let renewal: ReturnType<typeof setInterval> | undefined;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -29,6 +32,7 @@ export class ResourceScheduler {
       if (released) return;
       released = true;
       clearInterval(renewal); clearTimeout(watchdog);
+      renewalController.abort(new Error('permit_released'));
       if (admitted) await this.store.change(this.namespace, rows => {
         const index = rows.findIndex(row => row.id === id);
         if (index >= 0) rows.splice(index, 1);
@@ -81,8 +85,8 @@ export class ResourceScheduler {
         if (released || renewing || signal.aborted) return;
         renewing = true;
         const since = performance.now();
-        void change(false, signal).then(() => { if (!released) arm(since); })
-          .catch(error => lost.abort(error)).finally(() => { renewing = false; });
+        void change(false, renewalSignal).then(() => { if (!released && !signal.aborted) arm(since); })
+          .catch(error => { if (!released) lost.abort(controlFailure(error)); }).finally(() => { renewing = false; });
       }, LEASE_MS / 3);
       renewal.unref();
       signal.throwIfAborted();

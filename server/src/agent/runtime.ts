@@ -1,3 +1,5 @@
+import { runAbortCode } from '../services/execution-error.js';
+import { serviceError } from '../services/errors.js';
 import {
   Agent,
   DEFAULT_COMPACTION_SETTINGS,
@@ -162,18 +164,19 @@ export class PiConversationRuntime {
   async run(options: PiAgentRunOptions): Promise<PiRunResult>;
   async run<T>(
     options: PiAgentRunOptions,
-    finalize: (result: PiRunResult) => Promise<PiRunFinalization<T>>,
+    finalize: (result: PiRunResult, signal?: AbortSignal, writeFence?: {permitId:string}) => Promise<PiRunFinalization<T>>,
   ): Promise<T>;
   async run<T>(
     options: PiAgentRunOptions,
-    finalize?: (result: PiRunResult) => Promise<PiRunFinalization<T>>,
+    finalize?: (result: PiRunResult, signal?: AbortSignal, writeFence?: {permitId:string}) => Promise<PiRunFinalization<T>>,
   ): Promise<T | PiRunResult> {
     const control = this.preparedRuns.get(options.runId) ?? new AbortController();
     this.preparedRuns.set(options.runId, control);
-    const runSignal = options.signal
+    let runSignal = options.signal
       ? AbortSignal.any([options.signal, control.signal])
       : control.signal;
-    const abortCode = (): string => String(runSignal.reason).includes("conversation_stream_disconnected") ? "client_network_error" : "cancelled";
+    const abortCode = (): string => runAbortCode(runSignal.reason);
+    let finalized = false;
     const events: PiRunEvent[] = [];
     let sequence = 0;
     const runStartedAt = Date.now();
@@ -200,10 +203,11 @@ export class PiConversationRuntime {
     };
     try {
       return await this.sessions.withSession(options.identity, async (stored) => {
+      if (stored.signal) runSignal = AbortSignal.any([runSignal, stored.signal]);
       const originalLeaf = await stored.session.getLeafId();
       try {
         if (options.turn) await this.sessions.prepareTurn(stored, options.turn);
-        await options.beforePrompt?.();
+        await options.beforePrompt?.(runSignal,stored.writeFence);
       } catch (error) {
         await stored.session.moveLane("main", originalLeaf);
         throw error;
@@ -381,7 +385,10 @@ export class PiConversationRuntime {
       ): Promise<T | PiRunResult> => {
         let completed: PiRunFinalization<T | PiRunResult>;
         if (finalize) {
-          completed = await finalize(result);
+          if (runSignal.aborted && !['cancelled','client_network_error'].includes(abortCode()))
+            throw serviceError(abortCode(),failureMessage(abortCode()),503);
+          finalized = true;
+          completed = await finalize(result,runSignal,stored.writeFence);
         } else {
           completed = {
             value: result,
@@ -401,7 +408,7 @@ export class PiConversationRuntime {
       let appended: AgentMessage[] = [];
       try {
         if (runSignal.aborted || active.cancelRequested) {
-          emit(abortCode() === "cancelled" ? "run_cancelled" : "run_failed", failureMessage(abortCode()));
+          emit(abortCode() === "cancelled" ? "run_cancelled" : "run_failed", failureMessage(abortCode()), {errorCode:abortCode()});
           result = {
             runId: options.runId,
             text: "",
@@ -412,7 +419,7 @@ export class PiConversationRuntime {
         } else {
           await agent.prompt(userMessage);
           if (runSignal.aborted || active.cancelRequested) {
-            emit(abortCode() === "cancelled" ? "run_cancelled" : "run_failed", failureMessage(abortCode()));
+            emit(abortCode() === "cancelled" ? "run_cancelled" : "run_failed", failureMessage(abortCode()), {errorCode:abortCode()});
             result = { runId: options.runId, text, stopReason: abortCode(), usage, events };
           } else {
             const finalAssistant = [...agent.state.messages]
@@ -472,8 +479,8 @@ export class PiConversationRuntime {
         emit("run_failed", "上一轮仍在处理", { errorCode: "session_busy" });
         throw error;
       }
-      if (runSignal.aborted) {
-        emit(abortCode() === "cancelled" ? "run_cancelled" : "run_failed", failureMessage(abortCode()));
+      if (runSignal.aborted && !finalized) {
+        emit(abortCode() === "cancelled" ? "run_cancelled" : "run_failed", failureMessage(abortCode()), {errorCode:abortCode()});
         const result: PiRunResult = {
           runId: options.runId,
           text: "",
@@ -481,7 +488,10 @@ export class PiConversationRuntime {
           usage: { ...EMPTY_USAGE },
           events,
         };
-        if (finalize) return (await finalize(result)).value;
+        if (finalize) {
+          if (!['cancelled','client_network_error'].includes(abortCode())) throw serviceError(abortCode(),failureMessage(abortCode()),503);
+          finalized = true; return (await finalize(result,runSignal)).value;
+        }
         return result;
       }
       throw error;

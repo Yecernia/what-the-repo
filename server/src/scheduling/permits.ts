@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { KeyedMutex } from '../agent/mutex.js';
 import { serviceError } from '../services/errors.js';
+import { controlFailure } from '../services/execution-error.js';
+import { controlPoolFor } from '../persistence/control-pool.js';
+import { defaultRuntimeMetrics as metrics } from '../observability/metrics.js';
 
 export interface PermitRow {
   id: string; owner: string; resource: string; state: 'waiting' | 'running';
@@ -59,9 +62,38 @@ export function permitStoreFor(owner: object): PermitStore {
 }
 
 export class PostgresPermitStore implements PermitStore {
-  constructor(readonly pool: Pool) {}
+  readonly pool: Pool;
+  constructor(pool: Pool) { this.pool = controlPoolFor(pool); }
   async change<T>(namespace: string, fn: (rows: PermitRow[], now: number) => T, signal?: AbortSignal): Promise<T> {
+    const deadline = new AbortController();
+    const phase = { acquiring: true };
+    const timer = setTimeout(() => {
+      const code = phase.acquiring ? 'database_pool_timeout' : 'database_query_timeout';
+      deadline.abort(serviceError(code,code,503));
+    }, 5000);
+    timer.unref();
+    const bounded = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+    const started = performance.now();
+    try {
+      if (this.pool.waitingCount >= 128) throw serviceError('database_control_busy','database_control_busy',503);
+      const result = await this.changeBounded(namespace, fn, bounded, phase);
+      metrics.increment('what_the_repo_control_operations_total',1,{outcome:'success'});
+      return result;
+    } catch (error) {
+      const failure = signal?.aborted ? signal.reason : controlFailure(deadline.signal.aborted ? deadline.signal.reason : error);
+      const code=(controlFailure(failure) as {code?:string}).code ?? 'database_control_unavailable';
+      metrics.increment('what_the_repo_control_operations_total',1,{outcome:'error',code});
+      throw failure;
+    } finally {
+      clearTimeout(timer);
+      metrics.observe('what_the_repo_control_operation_duration_ms',performance.now()-started);
+      metrics.setGauge('what_the_repo_control_pool_waiting',this.pool.waitingCount ?? 0);
+    }
+  }
+  private async changeBounded<T>(namespace: string, fn: (rows: PermitRow[], now: number) => T, signal: AbortSignal, phase: {acquiring:boolean}): Promise<T> {
+    phase.acquiring=true;
     const client = await connectWithAbort<PoolClient>(this.pool, signal);
+    phase.acquiring=false;
     let released = false;
     const release = (destroy = false) => { if (!released) { released = true; client.release(destroy); } };
     const abort = () => release(true);
@@ -69,6 +101,7 @@ export class PostgresPermitStore implements PermitStore {
     try {
       signal?.throwIfAborted();
       await client.query('BEGIN');
+      await client.query("SET LOCAL statement_timeout='2s'; SET LOCAL lock_timeout='100ms'");
       // Try rather than queue a connection behind a long database lock.
       const lock = await client.query<{ acquired: boolean }>(
         'SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired', [`admission:${namespace}`]);
@@ -97,10 +130,14 @@ export class PostgresPermitStore implements PermitStore {
     } catch (error) {
       if (!released) await client.query('ROLLBACK').catch(() => undefined);
       if (signal?.aborted) throw signal.reason;
-      throw error;
+      // A fenced answer/session commit can briefly lock its own permit row.
+      // Yield the control connection and retry within the same operation budget;
+      // do not turn a transient row conflict into a lost execution immediately.
+      if ((error as {code?:string})?.code !== '55P03') throw error;
+      metrics.increment('what_the_repo_control_lock_retries_total',1);
     } finally { signal?.removeEventListener('abort', abort); release(); }
     await delay(25, signal);
-    return this.change(namespace, fn, signal);
+    return this.changeBounded(namespace, fn, signal, phase);
   }
 }
 
@@ -221,7 +258,7 @@ export class CapacityScheduler {
           const row = rows.find(row => row.id === id);
           if (!row || row.expires <= now) throw new Error('runtime_lease_lost');
           row.expires = now+LEASE_MS;
-        }, renewalSignal).then(() => { if (!released && !combined.aborted) armWatchdog(started); }).catch(error => { if (!released) lost.abort(error); }).finally(() => { renewing = false; });
+        }, renewalSignal).then(() => { if (!released && !combined.aborted) armWatchdog(started); }).catch(error => { if (!released) lost.abort(controlFailure(error)); }).finally(() => { renewing = false; });
       }, LEASE_MS/3);
       timer.unref();
       return { id, signal: combined, release };

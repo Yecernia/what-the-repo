@@ -141,7 +141,7 @@ export interface PiAgentRunOptions {
   onEvent?: (event: PiRunEvent) => void;
   /** Visible turn identity; editing rewinds the current Pi branch before this turn. */
   turn?: { messageId: string; replace: boolean; previousMessages: AgentMessage[] };
-  beforePrompt?: () => Promise<void>;
+  beforePrompt?: (signal?: AbortSignal, writeFence?: {permitId:string}) => Promise<void>;
 }
 
 export interface PersistedPiMessage {

@@ -513,3 +513,62 @@ test('BYOK echoed by a provider never reaches console diagnostics, events or sav
     await scan(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+for (const [reason,expected] of [
+  [new Error('run_cancelled'),'cancelled'],
+  [new Error('conversation_stream_disconnected'),'client_network_error'],
+  [new Error('runtime_lease_lost'),'runtime_lease_lost'],
+  [new Error('timeout exceeded when trying to connect'),'database_pool_timeout'],
+  [new Error('untrusted internal failure with secret-sentinel'),'server_error'],
+] as const) test(`run abort classification preserves ${expected}`,async()=>{
+  const root=await mkdtemp(join(tmpdir(),'wtr-runtime-abort-'));
+  try {
+    const runtime=new PiConversationRuntime(new PiSessionStore(root));
+    const faux=fauxProvider({provider:'abort-classifier'}), models=createModels();models.setProvider(faux.provider);
+    const signal=new AbortController();signal.abort(reason);
+    const result=await runtime.run(options({models,model:faux.getModel() as Model<Api>},'abort',signal.signal));
+    assert.equal(result.stopReason,expected);
+    assert.equal(result.events.some(event=>event.type==='run_cancelled'),expected==='cancelled');
+    assert.equal(result.events.at(-1)?.errorCode,expected);
+    assert.equal(JSON.stringify(result.events).includes('secret-sentinel'),false);
+  } finally {await rm(root,{recursive:true,force:true});}
+});
+
+test('a backend lease abort reaches an active Agent and cannot finalize a successful answer',async(t)=>{
+  const root=await mkdtemp(join(tmpdir(),'wtr-active-session-loss-'));
+  try {
+    const sessions=new PiSessionStore(root), runtime=new PiConversationRuntime(sessions);
+    const lease=new AbortController(), caller=new AbortController();
+    const original=sessions.withSession.bind(sessions);
+    const withLease: PiSessionStore['withSession'] = (identity,task,opts)=>original(identity,ctx=>task({...ctx,signal:lease.signal}),opts);
+    t.mock.method(sessions,'withSession',withLease);
+    const faux=fauxProvider({provider:'active-session-loss'}),models=createModels();models.setProvider(faux.provider);
+    faux.setResponses([()=>{lease.abort(new Error('runtime_lease_lost'));return fauxAssistantMessage('must not commit');}]);
+    let finalized=0;const events:unknown[]=[];
+    await assert.rejects(runtime.run({...options({models,model:faux.getModel() as Model<Api>},'test',caller.signal),onEvent:event=>events.push(event)},async result=>{
+      finalized++;return {value:result,sessionCommit:'accepted'};
+    }),{code:'runtime_lease_lost'});
+    assert.equal(caller.signal.aborted,false);assert.equal(finalized,0);
+    assert.equal(JSON.stringify(events).includes('run_cancelled'),false);
+    assert.match(JSON.stringify(events),/runtime_lease_lost/);
+  } finally {await rm(root,{recursive:true,force:true});}
+});
+
+test('runtime forwards the session fence to both business write boundaries',async(t)=>{
+  const root=await mkdtemp(join(tmpdir(),'wtr-session-fence-flow-'));
+  try {
+    const sessions=new PiSessionStore(root),runtime=new PiConversationRuntime(sessions);
+    const original=sessions.withSession.bind(sessions),fence={permitId:'test-write-fence'};
+    const fenced:PiSessionStore['withSession']=(identity,task,opts)=>original(identity,ctx=>task({...ctx,writeFence:fence}),opts);
+    t.mock.method(sessions,'withSession',fenced);
+    const faux=fauxProvider({provider:'fence-flow'}),models=createModels();models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage('ok')]);let checked=0;
+    await runtime.run({...options({models,model:faux.getModel() as Model<Api>},'test'),beforePrompt:async(signal,writeFence)=>{
+      assert.equal(signal?.aborted,false);assert.strictEqual(writeFence,fence);checked++;
+    }},async(result,signal,writeFence)=>{
+      assert.equal(signal?.aborted,false);assert.strictEqual(writeFence,fence);checked++;
+      return {value:result,sessionCommit:'accepted'};
+    });
+    assert.equal(checked,2);
+  } finally {await rm(root,{recursive:true,force:true});}
+});

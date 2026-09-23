@@ -1,3 +1,4 @@
+import { runAbortCode, executionErrorCode } from '../services/execution-error.js';
 import { createAdminSecurity, registerAdminRoutes, recordPresence, adminCookie, ADMIN_CHALLENGE, ADMIN_SESSION } from '../admin/routes.js';
 import { runtimeConfig } from '../admin/runtime-config.js';
 import { StorageManager } from '../admin/storage.js';
@@ -1787,7 +1788,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       return undefined;
     }
     const controller = new AbortController();
-    if (!stream) request.raw.once("aborted", () => controller.abort());
+    if (!stream) request.raw.once("aborted", () => controller.abort(new Error("conversation_stream_disconnected")));
     const startedAt = Date.now();
     const streamRun = stream
       ? conversationStreams.create({ runId, projectId, ownerId: owner.owner_id, controller })
@@ -1830,10 +1831,10 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
         }
       } catch (error) {
         const errorCode = controller.signal.aborted
-          ? "cancelled"
+          ? runAbortCode(controller.signal.reason)
           : error instanceof ProductServiceError
             ? error.code
-            : "internal_error";
+            : executionErrorCode(error) ?? "internal_error";
         await store.saveTrace(runId, {
           trace_id: runId,
           run_id: runId,
@@ -1847,7 +1848,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
         conversationStreams.finish(streamRun, {
           type: "error",
           payload: {
-            message: controller.signal.aborted ? "本轮回答已取消。" : streamFailureMessage(error),
+            message: failureMessage(errorCode),
             code: errorCode,
           },
         });

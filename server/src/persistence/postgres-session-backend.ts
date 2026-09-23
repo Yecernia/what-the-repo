@@ -381,6 +381,7 @@ class PostgresSessionStorage implements SessionStorage<ProductSessionMetadata> {
       await assertSessionPermit(client, this.permitId);
       const result = await this.transactionClient.run(client, task);
       this.signal.throwIfAborted();
+      await assertSessionPermit(client, this.permitId);
       await client.query("COMMIT");
       return result;
     } catch (error) {
@@ -395,7 +396,7 @@ export class PostgresPiSessionBackend implements PiSessionBackend {
 
   async withSession<T>(
     identity: PiSessionIdentity,
-    task: (session: Session<SessionMetadata>) => Promise<T>,
+    task: (session: Session<SessionMetadata>, signal?: AbortSignal, writeFence?: {permitId:string}) => Promise<T>,
     options: PiSessionBackendOptions = {},
   ): Promise<T> {
     const permit = await new CapacityScheduler(new PostgresPermitStore(this.pool), 'session', {
@@ -444,7 +445,7 @@ export class PostgresPiSessionBackend implements PiSessionBackend {
       );
       if (!opened.rowCount) throw new Error("pi_session_identity_mismatch");
       const storage = new PostgresSessionStorage(this.pool, identity.sessionId, permit.id, permit.signal);
-      return await task(new Session(storage) as unknown as Session<SessionMetadata>);
+      return await task(new Session(storage) as unknown as Session<SessionMetadata>, permit.signal, {permitId:permit.id});
     } catch (error) {
       if (permit.signal.aborted) throw permit.signal.reason;
       throw error;
