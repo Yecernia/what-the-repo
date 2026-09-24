@@ -278,6 +278,8 @@ for (const backend of ['file', 'postgres'])
         assert.deepEqual(repositoryRows.map((row: { key: string; limit: number | null; used: number | null }) =>
           [row.key, row.limit, row.used]), [['repository_update', 2.5, null], ['repository_background_daily', 0, 0]]);
         assert.ok(Array.isArray(saved.repositoryUpdates));
+        // Background scheduling is described even before any pass is recorded.
+        assert.deepEqual([saved.background.enabled, saved.background.runs], [false, []]);
         const overview = (await app.inject({ url: '/api/admin/overview', cookies: signedCookies })).json();
         assert.ok(overview.budgets.some((row: { key: string }) => row.key === 'repository_update'));
         const logout = await app.inject({

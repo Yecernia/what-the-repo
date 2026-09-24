@@ -132,7 +132,17 @@ try {
           requestUpdate: input => repository.requestBackgroundRepositoryUpdate(input),
         });
         backgroundRefreshScheduler = new RetentionScheduler(async () => {
-          await task();
+          // Every pass is recorded so the admin console can say why nothing started.
+          const startedAt = new Date().toISOString();
+          const record = (outcome: unknown, error: string | null) => store.recordBackgroundRun({
+            startedAt, finishedAt: new Date().toISOString(), outcome, error,
+          }).catch(() => undefined);
+          try {
+            await record(await task(), null);
+          } catch (error) {
+            await record(null, error instanceof Error ? error.message : String(error));
+            throw error;
+          }
         }, 5 * 60_000);
         await backgroundRefreshScheduler.runNow();
         backgroundRefreshScheduler.start({ keepProcessAlive: true });

@@ -857,3 +857,20 @@ body:has(.admin-console) {
   scrollbar-width: auto !important;
   scrollbar-color: auto !important;
 }
+/* List controls shared by the budget usage tables: filters, view switch, summary. */
+.admin-list-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 20px; margin: 4px 0 14px; }
+.admin-list-filters { display: flex; flex: 1 1 560px; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.admin-console .admin-list-filters label { flex: 0 1 160px; min-width: 120px; font-size: 12px; }
+.admin-console .admin-list-filters .admin-list-search { flex-basis: 220px; }
+.admin-console .admin-list-filters :is(select, input) { min-height: 36px; padding: 6px 9px; font-size: 13px; }
+.admin-console p.admin-list-summary { margin: 0 0 8px auto; color: var(--admin-muted, #727365); font-size: 12px; font-variant-numeric: tabular-nums; }
+.admin-view-switch { display: inline-flex; padding: 3px; gap: 3px; border: 1px solid var(--admin-line); border-radius: 8px; }
+.admin-console .admin-view-switch button { min-height: 32px; padding: 4px 12px; border: 0; border-radius: 6px; font-size: 12px; }
+.admin-console .admin-view-switch button[aria-pressed="true"] { background: var(--admin-active, #e1ecd9); color: var(--admin-active-ink, #2c6847); font-weight: 600; }
+.admin-amounts.admin-background-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 8px 0 18px; }
+.admin-background-history { margin-top: 18px; }
+@media (max-width: 600px) {
+  .admin-console .admin-card-title:has(.admin-view-switch) { flex-wrap: wrap; }
+  .admin-console .admin-list-filters label { flex: 1 1 130px; }
+  .admin-amounts.admin-background-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -25,6 +25,9 @@ import { AdminThemeToggle } from './AdminThemeToggle';
 import { AdminServiceMonitoring } from './AdminServiceMonitoring';
 import { AdminCode, AdminDiffButton } from './AdminCode';
 import { AdminModal, UserIdentity, Pagination, RepositoryName, RepositoryUsers, AnalysisStatus } from './AdminRepositoryViews';
+import { money, record, rows, text, time } from './admin-format';
+import { Table } from './AdminListViews';
+import { BackgroundScheduling, EvolutionTaskUsage, RepositoryUpdateUsage, UsageAttribution } from './AdminBudgetLists';
 
 const pages = [
   ['overview', '总览'],
@@ -62,27 +65,8 @@ interface Version {
   connections: Connection[];
   agents: Record<string, { connectionId: string; model: string }>;
 }
-const money = (v: unknown) =>
-  v === null || v === undefined ? '未知' : `$${Number(v).toFixed(4)}`;
 const cacheHitRate = (v: unknown) =>
   typeof v === 'number' && Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
-const time = (v: unknown) =>
-  v
-    ? new Date(String(v)).toLocaleString('zh-CN', {
-        timeZone: 'Asia/Shanghai',
-        hour12: false,
-      })
-    : '—';
-const rows = (v: unknown): AdminRow[] =>
-  Array.isArray(v) ? (v as AdminRow[]) : [];
-const record = (v: unknown): AdminRow =>
-  v && typeof v === 'object' && !Array.isArray(v) ? (v as AdminRow) : {};
-const text = (v: unknown) =>
-  v === null || v === undefined
-    ? '—'
-    : typeof v === 'object'
-      ? JSON.stringify(v)
-      : String(v);
 const budgetNames: Record<string, string> = {
   analysis_daily: '平台每日仓库分析',
   chat_daily: '平台每日免费聊天',
@@ -113,47 +97,6 @@ function Card({
       </div>
       {children}
     </section>
-  );
-}
-function Table({
-  data,
-  columns,
-}: {
-  data: AdminRow[];
-  columns: Array<
-    | [string, string, (v: unknown, row: AdminRow) => ReactNode]
-    | [string, string]
-  >;
-}) {
-  if (!data.length) return <p className="admin-empty">暂无记录</p>;
-  return (
-    <div className="admin-table-scroll">
-      <table>
-        <thead>
-          <tr>
-            {columns.map(([key, label], index) => (
-              <th key={key + index}>{label}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row, i) => (
-            <tr
-              key={String(
-                row.id ?? row.job_id ?? row.project_id ?? row.owner_id ?? i,
-              )}
-            >
-              {columns.map(([key, , format], index) => (
-                <td key={key + index}>
-                  {format ? format(row[key], row) : row[key] && typeof row[key] === 'object'
-                    ? <AdminCode source={JSON.stringify(row[key], null, 2)} /> : text(row[key])}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }
 function Details({
@@ -764,63 +707,18 @@ function Budgets({
         不扣平台额度，个人金额限制默认不启用。
       </p>
       <p className="admin-muted">
-        单次仓库更新限制一次共享更新（手动或后台、含重试）的全部模型费用，同时仍受平台每日仓库分析预算约束。
-        后台仓库更新每次启动先按单次上限预留、结束后按实际费用结算；单次更新不设限或每日总额为 0 时不会启动后台更新。
+        预算只在任务开始时检查：开始时额度够用，这轮聊天、这次分析或这个进化任务就会跑完，实际花费照常计入，
+        超出的部分会让之后的新任务更早被拒绝。上游出错、余额不足或限流仍会报错。
       </p>
-      <Card title="仓库更新用量">
-        <p className="admin-muted">最近 50 次共享更新，按更新累计，跨天不重置。</p>
-        <Table
-          data={rows(data.repositoryUpdates)}
-          columns={[
-            ['repository_identity', '仓库'],
-            ['trigger', '触发', (v) => (v === 'background' ? '后台' : v === 'initial' ? '首次' : '手动')],
-            ['status', '状态'],
-            ['created_at', '开始', (v) => time(v)],
-            ['used', '已知费用', money],
-            ['reserved', '预留', money],
-            ['remaining', '剩余', (v) => (policies.repository_update === null ? '不设限' : money(v))],
-            ['unknown_calls', '未知用量次数'],
-          ]}
-        />
-      </Card>
-      <Card title="自进化单任务用量">
-        <p className="admin-muted">
-          按任务累计，跨天不重置；每日总预算同时适用。
-        </p>
-        <Table
-          data={rows(data.tasks)}
-          columns={[
-            ['task_id', '任务'],
-            ['used', '已知费用', money],
-            ['reserved', '预留', money],
-            [
-              'remaining',
-              '剩余',
-              (v) => (policies.evolution_task === null ? '不设限' : money(v)),
-            ],
-            ['unknown_calls', '未知用量次数'],
-          ]}
-        />
-      </Card>
-      <Card title="用量归属">
-        <p className="admin-muted">
-          这是程序预算记录，不是厂商结算账单。旧数据无法可靠分类时显示历史未分类。
-        </p>
-        <Table
-          data={rows(data.usage)}
-          columns={[
-            ['business', '业务'],
-            ['payer', '费用承担方'],
-            ['agent_role', 'Agent'],
-            ['connection_id', '连接'],
-            ['config_version', '配置版本'],
-            ['task_id', '任务'],
-            ['used', '已知费用', money],
-            ['reserved', '预留', money],
-            ['unknown_calls', '未知用量次数'],
-          ]}
-        />
-      </Card>
+      <p className="admin-muted">
+        单次仓库更新限制一次共享更新（手动或后台、含重试）的开始额度，同时仍受平台每日仓库分析预算约束。
+        设了金额时，后台更新启动前先从后台每日总额中预留这笔钱，结束后按实际费用结算；不设限时不预留，
+        只要今日后台花费还没到每日总额就能启动。任一项设为 0 会关闭后台更新。
+      </p>
+      <BackgroundScheduling data={record(data.background)} />
+      <RepositoryUpdateUsage data={rows(data.repositoryUpdates)} capped={policies.repository_update !== null} />
+      <EvolutionTaskUsage data={rows(data.tasks)} capped={policies.evolution_task !== null} />
+      <UsageAttribution data={rows(data.usage)} />
     </>
   );
 }

@@ -405,7 +405,14 @@ export function registerAdminRoutes(
              LEFT JOIN analysis_jobs AS job ON job.repository_update_id=update.update_id
              LEFT JOIN provider_usage_events AS event
                ON event.task_id=job.job_id AND event.payer='platform' AND event.business='analysis'
-             GROUP BY update.update_id ORDER BY update.created_at DESC LIMIT 50`)).rows
+             WHERE update.created_at >= now() - interval '30 days'
+             GROUP BY update.update_id ORDER BY update.created_at DESC LIMIT 1000`)).rows
+          : [];
+        // Background scheduler passes of the last day; each keeps per-repository reasons.
+        const backgroundRuns = docs.pool
+          ? (await docs.pool.query(
+            `SELECT run_id, started_at, finished_at, outcome, error FROM repository_background_runs
+             WHERE started_at >= now() - interval '1 day' ORDER BY started_at DESC LIMIT 300`)).rows
           : [];
         const rows = docs.pool
           ? (
@@ -491,6 +498,16 @@ export function registerAdminRoutes(
                       Number(row.reserved),
                   ),
           })),
+          background: {
+            enabled: Boolean(deps.config.repositoryBackgroundRefreshEnabled),
+            intervalMinutes: 5,
+            commitThreshold: deps.config.repositoryBackgroundCommitThreshold ?? 20,
+            maxSnapshotAgeDays: deps.config.repositoryBackgroundMaxSnapshotAgeDays ?? 7,
+            minUpdateIntervalHours: deps.config.repositoryBackgroundMinUpdateIntervalHours ?? 24,
+            activeWindowDays: deps.config.repositoryActiveWindowDays ?? 7,
+            maxStartsPerDay: deps.config.repositoryBackgroundMaxStartsPerDay ?? 2,
+            runs: backgroundRuns,
+          },
           repositoryUpdates: repositoryUpdates.map((row) => ({
             ...row,
             remaining: policies.repository_update === null ? null

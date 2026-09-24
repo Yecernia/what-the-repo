@@ -1229,9 +1229,11 @@ export class FileStore implements ProductStore {
     targetCommitSha: string;
     maxStartsPerDay: number; maxActive: number; maxQueued: number;
     minUpdateIntervalHours: number; activeWindowDays: number; now: string;
-  }): Promise<'queued' | 'deferred' | 'up_to_date'> {
-    return 'deferred';
+  }): Promise<import('./store.js').BackgroundAdmission> {
+    return 'deferred:unavailable';
   }
+
+  async recordBackgroundRun(_run: { startedAt: string; finishedAt: string; outcome: unknown; error: string | null }): Promise<void> {}
 
   async saveRepositoryHead(head: RepositoryHead): Promise<void> {
     await this.saveRepositoryHeadWithAnalysisLease(head);

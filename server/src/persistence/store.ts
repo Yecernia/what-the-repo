@@ -109,6 +109,12 @@ export interface RepositoryIdentityInput {
   analysisConfigDigest: string;
 }
 
+/** Why a background update did not start; recorded for the admin console. */
+export type BackgroundDeferReason =
+  | 'disabled' | 'unavailable' | 'inactive' | 'interval' | 'suppressed'
+  | 'active_update' | 'capacity' | 'budget_off' | 'daily_starts' | 'daily_budget';
+export type BackgroundAdmission = 'queued' | 'up_to_date' | `deferred:${BackgroundDeferReason}`;
+
 export interface BackgroundRepositoryCandidate {
   repository: string;
   projectId: string;
@@ -279,7 +285,9 @@ export interface ProductStore {
     targetCommitSha: string;
     maxStartsPerDay: number; maxActive: number; maxQueued: number;
     minUpdateIntervalHours: number; activeWindowDays: number; now: string;
-  }): Promise<'queued' | 'deferred' | 'up_to_date'>;
+  }): Promise<BackgroundAdmission>;
+  /** Records one background scheduler pass; stores without a database keep none. */
+  recordBackgroundRun(run: { startedAt: string; finishedAt: string; outcome: unknown; error: string | null }): Promise<void>;
   listRepositoryUpdateProjects(updateId: string): Promise<Project[]>;
   publishRepositoryUpdate(input: RepositoryUpdatePublication & { fence?: AnalysisLeaseFence }): Promise<string[]>;
   failRepositoryUpdate(updateId: string, error: string, fence?: AnalysisLeaseFence): Promise<string[]>;

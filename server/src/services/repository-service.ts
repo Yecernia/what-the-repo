@@ -45,7 +45,7 @@ import {
 import type { TaskQueue } from "../queue/task-queue.js";
 import type { ServerConfig } from "../config.js";
 import { applyOwnedSnapshotLanguageOverlay, asSnapshotLanguageOverlayPayload } from "../domain/snapshot-language.js";
-import type { RepositoryIdentityInput } from "../persistence/store.js";
+import type { BackgroundAdmission, RepositoryIdentityInput } from "../persistence/store.js";
 import type { RepositoryHead, RepositoryUpdate, RepositoryViewStatus } from "../domain/lifecycle.js";
 import { repositoryIdentityOf, resolveSnapshotView, snapshotExpired } from "./snapshot-view.js";
 import { ensureLearningMigration, learningMigrationStatus } from "./learning-migration.js";
@@ -687,14 +687,14 @@ export class RepositoryService {
 
   async requestBackgroundRepositoryUpdate(input: {
     identity: RepositoryIdentityInput; projectId: string; targetCommitSha: string;
-  }): Promise<'queued' | 'deferred' | 'up_to_date'> {
+  }): Promise<BackgroundAdmission> {
     const project = await this.store.loadProject(input.projectId);
-    if (!project || project.source.kind !== 'github') return 'deferred';
+    if (!project || project.source.kind !== 'github') return 'deferred:unavailable';
     const parsed = parseGithubRepository(project.source.value);
-    if (`${parsed.owner}/${parsed.repo}`.toLowerCase() !== input.identity.repository.toLowerCase()) return 'deferred';
+    if (`${parsed.owner}/${parsed.repo}`.toLowerCase() !== input.identity.repository.toLowerCase()) return 'deferred:unavailable';
     const config = this.options.config;
     // Money limits are admin budgets, checked atomically by the store.
-    if (!config?.repositoryBackgroundRefreshEnabled) return 'deferred';
+    if (!config?.repositoryBackgroundRefreshEnabled) return 'deferred:disabled';
     const job = newAnalysisJob(project.project_id,
       `background:${input.identity.repository}:${input.targetCommitSha}:${Date.now()}`);
     job.execution_role = 'background';

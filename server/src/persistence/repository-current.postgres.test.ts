@@ -79,11 +79,11 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
         maxStartsPerDay: 2, maxActive: 1, maxQueued: 4, minUpdateIntervalHours: 24, activeWindowDays: 7 };
       const now = new Date().toISOString();
       assert.equal(await store.createBackgroundRepositoryUpdate({ ...background,
-        job: newAnalysisJob(reader.project_id, 'background:idle'), now }), 'deferred', 'an unused repository is not refreshed');
+        job: newAnalysisJob(reader.project_id, 'background:idle'), now }), 'deferred:inactive', 'an unused repository is not refreshed');
       await store.touchRepositoryRealUse(repository, now, 15);
-      // Default admin budgets keep background work off: no daily amount, no per-update cap.
+      // Default admin budgets keep background work off: the daily amount is 0.
       assert.equal(await store.createBackgroundRepositoryUpdate({ ...background,
-        job: newAnalysisJob(reader.project_id, 'background:unbudgeted'), now }), 'deferred');
+        job: newAnalysisJob(reader.project_id, 'background:unbudgeted'), now }), 'deferred:budget_off');
       await store.pool.query(`INSERT INTO admin_documents(key, value) VALUES ('budgets', $1::jsonb)`,
         [JSON.stringify({ analysis_daily: 5, chat_daily: 5, evolution_task: 1, evolution_daily: 5,
           repository_update: 4, repository_background_daily: 10 })]);
@@ -91,8 +91,8 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
         job: newAnalysisJob(reader.project_id, 'background:first'), now }), 'queued');
       const active = await store.loadActiveRepositoryUpdate(repository);
       assert.equal(active?.trigger, 'background');
-      assert.equal(await store.createBackgroundRepositoryUpdate({ ...background,
-        job: newAnalysisJob(reader.project_id, 'background:second'), now }), 'deferred', 'one active update per repository');
+      assert.equal(await store.createBackgroundRepositoryUpdate({ ...background, minUpdateIntervalHours: 0,
+        job: newAnalysisJob(reader.project_id, 'background:second'), now }), 'deferred:active_update', 'one active update per repository');
       const usage = await store.pool.query('SELECT starts, reserved_usd::float AS reserved FROM repository_background_daily_usage');
       assert.deepEqual(usage.rows, [{ starts: 1, reserved: 4 }]);
       // A user request joins the running background update instead of queueing another version.
@@ -115,6 +115,32 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
       await store.failRepositoryUpdate(active!.update_id, 'repeat');
       assert.deepEqual((await store.pool.query(`SELECT spent_usd::float AS spent FROM repository_background_daily_usage`)).rows,
         [{ spent: 0.75 }], 'settlement happens once');
+      // A failed target is not retried; a new upstream commit is. An uncapped update reserves nothing, starts while the daily amount is not
+      // used up, and still settles once at actual cost.
+      await store.pool.query(`UPDATE admin_documents SET value=$1::jsonb WHERE key='budgets'`,
+        [JSON.stringify({ analysis_daily: 5, chat_daily: 5, evolution_task: 1, evolution_daily: 5,
+          repository_update: null, repository_background_daily: 10 })]);
+      assert.equal(await store.createBackgroundRepositoryUpdate({ ...background, minUpdateIntervalHours: 0, targetCommitSha: 'e'.repeat(40),
+        job: newAnalysisJob(reader.project_id, 'background:uncapped'), now }), 'queued');
+      const uncapped = await store.loadActiveRepositoryUpdate(repository);
+      assert.deepEqual((await store.pool.query(`SELECT starts, reserved_usd::float AS reserved
+        FROM repository_background_daily_usage`)).rows, [{ starts: 2, reserved: 0 }]);
+      const uncappedJob = await store.pool.query<{ job_id: string }>(
+        "SELECT job_id FROM analysis_jobs WHERE repository_update_id=$1", [uncapped!.update_id]);
+      await store.pool.query(`INSERT INTO provider_usage_events(event_id, owner_id, provider, model, started_at, status,
+          reserved_cost_usd, cost_usd, input_tokens, output_tokens, cached_tokens, cache_write_tokens, business, payer, task_id)
+        VALUES ('usage-2', 'system:repository-analysis', 'test', 'test', clock_timestamp(), 'completed', 0.1, 0.5, 1, 1, 0, 0,
+          'analysis', 'platform', $1)`, [uncappedJob.rows[0]!.job_id]);
+      await store.failRepositoryUpdate(uncapped!.update_id, 'test failure');
+      await store.failRepositoryUpdate(uncapped!.update_id, 'repeat');
+      assert.deepEqual((await store.pool.query(`SELECT reserved_usd::float AS reserved, spent_usd::float AS spent
+        FROM repository_background_daily_usage`)).rows, [{ reserved: 0, spent: 1.25 }]);
+      assert.equal(await store.createBackgroundRepositoryUpdate({ ...background, minUpdateIntervalHours: 0, targetCommitSha: 'f'.repeat(40),
+        job: newAnalysisJob(reader.project_id, 'background:third'), now }), 'deferred:daily_starts');
+      // Scheduler passes are kept for the admin console.
+      await store.recordBackgroundRun({ startedAt: now, finishedAt: now, outcome: { examined: 1 }, error: null });
+      assert.deepEqual((await store.pool.query('SELECT outcome, error FROM repository_background_runs')).rows,
+        [{ outcome: { examined: 1 }, error: null }]);
     } finally { await store.close(); await rm(root, { recursive: true, force: true }); }
   });
 

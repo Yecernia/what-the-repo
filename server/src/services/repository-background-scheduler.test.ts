@@ -40,10 +40,43 @@ test('background refresh requires real recent use and a fresh confirmed change',
     }),
     requestUpdate: async input => { requested.push(input.identity.repository); return 'queued'; },
   });
-  assert.deepEqual(await task(), {
-    examined: 2, checked: 1, queued: 1, deferred: 0, failedChecks: 0,
+  const outcome = await task();
+  assert.deepEqual({ ...outcome, decisions: undefined }, {
+    examined: 2, checked: 1, queued: 1, deferred: 0, failedChecks: 0, decisions: undefined,
   });
+  assert.deepEqual(outcome.decisions.map(row => [row.repository, row.decision]).sort(),
+    [['old/repo', 'inactive'], ['owner/repo', 'queued']]);
   assert.deepEqual(requested, ['owner/repo']);
+});
+
+test('every examined repository records why it did or did not start', async () => {
+  const freshSnapshot = new Date(now - 86400_000).toISOString();
+  const task = createRepositoryBackgroundRefreshTask(config(), {
+    now: () => now,
+    listCandidates: async () => [
+      candidate({ repository: 'few/commits', publishedAt: freshSnapshot }),
+      candidate({ repository: 'recent/start', lastBackgroundStartedAt: new Date(now - 3600_000).toISOString() }),
+      candidate({ repository: 'no/budget' }),
+      candidate({ repository: 'broken/check' }),
+      candidate({ repository: 'same/head' }),
+    ],
+    checkFreshness: async identity => {
+      if (identity.repository === 'broken/check') throw new Error('gateway down');
+      return { baseSnapshotId: 'snapshot-id',
+        upstreamCommitSha: identity.repository === 'same/head' ? sha('a') : sha('b'),
+        behindCommits: 3, relation: identity.repository === 'same/head' ? 'same' : 'ahead',
+        checkedAt: new Date(now).toISOString() };
+    },
+    requestUpdate: async () => 'deferred:daily_budget',
+  });
+  const outcome = await task();
+  assert.deepEqual(outcome.decisions.map(row => [row.repository, row.decision]).sort(), [
+    ['broken/check', 'check_failed'], ['few/commits', 'below_threshold'],
+    ['no/budget', 'deferred:daily_budget'], ['recent/start', 'interval'], ['same/head', 'same'],
+  ]);
+  assert.equal(outcome.deferred, 1);
+  assert.equal(outcome.failedChecks, 1);
+  assert.equal(outcome.decisions.find(row => row.repository === 'few/commits')?.behindCommits, 3);
 });
 
 test('background refresh does not pay for same, unknown or stale comparisons', async () => {
@@ -56,7 +89,9 @@ test('background refresh does not pay for same, unknown or stale comparisons', a
     }),
     requestUpdate: async () => { calls++; return 'queued'; },
   });
-  assert.equal((await task()).queued, 0);
+  const outcome = await task();
+  assert.equal(outcome.queued, 0);
+  assert.deepEqual(outcome.decisions.map(row => row.decision), ['unknown_relation']);
   assert.equal(calls, 0);
   const disabled = createRepositoryBackgroundRefreshTask(config({ repositoryBackgroundRefreshEnabled: false }), {
     now: () => now, listCandidates: async () => { throw new Error('must stay idle'); },
