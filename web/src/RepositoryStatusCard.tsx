@@ -5,13 +5,21 @@ import { freshnessText, relativeAge } from './repository-freshness';
 
 export type RepositoryUpdateNotice = { kind: 'up_to_date' | 'joined' | 'queued' | 'deferred'; retryAfter: string | null } | null;
 
-export function RepositoryStatusCard({ status, refreshPending, updatePending, notice, onRefresh, onUpdate }: {
+const REVIEW_REASONS: Record<string, string> = {
+  changed: '相关代码已变化', deleted: '相关文件已删除', missing: '原来的证据已不存在', unknown: '无法确认相关代码是否变化',
+};
+
+export function RepositoryStatusCard({ status, refreshPending, updatePending, notice, onRefresh, onUpdate,
+  reviewPending = null, onResolveReview }: {
   status: RepositoryViewStatus;
   refreshPending: boolean;
   updatePending: boolean;
   notice: RepositoryUpdateNotice;
   onRefresh: () => void;
   onUpdate: () => void;
+  /** Step being resolved, so its buttons stay disabled until the answer arrives. */
+  reviewPending?: string | null;
+  onResolveReview?: (stepId: string, action: 'relearn' | 'skip') => void;
 }) {
   const update = status.update;
   const active = Boolean(update && (update.status === 'queued' || update.status === 'running'));
@@ -52,6 +60,28 @@ export function RepositoryStatusCard({ status, refreshPending, updatePending, no
         <p>{t('{0} 后可以再次更新', new Date(retryAfter).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</p>
       )}
       {status.view_expired && <p>{t('旧版本已超过保留期，请刷新查看当前版本。')}</p>}
+      {!status.refresh_required && status.migration.status === 'needs_review' && status.migration.items?.length ? (
+        <div className="learning-review">
+          <p>{t('仓库更新后，{0} 个已学习的步骤需要你决定重学还是跳过：', status.migration.changed_items)}</p>
+          <ul>
+            {status.migration.items.map(item => (
+              <li key={item.step_id}>
+                <span><strong>{item.title}</strong> · {t(REVIEW_REASONS[item.reason] ?? REVIEW_REASONS.unknown)}
+                  {item.previously === 'skipped' ? ` · ${t('此前已跳过')}` : ''}</span>
+                <span className="learning-review-actions">
+                  <button className="btn" type="button" disabled={reviewPending === item.step_id}
+                    onClick={() => onResolveReview?.(item.step_id, 'relearn')}>{t('重学')}</button>
+                  <button className="btn" type="button" disabled={reviewPending === item.step_id}
+                    onClick={() => onResolveReview?.(item.step_id, 'skip')}>{t('跳过')}</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {!status.refresh_required && (status.migration.marked_steps ?? 0) > 0 && (
+        <p>{t('路线中还有 {0} 个未学的步骤相关代码已变化，学到时会按新代码讲解。', status.migration.marked_steps ?? 0)}</p>
+      )}
     </div>
   );
 }

@@ -46,9 +46,11 @@ import { createLspRunner, type LspRunner } from "./lsp.js";
 import {
   type LspRunResult,
   type ParsedFile,
+  type SourceFileManifest,
   unavailableLspResult,
 } from "./facts.js";
 import {
+  classifyFileChanges,
   buildFullPlan,
   buildIncrementalPlan,
   createAnalysisCache,
@@ -1022,13 +1024,27 @@ export class AnalysisCoordinator {
       }
       if (!(await refreshLease())) throw new Error("analysis_lease_lost");
       signal.throwIfAborted();
+      let redirectBase = checkpoint?.checkpoint.from_public_key ?? (typeof previous?.metadata.public_snapshot_key === "string"
+        ? previous.metadata.public_snapshot_key
+        : null);
+      let previousFiles: SourceFileManifest[] | null = null;
+      if (plan.mode !== "incremental" && job.repository_update_id) {
+        // A full rebuild (new analyzer/config or no reusable base) still maps
+        // the repository's current version so learning progress can migrate.
+        const current = await this.store.loadCurrentRepositoryHead(repository).catch(() => null);
+        const currentKey = current?.current_public_snapshot_key ?? null;
+        if (currentKey && currentKey !== publicKey) {
+          redirectBase = currentKey;
+          previousFiles = await this.store.listPublicSourceFiles(currentKey).catch(() => null);
+        }
+      }
       const redirects = revisionRedirects({
         repository,
-        fromPublicKey: checkpoint?.checkpoint.from_public_key ?? (typeof previous?.metadata.public_snapshot_key === "string"
-          ? previous.metadata.public_snapshot_key
-          : null),
+        fromPublicKey: redirectBase,
         toPublicKey: publicKey,
         plan,
+        previousFiles,
+        currentFiles: fetched.manifest,
       });
       // The provider result is the boundary between expensive LLM work and
       // deterministic assembly. Persist it before provenance/validation so a
@@ -1629,8 +1645,18 @@ function revisionRedirects(input: {
   fromPublicKey: string | null;
   toPublicKey: string;
   plan: IncrementalPlan;
+  /** Full rebuilds compare against the previous current version's source list. */
+  previousFiles?: SourceFileManifest[] | null;
+  currentFiles?: SourceFileManifest[];
 }): RevisionRedirect[] {
-  if (!input.fromPublicKey || input.fromPublicKey === input.toPublicKey || input.plan.mode !== "incremental") return [];
+  if (!input.fromPublicKey || input.fromPublicKey === input.toPublicKey) return [];
+  if (input.plan.mode !== "incremental") {
+    if (!input.previousFiles || !input.currentFiles) return [];
+    const changes = classifyFileChanges(input.previousFiles, input.currentFiles);
+    const changed = new Set(changes.flatMap((change) => [change.path, change.renamed_from ?? ""]));
+    return revisionRedirects({ ...input, previousFiles: null, plan: { ...input.plan, mode: "incremental", changes,
+      reusedPaths: input.previousFiles.map((file) => file.path).filter((path) => !changed.has(path)) } });
+  }
   const createdAt = nowIso();
   const unchanged = input.plan.reusedPaths.map((path): RevisionRedirect => ({
     repository_identity: input.repository.toLowerCase(),
@@ -1668,13 +1694,14 @@ function revisionRedirects(input: {
         created_at: createdAt,
       }];
     }
+    // Same path, different content: learning progress built on it needs review.
     return [{
       repository_identity: input.repository.toLowerCase(),
       from_public_snapshot_key: input.fromPublicKey as string,
       to_public_snapshot_key: input.toPublicKey,
       old_path: change.path,
       old_stable_id: null,
-      kind: "unchanged",
+      kind: "modified",
       candidates: [{ path: change.path, stable_id: null, confidence: 1 }],
       created_at: createdAt,
     }];

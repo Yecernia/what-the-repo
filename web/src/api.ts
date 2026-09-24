@@ -359,6 +359,11 @@ export const apiClient = {
   requestRepositoryUpdate: (id: string) => api<import('./types').RepositoryUpdateResult>(
     `/api/projects/${id}/repository-update`, { method: 'POST' },
   ),
+  resolveLearningReview: (id: string, migrationId: string, stepId: string, action: 'relearn' | 'skip') =>
+    api<{ study: import('./types').Project['study']; migration: import('./types').RepositoryViewStatus['migration'] }>(
+      `/api/projects/${id}/learning-migrations/${encodeURIComponent(migrationId)}/resolve`,
+      { method: 'POST', body: JSON.stringify({ step_id: stepId, action }) },
+    ),
   renameProject: (id: string, title: string) =>
     api<import('./types').ProjectSummary>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteProject: (id: string) => api<void>(`/api/projects/${id}`, { method: 'DELETE' }),

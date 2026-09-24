@@ -663,6 +663,13 @@ export function createConversationTools(
           route_changes_require_confirmation: true,
           current_step: current,
           current_step_evidence: evidence,
+          // After a repository update: steps whose code changed. Re-verify them
+          // against current evidence; never claim an earlier explanation still holds.
+          code_changed_steps: context.project.study.migration?.to_snapshot_id === context.project.analysis.snapshot_id
+            ? context.project.study.migration.items.map((item) => ({ step_id: item.step_id, title: item.title,
+              reason: item.reason, paths: item.paths, previously: item.previously,
+              awaiting_learner_decision: item.needs_decision && !item.resolution, resolution: item.resolution }))
+            : [],
         },
         { evidence_ids: evidence.map((row) => row.stable_id) },
       );

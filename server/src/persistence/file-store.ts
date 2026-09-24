@@ -1151,6 +1151,27 @@ export class FileStore implements ProductStore {
       .sort((left, right) => left.created_at.localeCompare(right.created_at))[0] ?? null;
   }
 
+  async listPublicSourceFiles(publicKey: string): Promise<Array<{ path: string; bytes: number; digest: string }> | null> {
+    const metadata = await this.loadPublicSnapshotMetadata(publicKey);
+    if (!metadata || metadata.payload_purged_at) return null;
+    const root = this.publicSourceSnapshotRoot(safePublicKey(publicKey), metadata.analysis_snapshot_id);
+    const { readdir } = await import("node:fs/promises");
+    const files: Array<{ path: string; bytes: number; digest: string }> = [];
+    const visit = async (directory: string, relative: string): Promise<void> => {
+      for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+        if (entry.name === ".snapshot-meta.json") continue;
+        const child = relative ? `${relative}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) await visit(join(directory, entry.name), child);
+        else if (entry.isFile()) {
+          const body = await readFile(join(directory, entry.name));
+          files.push({ path: child, bytes: body.byteLength, digest: createHash("sha256").update(body).digest("hex") });
+        }
+      }
+    };
+    await visit(root, "");
+    return files.length ? files.sort((left, right) => left.path.localeCompare(right.path)) : null;
+  }
+
   async acquireSnapshotReadLease(publicKey: string, _maxMinutes: number): Promise<string | null> {
     // A single process cannot purge concurrently with its own request.
     const metadata = await this.loadPublicSnapshotMetadata(publicKey);

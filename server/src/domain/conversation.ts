@@ -189,6 +189,30 @@ export interface StudyState {
   used_evidence: string[];
   /** User-specific route generated only after an explicit learning request. */
   dynamic_learning_plan?: SnapshotLearningStep[];
+  /** Repository version the route and its progress were recorded against. */
+  snapshot_id?: string | null;
+  /** Latest deterministic carry-over of the route to a newer version. */
+  migration?: StudyMigration | null;
+}
+
+export interface LearningReviewItem {
+  step_id: string;
+  title: string;
+  /** changed: file content differs; deleted: file removed; missing: evidence gone; unknown: no reliable mapping. */
+  reason: "changed" | "deleted" | "missing" | "unknown";
+  paths: string[];
+  previously: "completed" | "skipped" | "pending";
+  /** Completed or skipped steps wait for the learner; unfinished ones are only marked. */
+  needs_decision: boolean;
+  resolution: "relearn" | "skip" | null;
+}
+
+export interface StudyMigration {
+  migration_id: string;
+  from_snapshot_id: string;
+  to_snapshot_id: string;
+  created_at: string;
+  items: LearningReviewItem[];
 }
 
 export interface Project {

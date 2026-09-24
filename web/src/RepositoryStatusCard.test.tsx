@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { RepositoryStatusCard } from './RepositoryStatusCard';
 import { freshnessText, relativeAge } from './repository-freshness';
 import type { RepositoryViewStatus } from './types';
@@ -84,5 +84,19 @@ describe('RepositoryStatusCard', () => {
       updatePending={false} notice={null} onRefresh={noop} onUpdate={noop} />);
     expect(screen.getByRole('button', { name: '更新' })).toBeDisabled();
     expect(screen.getByText(/后可以再次更新/)).toBeVisible();
+  });
+
+  it('lists learned steps whose code changed and sends the learner decision', () => {
+    const decisions: string[] = [];
+    render(<RepositoryStatusCard status={{ ...base, migration: { status: 'needs_review', changed_items: 1, migration_id: 'm1',
+      items: [{ step_id: 'step-1', title: '路由分发', reason: 'changed', paths: ['src/router.ts'], previously: 'completed' }],
+      marked_steps: 2 } }} refreshPending={false} updatePending={false} notice={null} onRefresh={noop} onUpdate={noop}
+      onResolveReview={(stepId, action) => decisions.push(`${stepId}:${action}`)} />);
+    expect(screen.getByText('路由分发')).toBeVisible();
+    expect(screen.getByText('路由分发').closest('li')).toHaveTextContent('相关代码已变化');
+    expect(screen.getByText(/2 个未学的步骤/)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: '重学' }));
+    fireEvent.click(screen.getByRole('button', { name: '跳过' }));
+    expect(decisions).toEqual(['step-1:relearn', 'step-1:skip']);
   });
 });

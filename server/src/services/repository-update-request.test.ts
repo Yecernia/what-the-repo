@@ -29,6 +29,8 @@ function updateStore(project: ReturnType<typeof readableProject>, latest: Reposi
   const calls = { freshness: 0, created: 0 };
   const store = {
     loadProject: async () => project,
+    // Reading the current version records the learning route's version once.
+    updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); return project; },
     latestJob: async () => null,
     loadActiveRepositoryUpdate: async () => null,
     loadLatestRepositoryUpdate: async () => latest,

@@ -54,6 +54,7 @@ import type { AnalysisCoordinator } from "../analysis/coordinator.js";
 import { ConversationService } from "../services/conversation-service.js";
 import { DEFAULT_CHAT_MAX_ROUNDS, DEFAULT_CHAT_MAX_CONTENT_BYTES } from '../services/chat-history-limits.js';
 import { RepositoryService } from "../services/repository-service.js";
+import { learningMigrationStatus, resolveLearningReview } from "../services/learning-migration.js";
 import { ProductServiceError } from "../services/errors.js";
 import { registerMcpRoutes } from "../mcp/server.js";
 import { configureProductSkillRegistry } from "../agent/skill-registry.js";
@@ -1330,6 +1331,17 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const { projectId } = request.params as { projectId: string };
     const { view_snapshot_id: viewSnapshotId } = request.query as { view_snapshot_id?: string };
     return repository.getRepositoryStatus(owner.owner_id, projectId, viewSnapshotId);
+  });
+  app.post("/api/projects/:projectId/learning-migrations/:migrationId/resolve", async (request: RequestWithBody) => {
+    const owner = await requiredOwner(request, store, config);
+    const { projectId, migrationId } = request.params as { projectId: string; migrationId: string };
+    const body = objectBody(request);
+    const action = body.action;
+    if (action !== "relearn" && action !== "skip") throw httpError(400, "学习项处理方式无效");
+    const stepId = textField(body, "step_id", 200, true);
+    const project = await resolveLearningReview(store, { ownerId: owner.owner_id, projectId, migrationId, stepId, action });
+    return { study: sanitizeProjectForResponse(project).study,
+      migration: learningMigrationStatus(project) };
   });
   app.post("/api/projects/:projectId/repository-update", async (request) => {
     const owner = await requiredOwner(request, store, config);

@@ -259,6 +259,8 @@ export interface ProductStore {
   loadLatestRepositoryUpdate(repository: string): Promise<RepositoryUpdate | null>;
   /** Public key of a readable older version of the project's repository; null for the current binding. */
   historicalPublicKey(projectId: string, snapshotId: string): Promise<string | null>;
+  /** Paths and content digests of a published version, or null without a source list. */
+  listPublicSourceFiles(publicKey: string): Promise<Array<{ path: string; bytes: number; digest: string }> | null>;
   /**
    * Protects a version from cleanup while one request reads it. Returns null
    * when the version is already outside its grace period or purged.

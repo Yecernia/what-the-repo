@@ -48,6 +48,7 @@ import { applyOwnedSnapshotLanguageOverlay, asSnapshotLanguageOverlayPayload } f
 import type { RepositoryIdentityInput } from "../persistence/store.js";
 import type { RepositoryHead, RepositoryUpdate, RepositoryViewStatus } from "../domain/lifecycle.js";
 import { repositoryIdentityOf, resolveSnapshotView, snapshotExpired } from "./snapshot-view.js";
+import { ensureLearningMigration, learningMigrationStatus } from "./learning-migration.js";
 
 const DEFAULT_HEAD_FRESHNESS_MS = 60 * 60 * 1000;
 
@@ -398,7 +399,10 @@ export class RepositoryService {
   async resolveProjectView(ownerId: string, projectId: string, viewSnapshotId?: string | null): Promise<{
     project: Project; historical: boolean;
   }> {
-    return resolveSnapshotView(this.store, await this.requireProject(ownerId, projectId), viewSnapshotId);
+    const project = await this.requireProject(ownerId, projectId);
+    const view = await resolveSnapshotView(this.store, project, viewSnapshotId);
+    // Reading the current version carries the personal route over once.
+    return view.historical ? view : { project: await ensureLearningMigration(this.store, project), historical: false };
   }
 
   async getProjectView(ownerId: string, projectId: string, viewSnapshotId?: string | null): Promise<Project> {
@@ -467,7 +471,7 @@ export class RepositoryService {
   }
 
   async getRepositoryStatus(ownerId: string, projectId: string, viewSnapshotId?: string | null): Promise<RepositoryViewStatus> {
-    const project = await this.requireProject(ownerId, projectId);
+    const project = await ensureLearningMigration(this.store, await this.requireProject(ownerId, projectId));
     if (project.source.kind !== "github") throw serviceError("invalid_request", "只有 GitHub 仓库有版本状态", 400);
     const repository = repositoryIdentityOf(project);
     const [head, latest] = await Promise.all([
@@ -544,7 +548,7 @@ export class RepositoryService {
         ? { allowed: true, reason: "join_running", retry_after: null }
         : cooldown ? { allowed: false, reason: "cooldown", retry_after: cooldown }
         : { allowed: Boolean(currentMeta), reason: currentMeta ? null : "snapshot_unavailable", retry_after: null },
-      migration: { status: "not_needed", changed_items: 0 },
+      migration: learningMigrationStatus(project),
     };
   }
 

@@ -86,6 +86,8 @@ export function applyCompletedLearningRoute(
     ? action.target.stable_id
     : null;
   project.study.dynamic_learning_plan = structuredClone(steps);
+  project.study.snapshot_id = project.analysis.snapshot_id;
+  project.study.migration = null;
   project.study.phase = "explaining";
   project.study.current_step = 0;
   project.study.total_steps = steps.length;
@@ -108,6 +110,7 @@ export function applyConfirmedLearningAction(project: Project, action: LearningA
     project.study.open_questions = [];
     project.study.used_evidence = [];
     project.study.dynamic_learning_plan = [];
+    project.study.migration = null;
     return;
   }
   if (action.action !== "advance_learning_step") {

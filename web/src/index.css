@@ -562,6 +562,9 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .repository-status-row strong { font-weight: 600; }
 .repository-status-card p { margin: 0; color: var(--fg-muted); line-height: 1.5; }
 .repository-status-card > .btn { justify-self: start; }
+.learning-review ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.learning-review li { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+.learning-review-actions { display: inline-flex; gap: 6px; }
 /* Composer — floating rounded surface, the hero control of the chat */
 .composer-wrap {
   padding: 10px 22px 20px; border: 0; background: var(--chat-bg);

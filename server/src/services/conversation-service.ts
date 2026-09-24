@@ -72,6 +72,7 @@ import type { ProductStore } from "../persistence/store.js";
 import type { TaskQueue } from "../queue/task-queue.js";
 import { serviceError } from "./errors.js";
 import { resolveSnapshotView } from "./snapshot-view.js";
+import { ensureLearningMigration } from "./learning-migration.js";
 import { defaultRuntimeMetrics, type RuntimeMetrics } from "../observability/metrics.js";
 import { measureEvidenceQuality } from "../domain/evidence-quality.js";
 
@@ -394,7 +395,9 @@ export class ConversationService {
     if(loaded.analysis.removed_by_admin) throw serviceError('snapshot_unavailable','此仓库的分析资料已由管理员清理，请重新分析后继续对话。',409);
     // Only analysis/source fields differ in a pinned view; history and study
     // are merged into the current row when the turn is saved.
-    const { project } = await resolveSnapshotView(this.store, loaded, input.viewSnapshotId);
+    const view = await resolveSnapshotView(this.store, loaded, input.viewSnapshotId);
+    // A turn on the current version first carries the route over to it.
+    const project = view.historical ? view.project : await ensureLearningMigration(this.store, loaded);
     const leasedKey = project.analysis.canonical_snapshot_key;
     if (leasedKey) {
       snapshotLease = await this.store.acquireSnapshotReadLease(leasedKey, this.config.repositoryReadLeaseMaxMinutes ?? 30);

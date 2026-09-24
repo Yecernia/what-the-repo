@@ -1848,6 +1848,15 @@ export class PostgresStore extends FileStore {
     return result.rows[0] ? repositoryUpdateFromRow(result.rows[0]) : null;
   }
 
+  override async listPublicSourceFiles(publicKey: string): Promise<Array<{ path: string; bytes: number; digest: string }> | null> {
+    const metadata = await this.loadPublicSnapshotMetadata(publicKey);
+    if (!metadata || metadata.payload_purged_at) return null;
+    const source = await this.publicSourceManifest(publicKey, metadata.analysis_snapshot_id).catch(() => null);
+    // The manifest records each file's content sha256, the same digest the fetcher uses.
+    return source ? source.manifest.files.map((file) => ({ path: file.path, bytes: file.bytes, digest: file.sha256 }))
+      : super.listPublicSourceFiles(publicKey);
+  }
+
   override async acquireSnapshotReadLease(publicKey: string, maxMinutes: number): Promise<string | null> {
     const minutes = Math.max(1, Math.min(30, Math.floor(maxMinutes)));
     const leaseId = randomUUID().replaceAll('-', '');

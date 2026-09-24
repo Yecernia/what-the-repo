@@ -2053,6 +2053,7 @@ export default function App() {
   const [repositoryUpdateNotice, setRepositoryUpdateNotice] = useState<{ projectId: string; value: RepositoryUpdateNotice } | null>(null);
   // Restarts status polling at the fast interval after this page joins an update.
   const [repositoryPollNonce, setRepositoryPollNonce] = useState(0);
+  const [learningReviewPending, setLearningReviewPending] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [input, setInput] = useState('');
@@ -3066,6 +3067,30 @@ export default function App() {
     }
   }
 
+  async function resolveLearningReview(stepId: string, action: 'relearn' | 'skip') {
+    const migrationId = visibleRepositoryStatus?.migration.migration_id;
+    if (!activeId || !migrationId || learningReviewPending) return;
+    const projectId = activeId;
+    const projectEpoch = projectEpochRef.current;
+    setLearningReviewPending(stepId);
+    try {
+      const result = await apiClient.resolveLearningReview(projectId, migrationId, stepId, action);
+      if (activeIdRef.current !== projectId || projectEpochRef.current !== projectEpoch) return;
+      setProject(current => {
+        if (current?.project_id !== projectId) return current;
+        const next = { ...current, study: result.study };
+        projectCacheRef.current.set(projectId, next);
+        return next;
+      });
+      setRepositoryStatus(current => current?.projectId === projectId
+        ? { ...current, value: { ...current.value, migration: result.migration } } : current);
+    } catch (error: unknown) {
+      if (activeIdRef.current === projectId) setLoadError(userFacingError(error, t('学习项暂时无法处理，请稍后重试。')));
+    } finally {
+      if (activeIdRef.current === projectId) setLearningReviewPending(null);
+    }
+  }
+
   const refreshRepositoryView = useCallback(async (projectId: string) => {
     const projectEpoch = projectEpochRef.current;
     const requestId = ++loadRequestRef.current;
@@ -3577,7 +3602,9 @@ export default function App() {
                     updatePending={repositoryUpdatePending}
                     notice={repositoryUpdateNotice?.projectId === activeId ? repositoryUpdateNotice.value : null}
                     onRefresh={requestRepositoryRefresh}
-                    onUpdate={() => { void requestRepositoryUpdate(); }} />
+                    onUpdate={() => { void requestRepositoryUpdate(); }}
+                    reviewPending={learningReviewPending}
+                    onResolveReview={(stepId, action) => { void resolveLearningReview(stepId, action); }} />
                 )}
                 {project.messages.length === 0 && (
                   <div className="chat-empty">

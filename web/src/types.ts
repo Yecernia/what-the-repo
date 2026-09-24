@@ -269,7 +269,14 @@ export interface RepositoryViewStatus {
     retryable: boolean;
   } | null;
   update_eligibility: { allowed: boolean; reason: string | null; retry_after: string | null };
-  migration: { status: 'not_needed' | 'pending' | 'ready' | 'needs_review' | 'failed'; changed_items: number };
+  migration: {
+    status: 'not_needed' | 'pending' | 'ready' | 'needs_review';
+    changed_items: number;
+    migration_id?: string;
+    items?: Array<{ step_id: string; title: string; reason: 'changed' | 'deleted' | 'missing' | 'unknown';
+      paths: string[]; previously: 'completed' | 'skipped' | 'pending' }>;
+    marked_steps?: number;
+  };
 }
 
 export interface RepositoryUpdateResult {

@@ -57,7 +57,8 @@ export function snapshotLanguageOverlayKey(publicKey: string, language: string):
   return `${publicKey.toLowerCase()}:${language.trim().toLowerCase()}`;
 }
 
-export type RevisionRedirectKind = "unchanged" | "renamed" | "deleted" | "split" | "merged" | "unknown";
+/** "unchanged" and "renamed" keep file content; "modified" keeps the path but not the content. */
+export type RevisionRedirectKind = "unchanged" | "renamed" | "modified" | "deleted" | "split" | "merged" | "unknown";
 
 export interface RevisionRedirectCandidate {
   path: string;
@@ -207,10 +208,12 @@ function composeRevisionRedirect(input: {
   history: RevisionRedirect[];
   terminal: RevisionRedirectKind | null;
 }): RevisionRedirect {
+  // A change anywhere in the chain stays visible: A→B modified, B→C unchanged is modified.
   const kind = state.terminal
     ?? (state.history.some((row) => row.kind === "split") ? "split"
       : state.history.some((row) => row.kind === "merged") ? "merged"
-        : state.path !== input.oldPath || state.history.some((row) => row.kind === "renamed") ? "renamed" : "unchanged");
+        : state.history.some((row) => row.kind === "modified") ? "modified"
+          : state.path !== input.oldPath || state.history.some((row) => row.kind === "renamed") ? "renamed" : "unchanged");
   return {
     repository_identity: state.history[0]?.repository_identity ?? "",
     from_public_snapshot_key: input.fromPublicKey,
@@ -317,5 +320,5 @@ export interface RepositoryViewStatus {
     retryable: boolean;
   } | null;
   update_eligibility: { allowed: boolean; reason: string | null; retry_after: string | null };
-  migration: { status: "not_needed" | "pending" | "ready" | "needs_review" | "failed"; changed_items: number };
+  migration: import("../services/learning-migration.js").LearningMigrationStatus;
 }
