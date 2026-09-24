@@ -63,6 +63,8 @@ import {
   assembleAnalysisPayload,
   assembleIncrementalBasePayload,
   visitAnalysisFactGraph,
+  visitAnalysisFactLineage,
+  readAnalysisFactRows,
   defaultAnalysisChunkKey,
   prepareStoredAnalysisPayload,
   mergePreparedAnalysisCache,
@@ -991,13 +993,26 @@ export class FileStore implements ProductStore {
       factGraphAvailable: base.fact_graph_available };
   }
 
-  async visitPublicSnapshotFactGraph(publicKey: string, visitor: {
-    node: (value: unknown) => void; edge: (value: unknown) => void;
-  }): Promise<void> {
+  async visitPublicSnapshotFactGraph(publicKey: string, visitor: import('./analysis-payload.js').AnalysisFactGraphVisitor): Promise<void> {
     const directory = join(this.dirs.publicSnapshots, safePublicKey(publicKey));
     const stored = await readJson<unknown>(join(directory, "analysis.json"));
     if (stored === null) throw new Error("public_snapshot_payload_missing");
     await visitAnalysisFactGraph(stored, chunk => this.readAnalysisChunk(directory, chunk), visitor);
+  }
+
+  async visitPublicSnapshotFactLineage(publicKey: string, visitor: import('./analysis-payload.js').AnalysisFactLineageVisitor): Promise<boolean> {
+    const directory = join(this.dirs.publicSnapshots, safePublicKey(publicKey));
+    const stored = await readJson<unknown>(join(directory, "analysis.json"));
+    if (stored === null) throw new Error("public_snapshot_payload_missing");
+    return visitAnalysisFactLineage(stored, chunk => this.readAnalysisChunk(directory, chunk), visitor);
+  }
+
+  async loadPublicSnapshotFactRows(publicKey: string, request: { nodes: readonly number[]; edges: readonly number[] },
+    options: { metrics?: import('./analysis-chunk-codec.js').AnalysisPayloadReadMetrics; signal?: AbortSignal } = {}) {
+    const directory = join(this.dirs.publicSnapshots, safePublicKey(publicKey));
+    const stored = await readJson<unknown>(join(directory, "analysis.json"));
+    if (stored === null) throw new Error("public_snapshot_payload_missing");
+    return readAnalysisFactRows(stored, chunk => this.readAnalysisChunk(directory, chunk), request, options);
   }
 
   /** Local file storage publishes by moving its source directory at final commit. */

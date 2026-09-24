@@ -1,3 +1,5 @@
+import { prepareStoredAnalysisPayload, readAnalysisFactRows, visitAnalysisFactGraph, visitAnalysisFactLineage } from '../persistence/analysis-payload.js';
+import { snapshotObjectDigest } from '../persistence/snapshot-object-store.js';
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ParsedFile, SourceFileManifest } from "./facts.js";
@@ -124,6 +126,13 @@ function compare(previousFiles: ParsedFile[], currentFiles: ParsedFile[], option
   for (const row of previous.fact_graph.nodes) selector.addNode(row);
   for (const row of previous.fact_graph.edges) selector.addEdge(row);
   const history = selector.finish();
+  const compactSelector = createIncrementalHistorySelector({
+    currentFactIds: { nodes: currentBase.fact_graph.nodes.map(row => row.id),
+      edges: currentBase.fact_graph.edges.map(row => row.id) }, plan, currentParsedFiles: currentFiles,
+  });
+  for (const row of previous.fact_graph.nodes) compactSelector.addNode(row);
+  for (const row of previous.fact_graph.edges) compactSelector.addEdge(row);
+  assert.deepEqual(compactSelector.finish(), history);
   assert.equal(history.nodePaths.size, previous.fact_graph.nodes.length);
   assert.ok(history.matchedNodes.every(row => Object.keys(row).every(key =>
     ["id", "revision_id", "first_seen_snapshot_id"].includes(key))));
@@ -136,7 +145,7 @@ function compare(previousFiles: ParsedFile[], currentFiles: ParsedFile[], option
   const actual = applyIncrementalProvenance({ snapshot: structuredClone(currentBase),
     previousFactGraph: history, plan, currentParsedFiles: currentFiles });
   assert.deepEqual(actual, expected);
-  return { plan, expected, history };
+  return { plan, expected, history, previous, currentBase, currentFiles };
 }
 
 function manifest(file: ParsedFile): SourceFileManifest {
@@ -147,3 +156,98 @@ function parsed(path: string, digest: string): ParsedFile {
   return { path, language: "typescript", bytes: 10, digest, symbols: [], imports: [], calls: [],
     parseError: null, semanticComplete: true };
 }
+
+test('compressed persisted history produces the same incremental graph, provenance and fingerprint', async () => {
+  const unchanged = Array.from({ length: 2200 }, (_, i) => parsed(`src/${i}.ts`, A));
+  const fixture = compare([...unchanged, parsed('modify.ts', A), parsed('deleted.ts', B), parsed('old-name.ts', C)],
+    [...unchanged, parsed('modify.ts', D), parsed('new-name.ts', C), parsed('new.ts', B)], { addInactiveEndpoint: true });
+  const bodies = new Map<string, Uint8Array>();
+  const prepared = await prepareStoredAnalysisPayload({ fact_graph: fixture.previous.fact_graph },
+    (path, index, sha) => `chunks/${path}-${index}-${sha}`, async (key, body) => {
+      bodies.set(key, body); return { key, bytes: body.byteLength, sha256: snapshotObjectDigest(body) };
+    });
+  assert.equal(prepared.envelope?.schema_version, 'analysis-payload-chunks-v2');
+  const selector = createIncrementalHistorySelector({ snapshot: fixture.currentBase, plan: fixture.plan,
+    currentParsedFiles: fixture.currentFiles });
+  await visitAnalysisFactGraph(prepared.value, async key => bodies.get(key) ?? null, {
+    node: row => selector.addNode(row as typeof fixture.previous.fact_graph.nodes[number]),
+    edge: row => selector.addEdge(row as typeof fixture.previous.fact_graph.edges[number]),
+  });
+  const actual = applyIncrementalProvenance({ snapshot: structuredClone(fixture.currentBase), previousFactGraph: selector.finish(),
+    plan: fixture.plan, currentParsedFiles: fixture.currentFiles });
+  // Both persisted representations omit undefined object properties: compare
+  // against the pre-existing raw JSON storage contract, not an in-memory clone.
+  const rawPersistedGraph = JSON.parse(JSON.stringify(fixture.previous.fact_graph));
+  const expected = applyIncrementalProvenance({ snapshot: structuredClone(fixture.currentBase),
+    previousFactGraph: rawPersistedGraph, plan: fixture.plan, currentParsedFiles: fixture.currentFiles });
+  assert.deepEqual(actual, expected);
+  assert.equal(actual.active_fact_fingerprint, fixture.expected.active_fact_fingerprint);
+});
+
+test('compact lineage selects the same history as a full graph scan and loads only tombstone chunks', async () => {
+  const unchanged = Array.from({ length: 4500 }, (_, i) => parsed(`src/${String(i).padStart(4, '0')}.ts`, A));
+  const fixture = compare([...unchanged, parsed('modify.ts', A), parsed('deleted.ts', B), parsed('old-name.ts', C)],
+    [...unchanged, parsed('modify.ts', D), parsed('new-name.ts', C), parsed('new.ts', B)], { addInactiveEndpoint: true });
+  const bodies = new Map<string, Uint8Array>();
+  const prepared = await prepareStoredAnalysisPayload({ fact_graph: fixture.previous.fact_graph },
+    (path, index, sha) => `chunks/${path}-${index}-${sha}`, async (key, body) => {
+      bodies.set(key, body); return { key, bytes: body.byteLength, sha256: snapshotObjectDigest(body) };
+    });
+  const lineageManifest = (prepared.envelope?.payload as { fact_lineage?: { nodes: unknown[] } }).fact_lineage;
+  assert.ok(lineageManifest && lineageManifest.nodes.length > 0);
+  const graphChunks = prepared.envelope!.chunks.filter(chunk => chunk.path === 'fact_graph.nodes').length;
+  assert.ok(graphChunks > 1);
+
+  const full = createIncrementalHistorySelector({ snapshot: fixture.currentBase, plan: fixture.plan,
+    currentParsedFiles: fixture.currentFiles });
+  await visitAnalysisFactGraph(prepared.value, async key => bodies.get(key) ?? null, {
+    node: row => full.addNode(row as typeof fixture.previous.fact_graph.nodes[number]),
+    edge: row => full.addEdge(row as typeof fixture.previous.fact_graph.edges[number]),
+  });
+  const expected = full.finish();
+
+  const loaded: string[] = [];
+  const load = async (key: string) => { loaded.push(key); return bodies.get(key) ?? null; };
+  const compact = createIncrementalHistorySelector({ currentFactIds: {
+    nodes: fixture.currentBase.fact_graph.nodes.map(row => row.id),
+    edges: fixture.currentBase.fact_graph.edges.map(row => row.id) }, plan: fixture.plan, currentParsedFiles: fixture.currentFiles });
+  assert.equal(await visitAnalysisFactLineage(prepared.value, load, {
+    node: (row, ordinal) => compact.addNodeLineage(row, ordinal),
+    edge: (row, ordinal) => compact.addEdgeLineage(row, ordinal),
+  }), true);
+  assert.equal(loaded.some(key => key.includes('fact_graph')), false);
+  const pending = compact.pendingTombstones();
+  assert.ok(pending.nodes.length > 0 && pending.edges.length > 0);
+  compact.resolveTombstones(await readAnalysisFactRows(prepared.value, load, pending));
+  const actual = compact.finish();
+  assert.deepEqual(actual, expected);
+  const graphLoads = loaded.filter(key => key.includes('fact_graph.nodes')).length;
+  assert.ok(graphLoads >= 1 && graphLoads < graphChunks);
+
+  const provenance = applyIncrementalProvenance({ snapshot: structuredClone(fixture.currentBase), previousFactGraph: actual,
+    plan: fixture.plan, currentParsedFiles: fixture.currentFiles });
+  assert.equal(provenance.active_fact_fingerprint, fixture.expected.active_fact_fingerprint);
+});
+
+test('lineage drift from the published graph is rejected instead of trusted', async () => {
+  const unchanged = Array.from({ length: 2200 }, (_, i) => parsed(`src/${i}.ts`, A));
+  const fixture = compare([...unchanged, parsed('deleted.ts', B)], [...unchanged]);
+  const bodies = new Map<string, Uint8Array>();
+  const prepared = await prepareStoredAnalysisPayload({ fact_graph: fixture.previous.fact_graph },
+    (path, index, sha) => `chunks/${path}-${index}-${sha}`, async (key, body) => {
+      bodies.set(key, body); return { key, bytes: body.byteLength, sha256: snapshotObjectDigest(body) };
+    });
+  const selector = createIncrementalHistorySelector({ snapshot: fixture.currentBase, plan: fixture.plan,
+    currentParsedFiles: fixture.currentFiles });
+  await visitAnalysisFactLineage(prepared.value, async key => bodies.get(key) ?? null, {
+    node: (row, ordinal) => selector.addNodeLineage(row, ordinal),
+    edge: (row, ordinal) => selector.addEdgeLineage(row, ordinal),
+  });
+  const pending = selector.pendingTombstones();
+  assert.ok(pending.nodes.length > 0);
+  const rows = await readAnalysisFactRows(prepared.value, async key => bodies.get(key) ?? null, pending);
+  const first = rows.nodes.get(pending.nodes[0]!) as { revision_id?: string };
+  rows.nodes.set(pending.nodes[0]!, { ...first, revision_id: 'rev:node:tampered' });
+  assert.throws(() => selector.resolveTombstones(rows), /analysis_fact_lineage_mismatch/);
+  assert.throws(() => selector.finish(), /incremental_history_tombstones_unresolved/);
+});

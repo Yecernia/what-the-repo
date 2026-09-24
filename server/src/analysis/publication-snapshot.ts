@@ -16,7 +16,8 @@ export async function preparePublicationCache(cache: AnalysisCache | undefined,
     ({ path, digest, parseError, semanticComplete }));
   const prepared = cache ? await write(cache) : undefined;
   return { files, prepared, timings: { preparation_cache_ms: performance.now() - start,
-    preparation_cache_rss_bytes: process.memoryUsage().rss } };
+    preparation_cache_rss_bytes: process.memoryUsage().rss,
+    ...Object.fromEntries(Object.entries(prepared?.metrics ?? {}).map(([key, value]) => ["cache_" + key, value])) } };
 }
 
 /** The caller transfers ownership of current fact rows; previous snapshots stay immutable. */

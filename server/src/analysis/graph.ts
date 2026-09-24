@@ -255,9 +255,14 @@ function mergeSymbols(
         ],
       });
     }
+  // Group by file so an update's vanished facts occupy few persisted chunks.
   return [...new Map(symbols.map((s) => [s.stableId, s])).values()].sort(
-    (a, b) => a.stableId.localeCompare(b.stableId),
+    (a, b) => compareText(a.path, b.path) || a.stableId.localeCompare(b.stableId),
   );
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 function buildRelations(
   files: ParsedFile[],
@@ -432,7 +437,7 @@ function buildRelations(
   }
   return {
     relations: [...rows.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a, left], [b, right]) => compareText(left.sourcePath, right.sourcePath) || a.localeCompare(b))
       .map(([, row]) => row),
     unresolvedCalls,
     unresolvedImports,

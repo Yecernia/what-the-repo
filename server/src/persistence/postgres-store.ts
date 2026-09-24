@@ -1,3 +1,4 @@
+import { newAnalysisWriteMetrics } from './analysis-chunk-codec.js';
 import { assertSessionPermit } from '../scheduling/permits.js';
 import { registerControlPool } from './control-pool.js';
 import { EncryptedPostgresKeyVault } from "./encrypted-key-vault.js";
@@ -76,6 +77,8 @@ import {
   assembleAnalysisPayload,
   assembleIncrementalBasePayload,
   visitAnalysisFactGraph,
+  visitAnalysisFactLineage,
+  readAnalysisFactRows,
   defaultAnalysisChunkKey,
   prepareStoredAnalysisPayload,
   mergePreparedAnalysisCache,
@@ -137,6 +140,7 @@ interface PostgresStoreOptions {
   connectionTimeoutMs?: number;
   objectStore?: SnapshotObjectStore;
   objectStoreConcurrency?: number;
+  analysisChunkCompression?: boolean;
   objectAdmissionStore?: PermitStore;
 }
 
@@ -349,6 +353,7 @@ export class PostgresStore extends FileStore {
   readonly snapshotObjects: SnapshotObjectStore;
   readonly controlPool: Pool;
   private readonly sourceManifestCache = new Map<string, CachedSourceManifest>();
+  private readonly analysisChunkCompression: boolean;
 
   constructor(options: PostgresStoreOptions) {
     const poolSettings = postgresPoolSettings(options);
@@ -367,6 +372,7 @@ export class PostgresStore extends FileStore {
       console.error("postgres_idle_connection_error", code);
     });
     this.pool = pool;
+    this.analysisChunkCompression = options.analysisChunkCompression !== false;
     this.migrationsRoot = options.migrationsRoot;
     this.limits = limits;
     // Object reads/purges may run while an application transaction holds the only
@@ -1303,12 +1309,23 @@ export class PostgresStore extends FileStore {
       factGraphAvailable: base.fact_graph_available };
   }
 
-  override async visitPublicSnapshotFactGraph(publicKey: string, visitor: {
-    node: (value: unknown) => void; edge: (value: unknown) => void;
-  }): Promise<void> {
+  override async visitPublicSnapshotFactGraph(publicKey: string, visitor: import('./analysis-payload.js').AnalysisFactGraphVisitor): Promise<void> {
     const stored = await this.readPublicSnapshotParts(publicKey, 'analysis', false);
     if (!stored?.analysis) throw new Error('public_snapshot_payload_missing');
     await visitAnalysisFactGraph(stored.analysis, key => this.snapshotObjects.get(key), visitor);
+  }
+
+  override async visitPublicSnapshotFactLineage(publicKey: string, visitor: import('./analysis-payload.js').AnalysisFactLineageVisitor): Promise<boolean> {
+    const stored = await this.readPublicSnapshotParts(publicKey, 'analysis', false);
+    if (!stored?.analysis) throw new Error('public_snapshot_payload_missing');
+    return visitAnalysisFactLineage(stored.analysis, key => this.snapshotObjects.get(key), visitor);
+  }
+
+  override async loadPublicSnapshotFactRows(publicKey: string, request: { nodes: readonly number[]; edges: readonly number[] },
+    options: { metrics?: import('./analysis-chunk-codec.js').AnalysisPayloadReadMetrics; signal?: AbortSignal } = {}) {
+    const stored = await this.readPublicSnapshotParts(publicKey, 'analysis', false);
+    if (!stored?.analysis) throw new Error('public_snapshot_payload_missing');
+    return readAnalysisFactRows(stored.analysis, key => this.snapshotObjects.get(key), request, options);
   }
 
   override async preparePublicSnapshotSource(input: {
@@ -1322,10 +1339,11 @@ export class PostgresStore extends FileStore {
     publicKey: string; snapshotId: string; cache: unknown; fence?: AnalysisLeaseFence;
   }): Promise<PreparedAnalysisCache> {
     return this.withSnapshotPreparation(input.fence, async () => {
+      const metrics = newAnalysisWriteMetrics();
       const payload = await prepareStoredAnalysisPayload({ analysis_cache: input.cache },
         (path, index, sha256) => defaultAnalysisChunkKey(`public-repository-snapshots/${input.publicKey}`, path, index, sha256),
-        (key, body) => this.snapshotObjects.put(key, body, 'application/json'));
-      return { publicKey: input.publicKey, snapshotId: input.snapshotId, payload };
+        (key, body) => this.snapshotObjects.put(key, body, 'application/octet-stream'), 4, { metrics });
+      return { publicKey: input.publicKey, snapshotId: input.snapshotId, payload, metrics };
     });
   }
 
@@ -1381,6 +1399,7 @@ export class PostgresStore extends FileStore {
       const viewBody = jsonBytes(input.view);
       const viewKey = `public-repository-snapshots/${input.publicKey}/view-${snapshotObjectDigest(viewBody)}.json`;
       timings.view_serialization_ms = performance.now() - viewStart;
+      const analysisMetrics = newAnalysisWriteMetrics();
       const uploads = [
         measure("view_upload_ms", () => this.snapshotObjects.put(viewKey, viewBody, "application/json")),
         measure("analysis_prepare_ms", async () => mergePreparedAnalysisCache(await prepareStoredAnalysisPayload(
@@ -1391,7 +1410,8 @@ export class PostgresStore extends FileStore {
             index,
             sha256,
           ),
-          (key, body) => this.snapshotObjects.put(key, body, "application/json"),
+          (key, body) => this.snapshotObjects.put(key, body, "application/octet-stream"), 4,
+          { metrics: analysisMetrics, compression: this.analysisChunkCompression },
         ), input.preparedAnalysisCache, input.publicKey, input.snapshotId)),
         measure("source_upload_ms", async () => input.preparedSource ?? putSourceSnapshot({
           objectStore: this.snapshotObjects,
@@ -1404,6 +1424,7 @@ export class PostgresStore extends FileStore {
       // Keep admitted writes owned by this task even when one upload fails.
       const [viewObject, preparedAnalysis, sourceSnapshot] = await Promise.all(uploads)
         .finally(async () => { await Promise.allSettled(uploads); });
+      for (const [key, value] of Object.entries(analysisMetrics)) timings["analysis_" + key] = value;
       // A resumed assembly may carry a previously uploaded immutable manifest.
       // Verify its identity and bytes before binding it to the published snapshot.
       const sourceManifestBody = sourceSnapshotManifestBytes(sourceSnapshot.manifest);

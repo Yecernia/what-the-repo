@@ -11,6 +11,9 @@ import {
   prepareStoredAnalysisPayload,
   mergePreparedAnalysisCache,
   readStaticFileFacts,
+  readAnalysisFactRows,
+  visitAnalysisFactLineage,
+  analysisPayloadChunkKeys,
 } from "./analysis-payload.js";
 import { snapshotObjectDigest } from './snapshot-object-store.js';
 
@@ -79,7 +82,7 @@ test('stored chunks bound UTF-8 bytes, preserve order and allow one indivisible 
     assert.ok(body.byteLength<=ANALYSIS_PAYLOAD_CHUNK_BYTES || decoded.length===1);
     bodies.set(key,body);await new Promise(resolve=>setTimeout(resolve,2));active--;
     return {key,bytes:body.byteLength,sha256:key.slice(-69,-5)};
-  },2);
+  },2,{compression:false});
   assert.ok(peak<=2);assert.ok(prepared.chunks.length>2);
   assert.deepEqual(await assembleAnalysisPayload(prepared.value,async key=>bodies.get(key)??null),original);
   const sync=prepareAnalysisPayload(original,(path,i,sha)=>`chunks/${path}-${i}-${sha}.json`);
@@ -182,7 +185,9 @@ test("stored preparation writes bounded chunks and returns only descriptors", as
     2,
   );
   assert.ok(prepared.envelope);
-  assert.equal(prepared.chunks.length, 2);
+  // Two graph chunks plus one compact lineage chunk; all stored objects are tracked.
+  assert.equal(prepared.envelope.chunks.length, 2);
+  assert.equal(prepared.chunks.length, 3);
   assert.equal("body" in prepared.chunks[0]!, false);
   const restored = await assembleAnalysisPayload(prepared.value, async (key) => bodies.get(key) ?? null);
   assert.deepEqual(restored, original);
@@ -199,8 +204,74 @@ test('byte limits also chunk arrays below the record-count threshold', async () 
     bodies.set(key, body);
     assert.ok(body.byteLength <= ANALYSIS_PAYLOAD_CHUNK_BYTES);
     return { key, bytes: body.byteLength, sha256: key.slice(-69, -5) };
-  }, 2);
+  }, 2, {compression:false});
   assert.equal(result.chunks.length, 2);
   assert.deepEqual(result.value, prepareAnalysisPayload(original, key).value);
   assert.deepEqual(await assembleAnalysisPayload(result.value, async key => bodies.get(key) ?? null), original);
+});
+
+test('stored graphs publish compact lineage used for node paths, purge keys and ordinal row reads', async () => {
+  const nodes = Array.from({ length: 5000 }, (_, index) => ({ id: `n${index}`, revision_id: `r${index}`,
+    first_seen_snapshot_id: 'snap:first', lifecycle_status: index === 7 ? 'tombstoned' : 'active',
+    source_observations: index === 9 ? [{ extractor: 'lsp' }] : [],
+    attributes: index === 0 ? {} : { path: `src/${index}.ts` },
+    evidence: index === 0 ? [{ path: 'fallback.ts' }] : [], members: [] }));
+  const edges = Array.from({ length: 4100 }, (_, index) => ({ id: `e${index}`, revision_id: `er${index}`,
+    source: `n${index}`, target: index === 3 ? 'outside' : `n${index + 1}`, lifecycle_status: 'active' }));
+  const value = { fact_graph: { nodes, edges }, analysis_cache: { manifest: [{ path: 'a.ts' }] } };
+  const bodies = new Map<string, Uint8Array>();
+  const put = async (key: string, body: Uint8Array) => {
+    bodies.set(key, body); return { key, bytes: body.byteLength, sha256: snapshotObjectDigest(body) };
+  };
+  const key = (path: string, index: number, sha: string) => `analysis-chunks/${path}-${index}-${sha}`;
+  const withLineage = await prepareStoredAnalysisPayload(value, key, put);
+  const legacy = await prepareStoredAnalysisPayload(value, key, put, 4, { factLineage: false });
+  const reads: string[] = [];
+  const load = async (name: string) => { reads.push(name); return bodies.get(name) ?? null; };
+
+  const base = await assembleIncrementalBasePayload(withLineage.value, load);
+  assert.deepEqual(base.node_paths, (await assembleIncrementalBasePayload(legacy.value, load)).node_paths);
+  reads.length = 0;
+  await assembleIncrementalBasePayload(withLineage.value, load);
+  assert.equal(reads.some(name => name.includes('fact_graph')), false);
+
+  const nodeRows: unknown[] = [], edgeRows: unknown[] = [];
+  assert.equal(await visitAnalysisFactLineage(withLineage.value, load, {
+    node: (row, ordinal) => { assert.equal(ordinal, nodeRows.length); nodeRows.push(row); },
+    edge: (row, ordinal) => { assert.equal(ordinal, edgeRows.length); edgeRows.push(row); },
+  }), true);
+  assert.deepEqual(nodeRows[0], ['n0', 'r0', 'snap:first', 'fallback.ts', 1]);
+  assert.deepEqual(nodeRows[7], ['n7', 'r7', 'snap:first', 'src/7.ts', 0]);
+  assert.deepEqual(nodeRows[9], ['n9', 'r9', 'snap:first', 'src/9.ts', 3]);
+  assert.deepEqual(edgeRows[3], ['e3', 'er3', null, 3, 'outside', 1]);
+  assert.equal(await visitAnalysisFactLineage(legacy.value, load, { node: () => {}, edge: () => {} }), false);
+
+  reads.length = 0;
+  const rows = await readAnalysisFactRows(withLineage.value, load, { nodes: [4999], edges: [0] });
+  assert.deepEqual(rows.nodes.get(4999), nodes[4999]);
+  assert.deepEqual(rows.edges.get(0), edges[0]);
+  assert.equal(reads.filter(name => name.includes('fact_graph.nodes')).length, 1);
+
+  const lineageKeys = analysisPayloadChunkKeys(withLineage.value).filter(name => name.includes('fact_lineage'));
+  assert.ok(lineageKeys.length >= 2);
+  assert.ok(withLineage.chunks.some(chunk => chunk.key === lineageKeys[0]));
+  const assembled = await assembleAnalysisPayload(withLineage.value, load) as Record<string, unknown>;
+  assert.equal('fact_lineage' in assembled, false);
+  assert.deepEqual(assembled, await assembleAnalysisPayload(legacy.value, load));
+  // Older readers see only the established graph descriptors.
+  assert.equal(parseAnalysisPayloadEnvelope(withLineage.value)!.chunks.some(chunk => String(chunk.path).startsWith('fact_lineage')), false);
+});
+
+test('lineage whose row count differs from the published graph is rejected', async () => {
+  const nodes = Array.from({ length: 2100 }, (_, index) => ({ id: `n${index}`, attributes: { path: 'a.ts' }, evidence: [], members: [] }));
+  const bodies = new Map<string, Uint8Array>();
+  const prepared = await prepareStoredAnalysisPayload({ fact_graph: { nodes, edges: [] } },
+    (path, index, sha) => `c/${path}-${index}-${sha}`, async (key, body) => {
+      bodies.set(key, body); return { key, bytes: body.byteLength, sha256: snapshotObjectDigest(body) };
+    });
+  const envelope = structuredClone(prepared.value) as { payload: { fact_lineage: { node_count: number; nodes: Array<{ count: number }> } } };
+  envelope.payload.fact_lineage.node_count -= 1;
+  envelope.payload.fact_lineage.nodes[0]!.count -= 1;
+  await assert.rejects(visitAnalysisFactLineage(envelope, async key => bodies.get(key) ?? null,
+    { node: () => {}, edge: () => {} }), /analysis_fact_lineage_invalid/);
 });

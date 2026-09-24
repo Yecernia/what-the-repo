@@ -197,10 +197,11 @@ export interface ProductStore {
     analysisConfigDigest: string;
     excludeCommitSha?: string;
   }): Promise<IncrementalSnapshotBase | null>;
-  visitPublicSnapshotFactGraph(publicKey: string, visitor: {
-    node: (value: unknown) => void;
-    edge: (value: unknown) => void;
-  }): Promise<void>;
+  visitPublicSnapshotFactGraph(publicKey: string, visitor: import('./analysis-payload.js').AnalysisFactGraphVisitor): Promise<void>;
+  /** False when the snapshot predates compact fact lineage. */
+  visitPublicSnapshotFactLineage(publicKey: string, visitor: import('./analysis-payload.js').AnalysisFactLineageVisitor): Promise<boolean>;
+  loadPublicSnapshotFactRows(publicKey: string, request: { nodes: readonly number[]; edges: readonly number[] },
+    options?: { metrics?: import('./analysis-chunk-codec.js').AnalysisPayloadReadMetrics; signal?: AbortSignal }): Promise<{ nodes: Map<number, unknown>; edges: Map<number, unknown> }>;
   savePublicSnapshot(input: {
     publicKey: string;
     repository: string;

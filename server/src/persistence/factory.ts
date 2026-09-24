@@ -36,6 +36,7 @@ export function createProductStore(config: ServerConfig, applicationRole = "api"
     connectionTimeoutMs: config.databaseConnectionTimeoutMs,
     objectStore: createSnapshotObjectStore(config),
     objectStoreConcurrency: config.objectStoreConcurrency,
+    analysisChunkCompression: config.analysisChunkCompression,
   });
 }
 

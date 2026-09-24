@@ -621,7 +621,9 @@ test('incremental assembly reloads prior facts through the saved public key', as
       commit_sha: snapshot.commit_sha, snapshot_id: snapshot.snapshot_id, public_key: publicKey,
       from_public_key: previousKey, analysis_config_digest: 'config', analyzer_bundle_version: 'analyzer',
       fetched: { manifest }, parsed: [currentFile], syntax_files: [currentFile], lsp_results: [],
-      plan, provenance_applied: false };
+      plan, provenance_applied: false,
+      fact_identity: { nodes: snapshot.fact_graph.nodes.map(row => row.id),
+        edges: snapshot.fact_graph.edges.map(row => row.id) } };
     checkpointStore = new FileStore(join(sourceRoot, 'checkpoint-storage'));
     await checkpointStore.init();
     await checkpointStore.saveAnalysisCheckpoint('incremental-assembly', checkpoint, snapshot);
@@ -635,6 +637,7 @@ test('incremental assembly reloads prior facts through the saved public key', as
     const store = {
       preparePublicSnapshotAnalysisCache: async () => ({ publicKey, snapshotId: snapshot.snapshot_id,
         payload: { value: {}, envelope: null, chunks: [] } }),
+      visitPublicSnapshotFactLineage: async () => false,
       visitPublicSnapshotFactGraph: async (key: string, visitor: { node: (row: unknown) => void; edge: (row: unknown) => void }) => {
         assert.equal(key, previousKey);
         for (const node of previous.fact_graph.nodes) { visitor.node(node); visited++; }
@@ -648,9 +651,19 @@ test('incremental assembly reloads prior facts through the saved public key', as
     const coordinator = new AnalysisCoordinator(store, config(1)) as unknown as {
       resumeAssemblyFromCheckpoint(input: Record<string, unknown>): Promise<void>;
     };
+    const mismatched = { ...deferred.checkpoint,
+      fact_identity: { ...checkpoint.fact_identity,
+        nodes: ['not-the-current-graph', ...checkpoint.fact_identity.nodes.slice(1)] } };
+    await assert.rejects(coordinator.resumeAssemblyFromCheckpoint({ checkpoint: mismatched, project,
+      job: job('incremental-assembly'), signal: new AbortController().signal, fence: {},
+      loadPublication: deferred.loadPublication }), /analysis_checkpoint_fact_identity_mismatch/);
+    visited = 0;
     await coordinator.resumeAssemblyFromCheckpoint({ checkpoint: deferred.checkpoint, project,
       job: job('incremental-assembly'), signal: new AbortController().signal, fence: {},
-      loadPublication: deferred.loadPublication });
+      loadPublication: async () => {
+        assert.ok(visited > 0, 'historical facts must be visited before loading the current graph');
+        return deferred.loadPublication!();
+      } });
     assert.ok(visited > 0);
     assert.equal((published as Record<string, unknown> | null)?.incremental !== undefined, true);
   } finally {

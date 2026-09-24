@@ -542,7 +542,7 @@ test("file store persists large analysis payloads as validated chunks", async ()
       schema_version?: string;
       chunks?: unknown[];
     };
-    assert.equal(envelope.schema_version, "analysis-payload-chunks-v1");
+    assert.equal(envelope.schema_version, "analysis-payload-chunks-v2");
     assert.ok((envelope.chunks?.length ?? 0) >= 2);
     const loaded = await store.loadPublicSnapshot(publicKey);
     assert.deepEqual((loaded?.analysis as typeof analysis).fact_graph.nodes, nodes);

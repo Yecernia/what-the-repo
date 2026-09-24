@@ -1,3 +1,4 @@
+import { newAnalysisReadMetrics } from '../persistence/analysis-chunk-codec.js';
 import { runtimeConfig } from '../admin/runtime-config.js';
 import { preparePublicationCache, preparePublicationSnapshot } from './publication-snapshot.js';
 import { randomUUID, createHash } from "node:crypto";
@@ -122,6 +123,8 @@ interface AnalysisCheckpoint {
   redirects?: RevisionRedirect[];
   prepared_source?: StoredSourceSnapshot;
   from_public_key?: string | null;
+  /** Current identities allow history selection before hydrating the large graph. */
+  fact_identity?: { nodes: string[]; edges: string[] };
 }
 
 function semanticFailureCode(error: unknown): string {
@@ -822,7 +825,8 @@ export class AnalysisCoordinator {
       let structuralSnapshot: BuiltSnapshot;
       if (resumingSemantic && checkpoint?.snapshot) {
         if (checkpoint.checkpoint.snapshot_id !== snapshotId && this.executionStage) {
-          const { parsed: _parsed, syntax_files: _syntax, lsp_results: _lsp, previous_fact_graph: _previous, ...sourceCheckpoint } = checkpoint.checkpoint;
+          const { parsed: _parsed, syntax_files: _syntax, lsp_results: _lsp, previous_fact_graph: _previous,
+            fact_identity: _identity, ...sourceCheckpoint } = checkpoint.checkpoint;
           await this.store.saveAnalysisCheckpoint(project.project_id, { ...sourceCheckpoint, stage: 'source' }, null);
           this.nextStage = 'cpu'; return;
         }
@@ -1042,6 +1046,11 @@ export class AnalysisCoordinator {
         commit_sha: fetched.commitSha,
         plan,
         from_public_key: checkpoint?.checkpoint.from_public_key ?? previousPublicKey,
+        ...(this.executionStage === 'semantic' && plan.mode === 'incremental'
+          ? { fact_identity: {
+              nodes: semantic.snapshot.fact_graph.nodes.map(row => row.id),
+              edges: semantic.snapshot.fact_graph.edges.map(row => row.id),
+            } } : {}),
         ...(this.executionStage === 'semantic' ? {} : { parsed, syntax_files: syntaxFiles, lsp_results: lspResults }),
         display_language: displayLanguage,
         provenance_applied: false,
@@ -1064,9 +1073,10 @@ export class AnalysisCoordinator {
         delete checkpoint.checkpoint.parsed; delete checkpoint.checkpoint.syntax_files;
         delete checkpoint.checkpoint.lsp_results;
       }
+      const historyTimings: Record<string, number> = {};
       const publicationPrevious = previousFactGraph ?? await loadIncrementalHistory({
         store: this.store, publicKey: checkpoint?.checkpoint.from_public_key ?? previousPublicKey,
-        snapshot: semantic.snapshot, plan, currentParsedFiles: preparedCache.files,
+        snapshot: semantic.snapshot, plan, currentParsedFiles: preparedCache.files, timings: historyTimings, signal,
       });
       const preparation = preparePublicationSnapshot({
         snapshot: semantic.snapshot, previousFactGraph: publicationPrevious, plan,
@@ -1090,7 +1100,7 @@ export class AnalysisCoordinator {
         languageOverlayVersion: SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
         fence,
       });
-      const publicationTimings = { ...(storageTimings ?? {}), ...preparedCache.timings, ...preparation.timings };
+      const publicationTimings = { ...(storageTimings ?? {}), ...historyTimings, ...preparedCache.timings, ...preparation.timings };
       await this.store.saveSnapshotLanguageOverlay({
         publicKey,
         language: displayLanguage,
@@ -1494,20 +1504,30 @@ async function prepareAssemblyPublication(input: {
     cache => input.store.preparePublicSnapshotAnalysisCache({ publicKey: input.checkpoint.public_key,
       snapshotId: input.checkpoint.snapshot_id, cache, fence: input.fence }));
   input.signal.throwIfAborted();
+  const graphLoadTimings: Record<string, number> = {};
+  const plan = input.checkpoint.plan
+    ?? (input.checkpoint.provenance_applied ? undefined : buildFullPlan(input.checkpoint.fetched.manifest));
+  const factIdentity = input.checkpoint.fact_identity;
+  const earlyHistory = !input.checkpoint.provenance_applied && plan?.mode === 'incremental'
+    && input.checkpoint.from_public_key && factIdentity && !previousFactGraph
+    ? await loadIncrementalHistory({ store: input.store, publicKey: input.checkpoint.from_public_key,
+      currentFactIds: factIdentity, plan, currentParsedFiles: preparedCache.files,
+      timings: graphLoadTimings, signal: input.signal }) : null;
+  input.signal.throwIfAborted();
   const graphLoadStarted = performance.now();
   const publication = input.loadPublication ? await input.loadPublication()
     : { snapshot: input.snapshot, previousFactGraph };
   input.signal.throwIfAborted();
   if (!publication.snapshot) throw new Error('analysis_checkpoint_snapshot_missing');
   if ((publication.snapshot as BuiltSnapshot).snapshot_id !== input.checkpoint.snapshot_id) throw new Error('analysis_checkpoint_identity_mismatch');
-  const graphLoadTimings = { preparation_graph_load_ms: performance.now() - graphLoadStarted,
-    preparation_graph_load_rss_bytes: process.memoryUsage().rss };
-  const plan = input.checkpoint.plan
-    ?? (input.checkpoint.provenance_applied ? undefined : buildFullPlan(input.checkpoint.fetched.manifest));
-  const publicationPrevious = asFactGraph(publication.previousFactGraph)
+  graphLoadTimings.preparation_graph_load_ms = performance.now() - graphLoadStarted;
+  graphLoadTimings.preparation_graph_load_rss_bytes = process.memoryUsage().rss;
+  if (earlyHistory) assertCheckpointFactIdentity(publication.snapshot as BuiltSnapshot, factIdentity!);
+  const publicationPrevious = asFactGraph(publication.previousFactGraph) ?? earlyHistory
     ?? (!input.checkpoint.provenance_applied && plan ? await loadIncrementalHistory({
       store: input.store, publicKey: input.checkpoint.from_public_key ?? null,
       snapshot: publication.snapshot as BuiltSnapshot, plan, currentParsedFiles: preparedCache.files,
+      timings: graphLoadTimings, signal: input.signal,
     }) : null);
   const preparation = preparePublicationSnapshot({
     snapshot: publication.snapshot as BuiltSnapshot,
@@ -1520,6 +1540,17 @@ async function prepareAssemblyPublication(input: {
   return { preparedCache, preparation, graphLoadTimings };
 }
 
+function assertCheckpointFactIdentity(snapshot: BuiltSnapshot, identity: { nodes: string[]; edges: string[] }): void {
+  for (const kind of ['nodes', 'edges'] as const) {
+    const actual = snapshot.fact_graph[kind];
+    const expected = identity[kind];
+    if (!Array.isArray(expected) || expected.length !== actual.length) throw new Error('analysis_checkpoint_fact_identity_mismatch');
+    for (let index = 0; index < actual.length; index++) {
+      if (expected[index] !== actual[index]!.id) throw new Error('analysis_checkpoint_fact_identity_mismatch');
+    }
+  }
+}
+
 function asFactGraph(value: unknown): NonNullable<EvidenceSnapshot["fact_graph"]> | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
@@ -1530,19 +1561,58 @@ function asFactGraph(value: unknown): NonNullable<EvidenceSnapshot["fact_graph"]
 async function loadIncrementalHistory(input: {
   store: ProductStore;
   publicKey: string | null;
-  snapshot: BuiltSnapshot;
+  snapshot?: BuiltSnapshot;
+  currentFactIds?: { nodes: readonly string[]; edges: readonly string[] };
   plan: IncrementalPlan;
   currentParsedFiles: Pick<ParsedFile, 'path' | 'digest' | 'parseError' | 'semanticComplete'>[];
+  timings?: Record<string, number>; signal?: AbortSignal;
 }) {
   if (input.plan.mode !== 'incremental') return null;
   if (!input.publicKey) throw new Error('analysis_previous_fact_graph_missing');
-  const selector = createIncrementalHistorySelector({ snapshot: input.snapshot,
-    plan: input.plan, currentParsedFiles: input.currentParsedFiles });
-  await input.store.visitPublicSnapshotFactGraph(input.publicKey, {
-    node: value => selector.addNode(value as SnapshotNode),
-    edge: value => selector.addEdge(value as SnapshotEdge),
-  });
-  return selector.finish();
+  const started = performance.now(), metrics = newAnalysisReadMetrics();
+  try {
+    const selectorAt = performance.now();
+    const selector = createIncrementalHistorySelector({ snapshot: input.snapshot, currentFactIds: input.currentFactIds,
+      plan: input.plan, currentParsedFiles: input.currentParsedFiles });
+    if (input.timings) input.timings.history_selector_init_ms = performance.now() - selectorAt;
+    // Compact lineage avoids decoding every historical row; only facts that
+    // become tombstones are then fetched from their covering graph chunks.
+    const lineage = await input.store.visitPublicSnapshotFactLineage(input.publicKey, {
+      node: (row, ordinal) => selector.addNodeLineage(row, ordinal),
+      edge: (row, ordinal) => selector.addEdgeLineage(row, ordinal), metrics, signal: input.signal,
+    });
+    if (lineage) {
+      const pending = selector.pendingTombstones();
+      if (pending.nodes.length || pending.edges.length) {
+        const rowsAt = performance.now(), rowMetrics = newAnalysisReadMetrics();
+        selector.resolveTombstones(await input.store.loadPublicSnapshotFactRows(input.publicKey, pending,
+          { metrics: rowMetrics, signal: input.signal }));
+        if (input.timings) {
+          input.timings.history_tombstone_rows_ms = performance.now() - rowsAt;
+          input.timings.history_tombstone_chunks = rowMetrics.chunks;
+        }
+      }
+    } else {
+      await input.store.visitPublicSnapshotFactGraph(input.publicKey, {
+        node: value => selector.addNode(value as SnapshotNode),
+        edge: value => selector.addEdge(value as SnapshotEdge), metrics, signal: input.signal,
+      });
+    }
+    const history = selector.finish();
+    if (input.timings) {
+      input.timings.history_lineage = lineage ? 1 : 0;
+      input.timings.history_matched_nodes = history.matchedNodes.length;
+      input.timings.history_matched_edges = history.matchedEdges.length;
+      input.timings.history_tombstone_nodes = history.tombstoneNodes.length;
+      input.timings.history_tombstone_edges = history.tombstoneEdges.length;
+    }
+    return history;
+  } finally {
+    if (input.timings) {
+      input.timings.preparation_history_ms = performance.now() - started;
+      for (const [key, value] of Object.entries(metrics)) input.timings['history_' + key] = value;
+    }
+  }
 }
 
 function revisionRedirects(input: {
