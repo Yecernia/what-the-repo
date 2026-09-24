@@ -15,8 +15,22 @@ export async function prepareDirectoryFinalization(client: PoolClient, tables: r
     set_config('enable_bitmapscan','off',true),set_config('enable_indexscan','on',true),
     set_config('enable_indexonlyscan','off',true),set_config('plan_cache_mode','force_custom_plan',true),
     set_config('jit','off',true)`);
+  const inherited = await client.query<{ name: string; parent: string }>(`SELECT child.relname AS name,parent.relname AS parent
+    FROM pg_inherits inh JOIN pg_class child ON child.oid=inh.inhrelid
+    JOIN pg_class parent ON parent.oid=inh.inhparent
+    JOIN pg_namespace ns ON ns.oid=child.relnamespace
+    WHERE ns.nspname='public'
+      AND parent.oid IN ('public.snapshot_directory_nodes'::regclass,
+        'public.snapshot_directory_edges'::regclass, 'public.snapshot_directory_evidence'::regclass,
+        'public.snapshot_directory_evidence_links'::regclass)`);
+  if (inherited.rows.some(row =>
+    !/^snapshot_directory_(nodes|edges|evidence|evidence_links)_g[1-9][0-9]*$/.test(row.name)
+    || !row.name.startsWith(row.parent + '_g'))) {
+    throw Object.assign(new Error('directory_finalization_schema_mismatch'), { code: 'directory_finalization_schema_mismatch' });
+  }
   const expected = [...tables.map(name => 'snapshot_directory_' + name),
-    'snapshot_query_directories', 'snapshot_directory_reclamation'];
+    'snapshot_query_directories', 'snapshot_directory_reclamation',
+    ...inherited.rows.map(row => row.name)];
   // A planner preference cannot manufacture an index. Fail closed if schema
   // drift adds an unreviewed cascade or removes a leading directory-ID index.
   const references = await client.query<{ name: string; indexed: boolean }>(`SELECT r.relname AS name,

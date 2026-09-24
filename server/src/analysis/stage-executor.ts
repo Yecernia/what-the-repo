@@ -30,6 +30,12 @@ export function stageHeapCapMb(memoryMb: number): number {
   return Math.max(256, Math.floor(memoryMb * 0.8), memoryMb - 1024);
 }
 
+/** Stage children keep a small pool. Publication (one at a time) holds its
+ * binding transaction while three directory lanes load in parallel. */
+export function stageDatabasePoolMax(stage: AnalysisExecutionStage): number {
+  return stage === 'publish' ? 5 : 2;
+}
+
 export function isolatedStageExecutor(store: ProductStore, config: ServerConfig,
   execute: typeof executeStageProcess = executeStageProcess): AnalysisStageExecutor {
   const scheduler = new ResourceScheduler(permitStoreFor(store));
@@ -225,7 +231,7 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
     // stderr can still contain the fatal V8 marker when exit fires; close waits
     // for the diagnostic pipe, so a known OOM never becomes a transient retry.
     child.once('close', finish);
-    child.send!({ type: 'run', job, stage, config: { ...config, databasePoolMax: 2 } }, error => {
+    child.send!({ type: 'run', job, stage, config: { ...config, databasePoolMax: stageDatabasePoolMax(stage) } }, error => {
       if (error) { failure = new Error('analysis_stage_dispatch_failed'); stop(); }
     });
     if (signal.aborted) abort();

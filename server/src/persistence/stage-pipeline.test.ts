@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Pool } from 'pg';
 import { setTimeout as delay } from 'node:timers/promises';
-import { reclaimSnapshotDirectoryBatch } from './directory-reclamation.js';
+import { RECLAMATION_TABLES, reclaimSnapshotDirectoryBatch } from './directory-reclamation.js';
 import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -67,11 +67,12 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
     // A deterministic completed semantic checkpoint exercises the real publication path.
     await store.saveAnalysisCheckpoint(project.project_id, { ...saved.checkpoint, stage: 'assembly', provenance_applied: true }, saved.snapshot);
     const publicKey = String(saved.checkpoint.public_key), snapshotId = String(saved.checkpoint.snapshot_id);
-    const oldView = {snapshot_id:snapshotId,graph:{nodes:[],edges:[],layers:[]},value_points:[],learning_plan:{steps:[]}};
+    const oldView = {snapshot_id:snapshotId,graph:{nodes:[],edges:[],layers:[{id:'retired-layer',name:'retired layer',responsibility:'',certainty:'verified',evidence:[]}]},value_points:[],learning_plan:{steps:[]}};
     await store.savePublicSnapshot({publicKey,snapshotId,repository:String(saved.checkpoint.repository),
       commitSha:String(saved.checkpoint.commit_sha),sourceRoot:String(saved.checkpoint.source_root),view:oldView,
       analyzerBundleVersion:String(saved.checkpoint.analyzer_bundle_version),analysisConfigDigest:String(saved.checkpoint.analysis_config_digest),
-      analysis:{fact_graph:{nodes:[{id:'retired-marker',name:'retired-marker',members:[],evidence:[],certainty:'verified'}],edges:[]}}});
+      analysis:{fact_graph:{nodes:[{id:'retired-marker',name:'retired-marker',members:[],certainty:'verified',
+        evidence:[{stable_id:'retired-marker-evidence',label:'retired marker',path:'src/main.ts',start_line:1,end_line:1,kind:'file'}]}],edges:[]}}});
     const oldId = (await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[publicKey])).rows[0].directory_id;
     await isolatedStageExecutor(store, config).run(job, signal);
     assert.equal((await store.loadJob(job.job_id))?.status, 'succeeded');
@@ -102,7 +103,8 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
     assert.equal(permits.rows[0].count, 0, 'all stage/object resources are released');
     assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rowCount,1,
       'the completed child leaves durable cleanup for the independent maintenance process');
-    while ((await store.pool.query('SELECT table_index FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0].table_index<5) {
+    // Large directory tables are dropped as child tables; delay a row-deleted table instead.
+    while ((await store.pool.query('SELECT table_index FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0].table_index<RECLAMATION_TABLES.indexOf('layers')) {
       await reclaimSnapshotDirectoryBatch(store.pool);
     }
     const cleanupPool = new Pool({connectionString:url,max:1,application_name:'wtr-cleanup-release-proof'});
@@ -112,7 +114,7 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
     try {
     await store.pool.query(`CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN PERFORM pg_sleep(0.8); RETURN OLD; END $$;
-      CREATE TRIGGER ${trigger} BEFORE DELETE ON snapshot_directory_nodes FOR EACH ROW
+      CREATE TRIGGER ${trigger} BEFORE DELETE ON snapshot_directory_layers FOR EACH ROW
       WHEN(OLD.directory_id=${oldId}) EXECUTE FUNCTION ${trigger}()`);
       cleanup = reclaimSnapshotDirectoryBatch(cleanupPool);
       let observed = false; const deadline = performance.now()+3_000;
@@ -128,7 +130,7 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
       console.log(JSON.stringify({analysisPermitsDuringCleanup:active,jobStatus:'succeeded',cleanupSqlDelayObserved:observed}));
     } finally {
       await cleanup?.catch(() => undefined);
-      try { await store.pool.query(`DROP TRIGGER IF EXISTS ${trigger} ON snapshot_directory_nodes; DROP FUNCTION IF EXISTS ${trigger}()`); }
+      try { await store.pool.query(`DROP TRIGGER IF EXISTS ${trigger} ON snapshot_directory_layers; DROP FUNCTION IF EXISTS ${trigger}()`); }
       finally { await cleanupPool.end(); }
     }
     for (let i=0;i<20;i++) {

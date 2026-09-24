@@ -12,7 +12,8 @@ import { bindSnapshotQueryDirectory } from './snapshot-directory-publication.js'
 import { streamSnapshotQueryDirectory } from '../domain/snapshot-query.js';
 
 const databaseUrl = process.env.WTR_RECLAMATION_TEST_DATABASE_URL;
-async function fixture(task: (store: PostgresStore, key: string, directoryId: string, base: Parameters<PostgresStore['savePublicSnapshot']>[0]) => Promise<void>) {
+async function fixture(task: (store: PostgresStore, key: string, directoryId: string, base: Parameters<PostgresStore['savePublicSnapshot']>[0]) => Promise<void>,
+  storage: 'legacy' | 'child' = 'legacy') {
   const url = new URL(databaseUrl!);
   assert.equal(url.hostname, '127.0.0.1'); assert.match(url.pathname, /^\/wtr_admin_test_reclamation_[a-z0-9_]+$/);
   const root = await mkdtemp(join(tmpdir(), 'wtr-directory-reclamation-'));
@@ -28,8 +29,25 @@ async function fixture(task: (store: PostgresStore, key: string, directoryId: st
     const base = {publicKey:key,snapshotId,repository:'test/reclaim-'+key.slice(0,12),commitSha:'a'.repeat(40),sourceRoot,view,analysis:{fact_graph:{nodes,edges:[]}}};
     await store.savePublicSnapshot(base);
     const directoryId = (await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id;
+    if (storage === 'legacy') {
+      // Keep the pre-existing bounded cleanup contract under test. Production
+      // generations written before 0031 already have this physical layout.
+      const columns = ['directory_id','node_key','node_id','node_kind','entity_kind','parent_entity_id','depth',
+        'label','name','responsibility','path','language','layer_id','layer_name','certainty','lifecycle_status','payload'].join(',');
+      const child = `snapshot_directory_nodes_g${directoryId}`;
+      await store.pool.query(`INSERT INTO snapshot_directory_nodes(${columns})
+        SELECT ${columns} FROM ONLY ${child}`);
+      await store.pool.query(`DROP TABLE ${child}`);
+      await store.pool.query(`DROP TABLE snapshot_directory_edges_g${directoryId}`);
+    }
     await task(store,key,directoryId,base);
   } finally {
+    const generations = await store.pool.query('SELECT directory_id FROM snapshot_directory_generations WHERE public_snapshot_key=$1',[key]).catch(() => ({rows: []}));
+    for (const row of generations.rows) {
+      const id = String(row.directory_id);
+      if (!/^[1-9][0-9]*$/.test(id)) throw new Error('test_directory_id_invalid');
+      await store.pool.query(`DROP TABLE IF EXISTS snapshot_directory_edges_g${id}, snapshot_directory_nodes_g${id}`).catch(()=>undefined);
+    }
     await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[key]).catch(()=>undefined);
     await store.close(); await rm(root,{recursive:true,force:true});
   }
@@ -68,6 +86,40 @@ test('retired directory cleanup resumes bounded primary-key batches across maint
     console.log(JSON.stringify({reclamationRows:deleted,boundedBatches:batches,batchLimit:137,oldReaderRemainsConsistent:true}));
     } finally {await reader.query('ROLLBACK');reader.release();}
   });
+});
+
+test('inherited directory children wait for pinned readers, then drop without leaving index copies',
+  {skip:!databaseUrl,timeout:60_000}, async () => {
+  await fixture(async (store,key,oldId,base) => {
+    const reader = await store.pool.connect();
+    await reader.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    try {
+      assert.equal((await reader.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id,oldId);
+      assert.equal((await reader.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,2_005);
+      await store.savePublicSnapshot({...base,analysis:{fact_graph:{nodes:[],edges:[]}}});
+      for (let table=0; table<4; table++) {
+        assert.equal((await reclaimSnapshotDirectoryBatch(store.pool)).status,'progress');
+      }
+      assert.equal((await reclaimSnapshotDirectoryBatch(store.pool)).status,'progress',
+        'first child pass records a post-publication observation boundary');
+      const held = await reclaimSnapshotDirectoryBatch(store.pool);
+      assert.equal(held.status,'busy');
+      assert.equal((await reader.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,2_005);
+      assert.equal((await store.pool.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,2_005);
+    } finally { await reader.query('ROLLBACK'); reader.release(); }
+    let removed = 0, calls = 0;
+    while ((await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rowCount) {
+      const result = await reclaimSnapshotDirectoryBatch(store.pool);
+      assert.ok(['progress','finished'].includes(result.status));
+      removed += result.deletedRows;
+      assert.ok(++calls < 20);
+    }
+    assert.equal(removed,2_005);
+    assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE directory_id=$1',[oldId])).rowCount,0);
+    assert.equal((await store.pool.query(`SELECT 1 FROM pg_class WHERE relname=ANY($1::text[])`,
+      [[`snapshot_directory_nodes_g${oldId}`,`snapshot_directory_edges_g${oldId}`]])).rowCount,0);
+    assert.equal((await store.pool.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,0);
+  }, 'child');
 });
 
 test('SQL cleanup failures retain progress for retry and cannot republish retired generations', {skip:!databaseUrl,timeout:60_000}, async () => {

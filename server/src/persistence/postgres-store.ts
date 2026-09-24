@@ -67,7 +67,7 @@ import {
   type SnapshotQueryResult,
 } from "../domain/snapshot-query.js";
 import { FileStore } from "./file-store.js";
-import { stageSnapshotQueryDirectory, bindSnapshotQueryDirectory, pruneDetachedSnapshotDirectories } from "./snapshot-directory-publication.js";
+import { stageSnapshotQueryDirectory, bindSnapshotQueryDirectory } from "./snapshot-directory-publication.js";
 import { applyMigrations } from "./migrations.js";
 import { boundedObjectStore } from './bounded-object-store.js';
 import { ResourceScheduler } from '../scheduling/resources.js';
@@ -354,6 +354,8 @@ export class PostgresStore extends FileStore {
   readonly controlPool: Pool;
   private readonly sourceManifestCache = new Map<string, CachedSourceManifest>();
   private readonly analysisChunkCompression: boolean;
+  /** Pool connections left for parallel directory loading beside the publication transaction. */
+  private readonly directoryParallelism: number;
 
   constructor(options: PostgresStoreOptions) {
     const poolSettings = postgresPoolSettings(options);
@@ -373,6 +375,7 @@ export class PostgresStore extends FileStore {
     });
     this.pool = pool;
     this.analysisChunkCompression = options.analysisChunkCompression !== false;
+    this.directoryParallelism = Math.min(3, poolSettings.max - 1);
     this.migrationsRoot = options.migrationsRoot;
     this.limits = limits;
     // Object reads/purges may run while an application transaction holds the only
@@ -1390,6 +1393,8 @@ export class PostgresStore extends FileStore {
     }
     const transactionStarted = performance.now();
     const client = await this.pool.connect();
+    // A parallel load commits its generation before the final binding transaction.
+    let committedDirectoryId: string | null = null;
     try {
       await client.query('BEGIN');
       // A transaction-scoped shared guard blocks reclamation, not heartbeats.
@@ -1572,13 +1577,15 @@ export class PostgresStore extends FileStore {
         );
       };
 
-      let lastLeaseCheck = performance.now();
-      const beforeBatch = input.fence ? async () => {
-        if (performance.now() - lastLeaseCheck < 1_000) return;
-        await this.assertAnalysisLeaseWithDb(client, input.fence!, input.fence!.projectId, false);
-        lastLeaseCheck = performance.now();
+      const leaseChecks = new WeakMap<PoolClient, number>();
+      const beforeBatch = input.fence ? async (db: PoolClient) => {
+        if (performance.now() - (leaseChecks.get(db) ?? -Infinity) < 1_000) return;
+        await this.assertAnalysisLeaseWithDb(db, input.fence!, input.fence!.projectId, false);
+        leaseChecks.set(db, performance.now());
       } : undefined;
-      const directoryId = await measure('directory_write_ms', () => stageSnapshotQueryDirectory(client, directory, beforeBatch));
+      const directoryId = await measure('directory_write_ms', () => stageSnapshotQueryDirectory(
+        this.pool, client, directory, { parallelism: this.directoryParallelism, beforeBatch, timings }));
+      if (this.directoryParallelism > 0) committedDirectoryId = directoryId;
       const finalizeStarted = performance.now();
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`snapshot-publication:${input.publicKey}`]);
       let fencedProjectId: string | undefined;
@@ -1598,6 +1605,9 @@ export class PostgresStore extends FileStore {
       return timings;
     } catch (error) {
       await client.query('ROLLBACK');
+      // The unbound generation is invisible; let maintenance drop its tables now.
+      if (committedDirectoryId) await this.pool.query(`INSERT INTO snapshot_directory_reclamation(directory_id) VALUES ($1)
+        ON CONFLICT(directory_id) DO NOTHING`, [committedDirectoryId]).catch(() => undefined);
       throw error;
     } finally { client.release(); }
   }
@@ -2720,11 +2730,15 @@ export class PostgresStore extends FileStore {
         };
         objectKeys.push(sourceManifestObject.key);
       }
+      // Retire the whole directory generation with the pointer. Row cleanup is
+      // done by the bounded background reclaimer after commit.
+      await client.query(`INSERT INTO snapshot_directory_reclamation(directory_id)
+        SELECT directory_id FROM snapshot_directory_generations WHERE public_snapshot_key=$1
+        ON CONFLICT(directory_id) DO NOTHING`, [publicKey]);
       await client.query(
         "DELETE FROM snapshot_query_directories WHERE public_snapshot_key = $1",
         [publicKey],
       );
-      await pruneDetachedSnapshotDirectories(client, publicKey);
       await client.query('DELETE FROM public_snapshot_language_overlays WHERE public_snapshot_key=$1',[publicKey]);
       if(administrator) await client.query(`DELETE FROM semantic_batches WHERE snapshot_id=$1 AND job_id IN (
         SELECT j.job_id FROM analysis_jobs j JOIN projects p USING(project_id)
@@ -2776,8 +2790,15 @@ export class PostgresStore extends FileStore {
         objectKeys.push(...objects.filter(object => object.key.startsWith(`public-repository-snapshots/${publicKey}/`)).map(object => object.key));
       }
       this.forgetSourceManifest(publicKey);
+      // The shared object-store gate bounds requests and its waiting queue. Do
+      // not enqueue an entire large repository's chunks at once.
+      const uniqueKeys = [...new Set(objectKeys)];
+      for (let offset = 0; offset < uniqueKeys.length; offset += 16) {
+        const deleted = await Promise.allSettled(uniqueKeys.slice(offset, offset + 16)
+          .map(key => this.snapshotObjects.purge?.(key) ?? this.snapshotObjects.delete(key)));
+        if (deleted.some(result => result.status === 'rejected')) throw new Error('storage_delete_incomplete');
+      }
       const deletions = await Promise.allSettled([
-        ...[...new Set(objectKeys)].map((key) => this.snapshotObjects.purge?.(key) ?? this.snapshotObjects.delete(key)),
         rm(join(this.root, "public-repository-snapshots", publicKey, "view.json"), { force: true }),
         rm(join(this.root, "public-repository-snapshots", publicKey, "analysis.json"), { force: true }),
         rm(join(this.root, "public-repository-snapshots", publicKey, "analysis-chunks"), { recursive: true, force: true }),

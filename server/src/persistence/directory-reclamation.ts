@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { prepareDirectoryFinalization } from './directory-reclamation-finalization.js';
+import { enqueueExpiredDirectoryStaging } from './snapshot-directory-publication.js';
 
 export const RECLAMATION_TABLES = [
   'evidence_links', 'projection_edges', 'projection_nodes', 'overlay_memberships',
@@ -25,7 +26,7 @@ const errorCode = (value: unknown) => {
   return typeof code === 'string' && ['57014','55P03','40P01','23503','23514','P0001','directory_finalization_schema_mismatch'].includes(code) ? code : 'database_error';
 };
 
-/** Only explicitly queued retired IDs are eligible; each call is one bounded transaction. */
+/** Only queued retired IDs (or expired unbound staging) are eligible; each call is one bounded transaction. */
 export async function reclaimSnapshotDirectoryBatch(pool: Pick<Pool,'connect'>,
   options: { batchRows?: number; statementTimeoutMs?: number } = {}): Promise<ReclamationResult> {
   const client = await pool.connect();
@@ -40,6 +41,8 @@ export async function reclaimSnapshotDirectoryBatch(pool: Pick<Pool,'connect'>,
     if (!guards.rows[0]?.worker || !guards.rows[0]?.maintenance) {
       await client.query('ROLLBACK'); return { status: 'busy', deletedRows: 0 };
     }
+    // Publications that stopped before binding leave an expired staging generation.
+    await enqueueExpiredDirectoryStaging(client);
     const selected = await client.query<WorkItem>(`SELECT q.directory_id,g.public_snapshot_key,q.table_index,q.attempts,q.cursor_values
       FROM snapshot_directory_reclamation q JOIN snapshot_directory_generations g USING(directory_id)
       WHERE q.available_at<=clock_timestamp() ORDER BY q.available_at,q.directory_id
@@ -60,6 +63,37 @@ export async function reclaimSnapshotDirectoryBatch(pool: Pick<Pool,'connect'>,
       const table = RECLAMATION_TABLES[work.table_index];
       let deletedRows = 0;
       if (table) {
+        if (table === 'edges' || table === 'nodes' || table === 'evidence' || table === 'evidence_links') {
+          // New generations keep these rows and indexes in one inherited table.
+          // The owner-only helper verifies retirement before removing that table.
+          // Legacy generations return NULL and retain the bounded row path below.
+          const child = await client.query<{ removed_rows: string | null }>(
+            'SELECT public.drop_retired_snapshot_directory_child($1::bigint,$2::text) AS removed_rows',
+            [work.directory_id, table]);
+          const removed = child.rows[0]?.removed_rows;
+          if (removed === '-1') {
+            const observed = await client.query(`UPDATE snapshot_directory_reclamation
+              SET cleanup_observed_at=clock_timestamp(),updated_at=clock_timestamp()
+              WHERE directory_id=$1 AND cleanup_observed_at IS NULL RETURNING directory_id`, [work.directory_id]);
+            if (observed.rowCount) {
+              // This commit is after the publishing transaction. Every reader
+              // that could still see the old pointer started before this time.
+              await client.query('COMMIT');
+              return { status: 'progress', deletedRows: 0, directoryId: work.directory_id };
+            }
+            await client.query('ROLLBACK');
+            return { status: 'busy', deletedRows: 0, directoryId: work.directory_id };
+          }
+          if (removed != null) {
+            deletedRows = Number(removed);
+            if (!Number.isSafeInteger(deletedRows) || deletedRows < 0) throw new Error('directory_cleanup_count_invalid');
+            await client.query(`UPDATE snapshot_directory_reclamation SET table_index=$2,rows_deleted=rows_deleted+$3,
+              cursor_values=NULL,attempts=0,last_error_code=NULL,available_at=clock_timestamp(),updated_at=clock_timestamp()
+              WHERE directory_id=$1`, [work.directory_id,work.table_index+1,deletedRows]);
+            await client.query('COMMIT');
+            return { status: 'progress', deletedRows, directoryId: work.directory_id };
+          }
+        }
         const physical = 'snapshot_directory_' + table;
         const columns = PRIMARY_KEYS[table], order = columns.join(',');
         if (work.cursor_values && (work.cursor_values.length !== columns.length || work.cursor_values.some(v => typeof v !== 'string'))) {

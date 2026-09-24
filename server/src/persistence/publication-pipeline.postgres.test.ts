@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { PostgresStore } from './postgres-store.js';
+import { parseAnalysisPayloadEnvelope } from './analysis-payload.js';
+import { FACT_CHUNK_FORMAT } from './fact-chunk-dictionary.js';
 import { LocalSnapshotObjectStore } from './snapshot-object-store.js';
 import { LocalPermitStore } from '../scheduling/permits.js';
 import { buildSnapshot } from '../analysis/graph.js';
@@ -43,7 +45,8 @@ test('checkpoint publication persists and reloads facts, cache, sources and atom
     snapshot.fact_graph.edges = Array.from({ length: 2_101 }, (_, index) => ({ id: `test-edge:${index}`,
       source: snapshot.fact_graph.nodes[index]!.id, target: fact.id, relation_kind: 'calls', label: 'calls',
       description: 'A static call.', certainty: 'verified', weight: 1, evidence: [] }));
-    const checkpoint = { stage: 'assembly', fetched: { manifest }, plan: buildFullPlan(manifest),
+    const checkpoint = { stage: 'assembly', fetched: { manifest },
+      plan: { ...buildFullPlan(manifest), affectedStableIds: snapshot.fact_graph.nodes.slice(0,32).map(row=>row.id) },
       parsed: [file], syntax_files: [], lsp_results: [] };
     await store.saveAnalysisCheckpoint('pipeline-checkpoint', checkpoint, snapshot);
     const loadedCheckpoint = await store.loadAnalysisCheckpoint<typeof checkpoint>('pipeline-checkpoint', { deferPublication: true });
@@ -59,7 +62,12 @@ test('checkpoint publication persists and reloads facts, cache, sources and atom
     const preparedCache = cache.prepared;
     const input = { publicKey, repository, commitSha: 'b'.repeat(40),
       snapshotId: snapshot.snapshot_id, sourceRoot, view: prepared.view, analysis:prepared.analysis, preparedAnalysisCache:preparedCache };
-    await store.savePublicSnapshot(input);
+    const timings = await store.savePublicSnapshot(input);
+    assert.ok((timings.analysis_dictionary_chunks ?? 0) > 0);
+    const envelopeKey = (await store.pool.query('SELECT analysis_storage_key FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[publicKey])).rows[0].analysis_storage_key;
+    const envelopeBody = await store.snapshotObjects.get(envelopeKey); assert.ok(envelopeBody);
+    const envelope = parseAnalysisPayloadEnvelope(JSON.parse(Buffer.from(envelopeBody).toString()));
+    assert.ok(envelope?.chunks.some(chunk=>chunk.format===FACT_CHUNK_FORMAT));
     const expected = JSON.parse(JSON.stringify(analysis)) as typeof analysis;
     const bundle = await store.loadPublicSnapshot<typeof analysis>(publicKey);
     assert.ok(bundle);
@@ -73,21 +81,31 @@ test('checkpoint publication persists and reloads facts, cache, sources and atom
     assert.deepEqual(rows.rows.map(row => row.node_id).sort(), analysis.fact_graph!.nodes.map(row => row.id).sort());
     const directoryId = String((await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1', [publicKey])).rows[0].directory_id);
     assert.match(directoryId, /^\d+$/);
+    const children = async () => Number((await store.pool.query(`SELECT count(*)::int AS n FROM pg_inherits
+      WHERE inhparent IN ('snapshot_directory_nodes'::regclass,'snapshot_directory_edges'::regclass)`)).rows[0].n);
+    const beforeChildren = await children();
     await store.pool.query(`CREATE FUNCTION ${failureFunction}() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN
-        IF EXISTS(SELECT 1 FROM snapshot_directory_generations WHERE directory_id=NEW.directory_id AND public_snapshot_key='${publicKey}')
+        IF NEW.public_snapshot_key='${publicKey}'
         THEN RAISE EXCEPTION 'publication_test_injected_failure'; END IF;
         RETURN NEW; END $$;
-      CREATE TRIGGER ${failureFunction} BEFORE INSERT ON snapshot_directory_edges
+      CREATE TRIGGER ${failureFunction} BEFORE UPDATE ON snapshot_query_directories
       FOR EACH ROW EXECUTE FUNCTION ${failureFunction}();`);
     try {
       await assert.rejects(store.savePublicSnapshot(input), /publication_test_injected_failure/);
       assert.deepEqual((await store.pool.query('SELECT directory_digest, node_count, edge_count FROM snapshot_query_directories WHERE public_snapshot_key=$1', [publicKey])).rows[0], before);
       assert.deepEqual((await store.loadPublicSnapshot<typeof analysis>(publicKey))?.analysis, expected);
+      assert.equal(await children(),beforeChildren,'failed publication must roll back both staged children');
     } finally {
-      await store.pool.query(`DROP TRIGGER ${failureFunction} ON snapshot_directory_edges; DROP FUNCTION ${failureFunction}();`);
+      await store.pool.query(`DROP TRIGGER ${failureFunction} ON snapshot_query_directories; DROP FUNCTION ${failureFunction}();`);
     }
   } finally {
+    const ids = await store.pool.query('SELECT directory_id FROM snapshot_directory_generations WHERE public_snapshot_key=$1',[publicKey]).catch(() => ({rows:[]}));
+    for (const row of ids.rows) {
+      const id = String(row.directory_id);
+      if (!/^[1-9][0-9]*$/.test(id)) throw new Error('test_directory_id_invalid');
+      await store.pool.query(`DROP TABLE IF EXISTS snapshot_directory_edges_g${id}, snapshot_directory_nodes_g${id}`).catch(()=>undefined);
+    }
     await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1', [publicKey]).catch(() => undefined);
     await store.close();
     await rm(root, { recursive: true, force: true });

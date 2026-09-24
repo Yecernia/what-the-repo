@@ -6,7 +6,7 @@ import { serialize } from 'node:v8';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from '../persistence/file-store.js';
-import { stageHeapCapMb, stageMemoryMb, stageMemoryFailureDetector, isolatedStageExecutor, type executeStageProcess } from './stage-executor.js';
+import { stageDatabasePoolMax, stageHeapCapMb, stageMemoryMb, stageMemoryFailureDetector, isolatedStageExecutor, type executeStageProcess } from './stage-executor.js';
 import { newAnalysisJob } from '../domain/jobs.js';
 import { createProject } from '../domain/conversation.js';
 import type { ProductStore } from '../persistence/store.js';
@@ -215,4 +215,9 @@ test('large stages keep 1 GiB outside the V8 heap while small stages keep the pr
   assert.equal(stageHeapCapMb(4096), 3276);
   assert.equal(stageHeapCapMb(1024), 819);
   assert.equal(stageHeapCapMb(200), 256);
+});
+
+test('publication children get connections for the binding transaction and three directory lanes', () => {
+  assert.equal(stageDatabasePoolMax('publish'), 5);
+  for (const stage of ['fetch', 'cpu', 'semantic', 'overlay'] as const) assert.equal(stageDatabasePoolMax(stage), 2);
 });

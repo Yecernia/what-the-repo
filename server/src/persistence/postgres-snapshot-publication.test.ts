@@ -31,6 +31,10 @@ class MemorySnapshotObjects implements SnapshotObjectStore {
   async delete(key: string): Promise<void> {
     this.values.delete(key);
   }
+
+  async inventory(): Promise<Array<{ key: string; bytes: number }>> {
+    return [...this.values].map(([key, body]) => ({ key, bytes: body.byteLength }));
+  }
 }
 
 function view(snapshotId: string) {
@@ -58,6 +62,9 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
   const client = {
     async query(sql: string, values: unknown[] = []) {
       queries.push({ sql: sql.replace(/\s+/gu, " ").trim(), values });
+      if (sql.includes('stage_snapshot_directory_child')) {
+        return { rows: [{ child_name: `snapshot_directory_${values[1]}_g1` }], rowCount: 1 };
+      }
       return { rows: sql.includes("RETURNING directory_id") ? [{ directory_id: "1" }] : [], rowCount: 1 };
     },
     release() { released = true; },
@@ -67,6 +74,8 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
     root,
     migrationsRoot: join(root, "migrations"),
     encryptionSecret: "snapshot-test-secret",
+    // One mocked client: the serial in-transaction directory path.
+    poolMax: 1,
     objectStore: objects,
   });
   const originalPool = store.pool;
@@ -197,9 +206,11 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
     );
 
     snapshotRow.purge_after = "2026-08-23T00:00:00.000Z";
+    const purgeQueries: string[] = [];
     const purgeClient = {
       async query(sql: string) {
         const normalized = sql.replace(/\s+/gu, " ").trim();
+        purgeQueries.push(normalized);
         if (normalized.includes("FROM canonical_public_repository_snapshots")
           && normalized.includes("FOR UPDATE")) {
           return { rows: [snapshotRow], rowCount: 1 };
@@ -213,8 +224,26 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
     (store as unknown as { pool: { connect(): Promise<typeof purgeClient> } }).pool = {
       async connect() { return purgeClient; },
     };
+    for (let index = 0; index < 600; index++) {
+      objects.values.set(`public-repository-snapshots/${publicKey}/analysis-chunks/extra-${index}`, Buffer.from('x'));
+    }
+    let activeDeletes = 0;
+    let peakDeletes = 0;
+    objects.delete = async key => {
+      activeDeletes++;
+      peakDeletes = Math.max(peakDeletes, activeDeletes);
+      try {
+        if (activeDeletes > 16) throw new Error('deletion_queue_unbounded');
+        await new Promise(resolve => setTimeout(resolve, 1));
+        objects.values.delete(key);
+      } finally { activeDeletes--; }
+    };
     assert.equal(await store.purgePublicSnapshotPayload(publicKey, "2026-08-24T01:00:00.000Z"), true);
+    assert.ok(peakDeletes > 1 && peakDeletes <= 16);
     assert.equal(objects.values.size, 0);
+    assert.ok(purgeQueries.findIndex(sql => sql.startsWith('INSERT INTO snapshot_directory_reclamation'))
+      < purgeQueries.findIndex(sql => sql.startsWith('DELETE FROM snapshot_query_directories')));
+    assert.equal(purgeQueries.some(sql => sql.startsWith('DELETE FROM snapshot_directory_generations')), false);
   } finally {
     await originalPool.end();
     await rm(root, { recursive: true, force: true });
@@ -228,6 +257,9 @@ test("PostgreSQL stores and reloads large analysis payload chunks", async () => 
   const client = {
     async query(sql: string, values: unknown[] = []) {
       queries.push({ sql: sql.replace(/\s+/gu, " ").trim(), values });
+      if (sql.includes('stage_snapshot_directory_child')) {
+        return { rows: [{ child_name: `snapshot_directory_${values[1]}_g1` }], rowCount: 1 };
+      }
       return { rows: sql.includes("RETURNING directory_id") ? [{ directory_id: "1" }] : [], rowCount: 1 };
     },
     release() {},
@@ -237,6 +269,8 @@ test("PostgreSQL stores and reloads large analysis payload chunks", async () => 
     root,
     migrationsRoot: join(root, "migrations"),
     encryptionSecret: "snapshot-test-secret",
+    // One mocked client: the serial in-transaction directory path.
+    poolMax: 1,
     objectStore: objects,
   });
   const originalPool = store.pool;
@@ -341,11 +375,14 @@ test("PostgreSQL rolls back snapshot metadata when query directory publication f
   const queries: string[] = [];
   let released = false;
   const client = {
-    async query(sql: string) {
+    async query(sql: string, values: unknown[] = []) {
       const normalized = sql.replace(/\s+/gu, " ").trim();
       queries.push(normalized);
       if (normalized.startsWith("INSERT INTO snapshot_query_directories")) {
         throw new Error("query_directory_write_failed");
+      }
+      if (normalized.includes('stage_snapshot_directory_child')) {
+        return { rows: [{ child_name: `snapshot_directory_${values[1]}_g1` }], rowCount: 1 };
       }
       return { rows: normalized.includes("RETURNING directory_id") ? [{ directory_id: "1" }] : [], rowCount: 1 };
     },
@@ -356,6 +393,8 @@ test("PostgreSQL rolls back snapshot metadata when query directory publication f
     root,
     migrationsRoot: join(root, "migrations"),
     encryptionSecret: "snapshot-test-secret",
+    // One mocked client: the serial in-transaction directory path.
+    poolMax: 1,
     objectStore: objects,
   });
   const originalPool = store.pool;
