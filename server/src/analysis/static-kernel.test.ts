@@ -338,6 +338,48 @@ test("incremental/full facts agree across unresolved imports becoming resolvable
     await rm(root, { recursive: true, force: true });
   }
 });
+test("unrelated repository files keep other projects warm, while a new resolution target invalidates its importer", async () => {
+  const root = await mkdtemp(join(tmpdir(), "wtr-kernel-probes-"));
+  try {
+    const base = {
+      "a/tsconfig.json": '{"include":["*.ts"]}',
+      "a/main.ts": "import {f} from '../shared/util.js'; export const run=()=>f();",
+      "b/tsconfig.json": '{"include":["*.ts"]}',
+      "b/main.ts": "export function stable() { return 2; }",
+    };
+    const revisions: Array<{ files: Record<string, string>; warm: string[] }> = [
+      { files: base, warm: [] },
+      { files: { ...base, "c/tsconfig.json": '{"include":["*.ts"]}', "c/unrelated.ts": "export const x = 1;" },
+        warm: ["a/main.ts", "b/main.ts"] },
+      { files: { ...base, "c/tsconfig.json": '{"include":["*.ts"]}', "c/unrelated.ts": "export const x = 1;",
+          "shared/util.ts": "export function f() { return 1; }" },
+        warm: ["b/main.ts", "c/unrelated.ts"] },
+    ];
+    let cache: ReturnType<typeof createAnalysisCache> | null = null;
+    let previous = new Map<string, unknown>();
+    for (const revision of revisions) {
+      for (const [path, text] of Object.entries(revision.files)) {
+        await mkdir(dirname(join(root, path)), { recursive: true });
+        await writeFile(join(root, path), text);
+      }
+      const manifest = Object.entries(revision.files).map(([path, text]) => ({ path,
+        bytes: Buffer.byteLength(text), digest: bytesDigest(text) }));
+      const incremental = await analyzeStaticSource({ manifest, sourceRoot: root, previous: cache });
+      const full = await analyzeStaticSource({ manifest, sourceRoot: root, previous: null });
+      assert.equal(activeFactFingerprint(snapshot(incremental.files)), activeFactFingerprint(snapshot(full.files)));
+      const reused = incremental.files.filter(file => file.semanticKey && previous.get(file.path) === file).map(file => file.path).sort();
+      assert.deepEqual(reused, revision.warm);
+      assert.equal(incremental.metrics.semantic_cache_hits, revision.warm.length);
+      previous = new Map(incremental.files.map(file => [file.path, file]));
+      cache = createAnalysisCache({ manifest, parsedFiles: incremental.files, syntaxFiles: incremental.syntaxFiles, lspResults: [] });
+    }
+    const importer = [...previous.values()].find(file => (file as { path: string }).path === "a/main.ts") as
+      { imports: Array<{ status: string }>; calls: Array<{ status: string }> };
+    assert.equal(importer.imports[0]?.status, "static");
+    assert.ok(importer.calls.some(call => call.status === "static"));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("owned incremental cache releases invalidated semantic rows before recompiling and preserves warm projects", async () => {
   const root = await mkdtemp(join(tmpdir(), "wtr-kernel-owned-cache-"));
   try {

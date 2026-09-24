@@ -23,6 +23,13 @@ export function stageMemoryMb(stage: AnalysisExecutionStage, info: { bytes: numb
   return Math.min(budgetMb, Math.ceil(Math.max(working, stage === 'overlay' ? 2048 : 0) / 64) * 64);
 }
 
+/** V8 heap ceiling inside an unchanged reservation. The process-tree RSS guard
+ * still enforces the whole reservation; large stages keep 1 GiB for non-heap
+ * memory (observed about 0.5 GiB) instead of an idle fixed 20%. */
+export function stageHeapCapMb(memoryMb: number): number {
+  return Math.max(256, Math.floor(memoryMb * 0.8), memoryMb - 1024);
+}
+
 export function isolatedStageExecutor(store: ProductStore, config: ServerConfig,
   execute: typeof executeStageProcess = executeStageProcess): AnalysisStageExecutor {
   const scheduler = new ResourceScheduler(permitStoreFor(store));
@@ -114,7 +121,7 @@ export function executeStageProcess(job: AnalysisJob, stage: AnalysisExecutionSt
   signal.throwIfAborted();
   const entry = new URL(import.meta.url.endsWith('.ts') ? './stage-main.ts' : './stage-main.js', import.meta.url);
   return new Promise((resolve, reject) => {
-    const heapCapMb = Math.max(256, Math.floor(memoryMb * 0.8));
+    const heapCapMb = stageHeapCapMb(memoryMb);
     const child = spawn(process.execPath, [...(entry.pathname.endsWith('.ts') ? ['--import', 'tsx'] : []),
       // RSS already bounds the whole process tree. Avoid imposing an unnecessarily
       // small JS heap in addition to that bound when most memory is JS graph data.

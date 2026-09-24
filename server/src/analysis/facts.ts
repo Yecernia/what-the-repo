@@ -148,6 +148,8 @@ export interface ParsedFile {
   syntaxKey?: string;
   semanticKey?: string;
   semanticInputs?: string[];
+  /** Compiler host lookups that decide semantic cache validity; stored once per project. */
+  semanticProbes?: string[];
   semanticComplete?: boolean;
   project?: ProjectContext;
   parser?: { name: string; version: string };

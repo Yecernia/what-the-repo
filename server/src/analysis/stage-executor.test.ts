@@ -6,7 +6,7 @@ import { serialize } from 'node:v8';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileStore } from '../persistence/file-store.js';
-import { stageMemoryMb, stageMemoryFailureDetector, isolatedStageExecutor, type executeStageProcess } from './stage-executor.js';
+import { stageHeapCapMb, stageMemoryMb, stageMemoryFailureDetector, isolatedStageExecutor, type executeStageProcess } from './stage-executor.js';
 import { newAnalysisJob } from '../domain/jobs.js';
 import { createProject } from '../domain/conversation.js';
 import type { ProductStore } from '../persistence/store.js';
@@ -208,4 +208,11 @@ test('cancellation and job lease changes cannot start a memory recovery', async 
     assert.equal(attempts, 1);
     assert.equal(await permitStoreFor(f.store).change('resource-admission-v1', rows => rows.length), 0);
   }
+});
+
+test('large stages keep 1 GiB outside the V8 heap while small stages keep the proportional reserve', () => {
+  assert.equal(stageHeapCapMb(9216), 8192);
+  assert.equal(stageHeapCapMb(4096), 3276);
+  assert.equal(stageHeapCapMb(1024), 819);
+  assert.equal(stageHeapCapMb(200), 256);
 });

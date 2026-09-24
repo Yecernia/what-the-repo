@@ -521,7 +521,25 @@ export function createCompilerWorkspace(texts: ReadonlyMap<string, string>) {
     return directories.has(path) || outputDirectories.has(path) || /\/node_modules(?:\/[^/]+)?$/.test(name);
   };
   const getParsedCommandLine = (path: string) => parsedConfigs.get(canonical(path));
-  return { all, canonical, directories, configHost, projects, owners, directoryExists, getParsedCommandLine };
+  const listDirectories = (name: string): string[] => [...(directories.get(canonical(name))?.directories ?? [])];
+  /** Observable result of one compiler host lookup. A project's semantic cache
+   * is reused only while every lookup it made still yields the same answer. */
+  const probeValue = (probe: string): string => {
+    const name = probe.slice(2);
+    if (probe.startsWith("f:")) {
+      const path = canonical(name);
+      return (all.has(path) ? "+" : "-") + path;
+    }
+    if (probe.startsWith("d:")) return directoryExists(name) ? "+" : "-";
+    if (probe.startsWith("l:")) return listDirectories(name).sort().join("\0");
+    throw new Error("typescript_resolution_probe_invalid");
+  };
+  return { all, canonical, directories, configHost, projects, owners, directoryExists, getParsedCommandLine,
+    listDirectories, probeValue };
+}
+
+function probeSignature(probes: ReadonlyArray<readonly [string, string]>): string {
+  return bytesDigest(JSON.stringify([...probes].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)));
 }
 export async function analyzeTypeScript(
   files: ParsedFile[],
@@ -547,7 +565,7 @@ type ProjectCompilation = {
   project: CompilerProject;
   owned: string[];
   contextInputs: string[];
-  keyFor: (inputs: string[]) => string;
+  keyFor: (inputs: string[], probes: string) => string;
 };
 /** Let each compiler Program, checker and AST index leave the call stack before
  * the next project starts. Only plain ParsedFile facts escape this function. */
@@ -556,13 +574,19 @@ function compileTypeScriptProject(input: ProjectCompilation & {
   originals: Map<string, ParsedFile>;
   outputs: Map<string, ParsedFile>;
   texts: ReadonlyMap<string, string>;
-  resolutionDomain: string;
   signal?: AbortSignal;
 }): void {
   const { project, owned, contextInputs, keyFor, workspace, originals, outputs,
-    texts, resolutionDomain, signal } = input;
-  const { all, canonical, directories, configHost } = workspace;
+    texts, signal } = input;
+  const { all, canonical, configHost } = workspace;
   signal?.throwIfAborted();
+  // Every path lookup made while building and binding this project. Files
+  // outside the project cannot change its resolution without changing one.
+  const probes = new Map<string, string>();
+  const probe = (kind: "f" | "d" | "l", name: string): void => {
+    const key = `${kind}:${normalize(name)}`;
+    if (!probes.has(key)) probes.set(key, workspace.probeValue(key));
+  };
   const options = {
     ...project.parsed.options,
     noEmit: true,
@@ -573,9 +597,12 @@ function compileTypeScriptProject(input: ProjectCompilation & {
   const sourceCache = new Map<string, ts.SourceFile>();
   const host: ts.CompilerHost = {
     ...configHost,
+    fileExists: (name) => { probe("f", name); return configHost.fileExists(name); },
+    readFile: (name) => { probe("f", name); return configHost.readFile(name); },
     readDirectory: (...args) => [...configHost.readDirectory(...args)],
     getSourceFile: (name, target) => {
       signal?.throwIfAborted();
+      probe("f", name);
       const path = canonical(name),
         text = all.get(path);
       if (text === undefined) return undefined;
@@ -597,11 +624,9 @@ function compileTypeScriptProject(input: ProjectCompilation & {
     writeFile: () => {
       throw new Error("typescript_emit_forbidden");
     },
-    realpath: canonical,
-    directoryExists: workspace.directoryExists,
-    getDirectories: (name) => [
-      ...(directories.get(canonical(name))?.directories ?? []),
-    ],
+    realpath: (name) => { probe("f", name); return canonical(name); },
+    directoryExists: (name) => { probe("d", name); return workspace.directoryExists(name); },
+    getDirectories: (name) => { probe("l", name); return workspace.listDirectories(name); },
   };
   const program = ts.createProgram({
     rootNames: project.parsed.fileNames,
@@ -793,10 +818,9 @@ function compileTypeScriptProject(input: ProjectCompilation & {
               : expression.text.startsWith(".")
                 ? "unresolved"
                 : "missing_dependency",
-          // The semantic key covers this entire path domain. Persisting every
-          // attempted node_modules path per import duplicates large compiler
-          // lookup caches without improving invalidation correctness.
-          resolutionDomain,
+          // Filled with the project's lookup signature once binding is done.
+          // Persisting every attempted path per import would duplicate it.
+          resolutionDomain: "",
         });
       }
       if (ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node))
@@ -867,10 +891,14 @@ function compileTypeScriptProject(input: ProjectCompilation & {
           : "declaration",
     });
   }
+  const probeList = [...probes.keys()].sort();
+  const signature = probeSignature([...probes]);
+  for (const file of model.files.values())
+    for (const row of file.imports) row.resolutionDomain = `resolution-probes:${signature}`;
   const inputs = [
       ...new Set([...contextInputs, ...sources.map((s) => s.fileName)]),
     ].sort(),
-    semanticKey = keyFor(inputs);
+    semanticKey = keyFor(inputs, signature);
   for (const path of owned) {
     // The compiler may intentionally omit a root (for example foo.js beside foo.ts).
     // Preserve its syntax and an explicit gap, and cache that decision too. Otherwise
@@ -891,6 +919,7 @@ function compileTypeScriptProject(input: ProjectCompilation & {
     file.project = { ...project.context, files: [] };
     file.semanticKey = semanticKey;
     file.semanticInputs = path === owned[0] ? inputs : undefined;
+    file.semanticProbes = path === owned[0] ? probeList : undefined;
     file.diagnostics!.push(...project.context.diagnostics);
     outputs.set(path, file);
   }
@@ -921,8 +950,6 @@ export async function analyzeTypeScriptTexts(
       [...texts].filter(([p]) => posix.basename(p) === "package.json").sort(),
     ),
   );
-  const structure = [...texts.keys()].sort();
-  const resolutionDomain = `snapshot-paths:${bytesDigest(JSON.stringify(structure))}`;
   // The same dependency often belongs to several project keys. Hash each text
   // once per invocation; do not retain compiler state or inputs between runs.
   const textDigests = new Map<string, string>();
@@ -935,7 +962,7 @@ export async function analyzeTypeScriptTexts(
     project: (typeof workspace.projects)[number];
     owned: string[];
     contextInputs: string[];
-    keyFor: (inputs: string[]) => string;
+    keyFor: (inputs: string[], probes: string) => string;
   }> = [];
   for (const project of workspace.projects) {
     signal?.throwIfAborted();
@@ -954,18 +981,22 @@ export async function analyzeTypeScriptTexts(
         (scriptPath.test(p) && p.startsWith(contextRoot + "/")) ||
         previousInputs.has(p),
     );
-    const keyFor = (inputs: string[]) =>
+    // Resolution depends on paths outside the project only through recorded
+    // host lookups, so unrelated repository additions keep the cache valid.
+    const keyFor = (inputs: string[], probes: string) =>
       bytesDigest(
         JSON.stringify([
           STATIC_KERNEL_VERSION,
           ts.version,
           project.context.configDigest,
           globalIdentity,
-          structure,
+          probes,
           inputs.sort().map((p) => [p, inputDigest(p)]),
         ]),
       );
-    const reuseKey = keyFor(contextInputs);
+    const previousProbes = [...new Set(owned.flatMap((p) => originals.get(p)?.semanticProbes ?? []))];
+    const reuseKey = keyFor(contextInputs,
+      probeSignature(previousProbes.map((probe) => [probe, workspace.probeValue(probe)] as const)));
     if (
       owned.every(
         (p) =>
@@ -989,9 +1020,13 @@ export async function analyzeTypeScriptTexts(
     }
     cacheOwnership.releasePrevious(owned.map(relativePath));
   }
+  // Projects are independent; compiling the largest first bounds its peak by
+  // the fewest retained outputs from earlier projects.
+  projectsToCompile.sort((left, right) => right.owned.length - left.owned.length
+    || left.project.context.id.localeCompare(right.project.context.id));
   for (const compilation of projectsToCompile) {
     compileTypeScriptProject({ ...compilation, workspace, originals, outputs,
-      texts, resolutionDomain, signal });
+      texts, signal });
     await setImmediate();
     signal?.throwIfAborted();
   }
