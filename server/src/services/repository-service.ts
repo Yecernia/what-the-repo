@@ -693,16 +693,14 @@ export class RepositoryService {
     const parsed = parseGithubRepository(project.source.value);
     if (`${parsed.owner}/${parsed.repo}`.toLowerCase() !== input.identity.repository.toLowerCase()) return 'deferred';
     const config = this.options.config;
-    if (!config?.repositoryBackgroundRefreshEnabled
-      || !config.repositoryBackgroundDailyUsd || !config.repositoryUpdateMaxUsd) return 'deferred';
+    // Money limits are admin budgets, checked atomically by the store.
+    if (!config?.repositoryBackgroundRefreshEnabled) return 'deferred';
     const job = newAnalysisJob(project.project_id,
       `background:${input.identity.repository}:${input.targetCommitSha}:${Date.now()}`);
     job.execution_role = 'background';
     job.config_version = (await this.options.analysisExecution?.())?.configVersion;
     const result = await this.store.createBackgroundRepositoryUpdate({
       project, job, identity: input.identity, targetCommitSha: input.targetCommitSha,
-      dailyUsd: config.repositoryBackgroundDailyUsd,
-      updateMaxUsd: config.repositoryUpdateMaxUsd,
       maxStartsPerDay: config.repositoryBackgroundMaxStartsPerDay ?? 2,
       maxActive: config.repositoryBackgroundMaxActive ?? 1,
       maxQueued: config.repositoryBackgroundMaxQueued ?? 4,

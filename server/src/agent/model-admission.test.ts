@@ -11,7 +11,7 @@ function fixture() {
   faux.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage('OK')));
   const models = createModels(); models.setProvider(faux.provider);
   const budget = new LocalProviderUsageBudget({ maxCallsPerMinute: 1, minimumReservationUsd: 0,
-    policies: { chat_daily: null, analysis_daily: null, evolution_daily: null, evolution_task: null } });
+    policies: { chat_daily: null, analysis_daily: null, evolution_daily: null, evolution_task: null, repository_update: null, repository_background_daily: 0 } });
   let acquired = 0, released = 0;
   const runtime: PiModelRuntime = { models, model: faux.getModel(), ownerId: 'owner', providerBudget: budget,
     attribution: { business: 'chat', payer: 'user' },

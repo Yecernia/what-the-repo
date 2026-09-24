@@ -136,6 +136,7 @@ export function conversationErrorMessage(code: string): string | null {
     site_budget_disabled: "这项平台服务当前未开放付费用量，请联系管理员。",
     site_evolution_budget_exhausted: "今日自进化额度已用完，请明天再试。",
     site_evolution_task_budget_exhausted: "这个自进化任务的金额预算已用完。",
+    site_repository_update_budget_exhausted: "这次仓库更新的金额预算已用完，当前内容仍可使用。",
     site_rate_limited: "请求过于频繁，请稍后重试。",
     site_storage_low: "全站存储容量不足，暂不接收新处理。已有结果仍可查看。",
     provider_budget_exceeded: '已达到本站用量上限，请稍后再试。',

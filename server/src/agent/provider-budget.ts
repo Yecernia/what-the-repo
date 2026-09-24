@@ -13,6 +13,8 @@ export interface UsageAttribution {
   connectionId?: string;
   configVersion?: number;
   taskId?: string;
+  /** The task is one shared repository update; its calls share the repository_update budget. */
+  repositoryUpdate?: boolean;
 }
 export interface ProviderUsageReport {
   usageKnown: boolean;
@@ -72,15 +74,26 @@ export type BudgetKey =
   | 'analysis_daily'
   | 'chat_daily'
   | 'evolution_task'
-  | 'evolution_daily';
+  | 'evolution_daily'
+  | 'repository_update'
+  | 'repository_background_daily';
 export type BudgetPolicies = Record<BudgetKey, number | null>;
 export const DEFAULT_BUDGET_POLICIES: BudgetPolicies = {
   analysis_daily: 5,
   chat_daily: 5,
   evolution_task: 1,
   evolution_daily: 5,
+  /** Per shared repository update (manual or background, across retries). */
+  repository_update: null,
+  /** Background refresh is off until an operator sets a positive amount. */
+  repository_background_daily: 0,
 };
 export const BUDGET_KEYS = Object.keys(DEFAULT_BUDGET_POLICIES) as BudgetKey[];
+/** Budgets saved before a key existed keep working with that key's default. */
+export function withBudgetDefaults(value: unknown): BudgetPolicies {
+  const row = value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<BudgetPolicies> : {};
+  return { ...DEFAULT_BUDGET_POLICIES, ...row };
+}
 export function validateBudgetPolicies(value: unknown): BudgetPolicies {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('invalid_budget_policy');
@@ -107,7 +120,7 @@ export function beijingBudgetDay(now = Date.now()) {
     timezone: 'Asia/Shanghai',
   };
 }
-export type ProviderBudgetScope = 'owner' | 'deployment' | BudgetKey;
+export type ProviderBudgetScope = 'owner' | 'deployment' | 'repository_update' | BudgetKey;
 export type ProviderBudgetKind =
   | 'calls_per_minute'
   | 'cost_per_day'
@@ -133,6 +146,8 @@ export class ProviderBudgetExceededError extends Error {
             ? 'site_analysis_budget_exhausted'
             : scope === 'chat_daily'
               ? 'site_chat_budget_exhausted'
+              : scope === 'repository_update'
+                ? 'site_repository_update_budget_exhausted'
               : scope === 'evolution_task'
                 ? 'site_evolution_task_budget_exhausted'
                 : scope === 'evolution_daily'
@@ -189,6 +204,20 @@ function assertBudget(
     if (reason === 'busy') return error;
     throw error;
   }
+}
+
+/** The per-update cap applies on top of the daily analysis budget, never instead of it. */
+function taskLimit(a: UsageAttribution, policies: BudgetPolicies): number | null {
+  return a.payer === 'platform' && a.business === 'analysis' && a.taskId && a.repositoryUpdate
+    ? policies.repository_update : null;
+}
+function assertTaskBudget(limit: number, total: number, reservation: number, committed: number) {
+  if (total + reservation <= limit + 1e-10) return undefined;
+  // Other calls of the same task may still settle below their reservation.
+  const reason = committed + reservation <= limit + 1e-10 ? 'busy' as const : undefined;
+  const error = new ProviderBudgetExceededError('cost_per_task', limit, 'repository_update', reason);
+  if (reason) return error;
+  throw error;
 }
 
 async function waitForReservation<T>(input: ProviderBudgetInput, attempt: () => Promise<T>): Promise<T> {
@@ -268,10 +297,10 @@ export class LocalProviderUsageBudget implements ProviderUsageBudget {
         amount(input.estimatedCostUsd),
         this.configured.minimumReservationUsd,
       );
-      const policies =
+      const policies = withBudgetDefaults(
         (await this.configured.loadPolicies?.()) ??
         this.configured.policies ??
-        DEFAULT_BUDGET_POLICIES;
+        DEFAULT_BUDGET_POLICIES);
       assertPricing(input, policies, a);
       let busy: ProviderBudgetExceededError | undefined;
       for (const key of applicableBudgets(a)) {
@@ -292,6 +321,13 @@ export class LocalProviderUsageBudget implements ProviderUsageBudget {
           reservation,
           rows.filter(e => e.settled).reduce((sum, e) => sum + e.reservedCostUsd, 0),
         ) ?? busy;
+      }
+      const limit = taskLimit(a, policies);
+      if (limit !== null) {
+        const rows = this.events.filter(e => e.attribution.payer === 'platform'
+          && e.attribution.business === a.business && e.attribution.taskId === a.taskId);
+        busy = assertTaskBudget(limit, rows.reduce((sum, e) => sum + e.reservedCostUsd, 0), reservation,
+          rows.filter(e => e.settled).reduce((sum, e) => sum + e.reservedCostUsd, 0)) ?? busy;
       }
       if (busy) throw busy;
       const created: LocalUsageEvent = {
@@ -359,10 +395,10 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
         'SELECT value FROM admin_documents WHERE key=$1',
         ['budgets'],
       );
-      const policies =
+      const policies = withBudgetDefaults(
         configured.rows[0]?.value ??
         this.configured.policies ??
-        DEFAULT_BUDGET_POLICIES;
+        DEFAULT_BUDGET_POLICIES);
       assertPricing(input, policies, a);
       const reservation = Math.max(
         amount(input.estimatedCostUsd),
@@ -384,6 +420,17 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
           reservation,
           Number(cost.rows[0]?.committed ?? 0),
         ) ?? busy;
+      }
+      const limit = taskLimit(a, policies);
+      if (limit !== null) {
+        const cost = await client.query<{ total: string; committed: string }>(
+          `SELECT COALESCE(SUM(GREATEST(reserved_cost_usd,cost_usd)),0)::text AS total,
+             COALESCE(SUM(GREATEST(reserved_cost_usd,cost_usd)) FILTER (WHERE status<>'reserved'),0)::text AS committed
+           FROM provider_usage_events WHERE payer='platform' AND business=$1 AND task_id=$2`,
+          [a.business, a.taskId],
+        );
+        busy = assertTaskBudget(limit, Number(cost.rows[0]?.total ?? 0), reservation,
+          Number(cost.rows[0]?.committed ?? 0)) ?? busy;
       }
       if (busy) throw busy;
       await client.query(

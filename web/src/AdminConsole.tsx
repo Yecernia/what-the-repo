@@ -88,6 +88,13 @@ const budgetNames: Record<string, string> = {
   chat_daily: '平台每日免费聊天',
   evolution_task: '自进化单任务',
   evolution_daily: '自进化每日总额',
+  repository_update: '单次仓库更新',
+  repository_background_daily: '后台仓库更新每日总额',
+};
+/** Budgets counted per task or update rather than per day. */
+const perItemBudgets: Record<string, { unit: string; view: string }> = {
+  evolution_task: { unit: ' / 任务', view: '按任务查看' },
+  repository_update: { unit: ' / 次更新', view: '按更新查看' },
 };
 function Card({
   title,
@@ -592,19 +599,19 @@ function Overview({ data }: { data: AdminRow }) {
       </details>
       <Card title="预算与错误">
         <p>
-          已有失败分析任务 {text(jobs.failed)} 项。日预算采用北京时间自然日。自进化单任务按任务累计，明细见“预算”页。
+          已有失败分析任务 {text(jobs.failed)} 项。日预算采用北京时间自然日。自进化单任务按任务累计、单次仓库更新按更新累计，明细见“预算”页。
         </p>
         <Table
           data={rows(data.budgets)}
           columns={[
             ['key', '业务', (v) => budgetNames[String(v)]],
-            ['limit', '限额', (v, r) => (v === null ? '不设限' : money(v) + (r.key === 'evolution_task' && v !== undefined ? ' / 任务' : ''))],
-            ['used', '已用', (v, r) => r.key === 'evolution_task' ? '按任务查看' : money(v)],
-            ['reserved', '预留', (v, r) => r.key === 'evolution_task' ? '按任务查看' : money(v)],
+            ['limit', '限额', (v, r) => (v === null ? '不设限' : money(v) + (v !== undefined ? perItemBudgets[String(r.key)]?.unit ?? '' : ''))],
+            ['used', '已用', (v, r) => perItemBudgets[String(r.key)]?.view ?? money(v)],
+            ['reserved', '预留', (v, r) => perItemBudgets[String(r.key)]?.view ?? money(v)],
             [
               'remaining',
               '剩余',
-              (v, r) => (r.limit === null ? '不设限' : r.key === 'evolution_task' ? '按任务查看' : money(v)),
+              (v, r) => (r.limit === null ? '不设限' : perItemBudgets[String(r.key)]?.view ?? money(v)),
             ],
           ]}
         />
@@ -712,15 +719,13 @@ function Budgets({
                 <div>
                   <dt>已用</dt>
                   <dd>
-                    {key === 'evolution_task' ? '按任务查看' : money(row.used)}
+                    {perItemBudgets[key]?.view ?? money(row.used)}
                   </dd>
                 </div>
                 <div>
                   <dt>预留</dt>
                   <dd>
-                    {key === 'evolution_task'
-                      ? '按任务查看'
-                      : money(row.reserved)}
+                    {perItemBudgets[key]?.view ?? money(row.reserved)}
                   </dd>
                 </div>
                 <div>
@@ -728,12 +733,10 @@ function Budgets({
                   <dd>
                     {row.limit === null
                       ? '不设限'
-                      : key === 'evolution_task'
-                        ? '按任务查看'
-                        : money(row.remaining)}
+                      : perItemBudgets[key]?.view ?? money(row.remaining)}
                   </dd>
                 </div>
-                {key !== 'evolution_task' && (
+                {!perItemBudgets[key] && key !== 'repository_background_daily' && (
                   <div>
                     <dt>输入缓存命中率</dt>
                     <dd>{cacheHitRate(row.cacheHitRate)}</dd>
@@ -760,6 +763,26 @@ function Budgets({
         0 表示不接受新的有费用调用；不设限不会绕过其他适用预算。用户自带 Key
         不扣平台额度，个人金额限制默认不启用。
       </p>
+      <p className="admin-muted">
+        单次仓库更新限制一次共享更新（手动或后台、含重试）的全部模型费用，同时仍受平台每日仓库分析预算约束。
+        后台仓库更新每次启动先按单次上限预留、结束后按实际费用结算；单次更新不设限或每日总额为 0 时不会启动后台更新。
+      </p>
+      <Card title="仓库更新用量">
+        <p className="admin-muted">最近 50 次共享更新，按更新累计，跨天不重置。</p>
+        <Table
+          data={rows(data.repositoryUpdates)}
+          columns={[
+            ['repository_identity', '仓库'],
+            ['trigger', '触发', (v) => (v === 'background' ? '后台' : v === 'initial' ? '首次' : '手动')],
+            ['status', '状态'],
+            ['created_at', '开始', (v) => time(v)],
+            ['used', '已知费用', money],
+            ['reserved', '预留', money],
+            ['remaining', '剩余', (v) => (policies.repository_update === null ? '不设限' : money(v))],
+            ['unknown_calls', '未知用量次数'],
+          ]}
+        />
+      </Card>
       <Card title="自进化单任务用量">
         <p className="admin-muted">
           按任务累计，跨天不重置；每日总预算同时适用。

@@ -951,7 +951,9 @@ export class AnalysisCoordinator {
                 [role, { ...runtime, providerGate: executionBudget!.wrapGate(runtime.providerGate) }])),
               providerBudget: this.providerBudget,
               ownerId: REPOSITORY_ANALYSIS_OWNER_ID,
-              attribution: { business: "analysis", payer: "platform", agentRole: "repository-analysis", connectionId: semanticProvider.connectionId, configVersion: config.adminConfigVersion, taskId: job.job_id },
+              attribution: { business: "analysis", payer: "platform", agentRole: "repository-analysis", connectionId: semanticProvider.connectionId, configVersion: config.adminConfigVersion, taskId: job.job_id,
+                // One shared repository update shares the admin repository_update cap, manual or background.
+                ...(job.repository_update_id ? { repositoryUpdate: true } : {}) },
               beforeWorkerRequest: executionBudget.beforeRequest,
             },
             executionBudget.signal,

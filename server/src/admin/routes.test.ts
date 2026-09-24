@@ -227,6 +227,8 @@ for (const backend of ['file', 'postgres'])
           chat_daily: null,
           evolution_task: null,
           evolution_daily: 1,
+          repository_update: 2.5,
+          repository_background_daily: 0,
         };
         assert.equal(
           (
@@ -269,6 +271,15 @@ for (const backend of ['file', 'postgres'])
             ).statusCode,
             200,
           );
+        // Repository update budgets are editable and visible in the budget page and overview.
+        const saved = (await app.inject({ url: '/api/admin/budgets', cookies: signedCookies })).json();
+        assert.equal(saved.policies.repository_update, 2.5);
+        const repositoryRows = saved.budgets.filter((row: { key: string }) => row.key.startsWith('repository_'));
+        assert.deepEqual(repositoryRows.map((row: { key: string; limit: number | null; used: number | null }) =>
+          [row.key, row.limit, row.used]), [['repository_update', 2.5, null], ['repository_background_daily', 0, 0]]);
+        assert.ok(Array.isArray(saved.repositoryUpdates));
+        const overview = (await app.inject({ url: '/api/admin/overview', cookies: signedCookies })).json();
+        assert.ok(overview.budgets.some((row: { key: string }) => row.key === 'repository_update'));
         const logout = await app.inject({
           method: 'POST',
           url: '/api/admin/auth/logout',

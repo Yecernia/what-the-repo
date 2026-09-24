@@ -260,3 +260,25 @@ test('a permanently insufficient second policy takes precedence over a temporari
   // Active task allowance fits by itself, but settled daily usage cannot cover another request.
   await assert.rejects(budget.acquire({ ...evolution, estimatedCostUsd: 0.02, reservationWaitMs: 1000 }), { code: 'site_budget_insufficient' });
 });
+test('a repository update cap spans every call of the task and leaves other tasks alone', async () => {
+  const budget = new LocalProviderUsageBudget(limits({ analysis_daily: null, repository_update: 1 }));
+  const capped = { ...input, estimatedCostUsd: 0.4,
+    attribution: { business: 'analysis' as const, payer: 'platform' as const, taskId: 'update-job', repositoryUpdate: true } };
+  const first = await budget.acquire(capped);
+  await first.release({ usageKnown: true, inputTokens: 1, outputTokens: 1, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0.5, status: 'completed' });
+  await budget.acquire(capped);
+  // 0.5 settled + 0.4 reserved + 0.4 requested exceeds the 1 USD cap; the open call might still settle lower.
+  await assert.rejects(budget.acquire({ ...capped, reservationWaitMs: 0 }), { code: 'site_budget_busy' });
+  await budget.acquire({ ...capped, attribution: { ...capped.attribution, taskId: 'other-job' } });
+  await budget.acquire({ ...capped, attribution: { ...capped.attribution, repositoryUpdate: false } });
+  const exhausted = new LocalProviderUsageBudget(limits({ analysis_daily: null, repository_update: 1 }));
+  const spent = await exhausted.acquire(capped);
+  await spent.release({ usageKnown: true, inputTokens: 1, outputTokens: 1, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0.9, status: 'completed' });
+  await assert.rejects(exhausted.acquire(capped), { code: 'site_repository_update_budget_exhausted' });
+  // Saved budgets from before the key existed still work: the default leaves updates uncapped.
+  const legacy = new LocalProviderUsageBudget({ ...limits({ analysis_daily: null }),
+    policies: { analysis_daily: null, chat_daily: 5, evolution_task: 1, evolution_daily: 5 } as never });
+  await legacy.acquire({ ...capped, estimatedCostUsd: 50 });
+  const disabled = new LocalProviderUsageBudget(limits({ analysis_daily: null, repository_update: 0 }));
+  await assert.rejects(disabled.acquire(capped), { code: 'site_budget_disabled' });
+});

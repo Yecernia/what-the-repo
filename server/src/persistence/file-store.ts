@@ -1226,7 +1226,7 @@ export class FileStore implements ProductStore {
 
   async createBackgroundRepositoryUpdate(_input: {
     project: Project; job: AnalysisJob; identity: RepositoryIdentityInput;
-    targetCommitSha: string; dailyUsd: number; updateMaxUsd: number;
+    targetCommitSha: string;
     maxStartsPerDay: number; maxActive: number; maxQueued: number;
     minUpdateIntervalHours: number; activeWindowDays: number; now: string;
   }): Promise<'queued' | 'deferred' | 'up_to_date'> {

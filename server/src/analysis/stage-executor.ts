@@ -51,7 +51,14 @@ export function isolatedStageExecutor(store: ProductStore, config: ServerConfig,
       const budget = config.analysisMemoryMb ?? 6144;
       const memory = raisedAllowances.get(stage)
         ?? stageMemoryMb(stage, info, config.analysisCpuMemoryExpansion, budget, config.analysisCheckpointMemoryExpansion);
-      const demands: ResourceDemands = { 'analysis:memory-mb': { units: memory, limit: budget } };
+      // An unattended background update leaves part of the memory pool to users.
+      // Once someone joins it, it is scheduled like their own update.
+      const unattended = job.execution_role === 'background' && job.repository_update_id
+        ? !(await store.listRepositoryUpdateProjects(job.repository_update_id)).some(row => row.project_id !== job.project_id)
+        : false;
+      const reserveRatio = config.repositoryBackgroundUserMemoryReserveRatio ?? 0.25;
+      const demands: ResourceDemands = { 'analysis:memory-mb': { units: memory, limit: budget,
+        ...(unattended ? { backgroundCeiling: Math.floor(budget * (1 - reserveRatio)) } : {}) } };
       if (stage === 'fetch') demands['analysis:fetch'] = { units: 1, limit: config.analysisFetchConcurrency ?? 2 };
       if (stage === 'cpu') demands['analysis:cpu'] = { units: 1, limit: config.analysisCpuConcurrency ?? 2 };
       if (stage === 'publish') demands['analysis:publish'] = { units: 1, limit: config.analysisPublishConcurrency ?? 1 };
@@ -66,7 +73,7 @@ export function isolatedStageExecutor(store: ProductStore, config: ServerConfig,
       };
       const labels = { stage };
       const endWait = defaultRuntimeMetrics.time(METRIC_NAMES.analysisStageWait, labels);
-      const permit = await scheduler.acquire({ owner: project.owner_id, task: job.job_id, demands, signal,
+      const permit = await scheduler.acquire({ owner: unattended ? 'system:background' : project.owner_id, task: job.job_id, demands, signal,
         onWaiting: async () => { waiting = true; await reportWait('running'); } });
       endWait();
       const endRun = defaultRuntimeMetrics.time(METRIC_NAMES.analysisStageDuration, labels);

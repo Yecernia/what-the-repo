@@ -17,6 +17,7 @@ import {
   BUDGET_KEYS,
   beijingBudgetDay,
   validateBudgetPolicies,
+  withBudgetDefaults,
   LocalProviderUsageBudget,
 } from '../agent/provider-budget.js';
 import { StorageManager, type StoragePolicy } from './storage.js';
@@ -384,8 +385,28 @@ export function registerAdminRoutes(
         return result;
       });
       const readBudgets = async () => {
-        const policies = await docs.read('budgets', DEFAULT_BUDGET_POLICIES),
+        const policies = withBudgetDefaults(await docs.read('budgets', DEFAULT_BUDGET_POLICIES)),
           day = beijingBudgetDay();
+        // Background refresh keeps its own ledger on the same Beijing calendar day.
+        const backgroundDay = docs.pool
+          ? (await docs.pool.query<{ used: number; reserved: number }>(
+            `SELECT spent_usd::float8 AS used, reserved_usd::float8 AS reserved
+             FROM repository_background_daily_usage WHERE usage_date=$1::date`,
+            [new Date(day.start + 8 * 3600_000).toISOString().slice(0, 10)])).rows[0] ?? { used: 0, reserved: 0 }
+          : { used: 0, reserved: 0 };
+        const repositoryUpdates = docs.pool
+          ? (await docs.pool.query(
+            `SELECT update.update_id, update.repository_identity, update.update_trigger AS trigger, update.status,
+                    update.created_at,
+                    COALESCE(SUM(event.cost_usd) FILTER (WHERE event.usage_known), 0)::float8 AS used,
+                    COALESCE(SUM(event.reserved_cost_usd) FILTER (WHERE event.usage_known IS DISTINCT FROM true), 0)::float8 AS reserved,
+                    COUNT(event.event_id) FILTER (WHERE event.usage_known IS DISTINCT FROM true)::int AS unknown_calls
+             FROM repository_analysis_updates AS update
+             LEFT JOIN analysis_jobs AS job ON job.repository_update_id=update.update_id
+             LEFT JOIN provider_usage_events AS event
+               ON event.task_id=job.job_id AND event.payer='platform' AND event.business='analysis'
+             GROUP BY update.update_id ORDER BY update.created_at DESC LIMIT 50`)).rows
+          : [];
         const rows = docs.pool
           ? (
               await docs.pool.query(
@@ -470,8 +491,22 @@ export function registerAdminRoutes(
                       Number(row.reserved),
                   ),
           })),
+          repositoryUpdates: repositoryUpdates.map((row) => ({
+            ...row,
+            remaining: policies.repository_update === null ? null
+              : Math.max(0, policies.repository_update - Number(row.used) - Number(row.reserved)),
+          })),
           accounting: 'program_estimate',
           budgets: BUDGET_KEYS.map((key) => {
+            if (key === 'repository_update' || key === 'repository_background_daily') {
+              const perUpdate = key === 'repository_update';
+              const used = perUpdate ? null : Number(backgroundDay.used);
+              const reserved = perUpdate ? null : Number(backgroundDay.reserved);
+              return { key, limit: policies[key], used, reserved, cacheHitRate: null,
+                remaining: policies[key] === null || used === null ? null
+                  : Math.max(0, policies[key]! - used - (reserved ?? 0)),
+                unknownCalls: 0 };
+            }
             const relevant = rows.filter(
               (r) => r.payer === 'platform' && r.business === key.split('_')[0],
             );

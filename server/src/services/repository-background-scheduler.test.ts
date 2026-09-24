@@ -23,8 +23,6 @@ const config = (overrides: Partial<ServerConfig> = {}) => ({
   repositoryBackgroundCommitThreshold: 20,
   repositoryBackgroundMaxSnapshotAgeDays: 7,
   repositoryBackgroundMinUpdateIntervalHours: 24,
-  repositoryBackgroundDailyUsd: 1,
-  repositoryUpdateMaxUsd: 0.5,
   ...overrides,
 } as ServerConfig);
 

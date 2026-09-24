@@ -90,6 +90,7 @@ export const englishMessages: Record<string, string> = {
   '这项平台服务当前未开放付费用量，请联系管理员。': 'Paid usage for this platform service is currently disabled. Please contact the administrator.',
   '今日自进化额度已用完，请明天再试。': 'Today’s self-evolution budget is exhausted. Please try again tomorrow.',
   '这个自进化任务的金额预算已用完。': 'This self-evolution task has exhausted its budget.',
+  '这次仓库更新的金额预算已用完，当前内容仍可使用。': 'This repository update has exhausted its budget. The current content is still available.',
   '全站存储容量不足，暂不接收新处理。已有结果仍可查看。': 'Site storage is low, so new processing is temporarily unavailable. Existing results remain available.',
   '平台模型服务的上游账户余额不足，请联系管理员。': 'The platform’s upstream model account has insufficient balance. Please contact the administrator.',
   '在GitHub查看源码，或点个Star :D': 'View the source on GitHub, or leave a Star :D',

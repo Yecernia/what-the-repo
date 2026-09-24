@@ -61,3 +61,30 @@ test('aged large jobs reserve memory even when sequential small arrivals reuse q
   assert.equal(rows[0].state, 'running');
   assert.equal(rows[1].state, 'waiting');
 });
+
+test('unattended background work leaves the user reserve and never overtakes a waiting user', () => {
+  const base = { resource: '', expires: 60000, deadline: 60000, enqueuedAt: 0 };
+  const user = (id: string, units: number, state: 'running' | 'waiting', order: number) =>
+    ({ ...base, id, owner: 'user:' + id, task: id, state, order, demands: { memory: { units, limit: 8 } } });
+  const background = (units: number, order: number) => ({ ...base, id: 'bg', owner: 'system:background', task: 'bg',
+    state: 'waiting' as 'running' | 'waiting', order, demands: { memory: { units, limit: 8, backgroundCeiling: 6 } } });
+  // 2 in use + 4 = 6 fits the background ceiling; + 5 would not, though the pool has room.
+  let rows = [user('a', 2, 'running', 1), background(4, 2)];
+  promoteResources(rows, 20000);
+  assert.equal(rows[1]!.state, 'running');
+  rows = [user('a', 2, 'running', 1), background(5, 2)];
+  promoteResources(rows, 20000);
+  assert.equal(rows[1]!.state, 'waiting', 'the reserve stays free for users');
+  // A stage larger than the ceiling starts only on an idle pool.
+  rows = [background(8, 1)];
+  promoteResources(rows, 20000);
+  assert.equal(rows[0]!.state, 'running');
+  // A user that cannot fit yet still blocks background admission, and background never ages into a reservation.
+  rows = [user('a', 4, 'running', 1), user('b', 6, 'waiting', 2), background(1, 3)];
+  promoteResources(rows, 20000);
+  assert.deepEqual(rows.map(row => row.state), ['running', 'waiting', 'waiting']);
+  rows = [user('a', 7, 'running', 1), background(1, 0), user('c', 1, 'waiting', 5)];
+  rows[2]!.enqueuedAt = 19000;
+  promoteResources(rows, 20000);
+  assert.equal(rows[2]!.state, 'running', 'an old background waiter does not reserve the pool');
+});

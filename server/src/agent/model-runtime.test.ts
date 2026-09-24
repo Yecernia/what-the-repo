@@ -485,7 +485,7 @@ test("provider runtime checks the owner budget before contacting the provider", 
       maxCallsPerMinute: 1,
       maxCostUsdPerDay: 1,
       minimumReservationUsd: 1,
-      policies: { chat_daily: 1, analysis_daily: null, evolution_task: null, evolution_daily: null },
+      policies: { chat_daily: 1, analysis_daily: null, evolution_task: null, evolution_daily: null, repository_update: null, repository_background_daily: 0 },
     }),
   };
   let calls = 0;
@@ -651,7 +651,7 @@ test("cancelled HTTP streaming without final usage retains the reservation and r
       init?.signal?.addEventListener("abort", () => controller.error(new Error("request aborted")), { once: true });
     },
   }), { headers: { "content-type": "text/event-stream" } }));
-  const budget = new LocalProviderUsageBudget({ maxCallsPerMinute: 10, minimumReservationUsd: 0.01, policies: { analysis_daily: 0.015, chat_daily: null, evolution_task: null, evolution_daily: null } });
+  const budget = new LocalProviderUsageBudget({ maxCallsPerMinute: 10, minimumReservationUsd: 0.01, policies: { analysis_daily: 0.015, chat_daily: null, evolution_task: null, evolution_daily: null, repository_update: null, repository_background_daily: 0 } });
   const reports: ProviderUsageReport[] = [];
   const runtime = createModelRuntime({ provider: "custom", connectionId: "cancel-test", baseUrl: "https://provider.example/v1",
     apiKey: "test-key", model: "test", modelId: "test", modelSelector: "test", api: "openai-completions", builtin: false, thinkingLevel: "off", cost:{input:0.001,output:0.001,cacheRead:0,cacheWrite:0} },

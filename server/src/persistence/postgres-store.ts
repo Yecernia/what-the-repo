@@ -1,4 +1,5 @@
 import { newAnalysisWriteMetrics } from './analysis-chunk-codec.js';
+import { beijingBudgetDay, withBudgetDefaults } from "../agent/provider-budget.js";
 import { assertSessionPermit } from '../scheduling/permits.js';
 import { registerControlPool } from './control-pool.js';
 import { EncryptedPostgresKeyVault } from "./encrypted-key-vault.js";
@@ -1857,6 +1858,34 @@ export class PostgresStore extends FileStore {
       : super.listPublicSourceFiles(publicKey);
   }
 
+  /**
+   * Replaces a finished background update's reservation with what its model
+   * calls actually cost, once. Calls still in flight count at their reservation.
+   */
+  private async settleBackgroundUpdateBudget(client: PoolClient, updateId: string): Promise<void> {
+    await client.query(
+      `WITH reserved AS (
+         -- No FOR UPDATE: the sibling UPDATE locks the row, and a row it modifies
+         -- would be skipped by a lock re-check in this same statement.
+         SELECT usage_date, reserved_usd FROM repository_background_update_budget
+         WHERE update_id=$1 AND reserved_usd>0
+       ), spent AS (
+         SELECT COALESCE(SUM(GREATEST(event.reserved_cost_usd, event.cost_usd)), 0)::numeric(14,6) AS usd
+         FROM provider_usage_events AS event
+         JOIN analysis_jobs AS job ON job.job_id=event.task_id
+         WHERE job.repository_update_id=$1 AND event.payer='platform' AND event.business='analysis'
+       ), settled AS (
+         UPDATE repository_background_update_budget SET reserved_usd=0, spent_usd=(SELECT usd FROM spent)
+         WHERE update_id=$1 AND reserved_usd>0 RETURNING spent_usd
+       )
+       UPDATE repository_background_daily_usage AS daily
+       SET reserved_usd=GREATEST(0, daily.reserved_usd-reserved.reserved_usd),
+           spent_usd=daily.spent_usd+(SELECT spent_usd FROM settled)
+       FROM reserved WHERE daily.usage_date=reserved.usage_date AND EXISTS (SELECT 1 FROM settled)`,
+      [updateId],
+    );
+  }
+
   override async acquireSnapshotReadLease(publicKey: string, maxMinutes: number): Promise<string | null> {
     const minutes = Math.max(1, Math.min(30, Math.floor(maxMinutes)));
     const leaseId = randomUUID().replaceAll('-', '');
@@ -1982,13 +2011,11 @@ export class PostgresStore extends FileStore {
 
   override async createBackgroundRepositoryUpdate(input: {
     project: Project; job: AnalysisJob; identity: RepositoryIdentityInput;
-    targetCommitSha: string; dailyUsd: number; updateMaxUsd: number;
+    targetCommitSha: string;
     maxStartsPerDay: number; maxActive: number; maxQueued: number;
     minUpdateIntervalHours: number; activeWindowDays: number; now: string;
   }): Promise<'queued' | 'deferred' | 'up_to_date'> {
-    if (!/^[0-9a-f]{40}$/i.test(input.targetCommitSha)
-      || !Number.isFinite(input.dailyUsd) || !Number.isFinite(input.updateMaxUsd)
-      || input.updateMaxUsd <= 0 || input.dailyUsd < input.updateMaxUsd) return 'deferred';
+    if (!/^[0-9a-f]{40}$/i.test(input.targetCommitSha)) return 'deferred';
     const repository = input.identity.repository.toLowerCase();
     const client = await this.pool.connect();
     try {
@@ -2049,7 +2076,16 @@ export class PostgresStore extends FileStore {
       if (running >= input.maxActive || queued >= input.maxQueued) {
         await client.query('COMMIT'); return 'deferred';
       }
-      const usageDate = input.now.slice(0, 10);
+      // Admin budgets: every background start reserves its whole per-update cap,
+      // so an unset (unlimited) cap never admits background work.
+      const budgets = withBudgetDefaults((await client.query<{ value: unknown }>(
+        "SELECT value FROM admin_documents WHERE key='budgets'")).rows[0]?.value);
+      const dailyUsd = budgets.repository_background_daily, updateMaxUsd = budgets.repository_update;
+      if (dailyUsd === null || updateMaxUsd === null || !(updateMaxUsd > 0) || dailyUsd < updateMaxUsd) {
+        await client.query('COMMIT'); return 'deferred';
+      }
+      // Same Beijing calendar day as the admin budget pages.
+      const usageDate = new Date(beijingBudgetDay(Date.parse(input.now)).start + 8 * 3600_000).toISOString().slice(0, 10);
       await client.query(
         `INSERT INTO repository_background_daily_usage(usage_date) VALUES ($1::date)
          ON CONFLICT DO NOTHING`, [usageDate],
@@ -2060,7 +2096,7 @@ export class PostgresStore extends FileStore {
       );
       const used = daily.rows[0];
       if (!used || used.starts >= input.maxStartsPerDay
-        || Number(used.reserved_usd) + Number(used.spent_usd) + input.updateMaxUsd > input.dailyUsd) {
+        || Number(used.reserved_usd) + Number(used.spent_usd) + updateMaxUsd > dailyUsd) {
         await client.query('COMMIT'); return 'deferred';
       }
       const updateId = randomUUID().replaceAll('-', '');
@@ -2088,11 +2124,11 @@ export class PostgresStore extends FileStore {
       await client.query(
         `UPDATE repository_background_daily_usage SET starts=starts+1,
            reserved_usd=reserved_usd+$2 WHERE usage_date=$1::date`,
-        [usageDate, input.updateMaxUsd],
+        [usageDate, updateMaxUsd],
       );
       await client.query(
         `INSERT INTO repository_background_update_budget(update_id,usage_date,reserved_usd)
-         VALUES ($1,$2::date,$3)`, [updateId, usageDate, input.updateMaxUsd],
+         VALUES ($1,$2::date,$3)`, [updateId, usageDate, updateMaxUsd],
       );
       await client.query(
         `UPDATE canonical_public_repositories SET last_background_started_at=$2, updated_at=$2
@@ -2413,6 +2449,7 @@ export class PostgresStore extends FileStore {
            AND status IN ('queued','running')`,
         [input.updateId, input.completedAt],
       );
+      await this.settleBackgroundUpdateBudget(client, input.updateId);
       await this.saveRevisionRedirectsWithDb(client, input.redirects);
       if (input.fence && !fencedJobFinalized) {
         // If the fenced job was not part of the joined update rows, it still
@@ -2488,6 +2525,7 @@ export class PostgresStore extends FileStore {
         [updateId, error, timestamp],
       );
       if (update.rows[0]?.update_trigger === 'background') {
+        await this.settleBackgroundUpdateBudget(client, updateId);
         await client.query(
           `UPDATE canonical_public_repositories SET
              suppressed_target_sha=$2,

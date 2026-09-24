@@ -75,12 +75,18 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
       assert.equal(await store.purgePublicSnapshotPayload(newKey, later), false, 'the current version is never cleaned');
 
       // Background admission needs recent real use and reserves one start.
-      const background = { project: reader, identity, targetCommitSha: 'c'.repeat(40), dailyUsd: 10, updateMaxUsd: 4,
+      const background = { project: reader, identity, targetCommitSha: 'c'.repeat(40),
         maxStartsPerDay: 2, maxActive: 1, maxQueued: 4, minUpdateIntervalHours: 24, activeWindowDays: 7 };
       const now = new Date().toISOString();
       assert.equal(await store.createBackgroundRepositoryUpdate({ ...background,
         job: newAnalysisJob(reader.project_id, 'background:idle'), now }), 'deferred', 'an unused repository is not refreshed');
       await store.touchRepositoryRealUse(repository, now, 15);
+      // Default admin budgets keep background work off: no daily amount, no per-update cap.
+      assert.equal(await store.createBackgroundRepositoryUpdate({ ...background,
+        job: newAnalysisJob(reader.project_id, 'background:unbudgeted'), now }), 'deferred');
+      await store.pool.query(`INSERT INTO admin_documents(key, value) VALUES ('budgets', $1::jsonb)`,
+        [JSON.stringify({ analysis_daily: 5, chat_daily: 5, evolution_task: 1, evolution_daily: 5,
+          repository_update: 4, repository_background_daily: 10 })]);
       assert.equal(await store.createBackgroundRepositoryUpdate({ ...background,
         job: newAnalysisJob(reader.project_id, 'background:first'), now }), 'queued');
       const active = await store.loadActiveRepositoryUpdate(repository);
@@ -95,6 +101,20 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
         identity, targetCommitSha: 'd'.repeat(40), newProject: true });
       assert.equal(joined.update.update_id, active?.update_id);
       assert.equal(joined.update.target_commit_sha, 'c'.repeat(40));
+      // Finishing settles the background reservation at the actual model cost.
+      const backgroundJob = await store.pool.query<{ job_id: string }>(
+        "SELECT job_id FROM analysis_jobs WHERE repository_update_id=$1 AND execution_role='background'", [active!.update_id]);
+      await store.pool.query(`INSERT INTO provider_usage_events(event_id, owner_id, provider, model, started_at, status,
+          reserved_cost_usd, cost_usd, input_tokens, output_tokens, cached_tokens, cache_write_tokens, business, payer, task_id)
+        VALUES ('usage-1', 'system:repository-analysis', 'test', 'test', clock_timestamp(), 'completed', 0.2, 0.75, 1, 1, 0, 0,
+          'analysis', 'platform', $1)`, [backgroundJob.rows[0]!.job_id]);
+      await store.failRepositoryUpdate(active!.update_id, 'test failure');
+      const settled = await store.pool.query(`SELECT reserved_usd::float AS reserved, spent_usd::float AS spent
+        FROM repository_background_daily_usage`);
+      assert.deepEqual(settled.rows, [{ reserved: 0, spent: 0.75 }]);
+      await store.failRepositoryUpdate(active!.update_id, 'repeat');
+      assert.deepEqual((await store.pool.query(`SELECT spent_usd::float AS spent FROM repository_background_daily_usage`)).rows,
+        [{ spent: 0.75 }], 'settlement happens once');
     } finally { await store.close(); await rm(root, { recursive: true, force: true }); }
   });
 

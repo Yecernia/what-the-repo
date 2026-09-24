@@ -69,8 +69,8 @@ export interface ServerConfig extends ConcurrencyConfig {
   repositoryBackgroundMaxStartsPerDay?: number;
   repositoryBackgroundMaxActive?: number;
   repositoryBackgroundMaxQueued?: number;
-  repositoryBackgroundDailyUsd?: number;
-  repositoryUpdateMaxUsd?: number;
+  /** Share of the analysis memory pool an unattended background update leaves free for users. */
+  repositoryBackgroundUserMemoryReserveRatio?: number;
   repositorySnapshotGraceHours?: number;
   repositoryReadLeaseMaxMinutes?: number;
   databasePoolMax?: number;
@@ -141,7 +141,7 @@ function boundedDecimal(value: string | undefined, fallback: number, maximum: nu
   if (value === undefined || value.trim() === "") return fallback;
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > maximum) {
-    throw new Error(`Invalid repository budget: ${value}`);
+    throw new Error(`Invalid repository ratio: ${value}`);
   }
   return parsed;
 }
@@ -282,8 +282,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     repositoryBackgroundMaxStartsPerDay: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_STARTS_PER_DAY', 2, 1, 100),
     repositoryBackgroundMaxActive: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_ACTIVE', 1, 1, 32),
     repositoryBackgroundMaxQueued: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_QUEUED', 4, 1, 100),
-    repositoryBackgroundDailyUsd: boundedDecimal(env.WHAT_THE_REPO_REPOSITORY_BACKGROUND_DAILY_USD, 0, 10000),
-    repositoryUpdateMaxUsd: boundedDecimal(env.WHAT_THE_REPO_REPOSITORY_UPDATE_MAX_USD, 0, 10000),
+    repositoryBackgroundUserMemoryReserveRatio: boundedDecimal(env.WHAT_THE_REPO_REPOSITORY_BACKGROUND_USER_MEMORY_RESERVE_RATIO, 0.25, 0.9),
     repositorySnapshotGraceHours: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_SNAPSHOT_GRACE_HOURS', 24, 1, 168),
     repositoryReadLeaseMaxMinutes: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_READ_LEASE_MAX_MINUTES', 30, 1, 30),
     databasePoolMax: positiveInt(env.WHAT_THE_REPO_DB_POOL_MAX, 10),

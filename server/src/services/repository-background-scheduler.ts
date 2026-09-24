@@ -91,11 +91,6 @@ export function createRepositoryBackgroundRefreshTask(
         if (candidate.lastBackgroundStartedAt
           && at - Date.parse(candidate.lastBackgroundStartedAt)
             < (config.repositoryBackgroundMinUpdateIntervalHours ?? 24) * 3600_000) return;
-        if ((config.repositoryBackgroundDailyUsd ?? 0) <= 0
-          || (config.repositoryUpdateMaxUsd ?? 0) <= 0) {
-          outcome.deferred++;
-          return;
-        }
         const admission = await dependencies.requestUpdate({
           identity, projectId: candidate.projectId,
           targetCommitSha: freshness.upstreamCommitSha,

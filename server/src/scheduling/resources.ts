@@ -3,7 +3,13 @@ import { controlFailure } from '../services/execution-error.js';
 import { performance } from 'node:perf_hooks';
 import { delay, LEASE_MS, type PermitRow, type PermitStore, type CapacityPermit } from './permits.js';
 
-export interface ResourceDemand { units: number; limit: number }
+export interface ResourceDemand {
+  units: number;
+  limit: number;
+  /** Background work may raise usage only to this level, leaving the rest for users;
+   * a larger single demand starts only on an otherwise idle resource. */
+  backgroundCeiling?: number;
+}
 export type ResourceDemands = Record<string, ResourceDemand>;
 interface ResourceRow extends PermitRow { demands?: ResourceDemands; task?: string; enqueuedAt?: number }
 
@@ -105,13 +111,25 @@ export function promoteResources(rows: ResourceRow[], now: number): void {
   const shares = (row: ResourceRow, task: boolean) => running.filter(active => active.owner === row.owner
     && (!task || active.task === row.task) && Object.keys(row.demands ?? {}).some(name => active.demands?.[name])).length;
   const reserved = new Set<string>();
+  const background = (row: ResourceRow) => Object.values(row.demands ?? {}).some(demand => demand.backgroundCeiling !== undefined);
+  // Users first: background work never jumps ahead of a waiting user demand.
+  const pending = [...waiting];
+  const userWaiting = (name: string) => pending.some(row => row.state === 'waiting' && !background(row) && row.demands?.[name]);
   while (waiting.length) {
-    waiting.sort((a, b) => shares(a, false) - shares(b, false) || shares(a, true) - shares(b, true) || a.order - b.order);
+    waiting.sort((a, b) => Number(background(a)) - Number(background(b))
+      || shares(a, false) - shares(b, false) || shares(a, true) - shares(b, true) || a.order - b.order);
     const row = waiting.shift()!;
     const demands = Object.entries(row.demands ?? {});
-    if (demands.every(([name, demand]) => !reserved.has(name) && used(name) + demand.units <= demand.limit)) {
+    const fits = ([name, demand]: [string, ResourceDemand]) => {
+      if (reserved.has(name) || used(name) + demand.units > demand.limit) return false;
+      if (demand.backgroundCeiling === undefined) return true;
+      return !userWaiting(name) && (used(name) + demand.units <= demand.backgroundCeiling || used(name) === 0);
+    };
+    if (demands.every(fits)) {
       row.state = 'running'; running.push(row);
-    } else if (now - (row.enqueuedAt ?? now) >= 10_000 || row.order < Math.max(0, ...rows.map(item => item.order)) - 32) {
+    } else if (!background(row)
+      && (now - (row.enqueuedAt ?? now) >= 10_000 || row.order < Math.max(0, ...rows.map(item => item.order)) - 32)) {
+      // Only user demands age into a reservation; background work simply waits.
       for (const [name] of demands) reserved.add(name);
     }
   }
