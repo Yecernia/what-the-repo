@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AnalysisJob,
-  AnalysisStatus,
   ConversationSelection,
   GraphEvidence,
   LearnerProfile,
@@ -13,6 +12,8 @@ import type {
   Project,
   ProjectDetail,
   ProjectSummary,
+  RepositoryViewStatus,
+  RepositoryUpdateResult,
   SettingsResponse,
   Snapshot,
 } from './types';
@@ -233,7 +234,8 @@ vi.mock('./api', () => ({
     getSettings: vi.fn(),
     getProject: vi.fn(),
     getSnapshot: vi.fn(),
-    reanalyze: vi.fn(),
+    getRepositoryStatus: vi.fn(),
+    requestRepositoryUpdate: vi.fn(),
     setProjectModel: vi.fn(),
     selectModel: vi.fn(),
     sendMessage: vi.fn(),
@@ -518,23 +520,107 @@ const snapshot: Snapshot = {
   },
 };
 
-const reanalysisQueued: AnalysisStatus = {
-  stage: 'failed',
-  snapshot_id: null,
-  file_count: 0,
-  symbol_count: 0,
-  call_count: 0,
-  languages: [],
-  error: null,
-  canonical_snapshot_key: null,
-  job_id: 'job-1',
-  job_status: 'queued',
-  job_attempt: 0,
-  job_max_attempts: 3,
-  lease_owner: null,
-  heartbeat_at: null,
-  retryable: true,
+const repositoryViewStatus: RepositoryViewStatus = {
+  snapshot_available: true,
+  current: { snapshot_id: 'snapshot-1', commit_sha: 'abc123', published_at: '2026-08-16T00:00:00Z', generation: 1 },
+  view: { snapshot_id: 'snapshot-1', commit_sha: 'abc123', expires_at: null },
+  refresh_required: false,
+  view_expired: false,
+  freshness: { base_snapshot_id: 'snapshot-1', upstream_commit_sha: 'abc123', behind_commits: 0,
+    relation: 'same', check_status: 'ok', checked_at: '2026-08-16T00:00:00Z', stale: false,
+    error_code: null, next_check_at: null },
+  update: null,
+  update_eligibility: { allowed: true, reason: null, retry_after: null },
+  migration: { status: 'not_needed', changed_items: 0 },
 };
+const reanalysisQueued: RepositoryUpdateResult = {
+  outcome: 'queued',
+  update_id: 'job-1',
+  job_id: 'job-1',
+  retry_after: null,
+  status: { ...repositoryViewStatus, snapshot_available: false,
+    update: { update_id: 'job-1', status: 'queued', target_commit_sha: null, trigger: 'initial',
+      stage: null, participation: 'queued', error_code: null, retryable: true } },
+};
+
+it('keeps the readable view through a shared update and switches only after refresh', async () => {
+  vi.useFakeTimers();
+  const oldProject = project({ source: { kind: 'github', value: 'https://github.com/acme/repo',
+    commit_sha: 'abc123', display_name: 'acme/repo' } });
+  const newProject = project({ ...oldProject,
+    source: { ...oldProject.source, commit_sha: 'def456' },
+    analysis: { ...oldProject.analysis, snapshot_id: 'snapshot-2' } });
+  const newSnapshot = { ...snapshot, snapshot_id: 'snapshot-2',
+    learning_plan: { ...snapshot.learning_plan, snapshot_id: 'snapshot-2' } };
+  const queued = { ...repositoryViewStatus,
+    update: { update_id: 'update-1', status: 'queued' as const, target_commit_sha: 'def456',
+      trigger: 'manual' as const, stage: null, participation: 'queued' as const,
+      error_code: null, retryable: true } };
+  const running = { ...queued, update: { ...queued.update, status: 'running' as const, stage: 'scanning' } };
+  const failed = { ...queued, update: { ...queued.update, status: 'failed' as const, error_code: 'upstream_failed' } };
+  const refreshed = { ...repositoryViewStatus,
+    current: { snapshot_id: 'snapshot-2', commit_sha: 'def456', published_at: '2026-08-17T00:00:00Z', generation: 2 },
+    refresh_required: true };
+  let currentStatus: RepositoryViewStatus = repositoryViewStatus;
+  let firstProjectRead = true;
+  vi.mocked(apiClient.getProject).mockImplementation(async (_id, viewId) => {
+    if (viewId === 'snapshot-1') return detail(oldProject, null, true);
+    if (firstProjectRead) { firstProjectRead = false; return detail(oldProject, null, true); }
+    return detail(newProject, null, true);
+  });
+  vi.mocked(apiClient.getSnapshot).mockImplementation(async (_id, _language, snapshotId) =>
+    snapshotId === 'snapshot-2' ? newSnapshot : snapshot);
+  vi.mocked(apiClient.getRepositoryStatus).mockImplementation(async (_id, viewId) =>
+    viewId === 'snapshot-2' ? { ...repositoryViewStatus, current: refreshed.current,
+      view: { snapshot_id: 'snapshot-2', commit_sha: 'def456', expires_at: null } } : currentStatus);
+  vi.mocked(apiClient.requestRepositoryUpdate).mockImplementation(async () => {
+    currentStatus = queued;
+    return { outcome: 'queued', update_id: 'update-1', job_id: 'job-update-1', retry_after: null, status: queued };
+  });
+
+  render(<App />);
+  await flushReact();
+  fireEvent.click(screen.getByText('python-edge-cases'));
+  await flushReact();
+  expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-1');
+  fireEvent.click(screen.getByRole('button', { name: '更新' }));
+  await flushReact();
+  expect(screen.getByText('已加入共享更新，正在排队')).toBeVisible();
+  expect(screen.getByRole('button', { name: '已加入更新' })).toBeDisabled();
+  expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-1');
+  expect(screen.getByPlaceholderText('尽情提问')).toBeEnabled();
+  // Polling is fast only while an update is queued or running.
+  for (const [next, label, wait] of [[running, '共享更新正在进行，完成后会提示刷新', 5_000],
+    [failed, '共享更新失败，当前内容仍可使用', 5_000], [refreshed, '仓库已更新，点击刷新', 30_000]] as const) {
+    currentStatus = next;
+    await act(async () => { await vi.advanceTimersByTimeAsync(wait); });
+    await flushReact();
+    expect(document.querySelector('.repository-status-card')).toHaveTextContent(label);
+    expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-1');
+  }
+  expect(apiClient.getProject).toHaveBeenCalledTimes(1);
+  const pendingAnswer = deferred<Awaited<ReturnType<typeof apiClient.sendMessageStream>>>();
+  vi.mocked(apiClient.sendMessageStream).mockReturnValue(pendingAnswer.promise);
+  fireEvent.change(screen.getByPlaceholderText('尽情提问'), { target: { value: '旧版问题' } });
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  // The turn is pinned to the version this page shows, not the newer current one.
+  expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[7]).toBe('snapshot-1');
+  fireEvent.click(screen.getByRole('button', { name: '刷新到新版本' }));
+  expect(screen.getByRole('button', { name: '本轮结束后刷新' })).toBeVisible();
+  expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-1');
+  const userMessage: Message = { message_id: 'old-view-user', role: 'user', content: '旧版问题',
+    created_at: '2026-08-17T00:00:00Z', evidence: [], model: null, usage: null, latency_ms: null,
+    error: null, placeholder: false, analysis_snapshot_id: 'snapshot-1' };
+  await act(async () => {
+    pendingAnswer.resolve({ user_message: userMessage,
+      assistant_message: { ...userMessage, message_id: 'old-view-answer', role: 'assistant', content: '旧版回答' },
+      teaching_phase: 'orienting', validation_errors: [], tools_used: [], state_changed: false });
+    await Promise.resolve();
+  });
+  await flushReact();
+  expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-2');
+  expect(apiClient.getSnapshot).toHaveBeenCalledWith('project-1', 'zh-CN', 'snapshot-2');
+});
 
 async function flushReact(): Promise<void> {
   await act(async () => {
@@ -584,6 +670,7 @@ beforeEach(() => {
   vi.mocked(apiClient.listProjects).mockResolvedValue([summary]);
   vi.mocked(apiClient.getSettings).mockResolvedValue(settings);
   vi.mocked(apiClient.getSnapshot).mockResolvedValue(snapshot);
+  vi.mocked(apiClient.getRepositoryStatus).mockReset().mockResolvedValue(repositoryViewStatus);
   vi.mocked(apiClient.renameProject).mockResolvedValue(summary);
   vi.mocked(apiClient.deleteProject).mockResolvedValue(undefined);
   vi.mocked(apiClient.setProjectModel).mockResolvedValue(summary);
@@ -2007,7 +2094,7 @@ describe('App project state synchronization', () => {
         error: 'previous analysis failed',
       },
     });
-    const pendingReanalysis = deferred<Awaited<ReturnType<typeof apiClient.reanalyze>>>();
+    const pendingReanalysis = deferred<Awaited<ReturnType<typeof apiClient.requestRepositoryUpdate>>>();
     vi.mocked(apiClient.listProjects).mockResolvedValue([summary, otherSummary]);
     vi.mocked(apiClient.getProject).mockImplementation(id => Promise.resolve(
       detail(
@@ -2024,12 +2111,12 @@ describe('App project state synchronization', () => {
         snapshot_id: id === 'project-1' ? 'snapshot-1' : 'snapshot-2',
       },
     }));
-    vi.mocked(apiClient.reanalyze).mockReturnValue(pendingReanalysis.promise);
+    vi.mocked(apiClient.requestRepositoryUpdate).mockReturnValue(pendingReanalysis.promise);
 
     render(<App />);
     await userEvent.click(await screen.findByText('python-edge-cases'));
     await userEvent.click(screen.getByRole('button', { name: /重新分析/ }));
-    await waitFor(() => expect(apiClient.reanalyze).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(apiClient.requestRepositoryUpdate).toHaveBeenCalledTimes(1));
     await userEvent.click(screen.getByText('second-project'));
     expect(await screen.findByTestId('repository-workspace')).toHaveTextContent(
       'snapshot:snapshot-2',
@@ -2106,7 +2193,7 @@ describe('App project state synchronization', () => {
       .mockResolvedValueOnce(detail(queued, job('queued'), false))
       .mockResolvedValueOnce(detail(running, job('running'), false))
       .mockResolvedValueOnce(detail(project(), job('succeeded'), true));
-    vi.mocked(apiClient.reanalyze).mockResolvedValue(reanalysisQueued);
+    vi.mocked(apiClient.requestRepositoryUpdate).mockResolvedValue(reanalysisQueued);
 
     render(<App />);
     await flushReact();
@@ -2175,7 +2262,7 @@ describe('App project state synchronization', () => {
       .mockResolvedValueOnce(detail(interpreting, null, false))
       .mockResolvedValueOnce(detail(interpreting, job('running'), false))
       .mockResolvedValueOnce(detail(project(), job('succeeded'), true));
-    vi.mocked(apiClient.reanalyze).mockResolvedValue(reanalysisQueued);
+    vi.mocked(apiClient.requestRepositoryUpdate).mockResolvedValue(reanalysisQueued);
 
     render(<App />);
     await flushReact();
@@ -2212,14 +2299,14 @@ describe('App project state synchronization', () => {
       error_code: 'analysis_cancelled',
     };
     vi.mocked(apiClient.getProject).mockResolvedValue(detail(cancelledProject, cancelledJob, false));
-    vi.mocked(apiClient.reanalyze).mockResolvedValue(reanalysisQueued);
+    vi.mocked(apiClient.requestRepositoryUpdate).mockResolvedValue(reanalysisQueued);
 
     render(<App />);
     await userEvent.click(await screen.findByText('python-edge-cases'));
 
     expect(await screen.findByText('分析已停止，可重新分析。')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /重新分析/ }));
-    expect(apiClient.reanalyze).toHaveBeenCalledWith('project-1');
+    expect(apiClient.requestRepositoryUpdate).toHaveBeenCalledWith('project-1');
   });
 
   it('treats a succeeded analysis job as terminal even if the project stage is stale', async () => {
@@ -2351,7 +2438,7 @@ describe('App project state synchronization', () => {
       await vi.advanceTimersByTimeAsync(2_000);
     });
     await flushReact();
-    expect(apiClient.getSnapshot).toHaveBeenCalledWith('project-1', 'zh-CN');
+    expect(apiClient.getSnapshot).toHaveBeenCalledWith('project-1', 'zh-CN', 'snapshot-1');
     expect(screen.queryByTestId('repository-workspace')).not.toBeInTheDocument();
 
     delayedSnapshot.resolve(snapshot);
@@ -2417,7 +2504,7 @@ describe('App project state synchronization', () => {
       await vi.advanceTimersByTimeAsync(2_000);
     });
     await flushReact();
-    expect(apiClient.getSnapshot).toHaveBeenCalledWith('project-1', 'zh-CN');
+    expect(apiClient.getSnapshot).toHaveBeenCalledWith('project-1', 'zh-CN', 'snapshot-1');
 
     fireEvent.click(screen.getByText('second-project'));
     await flushReact();
@@ -3200,7 +3287,7 @@ describe('interface and project language', () => {
     await userEvent.type(screen.getByPlaceholderText('尽情提问'), '我的草稿');
     await userEvent.click(screen.getByRole('button', { name: /The Octocat/ }));
     await userEvent.click(screen.getByRole('menuitemradio', { name: 'English' }));
-    await waitFor(() => expect(apiClient.getSnapshot).toHaveBeenCalledWith('project-1', 'en'));
+    await waitFor(() => expect(apiClient.getSnapshot).toHaveBeenCalledWith('project-1', 'en', 'snapshot-1'));
     await userEvent.click(screen.getByRole('button', { name: /The Octocat/ }));
     await userEvent.click(screen.getByRole('menuitemradio', { name: '简体中文' }));
     await act(async () => { english.resolve({ ...snapshot, display_language: 'en' }); });
@@ -3209,7 +3296,7 @@ describe('interface and project language', () => {
     await userEvent.click(screen.getByRole('menuitemradio', { name: 'English' }));
     expect(await screen.findByText('language:en')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Ask anything')).toHaveValue('我的草稿');
-    expect(apiClient.reanalyze).not.toHaveBeenCalled();
+    expect(apiClient.requestRepositoryUpdate).not.toHaveBeenCalled();
   });
 
   it('switches interface labels, persists the choice, and leaves the current project intact', async () => {
@@ -3225,7 +3312,7 @@ describe('interface and project language', () => {
     expect(localStorage.getItem(UI_LANGUAGE_STORAGE_KEY)).toBe('en');
     expect(screen.getByText('python-edge-cases')).toBeInTheDocument();
     expect(apiClient.getProject).toHaveBeenCalledTimes(reads);
-    expect(apiClient.reanalyze).not.toHaveBeenCalled();
+    expect(apiClient.requestRepositoryUpdate).not.toHaveBeenCalled();
     const toggle = screen.getByRole('button', { name: 'Settings' });
     expect(toggle?.nextElementSibling).toHaveAccessibleName('Switch to dark theme');
     await userEvent.click(screen.getByRole('button', { name: 'New project' }));

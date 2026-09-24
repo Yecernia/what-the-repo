@@ -557,6 +557,11 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .message-version-meta { margin-top: 8px; color: var(--fg-muted); font-size: 11px; }
 .message-version-meta code, .repository-version-strip code { font-family: var(--mono); color: var(--fg); }
 .repository-version-strip { margin: 4px 0 8px; color: var(--fg-muted); font-size: 11px; }
+.repository-status-card { display: grid; gap: 7px; margin: 8px 0 14px; padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--radius-sketch-sm); background: var(--panel); font-size: 12px; }
+.repository-status-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.repository-status-row strong { font-weight: 600; }
+.repository-status-card p { margin: 0; color: var(--fg-muted); line-height: 1.5; }
+.repository-status-card > .btn { justify-self: start; }
 /* Composer — floating rounded surface, the hero control of the chat */
 .composer-wrap {
   padding: 10px 22px 20px; border: 0; background: var(--chat-bg);

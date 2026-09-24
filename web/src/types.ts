@@ -241,6 +241,46 @@ export interface ProjectDetail {
   analysis_error_code?: string | null;
 }
 
+export interface RepositoryViewStatus {
+  snapshot_available: boolean;
+  current: { snapshot_id: string; commit_sha: string; published_at: string | null; generation: number } | null;
+  view: { snapshot_id: string; commit_sha: string; published_at?: string | null; expires_at: string | null } | null;
+  refresh_required: boolean;
+  view_expired: boolean;
+  freshness: {
+    base_snapshot_id: string | null;
+    upstream_commit_sha: string | null;
+    behind_commits: number | null;
+    relation: 'same' | 'ahead' | 'diverged' | 'rewound' | 'unknown';
+    check_status: 'idle' | 'checking' | 'ok' | 'failed';
+    checked_at: string | null;
+    stale: boolean;
+    error_code: string | null;
+    next_check_at: string | null;
+  };
+  update: {
+    update_id: string;
+    status: 'queued' | 'running' | 'failed';
+    target_commit_sha: string | null;
+    trigger: 'initial' | 'manual' | 'background';
+    stage: string | null;
+    participation: 'none' | 'queued' | 'running' | 'completed';
+    error_code: string | null;
+    retryable: boolean;
+  } | null;
+  update_eligibility: { allowed: boolean; reason: string | null; retry_after: string | null };
+  migration: { status: 'not_needed' | 'pending' | 'ready' | 'needs_review' | 'failed'; changed_items: number };
+}
+
+export interface RepositoryUpdateResult {
+  outcome: 'up_to_date' | 'joined' | 'queued' | 'deferred';
+  update_id: string | null;
+  /** The caller's analysis job when it waits for work; null when nothing started. */
+  job_id: string | null;
+  retry_after: string | null;
+  status: RepositoryViewStatus;
+}
+
 export interface AnalysisJob {
   scheduling_state?: 'waiting_capacity' | 'waiting_owner' | 'running' | 'completed';
   job_id: string;

@@ -7,6 +7,7 @@ import { ActivityIcon } from './ActivityIcon';
 import { activityPhaseKey, activityPhaseLabel, activityIconName, activityStatusLabel, analysisActivityLabel, analysisProgressLabels, analysisEventLabel, analysisStageKey, type ActivityPhaseKey } from './activity-presentation';
 import { UserRound, Plus, Settings, Send, Sun, Moon, X, LogOut, ChevronRight, ChevronLeft, ChevronDown as ChevronDownSketch } from './HandIcons';
 import { t, getUiLanguage, setUiLanguage, useUiLanguage, translateFor, type UiLanguage } from './ui-language';
+import { RepositoryStatusCard, type RepositoryUpdateNotice } from './RepositoryStatusCard';
 import { LanguagePicker } from './LanguagePicker';
 import { providerVariantLabel } from './provider-variant-label';
 import { lazy, Suspense, Fragment, memo, useCallback, useMemo, useState, useEffect, useLayoutEffect, useId, useRef } from 'react';
@@ -45,6 +46,7 @@ import type {
   Message,
   Project,
   ProjectSummary,
+  RepositoryViewStatus,
   SettingsResponse,
   Snapshot,
   RuntimeProgressEvent,
@@ -2045,6 +2047,12 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [snapshotTarget, setSnapshotTarget] = useState<{ projectId: string; snapshotId: string | null } | null>(null);
+  const [repositoryStatus, setRepositoryStatus] = useState<{ projectId: string; viewSnapshotId: string | null; value: RepositoryViewStatus } | null>(null);
+  const [repositoryUpdatePending, setRepositoryUpdatePending] = useState(false);
+  const [repositoryRefreshPending, setRepositoryRefreshPending] = useState<string | null>(null);
+  const [repositoryUpdateNotice, setRepositoryUpdateNotice] = useState<{ projectId: string; value: RepositoryUpdateNotice } | null>(null);
+  // Restarts status polling at the fast interval after this page joins an update.
+  const [repositoryPollNonce, setRepositoryPollNonce] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [input, setInput] = useState('');
@@ -2167,12 +2175,16 @@ export default function App() {
   const activeIdRef = useRef<string | null>(null);
   const projectEpochRef = useRef(0);
   const loadRequestRef = useRef(0);
+  const displayedViewRef = useRef<{ projectId: string; snapshotId: string } | null>(null);
+  const activeStatusRef = useRef<string | null>(null);
   const analysisTimerStartsRef = useRef(new Map<string, number>());
   const projectCacheRef = useRef(new Map<string, Project>());
   const pendingConversationsRef = useRef(new Map<string, PendingConversation>());
   const [analysisJobStatus, setAnalysisJobStatus] = useState<string | null>(null);
   const [analysisDismissed, setAnalysisDismissed] = useState(false);
   activeIdRef.current = activeId;
+  displayedViewRef.current = activeId && project?.project_id === activeId && snapshot
+    ? { projectId: activeId, snapshotId: snapshot.snapshot_id } : null;
 
   const rememberAnalysisStart = useCallback((
     projectId: string,
@@ -2352,11 +2364,13 @@ export default function App() {
     else messageRefs.current.delete(messageId);
   }, []);
 
-  const loadProject = useCallback(async (projectId: string) => {
+  const loadProject = useCallback(async (projectId: string, initialViewSnapshotId?: string | null) => {
     const requestId = ++loadRequestRef.current;
     setLoadError('');
     try {
-      const detail = await apiClient.getProject(projectId);
+      const viewSnapshotId = initialViewSnapshotId
+        ?? (displayedViewRef.current?.projectId === projectId ? displayedViewRef.current.snapshotId : null);
+      const detail = await apiClient.getProject(projectId, viewSnapshotId);
       if (requestId !== loadRequestRef.current || activeIdRef.current !== projectId) return;
       const nextJob = detail.analysis_job;
       const cachedProject = projectCacheRef.current.get(projectId) ?? null;
@@ -2386,7 +2400,7 @@ export default function App() {
       setAnalysisJobDetails(nextJob ?? null);
       setAnalysisJobStatus(nextJobStatus);
       syncProjectSummary(detail.project);
-      if (detail.snapshot_available && !jobIsActive) {
+    if (detail.snapshot_available) {
         setSnapshotTarget({ projectId, snapshotId: expectedSnapshotId });
       } else {
         setSnapshotTarget(null);
@@ -2410,7 +2424,7 @@ export default function App() {
       try {
         const cached = snapshotId ? await readCachedSnapshot(projectId, snapshotId, uiLanguage) : null;
         if (disposed || activeIdRef.current !== projectId) return;
-        const next = cached ?? await apiClient.getSnapshot(projectId, uiLanguage);
+        const next = cached ?? await apiClient.getSnapshot(projectId, uiLanguage, snapshotId);
         if (disposed || activeIdRef.current !== projectId) return;
         if (!cached) writeSnapshotCache(projectId, next);
         setSnapshot(next);
@@ -2422,6 +2436,30 @@ export default function App() {
     })();
     return () => { disposed = true; };
   }, [activeId, snapshotTarget, uiLanguage]);
+
+  // A shared update may finish in another tab or for another user. Poll only its
+  // small status document; the displayed snapshot remains fixed until refresh.
+  useEffect(() => {
+    if (!activeId || project?.project_id !== activeId || project.source.kind !== 'github') return;
+    const projectId = activeId;
+    const viewSnapshotId = snapshot?.snapshot_id ?? project.analysis.snapshot_id;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      try {
+        const value = await apiClient.getRepositoryStatus(projectId, viewSnapshotId);
+        if (!disposed && activeIdRef.current === projectId) {
+          activeStatusRef.current = value.update?.status ?? null;
+          setRepositoryStatus({ projectId, viewSnapshotId, value });
+        }
+      } catch { /* The visible snapshot remains usable while status is unavailable. */ }
+      // Status is small; poll faster only while an update is queued or running.
+      const updating = activeStatusRef.current === 'queued' || activeStatusRef.current === 'running';
+      if (!disposed) timer = setTimeout(() => { void poll(); }, updating ? 5000 : 30_000);
+    };
+    void poll();
+    return () => { disposed = true; if (timer) clearTimeout(timer); };
+  }, [activeId, project?.project_id, project?.source.kind, project?.analysis.snapshot_id, snapshot?.snapshot_id, repositoryPollNonce]);
 
   useEffect(() => {
     if (!identity) return;
@@ -2444,8 +2482,14 @@ export default function App() {
     loadRequestRef.current += 1;
     const cachedProject = activeId ? projectCacheRef.current.get(activeId) ?? null : null;
     setProject(cachedProject);
-    setSnapshot(activeId ? getMemorySnapshot(activeId, cachedProject?.analysis.snapshot_id, getUiLanguage()) : null);
+    const cachedView = activeId ? getMemorySnapshot(activeId, cachedProject?.analysis.snapshot_id, getUiLanguage()) : null;
+    setSnapshot(cachedView);
     setSnapshotTarget(null);
+    setRepositoryStatus(null);
+    setRepositoryUpdatePending(false);
+    setRepositoryRefreshPending(null);
+    setRepositoryUpdateNotice(null);
+    activeStatusRef.current = null;
     setAnalysisJobId(null);
     setAnalysisJobDetails(null);
     setAnalysisJobStatus(null);
@@ -2465,7 +2509,7 @@ export default function App() {
     if (!activeId) {
       return;
     }
-    void loadProject(activeId);
+    void loadProject(activeId, cachedView?.snapshot_id ?? cachedProject?.analysis.snapshot_id);
   }, [activeId, loadProject]);
 
   useTextareaAutosize(composerRef, input, 48, 1 / 3, project?.project_id);
@@ -2721,8 +2765,10 @@ export default function App() {
             reviewEvidence,
             replaceMessageId,
             retryRunId,
+            snapshot?.snapshot_id ?? null,
           )
-        : await apiClient.sendMessage(projectId, text, currentSelection, reviewEvidence, replaceMessageId, retryRunId);
+        : await apiClient.sendMessage(projectId, text, currentSelection, reviewEvidence, replaceMessageId, retryRunId,
+          snapshot?.snapshot_id ?? null);
       const cachedAfterResponse = projectCacheRef.current.get(projectId);
       if (cachedAfterResponse) {
         projectCacheRef.current.set(
@@ -2978,14 +3024,14 @@ export default function App() {
     setAnalysisDismissed(false);
     rememberAnalysisStart(projectId, null, null, true);
     try {
-      const status = await apiClient.reanalyze(projectId);
+      const result = await apiClient.requestRepositoryUpdate(projectId);
       if (
         activeIdRef.current !== projectId
         || projectEpochRef.current !== projectEpoch
       ) return;
-      rememberAnalysisStart(projectId, status.job_id, null);
-      setAnalysisJobId(status.job_id);
-      setAnalysisJobStatus(status.job_status);
+      rememberAnalysisStart(projectId, result.job_id, null);
+      setAnalysisJobId(result.job_id);
+      setAnalysisJobStatus(result.job_id ? 'queued' : null);
       await loadProject(projectId);
     } catch (error: unknown) {
       if (
@@ -2996,6 +3042,82 @@ export default function App() {
       }
     }
   }
+
+  async function requestRepositoryUpdate() {
+    if (!activeId || repositoryUpdatePending) return;
+    const projectId = activeId;
+    const projectEpoch = projectEpochRef.current;
+    setRepositoryUpdatePending(true);
+    setLoadError('');
+    try {
+      const result = await apiClient.requestRepositoryUpdate(projectId);
+      if (activeIdRef.current === projectId && projectEpochRef.current === projectEpoch) {
+        setRepositoryStatus({ projectId, viewSnapshotId: snapshot?.snapshot_id ?? null, value: result.status });
+        setRepositoryUpdateNotice({ projectId, value: { kind: result.outcome, retryAfter: result.retry_after } });
+        activeStatusRef.current = result.status.update?.status ?? null;
+        setRepositoryPollNonce(value => value + 1);
+      }
+    } catch (error: unknown) {
+      if (activeIdRef.current === projectId && projectEpochRef.current === projectEpoch) {
+        setLoadError(userFacingError(error, t('仓库更新暂时无法开始，请稍后重试。')));
+      }
+    } finally {
+      if (activeIdRef.current === projectId && projectEpochRef.current === projectEpoch) setRepositoryUpdatePending(false);
+    }
+  }
+
+  const refreshRepositoryView = useCallback(async (projectId: string) => {
+    const projectEpoch = projectEpochRef.current;
+    const requestId = ++loadRequestRef.current;
+    setLoadError('');
+    try {
+      const detail = await apiClient.getProject(projectId);
+      const nextSnapshotId = detail.project.analysis.snapshot_id;
+      if (!detail.snapshot_available || !nextSnapshotId) throw new Error('snapshot_unavailable');
+      const nextSnapshot = await readCachedSnapshot(projectId, nextSnapshotId, uiLanguage)
+        ?? await apiClient.getSnapshot(projectId, uiLanguage, nextSnapshotId);
+      if (activeIdRef.current !== projectId || projectEpochRef.current !== projectEpoch
+        || loadRequestRef.current !== requestId) return;
+      if (nextSnapshot.snapshot_id !== nextSnapshotId) throw new Error('snapshot_mismatch');
+      writeSnapshotCache(projectId, nextSnapshot);
+      const nextProject = mergeLocalMessages(detail.project, projectCacheRef.current.get(projectId) ?? null,
+        pendingConversationsRef.current.get(projectId));
+      projectCacheRef.current.set(projectId, nextProject);
+      setProject(nextProject);
+      setSnapshot(nextSnapshot);
+      setSnapshotTarget({ projectId, snapshotId: nextSnapshotId });
+      setConversationSelection(null);
+      setSourceModal(null);
+      setAnalysisJobId(detail.analysis_job?.job_id ?? null);
+      setAnalysisJobDetails(detail.analysis_job ?? null);
+      setAnalysisJobStatus(detail.analysis_job?.status ?? null);
+      syncProjectSummary(detail.project);
+      const status = await apiClient.getRepositoryStatus(projectId, nextSnapshotId);
+      if (activeIdRef.current === projectId && projectEpochRef.current === projectEpoch) {
+        setRepositoryStatus({ projectId, viewSnapshotId: nextSnapshotId, value: status });
+      }
+    } catch (error: unknown) {
+      if (activeIdRef.current === projectId && projectEpochRef.current === projectEpoch) {
+        setLoadError(userFacingError(error, t('新版暂时无法加载，请稍后重试。')));
+      }
+    }
+  }, [uiLanguage, syncProjectSummary]);
+
+  function requestRepositoryRefresh() {
+    if (!activeId) return;
+    if (sending || pendingConversationsRef.current.has(activeId)) {
+      setRepositoryRefreshPending(activeId);
+      return;
+    }
+    void refreshRepositoryView(activeId);
+  }
+
+  useEffect(() => {
+    if (!repositoryRefreshPending || sending || pendingConversationsRef.current.has(repositoryRefreshPending)) return;
+    if (activeId !== repositoryRefreshPending) { setRepositoryRefreshPending(null); return; }
+    setRepositoryRefreshPending(null);
+    void refreshRepositoryView(repositoryRefreshPending);
+  }, [activeId, repositoryRefreshPending, sending, refreshRepositoryView]);
 
   async function deleteProject(id: string) {
     setProjectMenuId(null);
@@ -3144,9 +3266,12 @@ export default function App() {
   }
 
   const analysisStage = project?.analysis.stage ?? 'idle';
+  const visibleRepositoryStatus = repositoryStatus?.projectId === activeId
+    && repositoryStatus.viewSnapshotId === (snapshot?.snapshot_id ?? project?.analysis.snapshot_id ?? null)
+    ? repositoryStatus.value : null;
   const analysisJobActive = analysisJobStatus === 'queued' || analysisJobStatus === 'running';
   const analysisJobTerminal = ['succeeded', 'failed', 'cancelled'].includes(analysisJobStatus ?? '');
-  const analysisCanRetry = !analysisJobActive
+  const analysisCanRetry = !snapshot && !analysisJobActive
     && (analysisStage === 'failed' || analysisJobStatus === 'failed' || analysisJobStatus === 'cancelled');
   const analysisRetryMessage = analysisJobStatus === 'cancelled'
     ? t("分析已停止，可重新分析。")
@@ -3160,7 +3285,7 @@ export default function App() {
     ? { stage: analysisJobDetails.scheduling_state === 'waiting_owner' ? 'analysis_waiting_owner' : 'analysis_waiting_capacity',
       status: 'running', kind: 'summary', visible: true, elapsed_ms: 0,
       label: analysisJobDetails.scheduling_state === 'waiting_owner' ? '等待个人分析名额' : '正在等待分析' } : null;
-  const isAnalyzing = !analysisJobTerminal
+  const isAnalyzing = !snapshot && !analysisJobTerminal
     && !analysisDismissed
     && (analysisJobActive || !['done', 'failed', 'idle'].includes(analysisStage));
   const modelForDisplay = project?.model_override ?? settings?.model ?? '';
@@ -3441,19 +3566,18 @@ export default function App() {
                       <RefreshCw size={12} /> {t(" 重新分析")}</button>
                   </div>
                 )}
-                {project.source.commit_sha && (
+                {(visibleRepositoryStatus?.view?.commit_sha ?? project.source.commit_sha) && (
                   <div className="repository-version-strip" role="status">
-                    {t("仓库版本 ")}<code>{project.source.commit_sha.slice(0, 12)}</code>
+                    {t("仓库版本 ")}<code>{(visibleRepositoryStatus?.view?.commit_sha ?? project.source.commit_sha ?? '').slice(0, 12)}</code>
                   </div>
                 )}
-                {project.repository_migration?.status === 'executed' && (
-                  <div className="repository-migration-card" role="status">
-                    <div className="repository-migration-heading">
-                      <strong>{t("已更新到新的仓库版本")}</strong>
-                      <span>{project.repository_migration.from_commit_sha.slice(0, 12)} → {project.repository_migration.to_commit_sha.slice(0, 12)}</span>
-                    </div>
-                    <p>{t("项目已更新到新的仓库版本，历史回答保留原版本标注。")}</p>
-                  </div>
+                {snapshot && project.source.kind === 'github' && visibleRepositoryStatus && (
+                  <RepositoryStatusCard status={visibleRepositoryStatus}
+                    refreshPending={repositoryRefreshPending === activeId}
+                    updatePending={repositoryUpdatePending}
+                    notice={repositoryUpdateNotice?.projectId === activeId ? repositoryUpdateNotice.value : null}
+                    onRefresh={requestRepositoryRefresh}
+                    onUpdate={() => { void requestRepositoryUpdate(); }} />
                 )}
                 {project.messages.length === 0 && (
                   <div className="chat-empty">

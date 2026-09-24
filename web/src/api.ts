@@ -91,6 +91,7 @@ function publicErrorMessage(status: number, code: string | undefined, detail: un
   if (status === 401) return t("登录状态已失效，请重新登录。");
   if (status === 403) return t("你暂时无法使用这个功能。");
   if (status === 404) return t("请求的内容不存在或已被移除。");
+  if (status === 410) return t("当前页面版本已过期，请刷新到新版本。");
   if (status === 409) return t("内容已更新，请刷新后重试。");
   if (status === 429) return t("请求过于频繁，请稍后再试。");
   if (status >= 500) return t("服务端错误，请稍后重试。");
@@ -349,12 +350,18 @@ export const apiClient = {
     display_language?: string;
   }) =>
     api<import('./types').ProjectDetail>('/api/projects', { method: 'POST', body: JSON.stringify(body) }),
-  getProject: (id: string) => api<import('./types').ProjectDetail>(`/api/projects/${id}`),
+  getProject: (id: string, viewSnapshotId?: string | null) => api<import('./types').ProjectDetail>(
+    `/api/projects/${id}${viewSnapshotId ? `?view_snapshot_id=${encodeURIComponent(viewSnapshotId)}` : ''}`,
+  ),
+  getRepositoryStatus: (id: string, viewSnapshotId?: string | null) => api<import('./types').RepositoryViewStatus>(
+    `/api/projects/${id}/repository-status${viewSnapshotId ? `?view_snapshot_id=${encodeURIComponent(viewSnapshotId)}` : ''}`,
+  ),
+  requestRepositoryUpdate: (id: string) => api<import('./types').RepositoryUpdateResult>(
+    `/api/projects/${id}/repository-update`, { method: 'POST' },
+  ),
   renameProject: (id: string, title: string) =>
     api<import('./types').ProjectSummary>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   deleteProject: (id: string) => api<void>(`/api/projects/${id}`, { method: 'DELETE' }),
-  reanalyze: (id: string) =>
-    api<import('./types').AnalysisStatus>(`/api/projects/${id}/reanalyze`, { method: 'POST' }),
   setProjectModel: (id: string, model: string) =>
     api<import('./types').ProjectSummary>(`/api/projects/${id}/model`, {
       method: 'PUT',
@@ -369,6 +376,7 @@ export const apiClient = {
     reviewEvidence = false,
     replaceMessageId?: string,
     retryRunId?: string,
+    viewSnapshotId?: string | null,
   ) =>
     api<import('./types').SendMessageResult>(
       `/api/projects/${id}/messages`, {
@@ -380,6 +388,7 @@ export const apiClient = {
           review_evidence: reviewEvidence,
           ...(replaceMessageId ? { replace_message_id: replaceMessageId } : {}),
           ...(retryRunId ? { retry_run_id: retryRunId } : {}),
+          ...(viewSnapshotId ? { view_snapshot_id: viewSnapshotId } : {}),
         }),
       },
     ),
@@ -391,6 +400,7 @@ export const apiClient = {
     reviewEvidence = false,
     replaceMessageId?: string,
     retryRunId?: string,
+    viewSnapshotId?: string | null,
   ): Promise<import('./types').SendMessageResult> => {
     const requestedRunId = clientRunId();
     onProgress({ run_id: requestedRunId, stage: 'request_created', label: '', kind: 'summary',
@@ -412,6 +422,7 @@ export const apiClient = {
                   run_id: requestedRunId,
                   ...(replaceMessageId ? { replace_message_id: replaceMessageId } : {}),
                   ...(retryRunId ? { retry_run_id: retryRunId } : {}),
+                  ...(viewSnapshotId ? { view_snapshot_id: viewSnapshotId } : {}),
                   content,
                   display_language: getUiLanguage(),
                   ui_context: uiContext,
@@ -492,7 +503,9 @@ export const apiClient = {
     ),
 
   // snapshot
-  getSnapshot: (id: string, language: 'zh-CN' | 'en') => api<import('./types').Snapshot>(`/api/projects/${id}/snapshot?display_language=${language}&view=workspace`),
+  getSnapshot: (id: string, language: 'zh-CN' | 'en', viewSnapshotId?: string | null) => api<import('./types').Snapshot>(
+    `/api/projects/${id}/snapshot?display_language=${language}&view=workspace${viewSnapshotId ? `&view_snapshot_id=${encodeURIComponent(viewSnapshotId)}` : ''}`,
+  ),
   getSnapshotDetail: (id: string, snapshotId: string, language: 'zh-CN' | 'en', kind: 'component' | 'relation' | 'layer', entityId: string) =>
     api<{ snapshot_id: string; display_language: 'zh-CN' | 'en'; kind: typeof kind; item: import('./types').GraphNode | import('./types').GraphEdge | import('./types').ArchitectureLayer }>(
       `/api/projects/${encodeURIComponent(id)}/snapshot/detail?snapshot_id=${encodeURIComponent(snapshotId)}&display_language=${encodeURIComponent(language)}&kind=${kind}&id=${encodeURIComponent(entityId)}`,
