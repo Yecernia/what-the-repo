@@ -2,6 +2,7 @@
 import { detailedAnalysisStages } from './analysis-stage-catalog';
 
 export const englishMessages: Record<string, string> = {
+  '共 {0} 项；可用方向键、Home、End 浏览。': '{0} items. Navigate with arrow keys, Home and End.',
   '处理凭证已失效，本轮已停止，请重试。': 'The execution lease expired. This turn has stopped. Please retry.',
   '数据库连接等待超时，请稍后重试。': 'Waiting for a database connection timed out. Please retry.',
   '数据库操作超时，本轮已停止，请稍后重试。': 'A database operation timed out. This turn has stopped. Please retry.',

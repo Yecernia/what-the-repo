@@ -1,0 +1,14 @@
+.workspace-evidence-help { margin: 0 0 6px; color: var(--fg-muted); font-size: 11px; }
+.workspace-evidence-window {
+  height: min(378px, 50vh);
+  min-height: 108px;
+  overflow: auto;
+  contain: layout paint;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+.workspace-evidence-window-space { position: relative; width: 100%; }
+.workspace-evidence-window-row { position: absolute; inset: 0 0 auto; box-sizing: border-box; padding: 2px; }
+.workspace-evidence-window-row .workspace-evidence { width: 100%; height: 49px; box-sizing: border-box; }
+.workspace-evidence-window .workspace-evidence:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

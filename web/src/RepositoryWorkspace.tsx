@@ -1,3 +1,4 @@
+import { WorkspaceEvidenceList as EvidenceList } from './WorkspaceEvidenceList';
 import { usePhoneDevice } from './usePhoneDevice';
 import { t, translateFor, useUiLanguage } from './ui-language';
 import { memo, useId, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -412,40 +413,6 @@ function InlineWorkspaceText({
   return <>{nodes}</>;
 }
 
-function EvidenceList({
-  evidence,
-  onOpenEvidence,
-}: {
-  evidence: GraphEvidence[];
-  onOpenEvidence: (evidence: GraphEvidence) => void;
-}) {
-  if (!evidence.length) return <div className="workspace-muted">{t("暂无可打开的源码")}</div>;
-  return (
-    <div className="workspace-evidence-list">
-      {evidence.map(item => (
-        (() => {
-          const fileName = item.path.split(/[\\/]/).pop() || item.label;
-          return (
-        <button
-          className="workspace-evidence"
-          key={`${item.stable_id}:${item.start_line ?? 0}`}
-          aria-label={`${item.label} ${item.path}${item.start_line ? `:${item.start_line}` : ''}`}
-          onClick={() => onOpenEvidence(item)}
-          disabled={!item.path}
-        >
-          <LanguageGlyph language={languageFromPath(item.path ?? 'file')} />
-          <span className="workspace-evidence-main">
-            <span className="workspace-evidence-label">{fileName}</span>
-            <code className="workspace-evidence-path">{item.path}{item.start_line ? `:${item.start_line}` : ''}</code>
-          </span>
-        </button>
-          );
-        })()
-      ))}
-    </div>
-  );
-}
-
 function relationKindLabel(kind: string) {
   const labels: Record<string, string> = {
     calls: t("调用"),
@@ -522,7 +489,7 @@ function DetailsPanel({
         </>}
         <section>
           <h4>{t("相关代码")}</h4>
-          <EvidenceList
+          <EvidenceList key={component.id}
             evidence={component.members.length ? component.members : component.evidence}
             onOpenEvidence={onOpenEvidence}
           />
@@ -559,7 +526,7 @@ function DetailsPanel({
         </section>
         <section>
           <h4>{t("代码参考")}</h4>
-          <EvidenceList evidence={relation.evidence} onOpenEvidence={onOpenEvidence} />
+          <EvidenceList key={relation.id} evidence={relation.evidence} onOpenEvidence={onOpenEvidence} />
         </section>
         <button
           className="btn btn-primary workspace-topic-button"
@@ -592,7 +559,7 @@ function DetailsPanel({
         )}
         <section>
           <h4>{t("代码参考")}</h4>
-          <EvidenceList evidence={point.evidence} onOpenEvidence={onOpenEvidence} />
+          <EvidenceList key={point.stable_id} evidence={point.evidence} onOpenEvidence={onOpenEvidence} />
         </section>
         <button
           className="btn btn-primary workspace-topic-button"
