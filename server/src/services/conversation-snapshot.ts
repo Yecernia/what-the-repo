@@ -4,8 +4,12 @@ import type { ConversationSummary } from '../domain/conversation-summary.js';
 import type { ProductStore } from '../persistence/store.js';
 import { serviceError } from './errors.js';
 
-export async function loadConversationSnapshot(store: ProductStore, projectId: string, canonical: boolean) {
-  const snapshot = asEvidenceSnapshot(await store.loadSnapshot(projectId));
+export async function loadConversationSnapshot(store: ProductStore, projectId: string, canonical: boolean,
+  pinned?: { publicSnapshotKey: string; snapshotId: string } | null) {
+  // A turn pinned to a retired version reads that version's published view.
+  const snapshot = pinned
+    ? asEvidenceSnapshot((await store.loadPublicSnapshotView(pinned.publicSnapshotKey))?.view)
+    : asEvidenceSnapshot(await store.loadSnapshot(projectId));
   // Published repositories use the indexed evidence directory and per-file source readers.
   // Full analysis objects also include compiler caches and must not be loaded per chat turn.
   if (snapshot && !canonical) {
@@ -28,20 +32,18 @@ export function createConversationSnapshotReader(store: ProductStore, input: {
   let promise: ReturnType<typeof loadConversationSnapshot> | undefined;
   return () => {
     promise ??= (async () => {
-      const assertBound = async () => {
-        input.signal?.throwIfAborted();
-        const current = await store.loadProject(input.projectId, input.ownerId);
-        if (!current || current.analysis.snapshot_id !== input.snapshotId
-          || current.analysis.canonical_snapshot_key !== input.publicSnapshotKey) {
-          throw serviceError('snapshot_changed', '项目快照已更新，请刷新后重试。', 409);
-        }
-      };
-      await assertBound();
-      const snapshot = await loadConversationSnapshot(store, input.projectId, Boolean(input.publicSnapshotKey));
+      input.signal?.throwIfAborted();
+      const current = await store.loadProject(input.projectId, input.ownerId);
+      if (!current) throw serviceError('not_found', '项目不存在', 404);
+      // The turn reads the version it captured, whether or not it is still current.
+      const pinned = input.publicSnapshotKey && input.snapshotId
+        && (current.analysis.snapshot_id !== input.snapshotId
+          || current.analysis.canonical_snapshot_key !== input.publicSnapshotKey)
+        ? { publicSnapshotKey: input.publicSnapshotKey, snapshotId: input.snapshotId } : null;
+      const snapshot = await loadConversationSnapshot(store, input.projectId, Boolean(input.publicSnapshotKey), pinned);
       if (snapshot && input.snapshotId && snapshot.snapshot_id !== input.snapshotId) {
         throw serviceError('snapshot_changed', '项目快照已更新，请刷新后重试。', 409);
       }
-      await assertBound();
       return snapshot;
     })();
     return promise;

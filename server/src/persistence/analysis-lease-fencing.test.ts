@@ -607,7 +607,7 @@ test("PostgreSQL repository failure locks every project before the fenced job ro
       .filter((row) => row.sql.startsWith("SELECT pg_advisory_xact_lock"))
       .map((row) => String(row.values[0]));
     assert.deepEqual(lockKeys, [
-      "repository-update:example/repository-lock:typescript-0.1.0:tree-sitter-nine-language-v1",
+      "repository-update:example/repository-lock",
       "project:project-a",
       "project:project-b",
     ]);

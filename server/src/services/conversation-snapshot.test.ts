@@ -69,10 +69,19 @@ test('deferred view refuses a changed binding or returned snapshot and retains r
   await assert.rejects(stale(), { code: 'snapshot_changed' });
   await assert.rejects(stale(), { code: 'snapshot_changed' });
   assert.equal(reads, 1);
+  // A newer publication does not interrupt the turn: it keeps reading the
+  // version it captured from that version's published view.
   project.analysis.canonical_snapshot_key = 'new-binding';
+  let pinnedReads = 0;
+  Object.assign(store, { loadPublicSnapshotView: async (key: string) => {
+    pinnedReads++;
+    assert.equal(key, 'canonical');
+    return { metadata: {}, view: { snapshot_id: 'snapshot:test', graph: { nodes: [], edges: [] } } };
+  } });
   const rebound = createConversationSnapshotReader(store, input);
-  await assert.rejects(rebound(), { code: 'snapshot_changed' });
-  assert.equal(reads, 1, 'changed binding is rejected before full read');
+  assert.equal((await rebound())?.snapshot_id, 'snapshot:test');
+  assert.equal(reads, 1, 'the pinned version never reads the new binding');
+  assert.equal(pinnedReads, 1);
   project.analysis.canonical_snapshot_key = 'canonical';
   const failed = new Error('storage unavailable');
   store.loadSnapshot = async () => { reads++; throw failed; };

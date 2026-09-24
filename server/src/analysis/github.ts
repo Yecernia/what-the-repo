@@ -55,11 +55,37 @@ export interface GithubGatewayTransport {
 }
 
 type GithubJsonRequest = {
-  kind: "metadata" | "commit" | "tree" | "readme";
+  kind: "metadata" | "commit" | "tree" | "readme" | "compare";
   owner: string;
   repo: string;
   ref?: string;
+  base?: string;
+  head?: string;
 };
+
+export interface GithubCommitComparison {
+  relation: "same" | "ahead" | "diverged" | "rewound" | "unknown";
+  behindCommits: number | null;
+}
+
+export async function fetchPublicGithubComparison(value: string, base: string, head: string,
+  clientId?: string | null, clientSecret?: string | null,
+  gateway?: GithubGatewayTransport | null, signal?: AbortSignal): Promise<GithubCommitComparison> {
+  if (!/^[a-f0-9]{40}$/i.test(base) || !/^[a-f0-9]{40}$/i.test(head)) {
+    throw new Error("github_compare_sha_invalid");
+  }
+  if (base.toLowerCase() === head.toLowerCase()) return { relation: "same", behindCommits: 0 };
+  const { owner, repo } = parseGithubRepository(value);
+  const result = await githubJson({ kind: "compare", owner, repo, base, head },
+    clientId, clientSecret, gateway, signal, 5000);
+  const ahead = Number(result.ahead_by), behind = Number(result.behind_by);
+  if (!Number.isSafeInteger(ahead) || ahead < 0 || !Number.isSafeInteger(behind) || behind < 0) {
+    return { relation: "unknown", behindCommits: null };
+  }
+  if (ahead > 0 && behind === 0) return { relation: "ahead", behindCommits: ahead };
+  if (ahead === 0 && behind > 0) return { relation: "rewound", behindCommits: null };
+  return { relation: "diverged", behindCommits: null };
+}
 
 export async function fetchPublicGithubHead(
   value: string,
@@ -83,6 +109,7 @@ function directGithubUrl(request: GithubJsonRequest): string {
   if (request.kind === "metadata") return root;
   if (request.kind === "readme") return `${root}/readme${request.ref ? `?ref=${encodeURIComponent(request.ref)}` : ""}`;
   if (request.kind === "commit") return `${root}/commits/${encodeURIComponent(request.ref ?? "")}`;
+  if (request.kind === "compare") return `${root}/compare/${encodeURIComponent(request.base ?? "")}...${encodeURIComponent(request.head ?? "")}`;
   return `${root}/git/trees/${encodeURIComponent(request.ref ?? "")}?recursive=1`;
 }
 
@@ -125,6 +152,8 @@ async function githubJson(
       owner: request.owner,
       repo: request.repo,
       ...(request.ref ? { ref: request.ref } : {}),
+      ...(request.base ? { base: request.base } : {}),
+      ...(request.head ? { head: request.head } : {}),
     }, signal)
     : fetch(directGithubUrl(request), {
       headers,

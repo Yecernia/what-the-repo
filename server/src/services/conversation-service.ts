@@ -71,6 +71,7 @@ import { assertProductSkillRun, loadProductSkill } from "../agent/skill-registry
 import type { ProductStore } from "../persistence/store.js";
 import type { TaskQueue } from "../queue/task-queue.js";
 import { serviceError } from "./errors.js";
+import { resolveSnapshotView } from "./snapshot-view.js";
 import { defaultRuntimeMetrics, type RuntimeMetrics } from "../observability/metrics.js";
 import { measureEvidenceQuality } from "../domain/evidence-quality.js";
 
@@ -97,6 +98,8 @@ export interface ConversationRunInput {
   /** Current UI language is a fallback, not a forced response language. */
   displayLanguage?: string;
   replaceMessageId?: string;
+  /** The version the page shows; the whole turn reads it even if a newer one is published. */
+  viewSnapshotId?: string | null;
   /** A browser may lose the response before learning the persisted message ID. */
   retryRunId?: string;
   selection?: UiSelection | null;
@@ -373,6 +376,7 @@ export class ConversationService {
     let admission: CapacityPermit | undefined;
     let admissionEvents = 0;
     let releaseRepository: RepositoryReadLease | null = null;
+    let snapshotLease: string | null = null;
     try {
     const owned = await this.store.loadProject(input.projectId, input.owner.owner_id);
     if (!owned) throw serviceError('not_found', '项目不存在', 404);
@@ -385,9 +389,17 @@ export class ConversationService {
     input = { ...input, signal: admission.signal };
     releaseRepository = await acquireRepositoryReadLease(this.store);
     if(releaseRepository) input={...input,signal:input.signal ? AbortSignal.any([input.signal,releaseRepository.signal]) : releaseRepository.signal};
-    const project = await this.store.loadProject(input.projectId, input.owner.owner_id);
-    if (!project) throw serviceError("not_found", "项目不存在", 404);
-    if(project.analysis.removed_by_admin) throw serviceError('snapshot_unavailable','此仓库的分析资料已由管理员清理，请重新分析后继续对话。',409);
+    const loaded = await this.store.loadProject(input.projectId, input.owner.owner_id);
+    if (!loaded) throw serviceError("not_found", "项目不存在", 404);
+    if(loaded.analysis.removed_by_admin) throw serviceError('snapshot_unavailable','此仓库的分析资料已由管理员清理，请重新分析后继续对话。',409);
+    // Only analysis/source fields differ in a pinned view; history and study
+    // are merged into the current row when the turn is saved.
+    const { project } = await resolveSnapshotView(this.store, loaded, input.viewSnapshotId);
+    const leasedKey = project.analysis.canonical_snapshot_key;
+    if (leasedKey) {
+      snapshotLease = await this.store.acquireSnapshotReadLease(leasedKey, this.config.repositoryReadLeaseMaxMinutes ?? 30);
+      if (!snapshotLease) throw serviceError("snapshot_expired", "旧版已过期，请刷新到最新版本。", 410);
+    }
     if (!input.replaceMessageId && input.retryRunId) {
       const prior = project.messages.find(message => message.role === "user" && message.trace_id === input.retryRunId);
       if (prior) input = { ...input, replaceMessageId: prior.message_id };
@@ -430,12 +442,12 @@ export class ConversationService {
     const primarySkill = await loadProductSkill(PRIMARY_SKILL_ID);
     const capturedSnapshotId = project.analysis.snapshot_id;
     const capturedPublicKey = project.analysis.canonical_snapshot_key;
+    // The turn keeps the version it started with under a read lease. A newer
+    // publication does not interrupt it; losing the project (access) still does.
     const assertSnapshotBinding = async () => {
       input.signal?.throwIfAborted();
-      const current = await this.store.loadProject(input.projectId, input.owner.owner_id);
-      if (!current || current.analysis.snapshot_id !== capturedSnapshotId
-        || current.analysis.canonical_snapshot_key !== capturedPublicKey) {
-        throw serviceError('snapshot_changed', '项目快照已更新，请刷新后重试。', 409);
+      if (!(await this.store.loadProject(input.projectId, input.owner.owner_id))) {
+        throw serviceError('not_found', '项目不存在', 404);
       }
     };
     const getSnapshot = createConversationSnapshotReader(this.store, {
@@ -810,7 +822,10 @@ export class ConversationService {
     } finally {
       this.runOwners.delete(runId);
       this.runtime.releaseRun(runId);
-      try { await releaseRepository?.(); } finally { await admission?.release(); }
+      try {
+        if (snapshotLease) await this.store.releaseSnapshotReadLease(snapshotLease).catch(() => undefined);
+        await releaseRepository?.();
+      } finally { await admission?.release(); }
     }
   }
 }

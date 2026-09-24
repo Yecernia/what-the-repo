@@ -109,6 +109,24 @@ export interface RepositoryIdentityInput {
   analysisConfigDigest: string;
 }
 
+export interface BackgroundRepositoryCandidate {
+  repository: string;
+  projectId: string;
+  currentPublicSnapshotKey: string;
+  currentSnapshotId: string;
+  analyzerBundleVersion: string;
+  analysisConfigDigest: string;
+  currentCommitSha: string;
+  publishedAt: string;
+  lastRealUseAt: string;
+  lastCheckedAt: string | null;
+  nextCheckAt: string | null;
+  upstreamCommitSha: string | null;
+  behindCommits: number | null;
+  relation: 'same' | 'ahead' | 'diverged' | 'rewound' | 'unknown';
+  lastBackgroundStartedAt: string | null;
+}
+
 export interface RepositoryUpdatePublication {
   updateId: string;
   publicKey: string;
@@ -121,6 +139,8 @@ export interface RepositoryUpdatePublication {
   completedAt: string;
   readyLanguage: string | null;
   redirects: RevisionRedirect[];
+  /** Old pages may keep reading the retired version this long (default 24). */
+  snapshotGraceHours?: number;
 }
 
 export interface SnapshotLanguageOverlayPublication {
@@ -224,6 +244,7 @@ export interface ProductStore {
     publicKey: string; snapshotId: string; cache: unknown; fence?: AnalysisLeaseFence;
   }): Promise<PreparedAnalysisCache>;
   loadRepositoryHead(input: RepositoryIdentityInput): Promise<RepositoryHead | null>;
+  loadCurrentRepositoryHead(repository: string): Promise<RepositoryHead | null>;
   saveRepositoryHead(head: RepositoryHead): Promise<void>;
   createOrJoinRepositoryUpdate(input: {
     project: Project;
@@ -233,6 +254,30 @@ export interface ProductStore {
     newProject: boolean;
   }): Promise<{ update: RepositoryUpdate; job: AnalysisJob; leader: boolean }>;
   loadRepositoryUpdateForProject(projectId: string): Promise<RepositoryUpdate | null>;
+  loadActiveRepositoryUpdate(repository: string): Promise<RepositoryUpdate | null>;
+  /** Most recently created update of any status; used for cooldown and failure display. */
+  loadLatestRepositoryUpdate(repository: string): Promise<RepositoryUpdate | null>;
+  /** Public key of a readable older version of the project's repository; null for the current binding. */
+  historicalPublicKey(projectId: string, snapshotId: string): Promise<string | null>;
+  /**
+   * Protects a version from cleanup while one request reads it. Returns null
+   * when the version is already outside its grace period or purged.
+   */
+  acquireSnapshotReadLease(publicKey: string, maxMinutes: number): Promise<string | null>;
+  releaseSnapshotReadLease(leaseId: string): Promise<void>;
+  touchRepositoryRealUse(repository: string, at: string, minIntervalMinutes: number): Promise<void>;
+  listBackgroundRepositoryCandidates(now: string, activeSince: string, limit: number): Promise<BackgroundRepositoryCandidate[]>;
+  saveRepositoryFreshness(input: {
+    repository: string; baseSnapshotKey: string; upstreamCommitSha: string | null;
+    behindCommits: number | null; relation: BackgroundRepositoryCandidate['relation'];
+    checkedAt: string; nextCheckAt: string; errorCode: string | null;
+  }): Promise<boolean>;
+  createBackgroundRepositoryUpdate(input: {
+    project: Project; job: AnalysisJob; identity: RepositoryIdentityInput;
+    targetCommitSha: string; dailyUsd: number; updateMaxUsd: number;
+    maxStartsPerDay: number; maxActive: number; maxQueued: number;
+    minUpdateIntervalHours: number; activeWindowDays: number; now: string;
+  }): Promise<'queued' | 'deferred' | 'up_to_date'>;
   listRepositoryUpdateProjects(updateId: string): Promise<Project[]>;
   publishRepositoryUpdate(input: RepositoryUpdatePublication & { fence?: AnalysisLeaseFence }): Promise<string[]>;
   failRepositoryUpdate(updateId: string, error: string, fence?: AnalysisLeaseFence): Promise<string[]>;

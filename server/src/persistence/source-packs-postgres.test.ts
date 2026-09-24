@@ -54,10 +54,12 @@ test('isolated PostgreSQL: packed sources survive JSONB checkpoints, restart and
         analyzer_bundle_version: 'typescript-0.1.0', analysis_config_digest: 'tree-sitter-nine-language-v1',
         current_public_snapshot_key: publicKey, current_commit_sha: 'a'.repeat(40),
         last_checked_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z' });
-      await reader.pool.query("UPDATE canonical_public_repository_snapshots SET purge_after='2020-01-01' WHERE public_snapshot_key=$1", [publicKey]);
+      await reader.pool.query("UPDATE canonical_public_repository_snapshots SET retired_at='2019-12-31', purge_after='2020-01-01' WHERE public_snapshot_key=$1", [publicKey]);
+      await reader.pool.query(`INSERT INTO canonical_public_repositories(repository_identity, current_public_snapshot_key)
+        VALUES ('example/source-pack-pg', $1)`, [publicKey]);
       assert.equal(await reader.purgePublicSnapshotPayload(publicKey, '2030-01-01T00:00:00.000Z'), false,
-        'current head still protects every shared pack');
-      await reader.pool.query('DELETE FROM canonical_public_repository_heads WHERE current_public_snapshot_key=$1', [publicKey]);
+        'the repository current pointer still protects every shared pack');
+      await reader.pool.query('UPDATE canonical_public_repositories SET current_public_snapshot_key=NULL WHERE current_public_snapshot_key=$1', [publicKey]);
       assert.equal(await reader.purgePublicSnapshotPayload(publicKey, '2030-01-01T00:00:00.000Z'), true);
       assert.deepEqual(await objects.inventory(), []);
     } finally {

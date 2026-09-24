@@ -482,7 +482,7 @@ export class FileStore implements ProductStore {
     return rows.filter((row): row is Project => Boolean(row));
   }
 
-  private async listPublicSnapshotMetadataForIdentity(input: RepositoryIdentityInput): Promise<PublicSnapshotMetadata[]> {
+  private async listPublicSnapshotMetadataForIdentity(input: RepositoryIdentityInput, wholeRepository = false): Promise<PublicSnapshotMetadata[]> {
     const { readdir } = await import("node:fs/promises");
     const names = await readdir(this.dirs.publicSnapshots).catch(() => [] as string[]);
     const rows = await Promise.all(names
@@ -491,8 +491,8 @@ export class FileStore implements ProductStore {
     return rows.filter((row): row is PublicSnapshotMetadata => Boolean(
       row
       && row.repository_identity === input.repository.toLowerCase()
-      && row.analyzer_bundle_version === input.analyzerBundleVersion
-      && row.analysis_config_digest === input.analysisConfigDigest,
+      && (wholeRepository || (row.analyzer_bundle_version === input.analyzerBundleVersion
+        && row.analysis_config_digest === input.analysisConfigDigest)),
     ));
   }
 
@@ -610,7 +610,11 @@ export class FileStore implements ProductStore {
     if (!current) return null;
     if (current.analysis.snapshot_id !== snapshotId
       || current.analysis.canonical_snapshot_key !== project.analysis.canonical_snapshot_key) {
-      throw new Error("snapshot_not_bound");
+      // A turn pinned to a retired version of the same repository keeps reading it.
+      const pinned = await this.historicalPublicKey(project.project_id, snapshotId);
+      if (!pinned || pinned !== project.analysis.canonical_snapshot_key) throw new Error("snapshot_not_bound");
+      const view = asEvidenceSnapshot((await this.loadPublicSnapshotView(pinned))?.view);
+      return view?.snapshot_id === snapshotId ? conversationSummaryFromSource(view) : null;
     }
     const key = project.analysis.canonical_snapshot_key;
     if (key) {
@@ -627,6 +631,10 @@ export class FileStore implements ProductStore {
   async saveAnalysisResult(projectId: string, payload: unknown): Promise<void> { await writeJson(this.path("analysisResults", projectId), payload); }
   async readStaticFile(projectId: string, snapshotId: string, path: string): Promise<StaticFileFacts | null> {
     const project = await this.loadProject(projectId);
+    if (project && project.analysis.snapshot_id !== snapshotId) {
+      const pinned = await this.historicalPublicKey(projectId, snapshotId);
+      if (pinned) return this.readPublicStaticFile(pinned, snapshotId, path);
+    }
     if (!project || project.analysis.snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
     const key = project.analysis.canonical_snapshot_key;
     if (!key) return readStaticFileFacts(await this.loadAnalysisResult(projectId), async () => null, path);
@@ -839,6 +847,11 @@ export class FileStore implements ProductStore {
   }
   async boundSourceSnapshotRoot(projectId: string, snapshotId: string): Promise<string> {
     const project = await this.loadProject(projectId);
+    if (project && project.analysis.snapshot_id !== snapshotId) {
+      // A request pinned to an older version of the repository keeps reading it.
+      const pinned = await this.historicalPublicKey(projectId, snapshotId);
+      if (pinned) return this.publicSourceSnapshotRoot(safePublicKey(pinned), snapshotId);
+    }
     if (!project || project.analysis.snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
     if (project.analysis.canonical_snapshot_key) {
       const key = safePublicKey(project.analysis.canonical_snapshot_key);
@@ -864,6 +877,21 @@ export class FileStore implements ProductStore {
     await visit(root, "");
     return result.sort();
   }
+  /**
+   * A request pinned to an older version of the project's repository may read
+   * it until the payload is purged. Returns null for the current binding.
+   */
+  async historicalPublicKey(projectId: string, snapshotId: string): Promise<string | null> {
+    const project = await this.loadProject(projectId);
+    const currentKey = project?.analysis.canonical_snapshot_key;
+    if (!project || !currentKey || project.analysis.snapshot_id === snapshotId) return null;
+    const [current, key] = await Promise.all([
+      this.loadPublicSnapshotMetadata(currentKey), this.findPublicSnapshotKeyBySnapshotId(snapshotId)]);
+    const metadata = key ? await this.loadPublicSnapshotMetadata(key) : null;
+    return current && metadata && metadata.repository_identity === current.repository_identity
+      && metadata.analysis_snapshot_id === snapshotId && !metadata.payload_purged_at ? metadata.public_snapshot_key : null;
+  }
+
   async readSourceLines(projectId: string, snapshotId: string, relativePath: string, start: number, end: number): Promise<{ lines: string[]; truncated: boolean }> {
     const root = await this.boundSourceSnapshotRoot(projectId, snapshotId);
     const normalized = relativePath.replaceAll("\\", "/");
@@ -1100,6 +1128,90 @@ export class FileStore implements ProductStore {
     return readJson<RepositoryHead>(this.path("repositoryHeads", identityKey(input)));
   }
 
+  async loadCurrentRepositoryHead(repository: string): Promise<RepositoryHead | null> {
+    const key = createHash("sha256").update(`current\n${repository.toLowerCase()}`).digest("hex");
+    const current = await readJson<RepositoryHead>(this.path("repositoryHeads", key));
+    if (current) return current;
+    const names = await readdir(this.dirs.repositoryHeads).catch(() => [] as string[]);
+    const heads = await Promise.all(names.filter((name) => name.endsWith(".json"))
+      .map((name) => readJson<RepositoryHead>(join(this.dirs.repositoryHeads, name))));
+    const matching = heads.filter((head): head is RepositoryHead => Boolean(head
+      && head.repository_identity === repository.toLowerCase() && head.current_public_snapshot_key));
+    return new Set(matching.map((head) => head.current_public_snapshot_key)).size === 1
+      ? matching[0] ?? null : null;
+  }
+
+  async loadActiveRepositoryUpdate(repository: string): Promise<RepositoryUpdate | null> {
+    const names = await readdir(this.dirs.repositoryUpdates).catch(() => [] as string[]);
+    const updates = await Promise.all(names.filter((name) => name.endsWith(".json"))
+      .map((name) => readJson<RepositoryUpdate>(join(this.dirs.repositoryUpdates, name))));
+    return updates.filter((update): update is RepositoryUpdate => Boolean(update
+      && update.repository_identity === repository.toLowerCase()
+      && (update.status === "queued" || update.status === "running")))
+      .sort((left, right) => left.created_at.localeCompare(right.created_at))[0] ?? null;
+  }
+
+  async acquireSnapshotReadLease(publicKey: string, _maxMinutes: number): Promise<string | null> {
+    // A single process cannot purge concurrently with its own request.
+    const metadata = await this.loadPublicSnapshotMetadata(publicKey);
+    if (!metadata || metadata.payload_purged_at) return null;
+    if (metadata.retired_at && metadata.purge_after && Date.parse(metadata.purge_after) <= Date.now()) return null;
+    return `local:${randomUUID()}`;
+  }
+
+  async releaseSnapshotReadLease(_leaseId: string): Promise<void> {}
+
+  async loadLatestRepositoryUpdate(repository: string): Promise<RepositoryUpdate | null> {
+    const names = await readdir(this.dirs.repositoryUpdates).catch(() => [] as string[]);
+    const updates = await Promise.all(names.filter((name) => name.endsWith(".json"))
+      .map((name) => readJson<RepositoryUpdate>(join(this.dirs.repositoryUpdates, name))));
+    return updates.filter((update): update is RepositoryUpdate => Boolean(update
+      && update.repository_identity === repository.toLowerCase()))
+      .sort((left, right) => right.created_at.localeCompare(left.created_at))[0] ?? null;
+  }
+
+  async touchRepositoryRealUse(repository: string, at: string, minIntervalMinutes: number): Promise<void> {
+    const key = createHash("sha256").update(`activity\n${repository.toLowerCase()}`).digest("hex");
+    await this.mutex.runExclusive(`repository-activity:${key}`, async () => {
+      const path = this.path("repositoryHeads", key);
+      const previous = await readJson<{ lastRealUseAt: string }>(path);
+      if (previous && Date.parse(at) - Date.parse(previous.lastRealUseAt) < minIntervalMinutes * 60_000) return;
+      await writeJson(path, { lastRealUseAt: at });
+    });
+  }
+
+  async listBackgroundRepositoryCandidates(_now: string, _activeSince: string, _limit: number): Promise<import('./store.js').BackgroundRepositoryCandidate[]> {
+    // Background physical tasks require the cross-process PostgreSQL scheduler.
+    return [];
+  }
+
+  async saveRepositoryFreshness(input: {
+    repository: string; baseSnapshotKey: string; upstreamCommitSha: string | null;
+    behindCommits: number | null; relation: import('./store.js').BackgroundRepositoryCandidate['relation'];
+    checkedAt: string; nextCheckAt: string; errorCode: string | null;
+  }): Promise<boolean> {
+    const key = createHash("sha256").update(`current\n${input.repository.toLowerCase()}`).digest("hex");
+    return this.mutex.runExclusive(`repository-current:${key}`, async () => {
+      const path = this.path("repositoryHeads", key);
+      const current = await readJson<RepositoryHead>(path);
+      if (!current || current.current_public_snapshot_key !== input.baseSnapshotKey) return false;
+      await writeJson(path, { ...current, upstream_commit_sha: input.upstreamCommitSha,
+        behind_commits: input.behindCommits, relation: input.relation,
+        last_checked_at: input.checkedAt, next_check_at: input.nextCheckAt,
+        check_error_code: input.errorCode });
+      return true;
+    });
+  }
+
+  async createBackgroundRepositoryUpdate(_input: {
+    project: Project; job: AnalysisJob; identity: RepositoryIdentityInput;
+    targetCommitSha: string; dailyUsd: number; updateMaxUsd: number;
+    maxStartsPerDay: number; maxActive: number; maxQueued: number;
+    minUpdateIntervalHours: number; activeWindowDays: number; now: string;
+  }): Promise<'queued' | 'deferred' | 'up_to_date'> {
+    return 'deferred';
+  }
+
   async saveRepositoryHead(head: RepositoryHead): Promise<void> {
     await this.saveRepositoryHeadWithAnalysisLease(head);
   }
@@ -1111,7 +1223,7 @@ export class FileStore implements ProductStore {
     targetCommitSha?: string | null;
     newProject: boolean;
   }): Promise<{ update: RepositoryUpdate; job: AnalysisJob; leader: boolean }> {
-    const key = identityKey(input.identity);
+    const key = input.identity.repository.toLowerCase();
     return this.mutex.runExclusive(`repository-update:${key}`, async () => this.withAnalysisAdmission(async () => {
       await this.checkCreationQuotas(input.project.owner_id, input.newProject);
       if (!input.newProject && !(await this.loadProject(input.project.project_id, input.project.owner_id))) {
@@ -1123,9 +1235,6 @@ export class FileStore implements ProductStore {
       let update = rows.find((row): row is RepositoryUpdate => Boolean(
         row
           && row.repository_identity === input.identity.repository.toLowerCase()
-          && row.analyzer_bundle_version === input.identity.analyzerBundleVersion
-          && row.analysis_config_digest === input.identity.analysisConfigDigest
-          && (row.target_commit_sha?.toLowerCase() ?? null) === (input.targetCommitSha?.toLowerCase() ?? null)
           && (row.status === "queued" || row.status === "running"),
       ));
       if (update) {
@@ -1205,11 +1314,7 @@ export class FileStore implements ProductStore {
     const run = async (): Promise<string[]> => {
       const update = await readJson<RepositoryUpdate>(this.path("repositoryUpdates", input.updateId));
       if (!update) throw new Error("repository_update_not_found");
-      return this.mutex.runExclusive(`repository-update:${identityKey({
-        repository: update.repository_identity,
-        analyzerBundleVersion: update.analyzer_bundle_version,
-        analysisConfigDigest: update.analysis_config_digest,
-      })}`, async () => {
+      return this.mutex.runExclusive(`repository-update:${update.repository_identity.toLowerCase()}`, async () => {
       let fencedJobFinalized = false;
       const fenceForWrite = (): AnalysisLeaseFence | undefined =>
         input.fence && !fencedJobFinalized ? input.fence : undefined;
@@ -1240,6 +1345,16 @@ export class FileStore implements ProductStore {
         last_checked_at: timestamp,
         updated_at: timestamp,
       }, fenceForWrite());
+      await this.writeJsonWithAnalysisLease(this.path("repositoryHeads", createHash("sha256")
+        .update(`current\n${current.repository_identity.toLowerCase()}`).digest("hex")), {
+        repository_identity: current.repository_identity,
+        analyzer_bundle_version: current.analyzer_bundle_version,
+        analysis_config_digest: current.analysis_config_digest,
+        current_public_snapshot_key: input.publicKey,
+        current_commit_sha: input.commitSha,
+        last_checked_at: timestamp,
+        updated_at: timestamp,
+      } satisfies RepositoryHead, fenceForWrite());
       const identity = {
         repository: current.repository_identity,
         analyzerBundleVersion: current.analyzer_bundle_version,
@@ -1248,7 +1363,8 @@ export class FileStore implements ProductStore {
       const [joinedProjects, allProjects, identitySnapshots, jobs] = await Promise.all([
         this.listRepositoryUpdateProjects(input.updateId),
         this.listAllProjects(),
-        this.listPublicSnapshotMetadataForIdentity(identity),
+        // Every version of the repository, across analyzer/config lineages.
+        this.listPublicSnapshotMetadataForIdentity(identity, true),
         this.listJobs(),
       ]);
       const identitySnapshotByKey = new Map(identitySnapshots.map((row) => [row.public_snapshot_key.toLowerCase(), row]));
@@ -1258,8 +1374,7 @@ export class FileStore implements ProductStore {
       });
       const projects = [...new Map(
         [...joinedProjects, ...boundProjects].map((project) => [project.project_id, project]),
-      ).values()].filter(project => !jobs.some(job => job.project_id === project.project_id
-        && (job.status === 'queued' || job.status === 'running') && job.repository_update_id !== input.updateId));
+      ).values()];
       if (previousPublicKey && previousPublicKey !== input.publicKey) {
         await this.saveRevisionLinkWithAnalysisLease({
           repository_identity: current.repository_identity,
@@ -1272,8 +1387,10 @@ export class FileStore implements ProductStore {
         const metadataPath = join(this.dirs.publicSnapshots, safePublicKey(oldSnapshot.public_snapshot_key), "metadata.json");
         const oldRaw = await readJson<Record<string, unknown>>(metadataPath);
         if (!oldRaw) continue;
-        oldRaw.retired_at = timestamp;
-        oldRaw.purge_after = timestamp;
+        oldRaw.retired_at ??= timestamp;
+        const grace = input.snapshotGraceHours;
+        const graceHours = grace !== undefined && Number.isInteger(grace) && grace >= 1 && grace <= 168 ? grace : 24;
+        oldRaw.purge_after ??= new Date(Date.parse(timestamp) + graceHours * 60 * 60 * 1000).toISOString();
         await this.writeJsonWithAnalysisLease(metadataPath, oldRaw, fenceForWrite());
       }
       const targetMetadata = await this.loadPublicSnapshotMetadata(input.publicKey);
@@ -1406,11 +1523,7 @@ export class FileStore implements ProductStore {
     const run = async (): Promise<string[]> => {
       const update = await readJson<RepositoryUpdate>(this.path("repositoryUpdates", updateId));
       if (!update) return [];
-      return this.mutex.runExclusive(`repository-update:${identityKey({
-        repository: update.repository_identity,
-        analyzerBundleVersion: update.analyzer_bundle_version,
-        analysisConfigDigest: update.analysis_config_digest,
-      })}`, async () => {
+      return this.mutex.runExclusive(`repository-update:${update.repository_identity.toLowerCase()}`, async () => {
       let fencedJobFinalized = false;
       const fenceForWrite = (): AnalysisLeaseFence | undefined =>
         fence && !fencedJobFinalized ? fence : undefined;

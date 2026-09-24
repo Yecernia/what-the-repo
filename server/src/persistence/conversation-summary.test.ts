@@ -102,6 +102,8 @@ test("PostgreSQL conversation summary queries only bounded JSON and refuses chan
   const queries: Array<{ sql: string; args: unknown[] }> = [];
   Object.assign(store, { pool: { query: async (sql: string, args: unknown[]) => {
     queries.push({ sql, args });
+    // No readable older version of the repository matches: a changed binding is refused.
+    if (sql.includes("AS pinned")) return { rows: [] };
     if (sql.includes("FROM projects AS p")) return { rows: [bound] };
     if (sql.includes("FROM public_snapshot_language_overlays AS o")) return { rows: args[1] === "zh-cn"
       ? [{ status: "ready", payload: overlay() }] : [] };

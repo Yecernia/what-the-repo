@@ -31,13 +31,15 @@ interface OAuthSession {
   expires_at: number;
 }
 
-type RepositoryFetchKind = "metadata" | "commit" | "tree" | "readme" | "archive";
+type RepositoryFetchKind = "metadata" | "commit" | "tree" | "readme" | "archive" | "compare";
 
 interface RepositoryFetchBody {
   kind?: unknown;
   owner?: unknown;
   repo?: unknown;
   ref?: unknown;
+  base?: unknown;
+  head?: unknown;
 }
 
 interface GithubUserResponse {
@@ -381,7 +383,7 @@ export function buildGithubGateway(dependencies: GithubGatewayDependencies): Fas
     requireRepositoryAuthorization(request, config.sharedSecret);
     const body = request.body as RepositoryFetchBody | null;
     const kind = body?.kind;
-    if (!body || !["metadata", "commit", "tree", "readme", "archive"].includes(String(kind))) {
+    if (!body || !["metadata", "commit", "tree", "readme", "archive", "compare"].includes(String(kind))) {
       throw httpError(400, "不支持的 GitHub 请求", "invalid_github_request");
     }
     if (!validOwner(body.owner) || !validRepo(body.repo)) {
@@ -399,6 +401,11 @@ export function buildGithubGateway(dependencies: GithubGatewayDependencies): Fas
     } else if (typedKind === "tree") {
       if (!validSha(body.ref)) throw httpError(400, "GitHub commit 不正确", "invalid_github_commit");
       url = `https://api.github.com/repos/${encodeURIComponent(body.owner)}/${encodeURIComponent(body.repo)}/git/trees/${body.ref}?recursive=1`;
+    } else if (typedKind === "compare") {
+      if (!validSha(body.base) || !validSha(body.head)) {
+        throw httpError(400, "GitHub compare commit 不正确", "invalid_github_commit");
+      }
+      url = `https://api.github.com/repos/${encodeURIComponent(body.owner)}/${encodeURIComponent(body.repo)}/compare/${body.base}...${body.head}?per_page=1`;
     } else {
       if (!validSha(body.ref)) throw httpError(400, "GitHub commit 不正确", "invalid_github_commit");
       url = `https://codeload.github.com/${encodeURIComponent(body.owner)}/${encodeURIComponent(body.repo)}/zip/${body.ref}`;
@@ -409,13 +416,30 @@ export function buildGithubGateway(dependencies: GithubGatewayDependencies): Fas
         ? { accept: "application/zip", "user-agent": "what-the-repo-github-gateway" }
         : githubHeaders(config),
     });
-    const payload = await readLimitedBytes(response, typedKind === "archive" ? ARCHIVE_RESPONSE_LIMIT : JSON_RESPONSE_LIMIT);
+    const payload = await readLimitedBytes(response, typedKind === "archive" ? ARCHIVE_RESPONSE_LIMIT
+      : typedKind === "compare" ? 4 * 1024 * 1024 : JSON_RESPONSE_LIMIT);
     // Preserve upstream pacing instructions, never arbitrary headers or credentials.
     for (const name of ['retry-after', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'x-ratelimit-resource']) {
       const value = response.headers.get(name);
       if (value && value.length <= 128 && !/[\r\n]/.test(value)) reply.header(name, value);
     }
     reply.header('x-wtr-rate-limit-source', 'github');
+    if (typedKind === "compare" && response.ok) {
+      let comparison: Record<string, unknown>;
+      try { comparison = JSON.parse(payload.toString('utf8')) as Record<string, unknown>; }
+      catch { throw httpError(502, "GitHub compare 响应不正确", "github_invalid_response"); }
+      const validCount = (value: unknown): value is number =>
+        typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+      if (!['identical','ahead','behind','diverged'].includes(String(comparison.status))
+        || !validCount(comparison.ahead_by) || !validCount(comparison.behind_by)) {
+        throw httpError(502, "GitHub compare 响应不正确", "github_invalid_response");
+      }
+      return reply.header("cache-control", "no-store").send({
+        status: comparison.status,
+        ahead_by: comparison.ahead_by,
+        behind_by: comparison.behind_by,
+      });
+    }
     return reply
       .header("cache-control", "no-store")
       .header("content-type", response.headers.get("content-type") ?? (typedKind === "archive" ? "application/zip" : "application/json"))

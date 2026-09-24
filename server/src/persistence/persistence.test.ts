@@ -210,7 +210,9 @@ test("file store shares one repository update and completes waiter projects on p
     const migratedLegacy = await store.loadProject(legacyProject.project_id);
     assert.equal(migratedLegacy?.analysis.snapshot_id, "snap:test:shared");
     assert.equal(migratedLegacy?.repository_migration?.status, "executed");
-    assert.equal((await store.loadPublicSnapshotMetadata(previousPublicKey))?.purge_after, (await store.loadPublicSnapshotMetadata(previousPublicKey))?.retired_at);
+    // Old pages keep reading the retired version for the default 24-hour grace.
+    const retired = await store.loadPublicSnapshotMetadata(previousPublicKey);
+    assert.equal(Date.parse(retired!.purge_after!) - Date.parse(retired!.retired_at!), 24 * 3600_000);
     assert.equal((await store.loadJob(waiter.job.job_id))?.status, "succeeded");
     assert.equal((await store.loadRepositoryHead(identity))?.current_commit_sha, "a".repeat(40));
   } finally {

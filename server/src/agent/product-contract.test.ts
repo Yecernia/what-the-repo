@@ -173,6 +173,55 @@ test("public upstream failures distinguish balance from rate limits and local bu
   assert.equal(providerErrorCode(new Error("database unavailable"), "server_error"), "server_error");
 });
 
+test("a turn pinned to a retired version completes against that version after a newer publication", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "wtr-pinned-turn-"));
+  try {
+    const { context, store, snapshot } = await fixture(root);
+    const oldId = context.project.analysis.snapshot_id!;
+    const newId = "snap:repo:github:example/contract:456:contract";
+    const newKey = "d".repeat(64);
+    await store.savePublicSnapshot({ publicKey: newKey, repository: "example/contract", commitSha: "4".repeat(40),
+      snapshotId: newId, view: { ...snapshot, snapshot_id: newId, learning_plan: { ...snapshot.learning_plan, snapshot_id: newId } },
+      analysis: { snapshot_id: newId, fact_graph: snapshot.fact_graph } });
+    const requester = createProject("guest:contract", "https://github.com/example/contract", "requester", "free:deepseek-v4-flash");
+    const identity = { repository: "example/contract", analyzerBundleVersion: "test", analysisConfigDigest: "test" };
+    const { newAnalysisJob } = await import("../domain/jobs.js");
+    const queued = await store.createOrJoinRepositoryUpdate({ project: requester, job: newAnalysisJob(requester.project_id, "pin:update"),
+      identity, targetCommitSha: "4".repeat(40), newProject: true });
+    await store.claimAnalysisJob("worker:pin", 30);
+    await store.publishRepositoryUpdate({ updateId: queued.update.update_id, publicKey: newKey, commitSha: "4".repeat(40),
+      snapshotId: newId, fileCount: 2, symbolCount: 2, callCount: 1, languages: [], readyLanguage: "zh-CN",
+      completedAt: new Date().toISOString(), redirects: [] });
+    assert.equal((await store.loadProject(context.project.project_id))!.analysis.snapshot_id, newId);
+    const sessions = new PiSessionStore(join(root, "sessions"));
+    const faux = fauxProvider({ provider: "pinned-turn-test" });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const originalRun = PiConversationRuntime.prototype.run;
+    t.mock.method(PiConversationRuntime.prototype, "run", function(this: PiConversationRuntime, options: PiAgentRunOptions,
+      finalize: (result: PiRunResult) => Promise<PiRunFinalization<unknown>>) {
+      return originalRun.call(this, { ...options, modelRuntime: { models, model: faux.getModel() } }, finalize);
+    });
+    t.mock.method(MemoryMaintenance.prototype, "schedule", () => {});
+    t.mock.method(FeedbackAnalysisWorker.prototype, "schedule", () => {});
+    const config = { root, dataDir: root, nodeEnv: "test", sessionSecret: "test-only-secret",
+      freeProviderBaseUrl: "https://api.deepseek.com", freeProviderModel: "deepseek-chat",
+      freeProviderApiKey: "never-used", keyEncryptionSecret: "test-only-secret" } as ServerConfig;
+    const service = new ConversationService(config, store, sessions, new PiMemoryStore(join(root, "memory")));
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("read_source_excerpt", { path: "src/entry.ts" })], { stopReason: "toolUse" }),
+      fauxAssistantMessage("入口在 `src/entry.ts:2`。"),
+    ]);
+    const result = (await service.run({ owner: { owner_id: context.project.owner_id, kind: "guest" },
+      projectId: context.project.project_id, content: "入口在哪", viewSnapshotId: oldId }))!;
+    assert.equal(result.user_message.analysis_snapshot_id, oldId);
+    assert.equal(result.assistant_message.analysis_snapshot_id, oldId);
+    const saved = (await store.loadProject(context.project.project_id))!;
+    assert.equal(saved.analysis.snapshot_id, newId, "the pinned turn never rewrites the current binding");
+    assert.equal(saved.messages.at(-1)!.analysis_snapshot_id, oldId);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 async function fixture(root: string): Promise<{
   store: FileStore;
   context: ConversationToolContext;

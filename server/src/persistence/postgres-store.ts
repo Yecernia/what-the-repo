@@ -114,6 +114,7 @@ import {
   type PublicSnapshotBundle,
   type IncrementalSnapshotBase,
   type RepositoryIdentityInput,
+  type BackgroundRepositoryCandidate,
   type RepositoryUpdatePublication,
   type SnapshotLanguageOverlayPublication,
   type SnapshotPublicationTimings,
@@ -288,6 +289,13 @@ function semanticBatchFromRow(row: Record<string, unknown>): SemanticBatch {
 function repositoryHeadFromRow(row: Record<string, unknown>): RepositoryHead {
   return {
     repository_identity: String(row.repository_identity),
+    ...(row.generation === undefined ? {} : { generation: Number(row.generation) }),
+    ...(row.published_at === undefined ? {} : { published_at: iso(row.published_at) }),
+    ...(row.upstream_commit_sha === undefined ? {} : { upstream_commit_sha: row.upstream_commit_sha === null ? null : String(row.upstream_commit_sha) }),
+    ...(row.behind_commits === undefined ? {} : { behind_commits: row.behind_commits === null ? null : Number(row.behind_commits) }),
+    ...(row.head_relation === undefined ? {} : { relation: String(row.head_relation) as RepositoryHead['relation'] }),
+    ...(row.head_error_code === undefined ? {} : { check_error_code: row.head_error_code === null ? null : String(row.head_error_code) }),
+    ...(row.next_check_at === undefined ? {} : { next_check_at: iso(row.next_check_at) }),
     analyzer_bundle_version: String(row.analyzer_bundle_version),
     analysis_config_digest: String(row.analysis_config_digest),
     current_public_snapshot_key: row.current_public_snapshot_key === null ? null : String(row.current_public_snapshot_key),
@@ -295,6 +303,10 @@ function repositoryHeadFromRow(row: Record<string, unknown>): RepositoryHead {
     last_checked_at: iso(row.last_checked_at),
     updated_at: iso(row.updated_at) ?? nowIso(),
   };
+}
+
+function snapshotGraceHours(value: number | undefined): number {
+  return value !== undefined && Number.isInteger(value) && value >= 1 && value <= 168 ? value : 24;
 }
 
 function repositoryUpdateFromRow(row: Record<string, unknown>): RepositoryUpdate {
@@ -314,6 +326,7 @@ function repositoryUpdateFromRow(row: Record<string, unknown>): RepositoryUpdate
     created_at: iso(row.created_at) ?? nowIso(),
     updated_at: iso(row.updated_at) ?? nowIso(),
     completed_at: iso(row.completed_at),
+    ...(row.update_trigger === undefined ? {} : { trigger: String(row.update_trigger) as RepositoryUpdate["trigger"] }),
   };
 }
 
@@ -536,7 +549,15 @@ export class PostgresStore extends FileStore {
   }
 
   override async listSourceFiles(projectId: string, snapshotId: string): Promise<string[]> {
-    const source = await this.boundSourceManifest(projectId, snapshotId);
+    let source: CachedSourceManifest | null;
+    try {
+      source = await this.boundSourceManifest(projectId, snapshotId);
+    } catch (error) {
+      const pinned = (error as Error).message === "snapshot_not_bound"
+        ? await this.historicalPublicKey(projectId, snapshotId) : null;
+      if (!pinned) throw error;
+      source = await this.publicSourceManifest(pinned, snapshotId);
+    }
     return source ? source.manifest.files.map((file) => file.path) : super.listSourceFiles(projectId, snapshotId);
   }
 
@@ -548,10 +569,34 @@ export class PostgresStore extends FileStore {
     end: number,
   ): Promise<{ lines: string[]; truncated: boolean }> {
     const path = normalizeSourceSnapshotPath(relativePath);
-    const source = await this.boundSourceManifest(projectId, snapshotId);
+    let source: CachedSourceManifest | null;
+    try {
+      source = await this.boundSourceManifest(projectId, snapshotId);
+    } catch (error) {
+      const pinned = (error as Error).message === "snapshot_not_bound"
+        ? await this.historicalPublicKey(projectId, snapshotId) : null;
+      if (!pinned) throw error;
+      return this.readPublicSourceLines(pinned, snapshotId, path, start, end);
+    }
     return source
       ? this.readStoredSourceLines(source, path, start, end)
       : super.readSourceLines(projectId, snapshotId, path, start, end);
+  }
+
+  override async historicalPublicKey(projectId: string, snapshotId: string): Promise<string | null> {
+    const result = await this.pool.query<{ public_snapshot_key: string }>(
+      `SELECT pinned.public_snapshot_key
+       FROM projects AS project
+       JOIN project_public_snapshot_bindings AS binding ON binding.project_id=project.project_id
+       JOIN canonical_public_repository_snapshots AS current ON current.public_snapshot_key=binding.public_snapshot_key
+       JOIN canonical_public_repository_snapshots AS pinned
+         ON pinned.repository_identity=current.repository_identity AND pinned.analysis_snapshot_id=$2
+       WHERE project.project_id=$1 AND project.payload #>> '{analysis,snapshot_id}' IS DISTINCT FROM $2
+         AND pinned.payload_purged_at IS NULL
+       LIMIT 1`,
+      [projectId, snapshotId],
+    );
+    return result.rows[0]?.public_snapshot_key ?? null;
   }
 
   override async readPublicSourceLines(
@@ -955,7 +1000,13 @@ export class PostgresStore extends FileStore {
     );
     const row = result.rows[0];
     if (!row) return null;
-    if (row.current_snapshot_id !== snapshotId || row.current_public_key !== publicKey) throw new Error("snapshot_not_bound");
+    if (row.current_snapshot_id !== snapshotId || row.current_public_key !== publicKey) {
+      // A turn pinned to a retired version of the same repository keeps reading it.
+      const pinned = await this.historicalPublicKey(project.project_id, snapshotId);
+      if (!pinned || pinned !== publicKey) throw new Error("snapshot_not_bound");
+      const view = asEvidenceSnapshot((await this.loadPublicSnapshotView(pinned))?.view);
+      return view?.snapshot_id === snapshotId ? conversationSummaryFromSource(view) : null;
+    }
     if (!row.public_snapshot_key) return publicKey ? null : fallback();
     if (row.public_snapshot_key !== publicKey) throw new Error("snapshot_not_bound");
     if (!row.analysis_snapshot_id) return null;
@@ -1646,6 +1697,25 @@ export class PostgresStore extends FileStore {
     return result.rows[0] ? repositoryHeadFromRow(result.rows[0]) : null;
   }
 
+  override async loadCurrentRepositoryHead(repository: string): Promise<RepositoryHead | null> {
+    const result = await this.pool.query(
+      `SELECT current.repository_identity, current.current_public_snapshot_key,
+              snapshot.commit_sha AS current_commit_sha,
+              snapshot.analyzer_bundle_version, snapshot.analysis_config_digest,
+              current.generation, current.published_at, current.last_checked_at,
+              current.upstream_commit_sha, current.behind_commits,
+              current.head_relation, current.head_error_code, current.next_check_at,
+              current.updated_at
+       FROM canonical_public_repositories AS current
+       LEFT JOIN canonical_public_repository_snapshots AS snapshot
+         ON snapshot.public_snapshot_key = current.current_public_snapshot_key
+       WHERE current.repository_identity = $1`,
+      [repository.toLowerCase()],
+    );
+    const row = result.rows[0];
+    return row?.current_public_snapshot_key ? repositoryHeadFromRow(row) : null;
+  }
+
   override async saveRepositoryHead(head: RepositoryHead): Promise<void> {
     await this.pool.query(
       `INSERT INTO canonical_public_repository_heads(
@@ -1683,7 +1753,7 @@ export class PostgresStore extends FileStore {
       await this.lockOwner(client, input.project.owner_id);
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        [`repository-update:${input.identity.repository.toLowerCase()}:${input.identity.analyzerBundleVersion}:${input.identity.analysisConfigDigest}`],
+        [`repository-update:${input.identity.repository.toLowerCase()}`],
       );
       await this.checkDbCreationQuotas(client, input.project.owner_id, input.newProject);
       if (input.newProject) {
@@ -1699,19 +1769,11 @@ export class PostgresStore extends FileStore {
       const active = await client.query(
         `SELECT * FROM repository_analysis_updates
          WHERE repository_identity = $1
-           AND analyzer_bundle_version = $2
-           AND analysis_config_digest = $3
-           AND target_commit_sha IS NOT DISTINCT FROM $4
            AND status IN ('queued', 'running')
          ORDER BY created_at
          LIMIT 1
          FOR UPDATE`,
-        [
-          input.identity.repository.toLowerCase(),
-          input.identity.analyzerBundleVersion,
-          input.identity.analysisConfigDigest,
-          input.targetCommitSha?.toLowerCase() ?? null,
-        ],
+        [input.identity.repository.toLowerCase()],
       );
       const leader = !active.rows[0];
       let update: RepositoryUpdate;
@@ -1723,8 +1785,11 @@ export class PostgresStore extends FileStore {
           `INSERT INTO repository_analysis_updates(
              update_id, repository_identity, analyzer_bundle_version,
              analysis_config_digest, target_commit_sha, status,
-             leader_project_id, created_at, updated_at
-           ) VALUES ($1, $2, $3, $4, $5, 'queued', $6, now(), now())
+             leader_project_id, base_generation, base_public_snapshot_key, created_at, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, 'queued', $6,
+             (SELECT generation FROM canonical_public_repositories WHERE repository_identity=$2),
+             (SELECT current_public_snapshot_key FROM canonical_public_repositories WHERE repository_identity=$2),
+             now(), now())
            RETURNING *`,
           [
             updateId,
@@ -1773,6 +1838,266 @@ export class PostgresStore extends FileStore {
     return result.rows[0] ? repositoryUpdateFromRow(result.rows[0]) : null;
   }
 
+  override async loadActiveRepositoryUpdate(repository: string): Promise<RepositoryUpdate | null> {
+    const result = await this.pool.query(
+      `SELECT * FROM repository_analysis_updates
+       WHERE repository_identity=$1 AND status IN ('queued','running')
+       ORDER BY created_at LIMIT 1`,
+      [repository.toLowerCase()],
+    );
+    return result.rows[0] ? repositoryUpdateFromRow(result.rows[0]) : null;
+  }
+
+  override async acquireSnapshotReadLease(publicKey: string, maxMinutes: number): Promise<string | null> {
+    const minutes = Math.max(1, Math.min(30, Math.floor(maxMinutes)));
+    const leaseId = randomUUID().replaceAll('-', '');
+    // FOR SHARE conflicts with the cleanup's FOR UPDATE, so a lease is either
+    // visible to cleanup or taken after the payload is gone (and then refused).
+    const result = await this.pool.query(
+      `WITH readable AS (
+         SELECT public_snapshot_key FROM canonical_public_repository_snapshots
+         WHERE public_snapshot_key=$2 AND payload_purged_at IS NULL
+           AND (retired_at IS NULL OR purge_after IS NULL OR purge_after > clock_timestamp())
+         FOR SHARE
+       )
+       INSERT INTO snapshot_read_leases(lease_id, public_snapshot_key, expires_at, absolute_expires_at)
+       SELECT $1, public_snapshot_key, clock_timestamp() + ($3::int * interval '1 minute'),
+              clock_timestamp() + ($3::int * interval '1 minute')
+       FROM readable`,
+      [leaseId, publicKey, minutes],
+    );
+    return result.rowCount ? leaseId : null;
+  }
+
+  override async releaseSnapshotReadLease(leaseId: string): Promise<void> {
+    await this.pool.query('DELETE FROM snapshot_read_leases WHERE lease_id=$1', [leaseId]);
+  }
+
+  override async loadLatestRepositoryUpdate(repository: string): Promise<RepositoryUpdate | null> {
+    const result = await this.pool.query(
+      `SELECT * FROM repository_analysis_updates WHERE repository_identity=$1
+       ORDER BY created_at DESC LIMIT 1`,
+      [repository.toLowerCase()],
+    );
+    return result.rows[0] ? repositoryUpdateFromRow(result.rows[0]) : null;
+  }
+
+  override async touchRepositoryRealUse(repository: string, at: string, minIntervalMinutes: number): Promise<void> {
+    const minutes = Math.max(1, Math.min(1440, Math.floor(minIntervalMinutes)));
+    await this.pool.query(
+      `UPDATE canonical_public_repositories
+       SET last_real_use_at=$2, updated_at=$2
+       WHERE repository_identity=$1 AND current_public_snapshot_key IS NOT NULL
+         AND (last_real_use_at IS NULL OR last_real_use_at <= $2::timestamptz - ($3::int * interval '1 minute'))`,
+      [repository.toLowerCase(), at, minutes],
+    );
+  }
+
+  override async listBackgroundRepositoryCandidates(
+    now: string, activeSince: string, limit: number,
+  ): Promise<BackgroundRepositoryCandidate[]> {
+    const result = await this.pool.query(
+      `SELECT current.repository_identity, current.current_public_snapshot_key,
+              snapshot.analysis_snapshot_id, snapshot.commit_sha,
+              snapshot.analyzer_bundle_version, snapshot.analysis_config_digest,
+              current.published_at, current.last_real_use_at,
+              current.last_checked_at, current.next_check_at,
+              current.upstream_commit_sha, current.behind_commits,
+              current.head_relation, current.last_background_started_at,
+              anchor.project_id
+       FROM canonical_public_repositories AS current
+       JOIN canonical_public_repository_snapshots AS snapshot
+         ON snapshot.public_snapshot_key=current.current_public_snapshot_key
+       JOIN LATERAL (
+         SELECT project.project_id FROM project_public_snapshot_bindings AS binding
+         JOIN projects AS project ON project.project_id=binding.project_id
+         WHERE binding.public_snapshot_key IN (
+           SELECT public_snapshot_key FROM canonical_public_repository_snapshots
+           WHERE repository_identity=current.repository_identity
+         )
+           AND project.payload->'source'->>'kind'='github'
+         ORDER BY project.updated_at DESC LIMIT 1
+       ) AS anchor ON true
+       WHERE current.last_real_use_at >= $2::timestamptz
+         AND snapshot.payload_purged_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM repository_analysis_updates AS active
+           WHERE active.repository_identity=current.repository_identity
+             AND active.status IN ('queued','running')
+         )
+         AND (current.next_check_at IS NULL OR current.next_check_at <= $1::timestamptz
+              OR current.upstream_commit_sha IS DISTINCT FROM snapshot.commit_sha)
+       ORDER BY COALESCE(current.next_check_at, '-infinity'::timestamptz),
+                current.last_real_use_at DESC
+       LIMIT $3`,
+      [now, activeSince, Math.max(1, Math.min(32, Math.floor(limit)))],
+    );
+    return result.rows.map(row => ({
+      repository: String(row.repository_identity),
+      projectId: String(row.project_id),
+      currentPublicSnapshotKey: String(row.current_public_snapshot_key),
+      currentSnapshotId: String(row.analysis_snapshot_id),
+      analyzerBundleVersion: String(row.analyzer_bundle_version),
+      analysisConfigDigest: String(row.analysis_config_digest),
+      currentCommitSha: String(row.commit_sha),
+      publishedAt: iso(row.published_at) ?? now,
+      lastRealUseAt: iso(row.last_real_use_at) ?? now,
+      lastCheckedAt: iso(row.last_checked_at),
+      nextCheckAt: iso(row.next_check_at),
+      upstreamCommitSha: row.upstream_commit_sha === null ? null : String(row.upstream_commit_sha),
+      behindCommits: row.behind_commits === null ? null : Number(row.behind_commits),
+      relation: String(row.head_relation) as BackgroundRepositoryCandidate['relation'],
+      lastBackgroundStartedAt: iso(row.last_background_started_at),
+    }));
+  }
+
+  override async saveRepositoryFreshness(input: {
+    repository: string; baseSnapshotKey: string; upstreamCommitSha: string | null;
+    behindCommits: number | null; relation: BackgroundRepositoryCandidate['relation'];
+    checkedAt: string; nextCheckAt: string; errorCode: string | null;
+  }): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE canonical_public_repositories SET
+         upstream_commit_sha=$3, behind_commits=$4, head_relation=$5,
+         last_checked_at=$6, next_check_at=$7,
+         head_check_status=$8, head_error_code=$9, updated_at=$6
+       WHERE repository_identity=$1 AND current_public_snapshot_key=$2
+         AND (last_checked_at IS NULL OR last_checked_at <= $6::timestamptz)`,
+      [input.repository.toLowerCase(), input.baseSnapshotKey,
+        input.upstreamCommitSha, input.behindCommits, input.relation,
+        input.checkedAt, input.nextCheckAt,
+        input.errorCode ? 'failed' : 'ok', input.errorCode],
+    );
+    return Boolean(result.rowCount);
+  }
+
+  override async createBackgroundRepositoryUpdate(input: {
+    project: Project; job: AnalysisJob; identity: RepositoryIdentityInput;
+    targetCommitSha: string; dailyUsd: number; updateMaxUsd: number;
+    maxStartsPerDay: number; maxActive: number; maxQueued: number;
+    minUpdateIntervalHours: number; activeWindowDays: number; now: string;
+  }): Promise<'queued' | 'deferred' | 'up_to_date'> {
+    if (!/^[0-9a-f]{40}$/i.test(input.targetCommitSha)
+      || !Number.isFinite(input.dailyUsd) || !Number.isFinite(input.updateMaxUsd)
+      || input.updateMaxUsd <= 0 || input.dailyUsd < input.updateMaxUsd) return 'deferred';
+    const repository = input.identity.repository.toLowerCase();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`repository-update:${repository}`]);
+      const current = await client.query<{
+        current_public_snapshot_key: string | null; generation: string;
+        last_real_use_at: Date | null; last_background_started_at: Date | null;
+        suppressed_target_sha: string | null; suppressed_analyzer_bundle_version: string | null;
+        suppressed_analysis_config_digest: string | null;
+      }>(
+        `SELECT * FROM canonical_public_repositories WHERE repository_identity=$1 FOR UPDATE`,
+        [repository],
+      );
+      const state = current.rows[0];
+      if (!state?.current_public_snapshot_key) { await client.query('ROLLBACK'); return 'deferred'; }
+      const head = await client.query<{ commit_sha: string }>(
+        'SELECT commit_sha FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1 AND payload_purged_at IS NULL',
+        [state.current_public_snapshot_key],
+      );
+      if (!head.rows[0]) { await client.query('ROLLBACK'); return 'deferred'; }
+      if (head.rows[0].commit_sha.toLowerCase() === input.targetCommitSha.toLowerCase()) {
+        await client.query('COMMIT'); return 'up_to_date';
+      }
+      const anchor = await client.query(
+        `SELECT 1 FROM projects AS project
+         WHERE project.project_id=$1 AND project.payload->'source'->>'kind'='github'
+           AND EXISTS (
+             SELECT 1 FROM project_public_snapshot_bindings AS binding
+             JOIN canonical_public_repository_snapshots AS snapshot
+               ON snapshot.public_snapshot_key=binding.public_snapshot_key
+             WHERE binding.project_id=project.project_id AND snapshot.repository_identity=$2
+           )`,
+        [input.project.project_id, repository],
+      );
+      if (!anchor.rowCount || !state.last_real_use_at
+        || Date.parse(input.now) - new Date(state.last_real_use_at).getTime() > input.activeWindowDays * 86400_000
+        || (state.last_background_started_at
+          && Date.parse(input.now) - new Date(state.last_background_started_at).getTime()
+            < input.minUpdateIntervalHours * 3600_000)
+        || (state.suppressed_target_sha?.toLowerCase() === input.targetCommitSha.toLowerCase()
+          && state.suppressed_analyzer_bundle_version === input.identity.analyzerBundleVersion
+          && state.suppressed_analysis_config_digest === input.identity.analysisConfigDigest)) {
+        await client.query('COMMIT'); return 'deferred';
+      }
+      const active = await client.query(
+        `SELECT 1 FROM repository_analysis_updates
+         WHERE repository_identity=$1 AND status IN ('queued','running') LIMIT 1`,
+        [repository],
+      );
+      if (active.rowCount) { await client.query('COMMIT'); return 'deferred'; }
+      const load = await client.query<{ status: string; count: string }>(
+        `SELECT status, count(*)::text AS count FROM repository_analysis_updates
+         WHERE status IN ('queued','running') AND update_trigger='background' GROUP BY status`,
+      );
+      const running = Number(load.rows.find(row => row.status === 'running')?.count ?? 0);
+      const queued = Number(load.rows.find(row => row.status === 'queued')?.count ?? 0);
+      if (running >= input.maxActive || queued >= input.maxQueued) {
+        await client.query('COMMIT'); return 'deferred';
+      }
+      const usageDate = input.now.slice(0, 10);
+      await client.query(
+        `INSERT INTO repository_background_daily_usage(usage_date) VALUES ($1::date)
+         ON CONFLICT DO NOTHING`, [usageDate],
+      );
+      const daily = await client.query<{ starts: number; reserved_usd: string; spent_usd: string }>(
+        `SELECT * FROM repository_background_daily_usage WHERE usage_date=$1::date FOR UPDATE`,
+        [usageDate],
+      );
+      const used = daily.rows[0];
+      if (!used || used.starts >= input.maxStartsPerDay
+        || Number(used.reserved_usd) + Number(used.spent_usd) + input.updateMaxUsd > input.dailyUsd) {
+        await client.query('COMMIT'); return 'deferred';
+      }
+      const updateId = randomUUID().replaceAll('-', '');
+      await client.query(
+        `INSERT INTO repository_analysis_updates(
+           update_id, repository_identity, analyzer_bundle_version, analysis_config_digest,
+           target_commit_sha, status, leader_project_id, base_generation,
+           base_public_snapshot_key, update_trigger, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,'background',$9,$9)`,
+        [updateId, repository, input.identity.analyzerBundleVersion,
+          input.identity.analysisConfigDigest, input.targetCommitSha.toLowerCase(),
+          input.project.project_id, Number(state.generation),
+          state.current_public_snapshot_key, input.now],
+      );
+      await client.query(
+        `INSERT INTO analysis_jobs(
+           job_id, project_id, idempotency_key, status, attempt, max_attempts,
+           lease_owner, lease_expires_at, heartbeat_at, created_at, updated_at,
+           available_at, completed_at, error, error_code, repository_update_id,
+           execution_role, language_overlay_key, config_version)
+         VALUES ($1,$2,$3,'queued',0,$4,NULL,NULL,NULL,$5,$5,$5,NULL,NULL,NULL,$6,'background',NULL,$7)`,
+        [input.job.job_id, input.project.project_id, input.job.idempotency_key,
+          input.job.max_attempts, input.now, updateId, input.job.config_version ?? null],
+      );
+      await client.query(
+        `UPDATE repository_background_daily_usage SET starts=starts+1,
+           reserved_usd=reserved_usd+$2 WHERE usage_date=$1::date`,
+        [usageDate, input.updateMaxUsd],
+      );
+      await client.query(
+        `INSERT INTO repository_background_update_budget(update_id,usage_date,reserved_usd)
+         VALUES ($1,$2::date,$3)`, [updateId, usageDate, input.updateMaxUsd],
+      );
+      await client.query(
+        `UPDATE canonical_public_repositories SET last_background_started_at=$2, updated_at=$2
+         WHERE repository_identity=$1`, [repository, input.now],
+      );
+      await client.query('COMMIT');
+      return 'queued';
+    } catch (error) {
+      await client.query('ROLLBACK');
+      if ((error as { code?: string }).code === '23505') return 'deferred';
+      throw error;
+    } finally { client.release(); }
+  }
+
   override async listRepositoryUpdateProjects(updateId: string): Promise<Project[]> {
     const result = await this.pool.query<{ project_id: string }>(
       `SELECT project_id FROM repository_analysis_update_projects
@@ -1804,15 +2129,31 @@ export class PostgresStore extends FileStore {
       );
       if (!locked.rows[0]) throw new Error("repository_update_not_found");
       const update = repositoryUpdateFromRow(locked.rows[0]);
-      const previousHead = await client.query<{ current_public_snapshot_key: string | null }>(
-        `SELECT current_public_snapshot_key FROM canonical_public_repository_heads
-         WHERE repository_identity = $1
-           AND analyzer_bundle_version = $2
-           AND analysis_config_digest = $3
-         FOR UPDATE`,
-        [update.repository_identity, update.analyzer_bundle_version, update.analysis_config_digest],
+      await client.query(
+        `INSERT INTO canonical_public_repositories(repository_identity)
+         VALUES ($1) ON CONFLICT DO NOTHING`,
+        [update.repository_identity],
+      );
+      const previousHead = await client.query<{ current_public_snapshot_key: string | null; generation: string }>(
+        `SELECT current_public_snapshot_key, generation
+         FROM canonical_public_repositories WHERE repository_identity=$1 FOR UPDATE`,
+        [update.repository_identity],
       );
       const previousPublicKey = previousHead.rows[0]?.current_public_snapshot_key ?? null;
+      const generation = Number(previousHead.rows[0]?.generation ?? 0);
+      if (locked.rows[0].base_generation !== null
+        && Number(locked.rows[0].base_generation) !== generation) {
+        throw new Error('repository_publication_generation_changed');
+      }
+      await client.query(
+        `UPDATE canonical_public_repositories
+         SET current_public_snapshot_key=$2, generation=generation+1,
+             published_at=$3, last_checked_at=$3, upstream_commit_sha=$4,
+             behind_commits=0, head_relation='same', head_check_status='ok',
+             head_error_code=NULL, next_check_at=NULL, updated_at=$3
+         WHERE repository_identity=$1`,
+        [update.repository_identity, input.publicKey, input.completedAt, input.commitSha],
+      );
       await client.query(
         `INSERT INTO canonical_public_repository_heads(
            repository_identity, analyzer_bundle_version, analysis_config_digest,
@@ -1850,17 +2191,15 @@ export class PostgresStore extends FileStore {
       }
       await client.query(
         `UPDATE canonical_public_repository_snapshots
-         SET retired_at = $4::timestamptz, purge_after = $4::timestamptz
+         SET retired_at = COALESCE(retired_at, $2::timestamptz),
+             purge_after = COALESCE(purge_after, $2::timestamptz + ($4::int * interval '1 hour'))
          WHERE repository_identity = $1
-           AND analyzer_bundle_version = $2
-           AND analysis_config_digest = $3
-           AND public_snapshot_key <> $5`,
+           AND public_snapshot_key <> $3 AND payload_purged_at IS NULL`,
         [
           update.repository_identity,
-          update.analyzer_bundle_version,
-          update.analysis_config_digest,
           input.completedAt,
           input.publicKey,
+          snapshotGraceHours(input.snapshotGraceHours),
         ],
       );
       const joined = await client.query<{ project_id: string }>(
@@ -1873,32 +2212,27 @@ export class PostgresStore extends FileStore {
              ON snapshot.public_snapshot_key = binding.public_snapshot_key
            WHERE binding.project_id = project.project_id
              AND snapshot.repository_identity = $1
-             AND snapshot.analyzer_bundle_version = $2
-             AND snapshot.analysis_config_digest = $3
          )
          OR EXISTS (
            SELECT 1
            FROM repository_analysis_update_projects AS joined_project
-           WHERE joined_project.update_id = $4
+           WHERE joined_project.update_id = $2
              AND joined_project.project_id = project.project_id
-         )) AND NOT EXISTS (
-           SELECT 1 FROM analysis_jobs pending WHERE pending.project_id=project.project_id
-             AND pending.status IN ('queued','running')
-             AND COALESCE(pending.repository_update_id,'') <> $4
-         )
+         ))
          ORDER BY project.project_id
          FOR UPDATE OF project`,
-        [update.repository_identity, update.analyzer_bundle_version, update.analysis_config_digest, input.updateId],
+        [update.repository_identity, input.updateId],
       );
       const affectedProjectIds = joined.rows.map((row) => row.project_id);
       const activeJobs = affectedProjectIds.length
         ? await client.query(
           `SELECT * FROM analysis_jobs
            WHERE project_id = ANY($1::text[])
+             AND repository_update_id=$2
              AND status IN ('queued', 'running')
            ORDER BY created_at DESC
            FOR UPDATE`,
-          [affectedProjectIds],
+          [affectedProjectIds, input.updateId],
         )
         : { rows: [] as Record<string, unknown>[] };
       const jobsByProject = new Map<string, AnalysisJob>();
@@ -2062,6 +2396,14 @@ export class PostgresStore extends FileStore {
          WHERE update_id = $1`,
          [input.updateId, input.commitSha, input.publicKey, input.completedAt],
        );
+      await client.query(
+        `UPDATE analysis_jobs SET status='succeeded', lease_owner=NULL,
+           lease_expires_at=NULL, heartbeat_at=$2, updated_at=$2,
+           completed_at=$2, error=NULL, error_code=NULL
+         WHERE repository_update_id=$1 AND execution_role='background'
+           AND status IN ('queued','running')`,
+        [input.updateId, input.completedAt],
+      );
       await this.saveRevisionRedirectsWithDb(client, input.redirects);
       if (input.fence && !fencedJobFinalized) {
         // If the fenced job was not part of the joined update rows, it still
@@ -2095,8 +2437,11 @@ export class PostgresStore extends FileStore {
         return [];
       }
       if (fence) await this.assertAnalysisLeaseWithDb(client, fence, fencedProjectId);
-      const update = await client.query(
-        "SELECT update_id FROM repository_analysis_updates WHERE update_id = $1 FOR UPDATE",
+      const update = await client.query<{
+        update_id: string; repository_identity: string; target_commit_sha: string | null;
+        analyzer_bundle_version: string; analysis_config_digest: string; update_trigger: string;
+      }>(
+        "SELECT update_id,repository_identity,target_commit_sha,analyzer_bundle_version,analysis_config_digest,update_trigger FROM repository_analysis_updates WHERE update_id = $1 FOR UPDATE",
         [updateId],
       );
       if (!update.rowCount) {
@@ -2113,11 +2458,11 @@ export class PostgresStore extends FileStore {
         if (!project) continue;
         // A failed update must not destroy a usable previous snapshot. New
         // projects without a bound snapshot remain failed and retryable.
-        recordAnalysisProgress(project.analysis, "failed", "failed", timestamp);
         if (project.analysis.canonical_snapshot_key) {
           project.analysis.stage = "done";
           project.analysis.error = null;
         } else {
+          recordAnalysisProgress(project.analysis, "failed", "failed", timestamp);
           project.analysis.stage = "failed";
           project.analysis.error = error;
         }
@@ -2133,6 +2478,18 @@ export class PostgresStore extends FileStore {
          WHERE update_id = $1`,
         [updateId, error, timestamp],
       );
+      if (update.rows[0]?.update_trigger === 'background') {
+        await client.query(
+          `UPDATE canonical_public_repositories SET
+             suppressed_target_sha=$2,
+             suppressed_analyzer_bundle_version=$3,
+             suppressed_analysis_config_digest=$4,
+             updated_at=$5
+           WHERE repository_identity=$1`,
+          [update.rows[0].repository_identity, update.rows[0].target_commit_sha,
+            update.rows[0].analyzer_bundle_version, update.rows[0].analysis_config_digest, timestamp],
+        );
+      }
       await client.query(
         `UPDATE analysis_jobs SET
            status = 'failed', lease_owner = NULL, lease_expires_at = NULL,
@@ -2567,17 +2924,24 @@ export class PostgresStore extends FileStore {
               snapshot.retired_at, snapshot.purge_after, snapshot.payload_purged_at
        FROM canonical_public_repository_snapshots AS snapshot
        WHERE snapshot.payload_purged_at IS NULL
+         AND snapshot.retired_at IS NOT NULL
          AND snapshot.purge_after IS NOT NULL
          AND snapshot.purge_after <= $1
          AND NOT EXISTS (
-           SELECT 1 FROM project_public_snapshot_bindings AS binding
-           WHERE binding.public_snapshot_key = snapshot.public_snapshot_key
+           SELECT 1 FROM snapshot_read_leases AS lease
+           WHERE lease.public_snapshot_key = snapshot.public_snapshot_key
+             AND lease.expires_at > $1::timestamptz
          )
          AND NOT EXISTS (
-           SELECT 1 FROM canonical_public_repository_heads AS head
+           SELECT 1 FROM canonical_public_repositories AS head
            WHERE head.current_public_snapshot_key = snapshot.public_snapshot_key
          )
-       ORDER BY snapshot.purge_after`,
+         AND NOT EXISTS (
+           SELECT 1 FROM repository_analysis_updates AS update
+           WHERE update.base_public_snapshot_key = snapshot.public_snapshot_key
+             AND update.status IN ('queued','running')
+         )
+       ORDER BY snapshot.purge_after LIMIT 16`,
       [now],
     );
     return result.rows.map((row) => ({
@@ -2663,9 +3027,12 @@ export class PostgresStore extends FileStore {
     try {
       await client.query("BEGIN");
       const guard = await client.query<{ acquired: boolean }>(
-        "SELECT pg_try_advisory_xact_lock(hashtextextended('repository-payload-use',0)) AS acquired");
+        `SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired`,
+        [administrator ? 'repository-payload-use' : `retired-snapshot:${publicKey}`]);
       if (!guard.rows[0]?.acquired) { await client.query('ROLLBACK'); return false; }
-      await client.query("LOCK TABLE analysis_jobs, project_public_snapshot_bindings, canonical_public_repository_heads IN SHARE ROW EXCLUSIVE MODE NOWAIT");
+      if (administrator) {
+        await client.query("LOCK TABLE analysis_jobs, project_public_snapshot_bindings, canonical_public_repository_heads IN SHARE ROW EXCLUSIVE MODE NOWAIT");
+      }
       const locked = await client.query(
         `SELECT public_snapshot_key, repository_identity, commit_sha,
                 analyzer_bundle_version, analysis_config_digest, analysis_snapshot_id,
@@ -2678,15 +3045,23 @@ export class PostgresStore extends FileStore {
         [publicKey],
       );
       const row = locked.rows[0];
-      if (!row || (!administrator && row.payload_purged_at) || !row.purge_after || new Date(row.purge_after).getTime() > Date.parse(purgedAt)) {
+      // Routine cleanup only takes versions retired by a later publication.
+      if (!row || (!administrator && (row.payload_purged_at || !row.retired_at)) || !row.purge_after
+        || new Date(row.purge_after).getTime() > Date.parse(purgedAt)) {
         await client.query("ROLLBACK");
         return false;
       }
       const referenced = await client.query(
-        `SELECT 1
-         WHERE EXISTS (SELECT 1 FROM analysis_jobs WHERE status IN ('queued','running'))
-            OR EXISTS (SELECT 1 FROM project_public_snapshot_bindings WHERE public_snapshot_key = $1)
-            OR EXISTS (SELECT 1 FROM canonical_public_repository_heads WHERE current_public_snapshot_key = $1)`,
+        administrator
+          ? `SELECT 1 WHERE EXISTS (SELECT 1 FROM analysis_jobs WHERE status IN ('queued','running'))
+              OR EXISTS (SELECT 1 FROM project_public_snapshot_bindings WHERE public_snapshot_key=$1)
+              OR EXISTS (SELECT 1 FROM canonical_public_repositories WHERE current_public_snapshot_key=$1)`
+          : `SELECT 1 WHERE EXISTS (
+                SELECT 1 FROM canonical_public_repositories WHERE current_public_snapshot_key=$1)
+              OR EXISTS (SELECT 1 FROM snapshot_read_leases
+                WHERE public_snapshot_key=$1 AND expires_at>clock_timestamp())
+              OR EXISTS (SELECT 1 FROM repository_analysis_updates
+                WHERE base_public_snapshot_key=$1 AND status IN ('queued','running'))`,
         [publicKey],
       );
       if (referenced.rowCount) {
@@ -2793,6 +3168,28 @@ export class PostgresStore extends FileStore {
       // The shared object-store gate bounds requests and its waiting queue. Do
       // not enqueue an entire large repository's chunks at once.
       const uniqueKeys = [...new Set(objectKeys)];
+      if (!administrator) {
+        // A key outside this immutable snapshot's namespace could be reused by
+        // another version. Keep the row untouched instead of guessing ownership.
+        if (uniqueKeys.some(key => !key.startsWith(`public-repository-snapshots/${publicKey}/`))) {
+          throw new Error('snapshot_cleanup_unscoped_object');
+        }
+        await client.query(
+          `INSERT INTO snapshot_payload_deletions(public_snapshot_key,object_key)
+           SELECT $1, unnest($2::text[])
+           ON CONFLICT(public_snapshot_key,object_key) DO NOTHING`,
+          [publicKey, uniqueKeys],
+        );
+        await client.query('COMMIT');
+        // Deletion is outside the transaction; the durable list survives a
+        // crash and the scheduler retries only unfinished keys.
+        await this.deleteSnapshotObjects(client, uniqueKeys.map(object_key => ({ public_snapshot_key: publicKey, object_key, attempts: 0 })));
+        await Promise.allSettled([
+          rm(join(this.root, "public-repository-snapshots", publicKey), { recursive: true, force: true }),
+          rm(join(this.root, "snapshot-language-overlays", publicKey), { recursive: true, force: true }),
+        ]);
+        return true;
+      }
       for (let offset = 0; offset < uniqueKeys.length; offset += 16) {
         const deleted = await Promise.allSettled(uniqueKeys.slice(offset, offset + 16)
           .map(key => this.snapshotObjects.purge?.(key) ?? this.snapshotObjects.delete(key)));
@@ -2815,6 +3212,65 @@ export class PostgresStore extends FileStore {
       if (!maintenanceClient) client.release();
     }
     return true;
+  }
+
+  /** Retries ledger rows left by an interrupted or failed retired-snapshot cleanup. */
+  async deleteRetiredSnapshotObjectsBatch(limit = 256): Promise<{ deleted: number; failed: number; pending: number }> {
+    const rows = await this.pool.query<{ public_snapshot_key: string; object_key: string; attempts: number }>(
+      `SELECT public_snapshot_key,object_key,attempts
+       FROM snapshot_payload_deletions
+       WHERE deleted_at IS NULL AND next_attempt_at <= clock_timestamp()
+       ORDER BY next_attempt_at,public_snapshot_key,object_key
+       LIMIT $1`,
+      [Math.max(1, Math.min(1024, Math.floor(limit)))],
+    );
+    const result = await this.deleteSnapshotObjects(this.pool, rows.rows);
+    const pending = await this.pool.query<{ pending: string }>(
+      `SELECT count(*)::text AS pending FROM snapshot_payload_deletions WHERE deleted_at IS NULL`,
+    );
+    return { ...result, pending: Number(pending.rows[0]?.pending ?? 0) };
+  }
+
+  /** Deletes 16 objects at a time and records each outcome in the ledger. */
+  private async deleteSnapshotObjects(db: Pick<Pool, 'query'>, rows: Array<{
+    public_snapshot_key: string; object_key: string; attempts: number;
+  }>): Promise<{ deleted: number; failed: number }> {
+    let deleted = 0, failed = 0;
+    for (let offset = 0; offset < rows.length; offset += 16) {
+      const group = rows.slice(offset, offset + 16);
+      const results = await Promise.allSettled(group.map(async row => {
+        // Every object of an immutable snapshot lives under its own prefix.
+        if (!row.object_key.startsWith(`public-repository-snapshots/${row.public_snapshot_key}/`)) {
+          throw new Error('unscoped_object');
+        }
+        await (this.snapshotObjects.purge?.(row.object_key) ?? this.snapshotObjects.delete(row.object_key));
+      }));
+      const done = group.filter((_, index) => results[index]!.status === 'fulfilled');
+      const retry = group.filter((_, index) => results[index]!.status === 'rejected');
+      deleted += done.length;
+      failed += retry.length;
+      if (done.length) {
+        await db.query(
+          `UPDATE snapshot_payload_deletions AS ledger SET deleted_at=clock_timestamp(), last_error=NULL
+           FROM unnest($1::text[], $2::text[]) AS done(public_snapshot_key, object_key)
+           WHERE ledger.public_snapshot_key=done.public_snapshot_key
+             AND ledger.object_key=done.object_key AND ledger.deleted_at IS NULL`,
+          [done.map(row => row.public_snapshot_key), done.map(row => row.object_key)],
+        );
+      }
+      if (retry.length) {
+        await db.query(
+          `UPDATE snapshot_payload_deletions AS ledger SET attempts=ledger.attempts+1,
+             next_attempt_at=clock_timestamp()+(least(3600, 30 * power(2, least(7, ledger.attempts)))::int * interval '1 second'),
+             last_error='storage_delete_incomplete'
+           FROM unnest($1::text[], $2::text[]) AS failed(public_snapshot_key, object_key)
+           WHERE ledger.public_snapshot_key=failed.public_snapshot_key
+             AND ledger.object_key=failed.object_key AND ledger.deleted_at IS NULL`,
+          [retry.map(row => row.public_snapshot_key), retry.map(row => row.object_key)],
+        );
+      }
+    }
+    return { deleted, failed };
   }
 
   override async executeRepositoryMigration(input: {
@@ -4027,7 +4483,7 @@ export class PostgresStore extends FileStore {
     if (!row) return false;
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-      [`repository-update:${row.repository_identity}:${row.analyzer_bundle_version}:${row.analysis_config_digest}`],
+      [`repository-update:${row.repository_identity}`],
     );
     const joined = await client.query<{ project_id: string }>(
       `SELECT project_id FROM repository_analysis_update_projects
@@ -4041,10 +4497,8 @@ export class PostgresStore extends FileStore {
          JOIN canonical_public_repository_snapshots AS snapshot
            ON snapshot.public_snapshot_key = binding.public_snapshot_key
          WHERE snapshot.repository_identity = $1
-           AND snapshot.analyzer_bundle_version = $2
-           AND snapshot.analysis_config_digest = $3
          ORDER BY binding.project_id`,
-        [row.repository_identity, row.analyzer_bundle_version, row.analysis_config_digest],
+        [row.repository_identity],
       )
       : { rows: [] as Array<{ project_id: string }> };
     const projectIds = [...new Set([

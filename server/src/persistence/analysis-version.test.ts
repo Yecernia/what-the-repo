@@ -10,7 +10,7 @@ import { newAnalysisJob } from '../domain/jobs.js';
 
 for (const backend of ['file', 'postgres'] as const) {
   const url = process.env.WTR_ADMIN_TEST_DATABASE_URL;
-  test(`${backend}: sharing matches commits and publication preserves a queued newer version`,
+  test(`${backend}: one active update per repository fixes its target and publication moves every project`,
     { skip: backend === 'postgres' && !url, timeout: 15_000 }, async () => {
     if (backend === 'postgres') assert.match(new URL(url!).pathname, /^\/wtr_admin_test_[a-z0-9_]+$/);
     const root = await mkdtemp(join(tmpdir(), 'wtr-versions-'));
@@ -43,21 +43,24 @@ for (const backend of ['file', 'postgres'] as const) {
           identity: i === 3 ? { ...identity, repository: 'example/unrelated-' + backend } : identity,
           targetCommitSha: (i === 2 ? 'b' : 'a').repeat(40), newProject: true }));
       }
+      // A later request for another commit joins the running update; it does
+      // not queue a second physical version of the same repository.
       assert.equal(queued[0]!.update.update_id, queued[1]!.update.update_id);
-      assert.notEqual(queued[0]!.update.update_id, queued[2]!.update.update_id);
+      assert.equal(queued[0]!.update.update_id, queued[2]!.update.update_id);
+      assert.equal(queued[2]!.update.target_commit_sha, 'a'.repeat(40));
+      assert.notEqual(queued[0]!.update.update_id, queued[3]!.update.update_id);
       assert.equal((await store.claimAnalysisJob('worker:old', 30))?.job_id, queued[0]!.job.job_id);
       const unrelated = await store.claimAnalysisJob('worker:unrelated', 30);
       assert.equal(unrelated?.job_id, queued[3]!.job.job_id);
       await store.failRepositoryUpdate(queued[3]!.update.update_id, 'test complete');
-      assert.equal(await store.claimAnalysisJob('worker:new-too-early', 30), null, 'same lineage does not overtake the old publication');
+      assert.equal(await store.claimAnalysisJob('worker:joined', 30), null, 'joined projects never run a second analysis');
       await store.publishRepositoryUpdate({ updateId: queued[0]!.update.update_id, publicKey: newKey,
         commitSha: 'a'.repeat(40), snapshotId: 'snap:new', fileCount: 0, symbolCount: 0, callCount: 0,
         languages: [], readyLanguage: 'zh-CN', completedAt: new Date().toISOString(), redirects: [] });
       assert.equal((await store.loadJob(queued[1]!.job.job_id))?.status, 'succeeded');
-      assert.equal((await store.loadJob(queued[2]!.job.job_id))?.status, 'queued');
-      assert.equal((await store.loadProject(projects[2]!.project_id))?.analysis.snapshot_id, 'snap:old');
-      assert.equal((await store.claimAnalysisJob('worker:new', 30))?.job_id, queued[2]!.job.job_id);
-      await store.failRepositoryUpdate(queued[2]!.update.update_id, 'test complete');
+      assert.equal((await store.loadJob(queued[2]!.job.job_id))?.status, 'succeeded');
+      assert.equal((await store.loadProject(projects[2]!.project_id))?.analysis.snapshot_id, 'snap:new');
+      assert.equal((await store.loadCurrentRepositoryHead(identity.repository))?.current_public_snapshot_key, newKey);
     } finally { await store.close(); await rm(root, { recursive: true, force: true }); }
   });
 }

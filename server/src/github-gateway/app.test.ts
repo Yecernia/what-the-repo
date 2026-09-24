@@ -203,6 +203,32 @@ test("GitHub gateway repository transport is bearer protected and path constrain
   }
 });
 
+test("GitHub compare accepts only exact SHAs and strips commit and file payloads", async () => {
+  const requests: string[] = [];
+  const app = buildGithubGateway({
+    config: config(),
+    fetchImpl: (async (input: RequestInfo | URL) => {
+      requests.push(String(input));
+      return new Response(JSON.stringify({
+        status: 'ahead', ahead_by: 23, behind_by: 0,
+        commits: [{ message: 'large untrusted data' }], files: [{ patch: 'secret' }],
+      }), { status: 200 });
+    }) as typeof fetch,
+  });
+  try {
+    const headers = { authorization: `Bearer ${sharedSecret}` };
+    const base = 'a'.repeat(40), head = 'b'.repeat(40);
+    const invalid = await app.inject({ method: 'POST', url: '/v1/github/fetch', headers,
+      payload: { kind: 'compare', owner: 'octocat', repo: 'repo', base: 'main', head } });
+    assert.equal(invalid.statusCode, 400);
+    const compared = await app.inject({ method: 'POST', url: '/v1/github/fetch', headers,
+      payload: { kind: 'compare', owner: 'octocat', repo: 'repo', base, head } });
+    assert.equal(compared.statusCode, 200);
+    assert.deepEqual(compared.json(), { status: 'ahead', ahead_by: 23, behind_by: 0 });
+    assert.deepEqual(requests, [`https://api.github.com/repos/octocat/repo/compare/${base}...${head}?per_page=1`]);
+  } finally { await app.close(); }
+});
+
 test("GitHub gateway repository transport has no fixed request timeout", async () => {
   const requests: Array<{ url: string; signal: AbortSignal | null }> = [];
   const app = buildGithubGateway({

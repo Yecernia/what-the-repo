@@ -24,7 +24,7 @@ export interface AnalysisJob {
   error: string | null;
   error_code?: string | null;
   repository_update_id?: string | null;
-  execution_role?: "standalone" | "leader" | "waiter" | "overlay";
+  execution_role?: "standalone" | "leader" | "waiter" | "overlay" | "background";
   language_overlay_key?: string | null;
 }
 

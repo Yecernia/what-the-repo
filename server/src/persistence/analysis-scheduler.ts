@@ -7,8 +7,9 @@ export async function lockAnalysisScheduler(db: PoolClient) {
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [ANALYSIS_SCHEDULER_LOCK]);
 }
 export async function loadScheduledAnalysis(db: PoolClient): Promise<ScheduledAnalysis[]> {
-  const result = await db.query(`SELECT j.*, p.owner_id, COALESCE(a.state,'waiting') AS participation_state,
-    CASE WHEN u.update_id IS NULL THEN NULL ELSE jsonb_build_array(u.repository_identity,u.analyzer_bundle_version,u.analysis_config_digest)::text END AS execution_scope
+  const result = await db.query(`SELECT j.*, CASE WHEN j.execution_role='background' THEN 'system:background' ELSE p.owner_id END AS owner_id,
+    COALESCE(a.state,'waiting') AS participation_state,
+    CASE WHEN u.update_id IS NULL THEN NULL ELSE u.repository_identity END AS execution_scope
     FROM analysis_jobs j JOIN projects p USING(project_id)
     LEFT JOIN analysis_participants a USING(job_id)
     LEFT JOIN repository_analysis_updates u ON u.update_id=j.repository_update_id WHERE j.status IN ('queued','running')`);

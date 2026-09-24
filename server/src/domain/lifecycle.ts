@@ -2,6 +2,14 @@ export type RepositoryUpdateStatus = "queued" | "running" | "succeeded" | "faile
 
 export interface RepositoryHead {
   repository_identity: string;
+  /** Monotonic repository-wide publication generation. Legacy heads omit it. */
+  generation?: number;
+  published_at?: string | null;
+  upstream_commit_sha?: string | null;
+  behind_commits?: number | null;
+  relation?: 'same' | 'ahead' | 'diverged' | 'rewound' | 'unknown';
+  check_error_code?: string | null;
+  next_check_at?: string | null;
   analyzer_bundle_version: string;
   analysis_config_digest: string;
   current_public_snapshot_key: string | null;
@@ -26,6 +34,8 @@ export interface RepositoryUpdate {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  /** Who started the physical update; legacy rows are manual. */
+  trigger?: "initial" | "manual" | "background";
 }
 
 export interface RepositoryUpdateJoin {
@@ -276,4 +286,36 @@ export interface OwnerMergeSummary {
   traces: number;
   feedback_requests: number;
   merged_at: string;
+}
+
+/** What a page needs to explain its version; it never triggers paid work. */
+export interface RepositoryViewStatus {
+  snapshot_available: boolean;
+  current: { snapshot_id: string; commit_sha: string; published_at: string | null; generation: number } | null;
+  view: { snapshot_id: string; commit_sha: string; published_at: string | null; expires_at: string | null } | null;
+  refresh_required: boolean;
+  view_expired: boolean;
+  freshness: {
+    base_snapshot_id: string | null;
+    upstream_commit_sha: string | null;
+    behind_commits: number | null;
+    relation: "same" | "ahead" | "diverged" | "rewound" | "unknown";
+    check_status: "idle" | "checking" | "ok" | "failed";
+    checked_at: string | null;
+    stale: boolean;
+    error_code: string | null;
+    next_check_at: string | null;
+  };
+  update: {
+    update_id: string;
+    status: "queued" | "running" | "failed";
+    target_commit_sha: string | null;
+    trigger: "initial" | "manual" | "background";
+    stage: string | null;
+    participation: "none" | "queued" | "running" | "completed";
+    error_code: string | null;
+    retryable: boolean;
+  } | null;
+  update_eligibility: { allowed: boolean; reason: string | null; retry_after: string | null };
+  migration: { status: "not_needed" | "pending" | "ready" | "needs_review" | "failed"; changed_items: number };
 }

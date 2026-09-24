@@ -139,20 +139,27 @@ test(
         const key='b'.repeat(64);
         await pool.query(`INSERT INTO canonical_public_repository_snapshots(public_snapshot_key,repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,view_payload,analysis_payload,source_storage_key,purge_after) VALUES($1,'example/fixture','commit','test','test','isolated','{}','{}','',clock_timestamp()-interval '1 day')`,[key]);
         const now=new Date().toISOString();
-        assert.equal(await store.purgePublicSnapshotPayload(key,now),false,'Queued work protects payloads');
-        await store.saveJob({...job,status:'succeeded',completed_at:now});
-        await pool.query('INSERT INTO project_public_snapshot_bindings(project_id,public_snapshot_key) VALUES($1,$2)',[project.project_id,key]);
-        assert.equal(await store.purgePublicSnapshotPayload(key,now),false,'A shared project reference protects the snapshot');
-        await pool.query('DELETE FROM project_public_snapshot_bindings WHERE project_id=$1',[project.project_id]);
-        await pool.query(`INSERT INTO canonical_public_repository_heads(repository_identity,analyzer_bundle_version,analysis_config_digest,current_public_snapshot_key) VALUES('example/fixture','test','test',$1)`,[key]);
-        assert.equal(await store.purgePublicSnapshotPayload(key,now),false,'The current repository head is an effective reference');
-        await pool.query(`DELETE FROM canonical_public_repository_heads WHERE repository_identity='example/fixture'`);
+        assert.equal(await store.purgePublicSnapshotPayload(key,now),false,'A snapshot that was never retired is not cleaned');
+        await pool.query(`UPDATE canonical_public_repository_snapshots SET retired_at=clock_timestamp()-interval '2 days' WHERE public_snapshot_key=$1`,[key]);
+        await pool.query(`INSERT INTO canonical_public_repositories(repository_identity,current_public_snapshot_key) VALUES('example/fixture',$1)`,[key]);
+        assert.equal(await store.purgePublicSnapshotPayload(key,now),false,'The repository current pointer protects the snapshot');
+        await pool.query(`UPDATE canonical_public_repositories SET current_public_snapshot_key=NULL WHERE repository_identity='example/fixture'`);
+        await pool.query(`INSERT INTO snapshot_read_leases(lease_id,public_snapshot_key,expires_at,absolute_expires_at) VALUES('lease',$1,clock_timestamp()+interval '5 minutes',clock_timestamp()+interval '5 minutes')`,[key]);
+        assert.equal(await store.purgePublicSnapshotPayload(key,now),false,'An in-flight read lease protects the snapshot');
+        await store.releaseSnapshotReadLease('lease');
+        assert.equal(await store.acquireSnapshotReadLease(key,30),null,'An expired retired version admits no new reads');
+        await pool.query(`INSERT INTO repository_analysis_updates(update_id,repository_identity,analyzer_bundle_version,analysis_config_digest,status,leader_project_id,base_public_snapshot_key,created_at,updated_at) VALUES('base-update','example/fixture','test','test','queued',$1,$2,now(),now())`,[project.project_id,key]);
+        assert.equal(await store.purgePublicSnapshotPayload(key,now),false,'An active update based on the snapshot protects it');
+        await pool.query(`UPDATE repository_analysis_updates SET status='failed' WHERE update_id='base-update'`);
         const originalDelete=store.snapshotObjects.delete.bind(store.snapshotObjects);
         store.snapshotObjects.delete=async()=>{throw new Error('isolated-object-delete-failure');};
-        await assert.rejects(()=>store.purgePublicSnapshotPayload(key,now),/storage_delete_incomplete/);
-        assert.equal((await pool.query('SELECT payload_purged_at FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[key])).rows[0].payload_purged_at,null,'Failed deletion keeps the candidate retryable');
+        assert.equal(await store.purgePublicSnapshotPayload(key,now),true,'Unrelated queued work no longer blocks cleanup');
+        assert.notEqual((await pool.query('SELECT payload_purged_at FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[key])).rows[0].payload_purged_at,null,'The payload is logically unreadable once cleanup commits');
+        const pending=await pool.query('SELECT count(*)::int AS pending FROM snapshot_payload_deletions WHERE public_snapshot_key=$1 AND deleted_at IS NULL AND last_error IS NOT NULL',[key]);
+        assert.ok(pending.rows[0].pending>0,'Failed object deletions stay in the durable retry ledger');
         store.snapshotObjects.delete=originalDelete;
-        assert.equal(await store.purgePublicSnapshotPayload(key,now),true,'Only an unreferenced expired test snapshot can be deleted');
+        await pool.query('UPDATE snapshot_payload_deletions SET next_attempt_at=clock_timestamp() WHERE public_snapshot_key=$1',[key]);
+        assert.equal((await store.deleteRetiredSnapshotObjectsBatch(256)).pending,0,'A later retry finishes the ledger');
         assert.equal(await store.purgePublicSnapshotPayload(key,now),false,'Repeated deletion is idempotent');
       }finally{await store.close();await rm(root,{recursive:true,force:true});}
     } finally {

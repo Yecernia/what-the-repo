@@ -20,6 +20,10 @@ export interface McpRepositoryOperations {
     title?: string;
     model?: string | null;
   }): Promise<StartAnalysisResult>;
+  requestRepositoryUpdate(owner: ConversationOwner, projectId: string): Promise<{
+    outcome: string; update_id: string | null; job_id: string | null; retry_after: string | null;
+    status: { refresh_required: boolean; update: unknown };
+  }>;
   getAnalysisStatus(ownerId: string, projectId: string): Promise<Record<string, unknown>>;
   listValuePoints(ownerId: string, projectId: string, snapshotId: string): Promise<Record<string, unknown>>;
   queryCodeEvidence(ownerId: string, projectId: string, snapshotId: string, query: EvidenceQuery): Promise<Record<string, unknown>>;
@@ -84,6 +88,14 @@ export class RepositoryMcpGateway {
     model?: string;
   }): Promise<Record<string, unknown>> {
     this.begin(owner.owner_id);
+    // An existing project uses the same explicit update path as the page:
+    // shared task, cooldown and "already current" without a fake job.
+    if (input.project_id && !input.kind && !input.value && !input.title?.trim()) {
+      const update = await this.repository.requestRepositoryUpdate(owner, input.project_id);
+      return { project_id: input.project_id, outcome: update.outcome, update_id: update.update_id,
+        job_id: update.job_id, retry_after: update.retry_after,
+        refresh_required: update.status.refresh_required, update: update.status.update };
+    }
     const result = await this.repository.startAnalysis({
       owner,
       projectId: input.project_id,

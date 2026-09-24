@@ -423,6 +423,10 @@ export class AnalysisCoordinator {
       ? await this.store.listRepositoryUpdateProjects(job.repository_update_id)
       : [await this.store.loadProject(job.project_id)].filter((row): row is Project => Boolean(row));
     for (const project of projects) {
+      // Updating a public revision must not hide a snapshot that is already usable.
+      // Progress belongs to the repository task until publication.
+      if (job.repository_update_id && project.analysis.stage === 'done'
+        && project.analysis.canonical_snapshot_key) continue;
       await this.store.updateProject(project.project_id, project.owner_id, mutate, fence);
     }
   }
@@ -844,9 +848,11 @@ export class AnalysisCoordinator {
           stage: "scanning",
           strategy: plan.mode,
         });
-        await this.store.updateProject(project.project_id, project.owner_id, (row) => {
-          row.source.commit_sha = fetched.commitSha;
-        }, fence);
+        if (!project.analysis.canonical_snapshot_key) {
+          await this.store.updateProject(project.project_id, project.owner_id, (row) => {
+            row.source.commit_sha = fetched.commitSha;
+          }, fence);
+        }
         await this.recordAnalysisPhase(job, fence, "parsing_source", "running");
         const staticResult = await analyzeStaticSource({ manifest: fetched.manifest, sourceRoot: temporary,
           previous: previousCache, signal, takePreviousCache: true });
@@ -1165,10 +1171,12 @@ export class AnalysisCoordinator {
         return;
       }
       const requeued = await this.requeueAfterTransientFailure(runningJob, worker, message, async () => {
-        await this.store.updateProject(project.project_id, project.owner_id, (row) => {
-          row.analysis.completed_at = null;
-          row.analysis.error = message;
-        }, fence);
+        if (!project.analysis.canonical_snapshot_key) {
+          await this.store.updateProject(project.project_id, project.owner_id, (row) => {
+            row.analysis.completed_at = null;
+            row.analysis.error = message;
+          }, fence);
+        }
       });
       if (requeued) {
         // Project state was recorded while the old attempt still owned the lease.
@@ -1377,6 +1385,7 @@ export class AnalysisCoordinator {
         completedAt,
         readyLanguage: input.readyLanguage,
         redirects: input.redirects,
+        snapshotGraceHours: this.config.repositorySnapshotGraceHours,
         fence: input.fence,
       });
       return;

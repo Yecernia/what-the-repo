@@ -74,7 +74,9 @@ test("reanalyzing retains the saved project language unless explicitly changed",
       return { leader: true, job: input.job };
     },
   } as unknown as ProductStore;
-  const service = new RepositoryService(store, { resolveGithubHead: async () => null });
+  // A readable project only starts an update after upstream is confirmed.
+  const service = new RepositoryService(store, { resolveGithubHead: async () => ({
+    owner: "example", repo: "repo", repository: "example/repo", commitSha: "b".repeat(40) }) });
   const owner = { owner_id: project.owner_id, kind: "guest" as const };
   const result = await service.startAnalysis({ owner, projectId: project.project_id });
   assert.equal(result.project.display_language, "en");

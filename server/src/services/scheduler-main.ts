@@ -18,6 +18,11 @@ import {
 import { createDirectoryReclamationTask } from './directory-reclamation-scheduler.js';
 import { recoverExpiredProviderReservations } from './provider-budget-recovery.js';
 import { RetentionScheduler } from "./retention-scheduler.js";
+import { RepositoryService } from './repository-service.js';
+import { createRepositoryBackgroundRefreshTask } from './repository-background-scheduler.js';
+import { createRetiredSnapshotCleanupTask } from './retired-snapshot-scheduler.js';
+import { runtimeConfig } from '../admin/runtime-config.js';
+import { resolveAnalysisExecution } from '../analysis/execution-identity.js';
 
 const config = loadConfig();
 const store = createProductStore(config, "scheduler");
@@ -43,6 +48,8 @@ const memories = store instanceof PostgresStore
 let scheduler: RetentionScheduler | null = null;
 let directoryScheduler: RetentionScheduler | null = null;
 let budgetRecoveryScheduler: RetentionScheduler | null = null;
+let backgroundRefreshScheduler: RetentionScheduler | null = null;
+let retiredCleanupScheduler: RetentionScheduler | null = null;
 let leadershipLease: RetentionLeadershipLease | null = null;
 let shuttingDown = false;
 const leadershipAbort = new AbortController();
@@ -60,7 +67,8 @@ const shutdown = async (exitCode = 0): Promise<void> => {
   stopObservations();
   leadershipAbort.abort();
   defaultRuntimeMetrics.setGauge(METRIC_NAMES.retentionLeader, 0);
-  await Promise.all([scheduler?.stop(), directoryScheduler?.stop(), budgetRecoveryScheduler?.stop()]);
+  await Promise.all([scheduler?.stop(), directoryScheduler?.stop(), budgetRecoveryScheduler?.stop(),
+    backgroundRefreshScheduler?.stop(), retiredCleanupScheduler?.stop()]);
   await leadershipLease?.release().catch(() => undefined);
   await metricsServer?.close();
   await store.close();
@@ -98,6 +106,37 @@ try {
         async () => { await recoverExpiredProviderReservations(store.pool); }, 60_000);
       await budgetRecoveryScheduler.runNow();
       budgetRecoveryScheduler.start({ keepProcessAlive: true });
+      retiredCleanupScheduler = new RetentionScheduler(
+        async () => { await createRetiredSnapshotCleanupTask(store)(); }, 30_000,
+      );
+      await retiredCleanupScheduler.runNow();
+      retiredCleanupScheduler.start({ keepProcessAlive: true });
+      if (config.repositoryBackgroundRefreshEnabled) {
+        const repository = new RepositoryService(store, {
+          config,
+          analysisExecution: async () => {
+            const current = await runtimeConfig(config, store);
+            return { digest: (await resolveAnalysisExecution(current)).digest,
+              configVersion: current.adminConfigVersion ?? 0 };
+          },
+          githubClientId: config.githubClientId,
+          githubClientSecret: config.githubClientSecret,
+          githubGateway: config.githubGatewayUrl && config.githubGatewaySharedSecret
+            ? { baseUrl: config.githubGatewayUrl, sharedSecret: config.githubGatewaySharedSecret }
+            : null,
+        });
+        const task = createRepositoryBackgroundRefreshTask(config, {
+          listCandidates: (now, activeSince, limit) =>
+            store.listBackgroundRepositoryCandidates(now, activeSince, limit),
+          checkFreshness: identity => repository.checkRepositoryFreshness(identity),
+          requestUpdate: input => repository.requestBackgroundRepositoryUpdate(input),
+        });
+        backgroundRefreshScheduler = new RetentionScheduler(async () => {
+          await task();
+        }, 5 * 60_000);
+        await backgroundRefreshScheduler.runNow();
+        backgroundRefreshScheduler.start({ keepProcessAlive: true });
+      }
     }
     scheduler = new RetentionScheduler(async () => {
       const finish = defaultRuntimeMetrics.time(METRIC_NAMES.retentionDuration);

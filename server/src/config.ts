@@ -57,6 +57,22 @@ export interface ServerConfig extends ConcurrencyConfig {
   analysisQueueLimit?: number;
   analysisModelConcurrency?: number;
   retentionEnabled: boolean;
+  repositoryBackgroundRefreshEnabled?: boolean;
+  repositoryActiveWindowDays?: number;
+  repositoryActivityWriteIntervalMinutes?: number;
+  repositoryBackgroundCheckIntervalHours?: number;
+  repositoryHeadCheckTtlMinutes?: number;
+  repositoryBackgroundCommitThreshold?: number;
+  repositoryBackgroundMaxSnapshotAgeDays?: number;
+  repositoryBackgroundMinUpdateIntervalHours?: number;
+  repositoryManualMinUpdateIntervalMinutes?: number;
+  repositoryBackgroundMaxStartsPerDay?: number;
+  repositoryBackgroundMaxActive?: number;
+  repositoryBackgroundMaxQueued?: number;
+  repositoryBackgroundDailyUsd?: number;
+  repositoryUpdateMaxUsd?: number;
+  repositorySnapshotGraceHours?: number;
+  repositoryReadLeaseMaxMinutes?: number;
   databasePoolMax?: number;
   databaseConnectionReserve?: number;
   databaseIdleTimeoutMs?: number;
@@ -119,6 +135,15 @@ function nonNegativeInt(value: string | undefined, fallback: number): number {
 function positiveNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value ?? fallback);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function boundedDecimal(value: string | undefined, fallback: number, maximum: number): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > maximum) {
+    throw new Error(`Invalid repository budget: ${value}`);
+  }
+  return parsed;
 }
 
 function booleanValue(value: string | undefined, fallback: boolean): boolean {
@@ -245,6 +270,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     analysisQueueLimit: integerSetting(env, 'ANALYSIS_QUEUE_LIMIT', 32, 1, 256),
     analysisModelConcurrency: integerSetting(env, 'ANALYSIS_MODEL_CONCURRENCY', 8, 1, 256),
     retentionEnabled: booleanValue(env.WHAT_THE_REPO_RETENTION_ENABLED, true),
+    repositoryBackgroundRefreshEnabled: booleanValue(env.WHAT_THE_REPO_REPOSITORY_BACKGROUND_REFRESH_ENABLED, false),
+    repositoryActiveWindowDays: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_ACTIVE_WINDOW_DAYS', 7, 1, 365),
+    repositoryActivityWriteIntervalMinutes: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_ACTIVITY_WRITE_INTERVAL_MINUTES', 15, 1, 1440),
+    repositoryBackgroundCheckIntervalHours: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_CHECK_INTERVAL_HOURS', 24, 1, 168),
+    repositoryHeadCheckTtlMinutes: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_HEAD_CHECK_TTL_MINUTES', 60, 1, 1440),
+    repositoryBackgroundCommitThreshold: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_COMMIT_THRESHOLD', 20, 1, 100000),
+    repositoryBackgroundMaxSnapshotAgeDays: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_SNAPSHOT_AGE_DAYS', 7, 1, 365),
+    repositoryBackgroundMinUpdateIntervalHours: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MIN_UPDATE_INTERVAL_HOURS', 24, 1, 720),
+    repositoryManualMinUpdateIntervalMinutes: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_MANUAL_MIN_UPDATE_INTERVAL_MINUTES', 60, 1, 10080),
+    repositoryBackgroundMaxStartsPerDay: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_STARTS_PER_DAY', 2, 1, 100),
+    repositoryBackgroundMaxActive: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_ACTIVE', 1, 1, 32),
+    repositoryBackgroundMaxQueued: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_QUEUED', 4, 1, 100),
+    repositoryBackgroundDailyUsd: boundedDecimal(env.WHAT_THE_REPO_REPOSITORY_BACKGROUND_DAILY_USD, 0, 10000),
+    repositoryUpdateMaxUsd: boundedDecimal(env.WHAT_THE_REPO_REPOSITORY_UPDATE_MAX_USD, 0, 10000),
+    repositorySnapshotGraceHours: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_SNAPSHOT_GRACE_HOURS', 24, 1, 168),
+    repositoryReadLeaseMaxMinutes: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_READ_LEASE_MAX_MINUTES', 30, 1, 30),
     databasePoolMax: positiveInt(env.WHAT_THE_REPO_DB_POOL_MAX, 10),
     databaseConnectionReserve: nonNegativeInt(env.WHAT_THE_REPO_DB_CONNECTION_RESERVE, 10),
     databaseIdleTimeoutMs: positiveInt(env.WHAT_THE_REPO_DB_IDLE_TIMEOUT_MS, 30_000),

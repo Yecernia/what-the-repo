@@ -56,7 +56,8 @@ export function scheduleAnalysis(jobs: ScheduledAnalysis[], served: Map<string, 
   let turn = Math.max(0, ...served.values());
   for (;;) {
     const owners = [...new Set(active.map(job => job.owner_id))].sort((a,b) =>
-      (served.get(a) ?? 0) - (served.get(b) ?? 0)
+      Number(a === 'system:background') - Number(b === 'system:background')
+      || (served.get(a) ?? 0) - (served.get(b) ?? 0)
       || earliest(a).localeCompare(earliest(b)) || a.localeCompare(b));
     let granted = false;
     for (const owner of owners) {

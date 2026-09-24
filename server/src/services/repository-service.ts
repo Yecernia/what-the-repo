@@ -33,6 +33,7 @@ import type { ConversationOwner } from "./conversation-service.js";
 import { serviceError } from "./errors.js";
 import {
   fetchPublicGithubHead,
+  fetchPublicGithubComparison,
   parseGithubRepository,
   type GithubGatewayTransport,
   type GithubRepositoryHead,
@@ -40,9 +41,13 @@ import {
 import {
   ANALYSIS_CONFIG_DIGEST,
   ANALYZER_BUNDLE_VERSION,
-  canonicalPublicSnapshotKey,
 } from "../analysis/identity.js";
 import type { TaskQueue } from "../queue/task-queue.js";
+import type { ServerConfig } from "../config.js";
+import { applyOwnedSnapshotLanguageOverlay, asSnapshotLanguageOverlayPayload } from "../domain/snapshot-language.js";
+import type { RepositoryIdentityInput } from "../persistence/store.js";
+import type { RepositoryHead, RepositoryUpdate, RepositoryViewStatus } from "../domain/lifecycle.js";
+import { repositoryIdentityOf, resolveSnapshotView, snapshotExpired } from "./snapshot-view.js";
 
 const DEFAULT_HEAD_FRESHNESS_MS = 60 * 60 * 1000;
 
@@ -51,9 +56,11 @@ export type GithubHeadResolver = (
   clientId?: string | null,
   clientSecret?: string | null,
   gateway?: GithubGatewayTransport | null,
+  signal?: AbortSignal,
 ) => Promise<GithubRepositoryHead | null>;
 
 export interface RepositoryServiceOptions {
+  config?: ServerConfig;
   githubClientId?: string | null;
   githubClientSecret?: string | null;
   githubGateway?: GithubGatewayTransport | null;
@@ -93,12 +100,15 @@ export interface StartAnalysisResult {
 export class RepositoryService {
   private readonly headFreshnessMs: number;
   private readonly resolveGithubHead: GithubHeadResolver;
+  /** Page-triggered upstream checks in flight, one per repository in this process. */
+  private readonly freshnessChecks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly store: ProductStore,
     private readonly options: RepositoryServiceOptions = {},
   ) {
-    this.headFreshnessMs = options.headFreshnessMs ?? DEFAULT_HEAD_FRESHNESS_MS;
+    this.headFreshnessMs = options.headFreshnessMs
+      ?? (options.config?.repositoryHeadCheckTtlMinutes ? options.config.repositoryHeadCheckTtlMinutes * 60_000 : DEFAULT_HEAD_FRESHNESS_MS);
     this.resolveGithubHead = options.resolveGithubHead ?? fetchPublicGithubHead;
   }
 
@@ -156,23 +166,26 @@ export class RepositoryService {
       analysisConfigDigest,
     };
     const startedAt = nowIso();
-    project.analysis.stage = "fetching";
-    project.analysis.error = null;
-    project.analysis.started_at = startedAt;
-    project.analysis.completed_at = null;
-    project.analysis.progress_events = [];
-    project.analysis.strategy = null;
-    recordAnalysisProgress(project.analysis, "checking_existing", "running", startedAt);
+    const hasReadableSnapshot = !created && project.analysis.stage === "done"
+      && Boolean(project.analysis.canonical_snapshot_key);
+    if (!hasReadableSnapshot) {
+      project.analysis.stage = "fetching";
+      project.analysis.error = null;
+      project.analysis.started_at = startedAt;
+      project.analysis.completed_at = null;
+      project.analysis.progress_events = [];
+      project.analysis.strategy = null;
+      recordAnalysisProgress(project.analysis, "checking_existing", "running", startedAt);
+    }
     const sourceDigest = createHash("sha256").update(project.source.value).digest("hex").slice(0, 24);
     const job = newAnalysisJob(project.project_id, created
       ? `analysis:${project.project_id}:${sourceDigest}`
       : `analysis:${project.project_id}:${Date.now()}`);
     job.config_version = execution?.configVersion;
-    const head = await this.store.loadRepositoryHead(identity);
-    const fresh = head?.last_checked_at
-      ? Date.now() - Date.parse(head.last_checked_at) <= this.headFreshnessMs
-      : false;
-    if (fresh && head?.current_public_snapshot_key) {
+    const head = typeof this.store.loadCurrentRepositoryHead === 'function'
+      ? await this.store.loadCurrentRepositoryHead(repository)
+      : await this.store.loadRepositoryHead(identity);
+    if (created && head?.current_public_snapshot_key) {
       const snapshot = await this.store.loadPublicSnapshotView(head.current_public_snapshot_key);
       if (snapshot) {
         recordAnalysisProgress(project.analysis, "checking_existing", "completed");
@@ -181,52 +194,80 @@ export class RepositoryService {
         return this.bindExistingSnapshot({ project, job, created, publicKey: head.current_public_snapshot_key, snapshot });
       }
     }
-
-    recordAnalysisProgress(project.analysis, "checking_existing", "completed");
-    recordAnalysisProgress(project.analysis, "confirming_upstream", "running");
-    let upstream: GithubRepositoryHead | null = null;
-    try {
-      upstream = await this.resolveGithubHead(
-        project.source.value,
-        this.options.githubClientId,
-        this.options.githubClientSecret,
-        this.options.githubGateway,
-      );
-    } catch {
-      upstream = null;
+    const fresh = head?.last_checked_at
+      ? Date.now() - Date.parse(head.last_checked_at) <= this.headFreshnessMs
+      : false;
+    // An existing version with another analyzer/config still needs the shared update.
+    const sameIdentity = head?.analyzer_bundle_version === ANALYZER_BUNDLE_VERSION
+      && head.analysis_config_digest === analysisConfigDigest;
+    if (fresh && sameIdentity && head?.current_public_snapshot_key && head.relation === 'same') {
+      const snapshot = await this.store.loadPublicSnapshotView(head.current_public_snapshot_key);
+      if (snapshot) {
+        if (!hasReadableSnapshot) {
+          recordAnalysisProgress(project.analysis, "checking_existing", "completed");
+          setAnalysisStrategy(project.analysis, "reuse");
+          recordAnalysisProgress(project.analysis, "reusing_snapshot", "completed");
+        }
+        return this.bindExistingSnapshot({ project, job, created, publicKey: head.current_public_snapshot_key, snapshot });
+      }
     }
-    recordAnalysisProgress(project.analysis, "confirming_upstream", "completed");
+
+    if (!hasReadableSnapshot) {
+      recordAnalysisProgress(project.analysis, "checking_existing", "completed");
+      recordAnalysisProgress(project.analysis, "confirming_upstream", "running");
+    }
+    let upstream: GithubRepositoryHead | null = null;
+    if (fresh && head?.upstream_commit_sha && head.upstream_commit_sha !== head.current_commit_sha) {
+      upstream = { ...parsed, repository, commitSha: head.upstream_commit_sha };
+    } else {
+      try {
+        upstream = await this.resolveGithubHead(
+          project.source.value,
+          this.options.githubClientId,
+          this.options.githubClientSecret,
+          this.options.githubGateway,
+        );
+      } catch {
+        upstream = null;
+      }
+    }
+    if (!hasReadableSnapshot) recordAnalysisProgress(project.analysis, "confirming_upstream", "completed");
     if (upstream) {
-      recordAnalysisProgress(project.analysis, "comparing_versions", "running");
-      if (head?.current_commit_sha === upstream.commitSha && head.current_public_snapshot_key) {
+      if (!hasReadableSnapshot) recordAnalysisProgress(project.analysis, "comparing_versions", "running");
+      if (sameIdentity && head?.current_commit_sha === upstream.commitSha && head.current_public_snapshot_key) {
         const snapshot = await this.store.loadPublicSnapshotView(head.current_public_snapshot_key);
         if (snapshot) {
           const checkedAt = nowIso();
           await this.store.saveRepositoryHead({ ...head, last_checked_at: checkedAt, updated_at: checkedAt });
-          recordAnalysisProgress(project.analysis, "comparing_versions", "completed");
-          setAnalysisStrategy(project.analysis, "reuse");
-          recordAnalysisProgress(project.analysis, "reusing_snapshot", "completed");
+          await this.store.saveRepositoryFreshness({ repository, baseSnapshotKey: head.current_public_snapshot_key,
+            upstreamCommitSha: upstream.commitSha, behindCommits: 0, relation: 'same', checkedAt,
+            nextCheckAt: new Date(Date.parse(checkedAt) + this.headFreshnessMs).toISOString(), errorCode: null });
+          if (!hasReadableSnapshot) {
+            recordAnalysisProgress(project.analysis, "comparing_versions", "completed");
+            setAnalysisStrategy(project.analysis, "reuse");
+            recordAnalysisProgress(project.analysis, "reusing_snapshot", "completed");
+          }
           return this.bindExistingSnapshot({ project, job, created, publicKey: head.current_public_snapshot_key, snapshot });
         }
       }
-      const exactKey = canonicalPublicSnapshotKey(repository, upstream.commitSha, ANALYZER_BUNDLE_VERSION, analysisConfigDigest);
-      const exact = await this.store.loadPublicSnapshotView(exactKey);
-      if (exact) {
+      if (head?.current_public_snapshot_key && upstream.commitSha !== head.current_commit_sha) {
         const checkedAt = nowIso();
-        await this.store.saveRepositoryHead({
-          repository_identity: repository,
-          analyzer_bundle_version: ANALYZER_BUNDLE_VERSION,
-          analysis_config_digest: analysisConfigDigest,
-          current_public_snapshot_key: exactKey,
-          current_commit_sha: upstream.commitSha,
-          last_checked_at: checkedAt,
-          updated_at: checkedAt,
-        });
-        recordAnalysisProgress(project.analysis, "comparing_versions", "completed");
-        setAnalysisStrategy(project.analysis, "reuse");
-        recordAnalysisProgress(project.analysis, "reusing_snapshot", "completed");
-        return this.bindExistingSnapshot({ project, job, created, publicKey: exactKey, snapshot: exact });
+        try {
+          const comparison = await fetchPublicGithubComparison(project.source.value,
+            head.current_commit_sha ?? '', upstream.commitSha, this.options.githubClientId,
+            this.options.githubClientSecret, this.options.githubGateway);
+          await this.store.saveRepositoryFreshness({ repository, baseSnapshotKey: head.current_public_snapshot_key,
+            upstreamCommitSha: upstream.commitSha, behindCommits: comparison.behindCommits,
+            relation: comparison.relation, checkedAt,
+            nextCheckAt: new Date(Date.parse(checkedAt) + this.headFreshnessMs).toISOString(), errorCode: null });
+        } catch {
+          // A comparison failure does not prevent a user-requested exact-commit update.
+        }
       }
+    }
+
+    if (!upstream && hasReadableSnapshot) {
+      throw serviceError('github_check_failed', '暂时无法检查上游代码，当前仓库内容仍可继续使用。', 503);
     }
 
     project.updated_at = startedAt;
@@ -237,7 +278,7 @@ export class RepositoryService {
       targetCommitSha: upstream?.commitSha ?? null,
       newProject: created,
     }));
-    if (!queued.leader) {
+    if (!queued.leader && !hasReadableSnapshot) {
       const members = await this.store.listRepositoryUpdateProjects(queued.update.update_id);
       const leader = members.find((member) => member.project_id === queued.update.leader_project_id);
       if (leader) {
@@ -346,6 +387,327 @@ export class RepositoryService {
       heartbeat_at: job?.heartbeat_at ?? null,
       retryable: !job || job.status === "failed" || job.status === "cancelled",
     };
+  }
+
+  /**
+   * Resolves the version a page is reading. The current binding needs no lookup;
+   * an older version must belong to the same repository, be retired (not an
+   * arbitrary snapshot ID) and still be inside its grace period.
+   */
+  /** Resolves the version a page is reading; see resolveSnapshotView. */
+  async resolveProjectView(ownerId: string, projectId: string, viewSnapshotId?: string | null): Promise<{
+    project: Project; historical: boolean;
+  }> {
+    return resolveSnapshotView(this.store, await this.requireProject(ownerId, projectId), viewSnapshotId);
+  }
+
+  async getProjectView(ownerId: string, projectId: string, viewSnapshotId?: string | null): Promise<Project> {
+    return (await this.resolveProjectView(ownerId, projectId, viewSnapshotId)).project;
+  }
+
+  async getSnapshotView(ownerId: string, projectId: string, language?: string | null,
+    viewSnapshotId?: string | null): Promise<EvidenceSnapshot | null> {
+    const { project, historical } = await this.resolveProjectView(ownerId, projectId, viewSnapshotId);
+    await this.touchRealUse(project);
+    if (!historical) return this.store.loadSnapshot<EvidenceSnapshot>(projectId, language ?? undefined);
+    const publicKey = project.analysis.canonical_snapshot_key ?? "";
+    const bundle = await this.store.loadPublicSnapshotView(publicKey);
+    const snapshot = asEvidenceSnapshot(bundle?.view);
+    if (!snapshot || !bundle?.metadata.language_overlay_version) return snapshot;
+    // Same rule as the current view: read existing overlays, never queue translation.
+    for (const candidate of new Set([normalizeDisplayLanguage(language ?? project.display_language),
+      normalizeDisplayLanguage(project.display_language)])) {
+      const overlay = await this.store.loadSnapshotLanguageOverlay(publicKey, candidate);
+      const payload = asSnapshotLanguageOverlayPayload(overlay?.payload);
+      if (!overlay || !payload || (overlay.status !== "ready" && overlay.status !== "degraded")) continue;
+      const assembled = applyOwnedSnapshotLanguageOverlay(snapshot, payload);
+      assembled.language_overlay_status = overlay.status;
+      return assembled;
+    }
+    return null;
+  }
+
+  /**
+   * Reads source from the requested version. A version outside its grace period
+   * falls back to the recorded path mapping into the current version.
+   */
+  async readSourceView(ownerId: string, projectId: string, snapshotId: string,
+    path: string, start: number, end: number, stableId?: string | null): Promise<{
+      snapshot_id: string; path: string; lines: string[]; truncated: boolean; redirect: unknown;
+    }> {
+    let resolved: { project: Project; historical: boolean } | null = null;
+    try {
+      resolved = await this.resolveProjectView(ownerId, projectId, snapshotId);
+    } catch (error) {
+      const status = (error as { statusCode?: number }).statusCode;
+      if (status !== 409 && status !== 410) throw error;
+    }
+    if (resolved) {
+      await this.touchRealUse(resolved.project);
+      const result = resolved.historical
+        ? await this.store.readPublicSourceLines(resolved.project.analysis.canonical_snapshot_key ?? "", snapshotId, path, start, end)
+        : await this.store.readSourceLines(projectId, snapshotId, path, start, end);
+      return { snapshot_id: snapshotId, path, ...result, redirect: null };
+    }
+    const project = await this.requireProject(ownerId, projectId);
+    const fromPublicKey = await this.store.findPublicSnapshotKeyBySnapshotId(snapshotId);
+    const toPublicKey = project.analysis.canonical_snapshot_key;
+    if (!fromPublicKey || !toPublicKey || !project.analysis.snapshot_id) {
+      throw serviceError("snapshot_mismatch", "源码证据与当前快照不匹配", 409);
+    }
+    const redirect = await this.store.resolveRevisionRedirect({ fromPublicKey, toPublicKey, oldPath: path, oldStableId: stableId ?? null });
+    if (!redirect) throw serviceError("snapshot_mismatch", "旧引用尚无可确认的新版位置", 409);
+    if (redirect.kind === "deleted") {
+      throw serviceError("source_deleted", `新版 commit 已删除文件 ${path}，不能编造删除原因`, 410);
+    }
+    const candidate = redirect.candidates[0];
+    if (!candidate) throw serviceError("snapshot_mismatch", "旧引用已变化，但尚无可打开的新位置", 409);
+    const result = await this.store.readPublicSourceLines(toPublicKey, project.analysis.snapshot_id, candidate.path, start, end);
+    return { snapshot_id: project.analysis.snapshot_id, path: candidate.path, ...result, redirect };
+  }
+
+  async getRepositoryStatus(ownerId: string, projectId: string, viewSnapshotId?: string | null): Promise<RepositoryViewStatus> {
+    const project = await this.requireProject(ownerId, projectId);
+    if (project.source.kind !== "github") throw serviceError("invalid_request", "只有 GitHub 仓库有版本状态", 400);
+    const repository = repositoryIdentityOf(project);
+    const [head, latest] = await Promise.all([
+      this.store.loadCurrentRepositoryHead(repository),
+      this.store.loadLatestRepositoryUpdate(repository),
+    ]);
+    const currentMeta = head?.current_public_snapshot_key
+      ? await this.store.loadPublicSnapshotMetadata(head.current_public_snapshot_key) : null;
+    const requestedView = viewSnapshotId ?? project.analysis.snapshot_id;
+    const viewKey = requestedView === project.analysis.snapshot_id
+      ? project.analysis.canonical_snapshot_key
+      : requestedView ? await this.store.findPublicSnapshotKeyBySnapshotId(requestedView) : null;
+    const viewCandidate = viewKey ? await this.store.loadPublicSnapshotMetadata(viewKey) : null;
+    const viewMeta = viewCandidate?.repository_identity === repository ? viewCandidate : null;
+    const currentId = currentMeta?.analysis_snapshot_id ?? null;
+    const viewId = viewMeta?.analysis_snapshot_id ?? project.analysis.snapshot_id;
+    const checkedAt = head?.last_checked_at ?? null;
+    const stale = !checkedAt || Date.now() - Date.parse(checkedAt) > this.headFreshnessMs;
+    // A stale page starts one free metadata check (never paid work); the next
+    // status poll shows its result.
+    if (stale && head?.current_public_snapshot_key) this.startFreshnessCheck(head);
+    const checking = this.freshnessChecks.has(repository);
+    const currentPublishedAt = head?.published_at ?? null;
+    const active = latest && (latest.status === "queued" || latest.status === "running") ? latest : null;
+    // A failure is only news until a later version is published.
+    const failed = latest?.status === "failed"
+      && (!currentPublishedAt || latest.updated_at > currentPublishedAt) ? latest : null;
+    const shown = active ?? failed;
+    const participant = shown ? await this.store.loadRepositoryUpdateForProject(projectId) : null;
+    const participating = Boolean(shown && participant?.update_id === shown.update_id);
+    const cooldown = active ? null : this.manualCooldown(latest);
+    return {
+      snapshot_available: Boolean(project.analysis.snapshot_id && !project.analysis.removed_by_admin),
+      current: currentMeta ? {
+        snapshot_id: currentMeta.analysis_snapshot_id,
+        commit_sha: currentMeta.commit_sha,
+        published_at: currentPublishedAt,
+        generation: head?.generation ?? 0,
+      } : null,
+      view: viewMeta ? {
+        snapshot_id: viewMeta.analysis_snapshot_id,
+        commit_sha: viewMeta.commit_sha,
+        // An old page must not borrow the newer version's publication time.
+        published_at: viewMeta.public_snapshot_key === head?.current_public_snapshot_key
+          ? currentPublishedAt : null,
+        expires_at: viewMeta.retired_at ? viewMeta.purge_after : null,
+      } : null,
+      refresh_required: Boolean(currentId && viewId && currentId !== viewId),
+      view_expired: Boolean(viewMeta && snapshotExpired(viewMeta)),
+      freshness: {
+        base_snapshot_id: currentId,
+        upstream_commit_sha: head?.upstream_commit_sha ?? null,
+        behind_commits: head?.behind_commits ?? null,
+        relation: head?.relation ?? "unknown",
+        check_status: checking ? "checking" : head?.check_error_code ? "failed" : checkedAt ? "ok" : "idle",
+        checked_at: checkedAt,
+        stale,
+        error_code: head?.check_error_code ?? null,
+        next_check_at: head?.next_check_at ?? null,
+      },
+      update: shown ? {
+        update_id: shown.update_id,
+        status: shown.status === "failed" ? "failed" : shown.status === "running" ? "running" : "queued",
+        target_commit_sha: shown.target_commit_sha,
+        trigger: shown.trigger ?? "manual",
+        stage: null,
+        participation: participating ? (shown.status === "running" ? "running"
+          : shown.status === "failed" ? "completed" : "queued") : "none",
+        // Participants and costs stay private; the public reason is enough.
+        error_code: shown.status === "failed" ? "repository_update_failed" : null,
+        retryable: shown.status === "failed" && !cooldown,
+      } : null,
+      update_eligibility: active
+        ? { allowed: true, reason: "join_running", retry_after: null }
+        : cooldown ? { allowed: false, reason: "cooldown", retry_after: cooldown }
+        : { allowed: Boolean(currentMeta), reason: currentMeta ? null : "snapshot_unavailable", retry_after: null },
+      migration: { status: "not_needed", changed_items: 0 },
+    };
+  }
+
+  private startFreshnessCheck(head: RepositoryHead): void {
+    const repository = head.repository_identity.toLowerCase();
+    // A failed check is retried only after its recorded next-check time.
+    if (this.freshnessChecks.has(repository)
+      || (head.check_error_code && head.next_check_at && Date.parse(head.next_check_at) > Date.now())) return;
+    const task = this.checkRepositoryFreshness({ repository, analyzerBundleVersion: head.analyzer_bundle_version,
+      analysisConfigDigest: head.analysis_config_digest })
+      .then(() => undefined, () => undefined)
+      .finally(() => { this.freshnessChecks.delete(repository); });
+    this.freshnessChecks.set(repository, task);
+  }
+
+  /** ISO time when another paid update may start, or null. Failures count too. */
+  private manualCooldown(latest: RepositoryUpdate | null): string | null {
+    if (!latest || latest.status === "cancelled") return null;
+    const minutes = this.options.config?.repositoryManualMinUpdateIntervalMinutes ?? 60;
+    const until = Date.parse(latest.created_at) + minutes * 60_000;
+    return until > Date.now() ? new Date(until).toISOString() : null;
+  }
+
+  /**
+   * Explicit "update" for a project. It never replaces the page: the caller
+   * receives status and, after publication, a refresh prompt.
+   */
+  async requestRepositoryUpdate(owner: ConversationOwner, projectId: string): Promise<{
+    outcome: "up_to_date" | "joined" | "queued" | "deferred";
+    update_id: string | null; job_id: string | null; retry_after: string | null; status: RepositoryViewStatus;
+  }> {
+    const project = await this.requireProject(owner.owner_id, projectId);
+    if (project.source.kind !== "github") throw serviceError("invalid_request", "只有 GitHub 仓库可以更新", 400);
+    const readable = project.analysis.stage === "done" && Boolean(project.analysis.canonical_snapshot_key)
+      && !project.analysis.removed_by_admin;
+    const repository = repositoryIdentityOf(project);
+    const status = () => this.getRepositoryStatus(owner.owner_id, projectId, project.analysis.snapshot_id);
+    const active = await this.store.loadActiveRepositoryUpdate(repository);
+    const previousJob = await this.store.latestJob(projectId);
+    const alreadyWaiting = previousJob?.status === "queued" || previousJob?.status === "running";
+    if (!readable || active || alreadyWaiting) {
+      // No usable snapshot (first analysis or retry) or a task is already
+      // running: the normal admission path creates or joins it.
+      const result = await this.startAnalysis({ owner, projectId });
+      const running = result.job.status === "queued" || result.job.status === "running";
+      return {
+        outcome: active || alreadyWaiting ? "joined" : running ? "queued" : "up_to_date",
+        update_id: result.job.repository_update_id ?? active?.update_id ?? null,
+        job_id: running ? result.job.job_id : null,
+        retry_after: null,
+        status: await status(),
+      };
+    }
+    const head = await this.store.loadCurrentRepositoryHead(repository);
+    const key = head?.current_public_snapshot_key;
+    if (!head || !key || !head.current_commit_sha) throw serviceError("snapshot_unavailable", "当前仓库快照不可用", 409);
+    const execution = await this.options.analysisExecution?.();
+    const digest = execution?.digest ?? await this.options.analysisConfigDigest?.() ?? ANALYSIS_CONFIG_DIGEST;
+    const fresh = Boolean(head.upstream_commit_sha && head.last_checked_at && !head.check_error_code
+      && Date.now() - Date.parse(head.last_checked_at) <= this.headFreshnessMs);
+    let upstreamSha = fresh ? head.upstream_commit_sha ?? null : null;
+    if (!upstreamSha) {
+      const upstream = await this.resolveGithubHead(project.source.value, this.options.githubClientId,
+        this.options.githubClientSecret, this.options.githubGateway).catch(() => null);
+      if (!upstream) throw serviceError("github_check_failed", "暂时无法检查上游代码，当前仓库内容仍可继续使用。", 503);
+      upstreamSha = upstream.commitSha;
+      const checkedAt = nowIso();
+      const comparison = upstreamSha === head.current_commit_sha
+        ? { relation: "same" as const, behindCommits: 0 }
+        : await fetchPublicGithubComparison(project.source.value, head.current_commit_sha, upstreamSha,
+          this.options.githubClientId, this.options.githubClientSecret, this.options.githubGateway)
+          .catch(() => ({ relation: "unknown" as const, behindCommits: null }));
+      await this.store.saveRepositoryFreshness({ repository, baseSnapshotKey: key, upstreamCommitSha: upstreamSha,
+        behindCommits: comparison.behindCommits, relation: comparison.relation, checkedAt,
+        nextCheckAt: new Date(Date.parse(checkedAt) + this.headFreshnessMs).toISOString(), errorCode: null });
+    }
+    const sameIdentity = head.analyzer_bundle_version === ANALYZER_BUNDLE_VERSION && head.analysis_config_digest === digest;
+    if (upstreamSha === head.current_commit_sha && sameIdentity) {
+      return { outcome: "up_to_date", update_id: null, job_id: null, retry_after: null, status: await status() };
+    }
+    const cooldown = this.manualCooldown(await this.store.loadLatestRepositoryUpdate(repository));
+    if (cooldown) return { outcome: "deferred", update_id: null, job_id: null, retry_after: cooldown, status: await status() };
+    const result = await this.startAnalysis({ owner, projectId });
+    return {
+      outcome: result.job.status === "succeeded" ? "up_to_date" : "queued",
+      update_id: result.job.repository_update_id ?? null,
+      job_id: result.job.status === "succeeded" ? null : result.job.job_id,
+      retry_after: null,
+      status: await status(),
+    };
+  }
+
+  private async touchRealUse(project: Project): Promise<void> {
+    if (project.source.kind !== "github") return;
+    const parsed = parseGithubRepository(project.source.value);
+    await this.store.touchRepositoryRealUse(`${parsed.owner}/${parsed.repo}`.toLowerCase(),
+      nowIso(), this.options.config?.repositoryActivityWriteIntervalMinutes ?? 15);
+  }
+
+  async checkRepositoryFreshness(identity: RepositoryIdentityInput, signal?: AbortSignal): Promise<{
+    baseSnapshotId: string | null; upstreamCommitSha: string | null; behindCommits: number | null;
+    relation: 'same' | 'ahead' | 'diverged' | 'rewound' | 'unknown'; checkedAt: string;
+  }> {
+    const current = await this.store.loadCurrentRepositoryHead(identity.repository);
+    const key = current?.current_public_snapshot_key;
+    const base = key ? await this.store.loadPublicSnapshotMetadata(key) : null;
+    if (!key || !base) throw serviceError('snapshot_unavailable', '当前仓库快照不可用', 404);
+    const checkedAt = nowIso();
+    const value = `https://github.com/${identity.repository}`;
+    try {
+      const upstream = await this.resolveGithubHead(value, this.options.githubClientId,
+        this.options.githubClientSecret, this.options.githubGateway, signal);
+      if (!upstream) throw new Error('github_head_unavailable');
+      const comparison = await fetchPublicGithubComparison(value, base.commit_sha,
+        upstream.commitSha, this.options.githubClientId, this.options.githubClientSecret,
+        this.options.githubGateway, signal);
+      await this.store.saveRepositoryFreshness({ repository: identity.repository,
+        baseSnapshotKey: key, upstreamCommitSha: upstream.commitSha,
+        behindCommits: comparison.behindCommits, relation: comparison.relation,
+        checkedAt,
+        nextCheckAt: new Date(Date.parse(checkedAt) + (this.options.config?.repositoryBackgroundCheckIntervalHours ?? 24) * 3_600_000).toISOString(),
+        errorCode: null });
+      return { baseSnapshotId: base.analysis_snapshot_id, upstreamCommitSha: upstream.commitSha,
+        behindCommits: comparison.behindCommits, relation: comparison.relation, checkedAt };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      await this.store.saveRepositoryFreshness({ repository: identity.repository,
+        baseSnapshotKey: key, upstreamCommitSha: null, behindCommits: null,
+        relation: 'unknown', checkedAt,
+        nextCheckAt: new Date(Date.parse(checkedAt) + 60 * 60_000).toISOString(),
+        errorCode: 'github_check_failed' });
+      return { baseSnapshotId: base.analysis_snapshot_id, upstreamCommitSha: null,
+        behindCommits: null, relation: 'unknown', checkedAt };
+    }
+  }
+
+  async requestBackgroundRepositoryUpdate(input: {
+    identity: RepositoryIdentityInput; projectId: string; targetCommitSha: string;
+  }): Promise<'queued' | 'deferred' | 'up_to_date'> {
+    const project = await this.store.loadProject(input.projectId);
+    if (!project || project.source.kind !== 'github') return 'deferred';
+    const parsed = parseGithubRepository(project.source.value);
+    if (`${parsed.owner}/${parsed.repo}`.toLowerCase() !== input.identity.repository.toLowerCase()) return 'deferred';
+    const config = this.options.config;
+    if (!config?.repositoryBackgroundRefreshEnabled
+      || !config.repositoryBackgroundDailyUsd || !config.repositoryUpdateMaxUsd) return 'deferred';
+    const job = newAnalysisJob(project.project_id,
+      `background:${input.identity.repository}:${input.targetCommitSha}:${Date.now()}`);
+    job.execution_role = 'background';
+    job.config_version = (await this.options.analysisExecution?.())?.configVersion;
+    const result = await this.store.createBackgroundRepositoryUpdate({
+      project, job, identity: input.identity, targetCommitSha: input.targetCommitSha,
+      dailyUsd: config.repositoryBackgroundDailyUsd,
+      updateMaxUsd: config.repositoryUpdateMaxUsd,
+      maxStartsPerDay: config.repositoryBackgroundMaxStartsPerDay ?? 2,
+      maxActive: config.repositoryBackgroundMaxActive ?? 1,
+      maxQueued: config.repositoryBackgroundMaxQueued ?? 4,
+      minUpdateIntervalHours: config.repositoryBackgroundMinUpdateIntervalHours ?? 24,
+      activeWindowDays: config.repositoryActiveWindowDays ?? 7,
+      now: nowIso(),
+    });
+    if (result === 'queued') await this.enqueueIfRunnable(job);
+    return result;
   }
 
   async refreshMigrationNotice(ownerId: string, projectId: string): Promise<Project> {
@@ -741,3 +1103,4 @@ function clampInteger(value: number | undefined, minimum: number, maximum: numbe
     ? Math.max(minimum, Math.min(maximum, candidate))
     : fallback;
 }
+

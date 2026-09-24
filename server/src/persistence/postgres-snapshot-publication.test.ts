@@ -206,6 +206,8 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
     );
 
     snapshotRow.purge_after = "2026-08-23T00:00:00.000Z";
+    // Routine cleanup only takes a version retired by a later publication.
+    Object.assign(snapshotRow, { retired_at: "2026-08-22T00:00:00.000Z" });
     const purgeQueries: string[] = [];
     const purgeClient = {
       async query(sql: string) {

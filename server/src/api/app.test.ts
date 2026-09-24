@@ -284,7 +284,7 @@ test('workspace detail requires owner, current snapshot, exact language and a re
   } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-test("reanalyze reuses an active job and the user cancellation route is gone", async () => {
+test("repository update joins an active job and the user cancellation route is gone", async () => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-api-analysis-reuse-"));
   try {
     const store = new FileStore(root);
@@ -315,13 +315,13 @@ test("reanalyze reuses an active job and the user cancellation route is gone", a
 
     const reanalyzed = await browserInject(app, {
       method: "POST",
-      url: `/api/projects/${project.project_id}/reanalyze`,
+      url: `/api/projects/${project.project_id}/repository-update`,
       headers: { cookie: cookieHeader },
     });
     assert.equal(reanalyzed.statusCode, 200);
-    const reanalyzedBody = reanalyzed.json() as { job_id: string; job_status: string };
+    const reanalyzedBody = reanalyzed.json() as { job_id: string; outcome: string };
     assert.equal(reanalyzedBody.job_id, originalJob.job_id);
-    assert.equal(reanalyzedBody.job_status, "queued");
+    assert.equal(reanalyzedBody.outcome, "joined");
 
     const otherGuest = await browserInject(app, { method: "POST", url: "/api/auth/guest" });
     const otherCookie = otherGuest.headers["set-cookie"];
@@ -329,7 +329,7 @@ test("reanalyze reuses an active job and the user cancellation route is gone", a
     const otherCookieHeader = Array.isArray(otherCookie) ? otherCookie[0].split(";", 1)[0] : otherCookie.split(";", 1)[0];
     const forbidden = await browserInject(app, {
       method: "POST",
-      url: `/api/projects/${project.project_id}/reanalyze`,
+      url: `/api/projects/${project.project_id}/repository-update`,
       headers: { cookie: otherCookieHeader },
     });
     assert.equal(forbidden.statusCode, 404);

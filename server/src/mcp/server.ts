@@ -82,7 +82,7 @@ function createMcpServer(
   });
 
   server.registerTool(MCP_TOOL_NAMES[0], {
-    description: "创建公开 GitHub 仓库分析项目，或用 project_id 重新分析已有项目。不会执行仓库代码。",
+    description: "创建公开 GitHub 仓库分析项目，或用 project_id 请求更新已有项目（加入共享更新；已是最新或冷却中时不启动分析）。不会执行仓库代码。",
     inputSchema: {
       project_id: z.string().min(1).max(128).optional(),
       kind: z.literal("github").optional(),

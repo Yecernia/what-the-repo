@@ -960,6 +960,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     return true;
   };
   const repository = new RepositoryService(store, {
+    config,
     analysisExecution: async () => { const current = await runtimeConfig(config, store); return { digest: (await resolveAnalysisExecution(current)).digest, configVersion: current.adminConfigVersion ?? 0 }; },
     analysisConfigDigest: async () => (await resolveAnalysisExecution(await runtimeConfig(config, store))).digest,
     admitWork: (job, operation) => storageManager.admit(job, operation),
@@ -1293,10 +1294,11 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
   app.get("/api/projects/:projectId", async (request) => {
     const owner = await requiredOwner(request, store, config);
     const { projectId } = request.params as { projectId: string };
-    const project = await repository.refreshMigrationNotice(owner.owner_id, projectId);
-    if (!project) throw httpError(404, "项目不存在");
+    const viewSnapshotId = (request.query as { view_snapshot_id?: string }).view_snapshot_id;
+    const { project, historical } = await repository.resolveProjectView(owner.owner_id, projectId, viewSnapshotId);
+    // A historical view was validated as readable and inside its grace period.
     const [job, snapshotAvailable] = await Promise.all([
-      store.latestJob(projectId), store.snapshotAvailable(project),
+      store.latestJob(projectId), historical ? true : store.snapshotAvailable(project),
     ]);
     return projectDetail(project, job, snapshotAvailable, config);
   });
@@ -1323,22 +1325,16 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     if (!(await store.deleteProject(projectId, owner.owner_id))) throw httpError(404, "项目不存在");
     return reply.code(204).send();
   });
-  app.post("/api/projects/:projectId/reanalyze", async (request) => {
+  app.get("/api/projects/:projectId/repository-status", async (request) => {
     const owner = await requiredOwner(request, store, config);
     const { projectId } = request.params as { projectId: string };
-    const { project, job } = await repository.startAnalysis({ owner, projectId });
-    return {
-      project_id: projectId,
-      ...sanitizeProjectForResponse(project).analysis,
-      error_code: job.error_code ? publicErrorCode(500, job.error_code) : null,
-      job_id: job.job_id,
-      job_status: job.status,
-      job_attempt: job.attempt,
-      job_max_attempts: job.max_attempts,
-      lease_owner: job.lease_owner,
-      heartbeat_at: job.heartbeat_at,
-      retryable: true,
-    };
+    const { view_snapshot_id: viewSnapshotId } = request.query as { view_snapshot_id?: string };
+    return repository.getRepositoryStatus(owner.owner_id, projectId, viewSnapshotId);
+  });
+  app.post("/api/projects/:projectId/repository-update", async (request) => {
+    const owner = await requiredOwner(request, store, config);
+    const { projectId } = request.params as { projectId: string };
+    return repository.requestRepositoryUpdate(owner, projectId);
   });
   app.get("/api/projects/:projectId/analysis", async (request) => {
     const owner = await requiredOwner(request, store, config);
@@ -1805,6 +1801,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       displayLanguage: typeof body.display_language === "string"
         ? normalizeDisplayLanguage(textField(body, "display_language", 40)) : undefined,
       replaceMessageId: typeof body.replace_message_id === "string" ? body.replace_message_id : undefined,
+      viewSnapshotId: typeof body.view_snapshot_id === "string" ? body.view_snapshot_id.slice(0, 200) : undefined,
       retryRunId: typeof body.retry_run_id === "string" ? body.retry_run_id.slice(0, 128) : undefined,
       selection,
       reviewEvidence: body.review_evidence === true,
@@ -1926,12 +1923,11 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
   app.get("/api/projects/:projectId/snapshot", async (request) => {
     const owner = await requiredOwner(request, store, config);
     const { projectId } = request.params as { projectId: string };
-    const project = await store.loadProject(projectId, owner.owner_id);
-    if (!project) throw httpError(404, "项目不存在");
-    const { display_language: language, view } = request.query as { display_language?: string; view?: string };
+    const { display_language: language, view, view_snapshot_id: viewSnapshotId } = request.query as { display_language?: string; view?: string; view_snapshot_id?: string };
     if (language !== undefined && language !== "zh-CN" && language !== "en") throw httpError(400, "不支持的显示语言");
     if (view !== undefined && view !== 'workspace') throw httpError(400, "不支持的快照视图");
-    const snapshot = await store.loadSnapshot<EvidenceSnapshot>(projectId, language);
+    const project = await repository.getProjectView(owner.owner_id, projectId, viewSnapshotId);
+    const snapshot = await repository.getSnapshotView(owner.owner_id, projectId, language, viewSnapshotId);
     if (!snapshot) throw httpError(404, "项目图谱尚未完成");
     const displayed = { ...snapshot, display_language: snapshot.display_language ?? normalizeDisplayLanguage(project.display_language) };
     // Legacy records without a current snapshot binding cannot use the detail route.
@@ -1941,16 +1937,14 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
   app.get("/api/projects/:projectId/snapshot/detail", async (request) => {
     const owner = await requiredOwner(request, store, config);
     const { projectId } = request.params as { projectId: string };
-    const project = await store.loadProject(projectId, owner.owner_id);
-    if (!project) throw httpError(404, "项目不存在");
     const query = request.query as { snapshot_id?: string; kind?: string; id?: string; display_language?: string };
     if (!query.snapshot_id || !query.id || !query.display_language
       || !['component', 'relation', 'layer'].includes(query.kind ?? '')
       || (query.display_language !== 'zh-CN' && query.display_language !== 'en')) {
       throw httpError(400, "详情参数无效");
     }
-    if (project.analysis.snapshot_id !== query.snapshot_id) throw httpError(409, "详情与当前快照不匹配");
-    const snapshot = await store.loadSnapshot<EvidenceSnapshot>(projectId, query.display_language);
+    const project = await repository.getProjectView(owner.owner_id, projectId, query.snapshot_id);
+    const snapshot = await repository.getSnapshotView(owner.owner_id, projectId, query.display_language, query.snapshot_id);
     if (!snapshot || snapshot.snapshot_id !== query.snapshot_id) throw httpError(409, "详情与当前快照不匹配");
     const displayedLanguage = snapshot.display_language ?? normalizeDisplayLanguage(project.display_language);
     if (displayedLanguage !== query.display_language) throw httpError(409, "详情与显示语言不匹配");
@@ -1961,34 +1955,14 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
   app.get("/api/projects/:projectId/source", async (request) => {
     const owner = await requiredOwner(request, store, config);
     const { projectId } = request.params as { projectId: string };
-    const project = await store.loadProject(projectId, owner.owner_id);
-    if (!project) throw httpError(404, "项目不存在");
     const query = request.query as { snapshot_id?: string; path?: string; start?: string; end?: string; stable_id?: string };
     if (!query.snapshot_id || !query.path) throw httpError(409, "源码证据缺少快照或路径");
     const start = Number(query.start ?? 1);
     const end = Number(query.end ?? start + 40);
     try {
-      if (query.snapshot_id === project.analysis.snapshot_id) {
-        const result = await store.readSourceLines(projectId, query.snapshot_id, query.path, start, end);
-        return { snapshot_id: query.snapshot_id, path: query.path, start_line: Math.max(1, Math.floor(start)), end_line: Math.max(1, Math.floor(start)) + result.lines.length - 1, lines: result.lines, truncated: result.truncated, redirect: null };
-      }
-      const fromPublicKey = await store.findPublicSnapshotKeyBySnapshotId(query.snapshot_id);
-      const toPublicKey = project.analysis.canonical_snapshot_key;
-      if (!fromPublicKey || !toPublicKey || !project.analysis.snapshot_id) throw httpError(409, "源码证据与当前快照不匹配");
-      const redirect = await store.resolveRevisionRedirect({
-        fromPublicKey,
-        toPublicKey,
-        oldPath: query.path,
-        oldStableId: typeof query.stable_id === "string" ? query.stable_id : null,
-      });
-      if (!redirect) throw httpError(409, "旧引用尚无可确认的新版位置");
-      if (redirect.kind === "deleted") {
-        throw httpError(410, `新版 commit 已删除文件 ${query.path}，不能编造删除原因`);
-      }
-      const candidate = redirect.candidates[0];
-      if (!candidate) throw httpError(409, "旧引用已变化，但尚无可打开的新位置");
-      const result = await store.readPublicSourceLines(toPublicKey, project.analysis.snapshot_id, candidate.path, start, end);
-      return { snapshot_id: project.analysis.snapshot_id, path: candidate.path, start_line: Math.max(1, Math.floor(start)), end_line: Math.max(1, Math.floor(start)) + result.lines.length - 1, lines: result.lines, truncated: result.truncated, redirect };
+      const result = await repository.readSourceView(owner.owner_id, projectId, query.snapshot_id, query.path, start, end,
+        typeof query.stable_id === "string" ? query.stable_id : null);
+      return { snapshot_id: result.snapshot_id, path: result.path, start_line: Math.max(1, Math.floor(start)), end_line: Math.max(1, Math.floor(start)) + result.lines.length - 1, lines: result.lines, truncated: result.truncated, redirect: result.redirect };
     } catch (error) {
       if (typeof (error as { statusCode?: unknown }).statusCode === "number") throw error;
       throw httpError(404, "源码片段不存在");
