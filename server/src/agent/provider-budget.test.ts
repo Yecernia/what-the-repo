@@ -28,7 +28,6 @@ const input: ProviderBudgetInput = {
     business: 'analysis',
     payer: 'platform',
     agentRole: 'component-explanation',
-    taskId: 'analysis-1',
     configVersion: 2,
     connectionId: 'test',
   },
@@ -91,16 +90,18 @@ test('BYOK never debits platform business budgets or the obsolete mixed call cou
 test('unlimited evolution daily/task budget does not bypass the other finite budget', async () => {
   const evolution = {
     ...input,
-    attribution: { ...input.attribution!, business: 'evolution' as const },
+    attribution: { ...input.attribution!, business: 'evolution' as const, taskId: 'evolution-1' },
   };
-  for (const policies of [
-    { evolution_daily: null, evolution_task: 0.015 },
-    { evolution_daily: 0.015, evolution_task: null },
-  ]) {
+  const next = { ...evolution, attribution: { ...evolution.attribution, taskId: 'evolution-2' } };
+  // The per-task cap refuses a task whose estimate does not fit; the daily cap stops the next task.
+  for (const [policies, second] of [
+    [{ evolution_daily: null, evolution_task: 0.015 }, { ...next, estimatedCostUsd: 0.02 }],
+    [{ evolution_daily: 0.015, evolution_task: null }, next],
+  ] as const) {
     const budget = new LocalProviderUsageBudget(limits(policies));
     await budget.acquire(evolution);
     await assert.rejects(
-      () => budget.acquire(evolution),
+      () => budget.acquire(second),
       (e) => e instanceof ProviderBudgetExceededError,
     );
   }
@@ -253,28 +254,51 @@ test('waiting is bounded, abortable, and never refunds unknown settled usage', a
 
 test('a permanently insufficient second policy takes precedence over a temporarily held first policy', async () => {
   const budget = new LocalProviderUsageBudget(limits({ evolution_task: 0.02, evolution_daily: 0.03 }));
-  const evolution = { ...input, attribution: { ...input.attribution!, business: 'evolution' as const } };
+  const evolution = { ...input, attribution: { ...input.attribution!, business: 'evolution' as const, taskId: 'first' } };
   await budget.acquire({ ...evolution, estimatedCostUsd: 0.015 });
   const spent = await budget.acquire({ ...evolution, estimatedCostUsd: 0.014, attribution: { ...evolution.attribution, taskId: 'other' } });
   await spent.release({ ...report, costUsd: 0.014 });
   // Active task allowance fits by itself, but settled daily usage cannot cover another request.
-  await assert.rejects(budget.acquire({ ...evolution, estimatedCostUsd: 0.02, reservationWaitMs: 1000 }), { code: 'site_budget_insufficient' });
+  await assert.rejects(budget.acquire({ ...evolution, estimatedCostUsd: 0.02, reservationWaitMs: 1000,
+    attribution: { ...evolution.attribution, taskId: 'third' } }), { code: 'site_budget_insufficient' });
 });
-test('a repository update cap spans every call of the task and leaves other tasks alone', async () => {
+test('a started task finishes past the daily budget while new tasks are refused', async () => {
+  const budget = new LocalProviderUsageBudget(limits({ chat_daily: 0.05 }));
+  const turn = { ...input, estimatedCostUsd: 0.03,
+    attribution: { ...input.attribution!, business: 'chat' as const, taskId: 'turn-1' } };
+  const first = await budget.acquire(turn);
+  await first.release({ ...report, costUsd: 0.04 });
+  // The same chat turn keeps calling tools and the model after the day is spent.
+  await budget.acquire(turn);
+  await budget.acquire(turn);
+  await assert.rejects(budget.acquire({ ...turn, reservationWaitMs: 0, attribution: { ...turn.attribution, taskId: 'turn-2' } }),
+    (error) => error instanceof ProviderBudgetExceededError && error.scope === 'chat_daily');
+  // Zero means "no new paid work": a started task still finishes.
+  const stopped = new LocalProviderUsageBudget(limits({ chat_daily: 0.05 }));
+  await stopped.acquire(turn);
+  (stopped as unknown as { configured: { policies: BudgetPolicies } }).configured.policies.chat_daily = 0;
+  await stopped.acquire(turn);
+  await assert.rejects(stopped.acquire({ ...turn, attribution: { ...turn.attribution, taskId: 'turn-3' } }),
+    { code: 'site_budget_disabled' });
+  // User-paid calls never count as an admitted platform task.
+  const byok = new LocalProviderUsageBudget(limits({ chat_daily: 0 }));
+  await byok.acquire({ ...turn, attribution: { ...turn.attribution, payer: 'user' } });
+  await assert.rejects(byok.acquire(turn), { code: 'site_budget_disabled' });
+});
+test('a repository update cap admits the update by its estimate and then lets it finish', async () => {
   const budget = new LocalProviderUsageBudget(limits({ analysis_daily: null, repository_update: 1 }));
   const capped = { ...input, estimatedCostUsd: 0.4,
     attribution: { business: 'analysis' as const, payer: 'platform' as const, taskId: 'update-job', repositoryUpdate: true } };
   const first = await budget.acquire(capped);
-  await first.release({ usageKnown: true, inputTokens: 1, outputTokens: 1, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0.5, status: 'completed' });
+  await first.release({ usageKnown: true, inputTokens: 1, outputTokens: 1, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0.9, status: 'completed' });
+  // Stopping a started update would waste what it already spent: it runs past the cap.
   await budget.acquire(capped);
-  // 0.5 settled + 0.4 reserved + 0.4 requested exceeds the 1 USD cap; the open call might still settle lower.
-  await assert.rejects(budget.acquire({ ...capped, reservationWaitMs: 0 }), { code: 'site_budget_busy' });
+  await budget.acquire(capped);
+  // Another update is admitted only when its estimate fits the cap.
   await budget.acquire({ ...capped, attribution: { ...capped.attribution, taskId: 'other-job' } });
-  await budget.acquire({ ...capped, attribution: { ...capped.attribution, repositoryUpdate: false } });
-  const exhausted = new LocalProviderUsageBudget(limits({ analysis_daily: null, repository_update: 1 }));
-  const spent = await exhausted.acquire(capped);
-  await spent.release({ usageKnown: true, inputTokens: 1, outputTokens: 1, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0.9, status: 'completed' });
-  await assert.rejects(exhausted.acquire(capped), { code: 'site_repository_update_budget_exhausted' });
+  await assert.rejects(budget.acquire({ ...capped, estimatedCostUsd: 1.5, attribution: { ...capped.attribution, taskId: 'large-job' } }),
+    { code: 'site_repository_update_budget_exhausted' });
+  await budget.acquire({ ...capped, estimatedCostUsd: 1.5, attribution: { ...capped.attribution, repositoryUpdate: false } });
   // Saved budgets from before the key existed still work: the default leaves updates uncapped.
   const legacy = new LocalProviderUsageBudget({ ...limits({ analysis_daily: null }),
     policies: { analysis_daily: null, chat_daily: 5, evolution_task: 1, evolution_daily: 5 } as never });

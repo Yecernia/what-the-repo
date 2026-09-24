@@ -234,12 +234,21 @@ async function waitForReservation<T>(input: ProviderBudgetInput, attempt: () => 
     }
   }
 }
+/**
+ * Budgets admit tasks: the first platform call of a task (chat turn, analysis
+ * job, evolution task) must fit every budget with its estimate; after that the
+ * task finishes, and its actual cost still counts against later admissions.
+ */
+function gatingBudgets(a: UsageAttribution, admitted: boolean): BudgetKey[] {
+  return admitted ? [] : applicableBudgets(a);
+}
 function assertPricing(
   input: ProviderBudgetInput,
   policies: BudgetPolicies,
   a: UsageAttribution,
+  admitted = false,
 ) {
-  for(const key of applicableBudgets(a))if(policies[key]===0)assertBudget(key,0,0,0);
+  for(const key of gatingBudgets(a, admitted))if(policies[key]===0)assertBudget(key,0,0,0);
   if (
     input.pricingKnown === false &&
     applicableBudgets(a).some((key) => policies[key] !== null)
@@ -301,9 +310,11 @@ export class LocalProviderUsageBudget implements ProviderUsageBudget {
         (await this.configured.loadPolicies?.()) ??
         this.configured.policies ??
         DEFAULT_BUDGET_POLICIES);
-      assertPricing(input, policies, a);
+      const admitted = Boolean(a.taskId) && this.events.some((e) => e.attribution.taskId === a.taskId
+        && e.attribution.business === a.business && e.attribution.payer === a.payer);
+      assertPricing(input, policies, a, admitted);
       let busy: ProviderBudgetExceededError | undefined;
-      for (const key of applicableBudgets(a)) {
+      for (const key of gatingBudgets(a, admitted)) {
         if (key === 'evolution_task' && !a.taskId)
           throw new Error('model_usage_task_required');
         const rows = this.events.filter(
@@ -322,7 +333,7 @@ export class LocalProviderUsageBudget implements ProviderUsageBudget {
           rows.filter(e => e.settled).reduce((sum, e) => sum + e.reservedCostUsd, 0),
         ) ?? busy;
       }
-      const limit = taskLimit(a, policies);
+      const limit = admitted ? null : taskLimit(a, policies);
       if (limit !== null) {
         const rows = this.events.filter(e => e.attribution.payer === 'platform'
           && e.attribution.business === a.business && e.attribution.taskId === a.taskId);
@@ -399,13 +410,18 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
         configured.rows[0]?.value ??
         this.configured.policies ??
         DEFAULT_BUDGET_POLICIES);
-      assertPricing(input, policies, a);
+      // A task that already reserved a platform call was admitted while its
+      // budgets allowed it; it is not cut off halfway.
+      const admitted = Boolean(a.taskId) && a.payer === 'platform' && Boolean((await client.query(
+        `SELECT 1 FROM provider_usage_events WHERE task_id=$1 AND business=$2 AND payer='platform' LIMIT 1`,
+        [a.taskId, a.business])).rowCount);
+      assertPricing(input, policies, a, admitted);
       const reservation = Math.max(
         amount(input.estimatedCostUsd),
         this.configured.minimumReservationUsd,
       );
       let busy: ProviderBudgetExceededError | undefined;
-      for (const key of applicableBudgets(a)) {
+      for (const key of gatingBudgets(a, admitted)) {
         if (key === 'evolution_task' && !a.taskId)
           throw new Error('model_usage_task_required');
         if (policies[key] === null) continue;
@@ -421,7 +437,7 @@ export class PostgresProviderUsageBudget implements ProviderUsageBudget {
           Number(cost.rows[0]?.committed ?? 0),
         ) ?? busy;
       }
-      const limit = taskLimit(a, policies);
+      const limit = admitted ? null : taskLimit(a, policies);
       if (limit !== null) {
         const cost = await client.query<{ total: string; committed: string }>(
           `SELECT COALESCE(SUM(GREATEST(reserved_cost_usd,cost_usd)),0)::text AS total,

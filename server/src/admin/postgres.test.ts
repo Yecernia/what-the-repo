@@ -63,7 +63,9 @@ test(
         },
       };
       const attempts = await Promise.allSettled(
-        Array.from({ length: 30 }, () => budget.acquire(input)),
+        // Thirty independent tasks; one task's later calls would be admitted work.
+        Array.from({ length: 30 }, (_, index) => budget.acquire({ ...input,
+          attribution: { ...input.attribution, taskId: 'task-' + index } })),
       );
       assert.equal(attempts.filter((r) => r.status === 'fulfilled').length, 5);
       const permit = attempts.find((r) => r.status === 'fulfilled');
@@ -80,10 +82,12 @@ test(
       await Promise.all(
         Array.from({ length: 5 }, () => permit.value.release(report)),
       );
-      await budget.acquire(input);
-      await assert.rejects(() => budget.acquire(input), {
+      await budget.acquire({ ...input, attribution: { ...input.attribution, taskId: 'task-new-a' } });
+      await assert.rejects(() => budget.acquire({ ...input, attribution: { ...input.attribution, taskId: 'task-new-b' } }), {
         code: 'site_budget_busy',
       });
+      // A started task is not cut off by the daily budget it was admitted under.
+      await budget.acquire({ ...input, attribution: { ...input.attribution, taskId: 'task-new-a' } });
       await budget.acquire({
         ...input,
         attribution: { ...input.attribution, business: 'chat', payer: 'user' },
