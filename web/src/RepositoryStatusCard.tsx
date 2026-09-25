@@ -61,9 +61,9 @@ export function RepositoryStatusCard({ status, refreshPending, updatePending, no
         )}
       </div>
       {update && (
-        <p>{update.status === 'failed' ? t('共享更新失败，当前内容仍可使用')
+        <p>{update.status === 'failed' ? t('更新失败，当前内容仍可使用')
           : participating
-            ? (update.status === 'running' ? t('共享更新正在进行，完成后可以切换到新版本') : t('已加入共享更新，正在排队'))
+            ? (update.status === 'running' ? t('更新正在进行，完成后可以切换到新版本') : t('已加入更新，正在排队'))
             : update.status === 'running' ? t('这个仓库正在更新，完成后可以切换到新版本') : t('这个仓库有一次更新正在排队')}</p>
       )}
       {notice?.kind === 'up_to_date' && <p>{t('已是最新代码，无需更新')}</p>}

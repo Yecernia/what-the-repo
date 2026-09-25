@@ -80,6 +80,29 @@ test("a new paid update waits for the per-repository cooldown, including after a
   assert.equal(calls.created, 0);
 });
 
+test("a failed update is shown only to the user who asked for it", async () => {
+  const project = readableProject();
+  const at = new Date(Date.now() - 10 * 60_000).toISOString();
+  const failed = (trigger: RepositoryUpdate["trigger"], leader: string) => ({ update_id: "u1", repository_identity: "example/repo",
+    analyzer_bundle_version: ANALYZER_BUNDLE_VERSION, analysis_config_digest: ANALYSIS_CONFIG_DIGEST, target_commit_sha: newer,
+    status: "failed", leader_project_id: leader, lease_owner: null, lease_expires_at: null, heartbeat_at: null,
+    result_public_snapshot_key: null, error: "x", created_at: at, updated_at: at, completed_at: at, trigger }) satisfies RepositoryUpdate;
+  const statusFor = async (latest: RepositoryUpdate, joined: boolean) => {
+    const { store } = updateStore(project, latest);
+    (store as unknown as { loadRepositoryUpdateForProject: () => Promise<RepositoryUpdate | null> })
+      .loadRepositoryUpdateForProject = async () => joined ? latest : null;
+    const service = new RepositoryService(store, {
+      resolveGithubHead: async () => ({ owner: "example", repo: "repo", repository: "example/repo", commitSha: newer }),
+    });
+    return (await service.getRepositoryStatus(project.owner_id, project.project_id)).update;
+  };
+  assert.equal((await statusFor(failed("manual", project.project_id), true))?.status, "failed", "the requester sees it");
+  assert.equal((await statusFor(failed("manual", "someone-else"), true))?.status, "failed", "so does a user who joined");
+  assert.equal(await statusFor(failed("manual", "someone-else"), false), null, "someone else's failure stays hidden");
+  assert.equal(await statusFor(failed("background", project.project_id), true), null,
+    "a background run only borrows this project, so its failure stays hidden");
+});
+
 test("a readable project reports a GitHub failure instead of replacing its view", async () => {
   const project = readableProject();
   const { store } = updateStore(project, null);

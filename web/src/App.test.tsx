@@ -585,13 +585,13 @@ it('keeps the readable view through a shared update and switches only after refr
   expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-1');
   fireEvent.click(screen.getByRole('button', { name: '更新代码' }));
   await flushReact();
-  expect(screen.getByText('已加入共享更新，正在排队')).toBeVisible();
+  expect(screen.getByText('已加入更新，正在排队')).toBeVisible();
   expect(screen.getByRole('button', { name: '已加入更新' })).toBeDisabled();
   expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-1');
   expect(screen.getByPlaceholderText('尽情提问')).toBeEnabled();
   // Polling is fast only while an update is queued or running.
-  for (const [next, label, wait] of [[running, '共享更新正在进行，完成后可以切换到新版本', 5_000],
-    [failed, '共享更新失败，当前内容仍可使用', 5_000], [refreshed, '仓库已有新版本', 30_000]] as const) {
+  for (const [next, label, wait] of [[running, '更新正在进行，完成后可以切换到新版本', 5_000],
+    [failed, '更新失败，当前内容仍可使用', 5_000], [refreshed, '仓库已有新版本', 30_000]] as const) {
     currentStatus = next;
     await act(async () => { await vi.advanceTimersByTimeAsync(wait); });
     await flushReact();

@@ -502,8 +502,12 @@ export class RepositoryService {
     // A failure is only news until a later version is published.
     const failed = latest?.status === "failed"
       && (!currentPublishedAt || latest.updated_at > currentPublishedAt) ? latest : null;
-    const shown = active ?? failed;
-    const participant = shown ? await this.store.loadRepositoryUpdateForProject(projectId) : null;
+    const participant = active ?? failed ? await this.store.loadRepositoryUpdateForProject(projectId) : null;
+    // A failure is only this project's news when its user asked for the update; a background run merely
+    // borrows a leader project, and someone else's failure changes nothing for this page.
+    const ownFailure = Boolean(failed && participant?.update_id === failed.update_id
+      && !(failed.trigger === "background" && failed.leader_project_id === projectId));
+    const shown = active ?? (ownFailure ? failed : null);
     const participating = Boolean(shown && participant?.update_id === shown.update_id);
     const cooldown = active ? null : this.manualCooldown(latest);
     return {
@@ -691,10 +695,6 @@ export class RepositoryService {
     }
   }
 
-  async requestBackgroundRepositoryUpdate(input: {
-    identity: RepositoryIdentityInput; projectId: string; targetCommitSha: string;
-  }): Promise<BackgroundAdmission> {
-    const project = await this.store.loadProject(input.projectId);
   /** When the newest release was published; null when there is none or GitHub cannot say. */
   async latestReleasePublishedAt(identity: RepositoryIdentityInput): Promise<string | null> {
     const release = await fetchPublicGithubLatestRelease(`https://github.com/${identity.repository}`,
@@ -702,6 +702,10 @@ export class RepositoryService {
     return release?.publishedAt ?? null;
   }
 
+  async requestBackgroundRepositoryUpdate(input: {
+    identity: RepositoryIdentityInput; projectId: string; targetCommitSha: string;
+  }): Promise<BackgroundAdmission> {
+    const project = await this.store.loadProject(input.projectId);
     if (!project || project.source.kind !== 'github') return 'deferred:unavailable';
     const parsed = parseGithubRepository(project.source.value);
     if (`${parsed.owner}/${parsed.repo}`.toLowerCase() !== input.identity.repository.toLowerCase()) return 'deferred:unavailable';
