@@ -129,6 +129,7 @@ try {
           listCandidates: (now, activeSince, limit) =>
             store.listBackgroundRepositoryCandidates(now, activeSince, limit),
           checkFreshness: identity => repository.checkRepositoryFreshness(identity),
+          latestReleasePublishedAt: identity => repository.latestReleasePublishedAt(identity),
           requestUpdate: input => repository.requestBackgroundRepositoryUpdate(input),
         });
         backgroundRefreshScheduler = new RetentionScheduler(async () => {

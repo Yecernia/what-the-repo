@@ -34,6 +34,7 @@ import { serviceError } from "./errors.js";
 import {
   fetchPublicGithubHead,
   fetchPublicGithubComparison,
+  fetchPublicGithubLatestRelease,
   parseGithubRepository,
   type GithubGatewayTransport,
   type GithubRepositoryHead,
@@ -694,6 +695,13 @@ export class RepositoryService {
     identity: RepositoryIdentityInput; projectId: string; targetCommitSha: string;
   }): Promise<BackgroundAdmission> {
     const project = await this.store.loadProject(input.projectId);
+  /** When the newest release was published; null when there is none or GitHub cannot say. */
+  async latestReleasePublishedAt(identity: RepositoryIdentityInput): Promise<string | null> {
+    const release = await fetchPublicGithubLatestRelease(`https://github.com/${identity.repository}`,
+      this.options.githubClientId, this.options.githubClientSecret, this.options.githubGateway).catch(() => null);
+    return release?.publishedAt ?? null;
+  }
+
     if (!project || project.source.kind !== 'github') return 'deferred:unavailable';
     const parsed = parseGithubRepository(project.source.value);
     if (`${parsed.owner}/${parsed.repo}`.toLowerCase() !== input.identity.repository.toLowerCase()) return 'deferred:unavailable';

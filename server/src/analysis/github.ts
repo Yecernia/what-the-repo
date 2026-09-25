@@ -57,7 +57,7 @@ export interface GithubGatewayTransport {
 }
 
 type GithubJsonRequest = {
-  kind: "metadata" | "commit" | "tree" | "readme" | "compare";
+  kind: "metadata" | "commit" | "tree" | "readme" | "compare" | "latest_release";
   owner: string;
   repo: string;
   ref?: string;
@@ -106,6 +106,26 @@ export async function fetchPublicGithubHead(
   return { owner, repo, repository: `${owner}/${repo}`, commitSha, committedAt: githubCommitTime(commit) };
 }
 
+/**
+ * The newest published release (GitHub leaves out drafts and prereleases), or null when the repository has
+ * none. Only its tag and time are read; release notes are untrusted text the product does not need.
+ */
+export async function fetchPublicGithubLatestRelease(value: string,
+  clientId?: string | null, clientSecret?: string | null,
+  gateway?: GithubGatewayTransport | null, signal?: AbortSignal): Promise<{ tag: string; publishedAt: string } | null> {
+  const { owner, repo } = parseGithubRepository(value);
+  let release: Record<string, unknown>;
+  try {
+    release = await githubJson({ kind: "latest_release", owner, repo }, clientId, clientSecret, gateway, signal, 5000);
+  } catch (error) {
+    if (error instanceof Error && error.message === "github_api_404") return null;
+    throw error;
+  }
+  const publishedAt = typeof release.published_at === "string" ? Date.parse(release.published_at) : NaN;
+  const tag = typeof release.tag_name === "string" ? release.tag_name.slice(0, 200) : "";
+  return tag && Number.isFinite(publishedAt) ? { tag, publishedAt: new Date(publishedAt).toISOString() } : null;
+}
+
 /** The committer date is when the commit reached the branch; the author date is a fallback. */
 export function githubCommitTime(commit: unknown): string | null {
   const detail = (commit as { commit?: { committer?: { date?: unknown }; author?: { date?: unknown } } })?.commit;
@@ -121,6 +141,7 @@ function directGithubUrl(request: GithubJsonRequest): string {
   if (request.kind === "metadata") return root;
   if (request.kind === "readme") return `${root}/readme${request.ref ? `?ref=${encodeURIComponent(request.ref)}` : ""}`;
   if (request.kind === "commit") return `${root}/commits/${encodeURIComponent(request.ref ?? "")}`;
+  if (request.kind === "latest_release") return `${root}/releases/latest`;
   if (request.kind === "compare") return `${root}/compare/${encodeURIComponent(request.base ?? "")}...${encodeURIComponent(request.head ?? "")}`;
   return `${root}/git/trees/${encodeURIComponent(request.ref ?? "")}?recursive=1`;
 }

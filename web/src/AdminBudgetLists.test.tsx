@@ -56,7 +56,7 @@ it('background scheduling explains why each repository did or did not start', ()
   expect(screen.getByText('已开启')).toBeTruthy();
   expect(screen.getByText('与上游一致，无需更新')).toBeTruthy();
   expect(screen.getByText('上游新增 3 个提交')).toBeTruthy();
-  expect(screen.getByText('新提交不足 20 个，且当前版本不满 7 天')).toBeTruthy();
+  expect(screen.getByText('新提交不足 20 个，当前版本不满 7 天，也没有新 release')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('只看'), { target: { value: 'queued' } });
   expect(screen.getByText('1 个已启动后台更新')).toBeTruthy();
 });

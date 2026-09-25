@@ -100,3 +100,35 @@ test('background refresh does not pay for same, unknown or stale comparisons', a
   });
   assert.equal((await disabled()).examined, 0);
 });
+
+test('a release published after the current version starts an update even with few commits', async () => {
+  const snapshotAt = new Date(now - 86400_000).toISOString();
+  const asked: string[] = [];
+  const requested: string[] = [];
+  const task = createRepositoryBackgroundRefreshTask(config(), {
+    now: () => now,
+    listCandidates: async () => [
+      candidate({ repository: 'new/release', publishedAt: snapshotAt }),
+      candidate({ repository: 'old/release', publishedAt: snapshotAt }),
+      candidate({ repository: 'no/release', publishedAt: snapshotAt }),
+      candidate({ repository: 'many/commits', publishedAt: snapshotAt }),
+    ],
+    checkFreshness: async identity => ({ baseSnapshotId: 'snapshot-id', upstreamCommitSha: sha('b'),
+      behindCommits: identity.repository === 'many/commits' ? 40 : 3, relation: 'ahead',
+      checkedAt: new Date(now).toISOString() }),
+    latestReleasePublishedAt: async identity => {
+      asked.push(identity.repository);
+      if (identity.repository === 'new/release') return new Date(now - 3600_000).toISOString();
+      if (identity.repository === 'old/release') return new Date(now - 30 * 86400_000).toISOString();
+      if (identity.repository === 'no/release') throw new Error('gateway down');
+      return null;
+    },
+    requestUpdate: async input => { requested.push(input.identity.repository); return 'queued'; },
+  });
+  const outcome = await task();
+  assert.deepEqual(outcome.decisions.map(row => [row.repository, row.decision]).sort(), [
+    ['many/commits', 'queued'], ['new/release', 'queued'], ['no/release', 'below_threshold'], ['old/release', 'below_threshold'],
+  ]);
+  assert.deepEqual(requested.sort(), ['many/commits', 'new/release']);
+  assert.ok(!asked.includes('many/commits'), 'releases are only looked up when the other rules would wait');
+});

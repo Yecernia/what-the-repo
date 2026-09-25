@@ -229,6 +229,32 @@ test("GitHub compare accepts only exact SHAs and strips commit and file payloads
   } finally { await app.close(); }
 });
 
+test("GitHub latest release returns only its tag and time, and passes a missing release through", async () => {
+  const requests: string[] = [];
+  let missing = false;
+  const app = buildGithubGateway({
+    config: config(),
+    fetchImpl: (async (input: RequestInfo | URL) => {
+      requests.push(String(input));
+      if (missing) return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+      return new Response(JSON.stringify({
+        tag_name: 'v2.0.0', published_at: '2026-09-20T08:00:00Z',
+        body: 'untrusted release notes', assets: [{ browser_download_url: 'https://example.com/x' }],
+      }), { status: 200 });
+    }) as typeof fetch,
+  });
+  try {
+    const headers = { authorization: `Bearer ${sharedSecret}` };
+    const payload = { kind: 'latest_release', owner: 'octocat', repo: 'repo' };
+    const release = await app.inject({ method: 'POST', url: '/v1/github/fetch', headers, payload });
+    assert.equal(release.statusCode, 200);
+    assert.deepEqual(release.json(), { tag_name: 'v2.0.0', published_at: '2026-09-20T08:00:00Z' });
+    assert.deepEqual(requests, ['https://api.github.com/repos/octocat/repo/releases/latest']);
+    missing = true;
+    assert.equal((await app.inject({ method: 'POST', url: '/v1/github/fetch', headers, payload })).statusCode, 404);
+  } finally { await app.close(); }
+});
+
 test("GitHub gateway repository transport has no fixed request timeout", async () => {
   const requests: Array<{ url: string; signal: AbortSignal | null }> = [];
   const app = buildGithubGateway({

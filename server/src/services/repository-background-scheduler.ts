@@ -14,6 +14,8 @@ export interface CheckedRepositoryFreshness {
 export interface BackgroundRefreshDependencies {
   listCandidates(now: string, activeSince: string, limit: number): Promise<BackgroundRepositoryCandidate[]>;
   checkFreshness(identity: RepositoryIdentityInput): Promise<CheckedRepositoryFreshness>;
+  /** When the newest release was published, or null; asked only when the other rules would wait. */
+  latestReleasePublishedAt?(identity: RepositoryIdentityInput): Promise<string | null>;
   requestUpdate(input: {
     identity: RepositoryIdentityInput;
     projectId: string;
@@ -104,7 +106,13 @@ export function createRepositoryBackgroundRefreshTask(
           && (freshness.behindCommits ?? 0) >= (config.repositoryBackgroundCommitThreshold ?? 20);
         const oldSnapshot = at - Date.parse(candidate.publishedAt)
           >= (config.repositoryBackgroundMaxSnapshotAgeDays ?? 7) * 86400_000;
-        if (!enoughCommits && !oldSnapshot) return decide('below_threshold', freshness);
+        // A release is the author's own "this is a complete step", so it is worth updating for even when
+        // only a few commits have landed.
+        const releasedSince = async () => {
+          const releasedAt = await dependencies.latestReleasePublishedAt?.(identity).catch(() => null);
+          return Boolean(releasedAt && Date.parse(releasedAt) > Date.parse(candidate.publishedAt));
+        };
+        if (!enoughCommits && !oldSnapshot && !(await releasedSince())) return decide('below_threshold', freshness);
         if (candidate.lastBackgroundStartedAt
           && at - Date.parse(candidate.lastBackgroundStartedAt)
             < (config.repositoryBackgroundMinUpdateIntervalHours ?? 24) * 3600_000) return decide('interval', freshness);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchPublicGithubHead, githubCommitTime, fetchPublicGithubSource, fetchResearchPage, safeResearchUrl, readGithubArchive } from "./github.js";
+import { fetchPublicGithubHead, fetchPublicGithubLatestRelease, githubCommitTime, fetchPublicGithubSource, fetchResearchPage, safeResearchUrl, readGithubArchive } from "./github.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -203,4 +203,24 @@ test("GitHub commit time prefers the committer date and ignores invalid values",
     "2026-09-20T08:00:00.000Z");
   assert.equal(githubCommitTime({ sha: "a".repeat(40) }), null);
   assert.equal(githubCommitTime(null), null);
+});
+
+test("the latest release reads only its tag and time, and a repository without releases has none", async () => {
+  const originalFetch = globalThis.fetch;
+  const urls: string[] = [];
+  let status = 200;
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify(status === 200 ? { tag_name: "v1.2.0", published_at: "2026-09-20T08:00:00Z", body: "notes" }
+        : { message: "Not Found" }), { status });
+    }) as typeof fetch;
+    assert.deepEqual(await fetchPublicGithubLatestRelease("https://github.com/octocat/repo"),
+      { tag: "v1.2.0", publishedAt: "2026-09-20T08:00:00.000Z" });
+    assert.deepEqual(urls, ["https://api.github.com/repos/octocat/repo/releases/latest"]);
+    status = 404;
+    assert.equal(await fetchPublicGithubLatestRelease("https://github.com/octocat/repo"), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

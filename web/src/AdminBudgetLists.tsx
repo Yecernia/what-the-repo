@@ -215,7 +215,7 @@ function decisionText(decision: string, rules: Rules) {
     check_failed: '查询上游失败，下轮重试',
     check_stale: '上游信息不完整或已过期，下轮再查',
     unknown_relation: '无法判断与上游的关系',
-    below_threshold: `新提交不足 ${rules.commitThreshold} 个，且当前版本不满 ${rules.maxSnapshotAgeDays} 天`,
+    below_threshold: `新提交不足 ${rules.commitThreshold} 个，当前版本不满 ${rules.maxSnapshotAgeDays} 天，也没有新 release`,
     interval: `距上次后台更新不足 ${rules.minUpdateIntervalHours} 小时`,
     'deferred:disabled': '后台更新未开启',
     'deferred:unavailable': '仓库记录不可用',
@@ -270,7 +270,7 @@ export function BackgroundScheduling({ data }: { data: AdminRow }) {
       </span>}>
       <p className="admin-muted">
         每 {rules.intervalMinutes} 分钟检查一次最近 {rules.activeWindowDays} 天有人打开过的仓库。
-        上游新增至少 {rules.commitThreshold} 个提交，或当前版本已超过 {rules.maxSnapshotAgeDays} 天且上游有变化时才会启动；
+        上游新增至少 {rules.commitThreshold} 个提交、发布了新 release，或当前版本已超过 {rules.maxSnapshotAgeDays} 天且上游有变化时才会启动；
         同一仓库 {rules.minUpdateIntervalHours} 小时内最多一次，每天最多启动 {rules.maxStartsPerDay} 次。
       </p>
       {!enabled ? (

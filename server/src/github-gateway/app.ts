@@ -31,7 +31,7 @@ interface OAuthSession {
   expires_at: number;
 }
 
-type RepositoryFetchKind = "metadata" | "commit" | "tree" | "readme" | "archive" | "compare";
+type RepositoryFetchKind = "metadata" | "commit" | "tree" | "readme" | "archive" | "compare" | "latest_release";
 
 interface RepositoryFetchBody {
   kind?: unknown;
@@ -383,7 +383,7 @@ export function buildGithubGateway(dependencies: GithubGatewayDependencies): Fas
     requireRepositoryAuthorization(request, config.sharedSecret);
     const body = request.body as RepositoryFetchBody | null;
     const kind = body?.kind;
-    if (!body || !["metadata", "commit", "tree", "readme", "archive", "compare"].includes(String(kind))) {
+    if (!body || !["metadata", "commit", "tree", "readme", "archive", "compare", "latest_release"].includes(String(kind))) {
       throw httpError(400, "不支持的 GitHub 请求", "invalid_github_request");
     }
     if (!validOwner(body.owner) || !validRepo(body.repo)) {
@@ -401,6 +401,8 @@ export function buildGithubGateway(dependencies: GithubGatewayDependencies): Fas
     } else if (typedKind === "tree") {
       if (!validSha(body.ref)) throw httpError(400, "GitHub commit 不正确", "invalid_github_commit");
       url = `https://api.github.com/repos/${encodeURIComponent(body.owner)}/${encodeURIComponent(body.repo)}/git/trees/${body.ref}?recursive=1`;
+    } else if (typedKind === "latest_release") {
+      url = `https://api.github.com/repos/${encodeURIComponent(body.owner)}/${encodeURIComponent(body.repo)}/releases/latest`;
     } else if (typedKind === "compare") {
       if (!validSha(body.base) || !validSha(body.head)) {
         throw httpError(400, "GitHub compare commit 不正确", "invalid_github_commit");
@@ -438,6 +440,19 @@ export function buildGithubGateway(dependencies: GithubGatewayDependencies): Fas
         status: comparison.status,
         ahead_by: comparison.ahead_by,
         behind_by: comparison.behind_by,
+      });
+    }
+    if (typedKind === "latest_release" && response.ok) {
+      // Only the tag and time leave the gateway; release notes and assets are not needed.
+      let release: Record<string, unknown>;
+      try { release = JSON.parse(payload.toString('utf8')) as Record<string, unknown>; }
+      catch { throw httpError(502, "GitHub release 响应不正确", "github_invalid_response"); }
+      if (typeof release.tag_name !== 'string' || typeof release.published_at !== 'string') {
+        throw httpError(502, "GitHub release 响应不正确", "github_invalid_response");
+      }
+      return reply.header("cache-control", "no-store").send({
+        tag_name: release.tag_name.slice(0, 200),
+        published_at: release.published_at.slice(0, 64),
       });
     }
     return reply
