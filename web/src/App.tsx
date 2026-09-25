@@ -1715,17 +1715,50 @@ const CONTEXT_CARD_LOOK: Record<ConversationSelection['kind'], { icon: import('.
   learning_step: { icon: 'learn', label: '学习步骤' },
 };
 
+/** One pin colour per attachable card (at most eight), so every card on the composer has its own. */
+export const PIN_COLORS = 8;
+
+/**
+ * Keeps the colours of cards still attached and gives each new card a random colour none of them uses.
+ * A card taken off gives its colour back; attached again, it draws a new one.
+ */
+export function assignPinColors(previous: ReadonlyMap<string, number>, keys: readonly string[],
+  random: () => number = Math.random): Map<string, number> {
+  const next = new Map<string, number>();
+  for (const key of keys) if (previous.has(key)) next.set(key, previous.get(key)!);
+  for (const key of keys) {
+    if (next.has(key)) continue;
+    const used = new Set(next.values());
+    const free = Array.from({ length: PIN_COLORS }, (_, index) => index).filter(index => !used.has(index));
+    const pool = free.length ? free : Array.from({ length: PIN_COLORS }, (_, index) => index);
+    next.set(key, pool[Math.min(pool.length - 1, Math.floor(random() * pool.length))]!);
+  }
+  return next;
+}
+
+/** A flat push pin seen from above: a round head with its cap, and the same hard shadow the card casts. */
+function PushPin() {
+  return <svg className="push-pin" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+    <circle className="push-pin-shadow" cx="11" cy="11.5" r="6" />
+    <g className="push-pin-top">
+      <circle className="push-pin-head" cx="10" cy="10" r="6" />
+      <circle className="push-pin-cap" cx="10" cy="10" r="3.2" />
+    </g>
+  </svg>;
+}
+
 /** A graph object attached to a message, shown as a small paper tile like an attached file. */
-function ContextCard({ item, onRemove }: { item: ConversationSelection; onRemove?: () => void }) {
+function ContextCard({ item, onRemove, pinColor = 0 }: { item: ConversationSelection; onRemove?: () => void; pinColor?: number }) {
   const look = CONTEXT_CARD_LOOK[item.kind];
-  return <span className="context-card" role="listitem">
+  return <span className="context-card" role="listitem" data-pin={onRemove ? pinColor : undefined}>
     <ActivityIcon name={look.icon} size={20} />
     <span className="context-card-text">
       <strong>{item.label}</strong>
       <small>{t(look.label)}</small>
     </span>
+    {/* The card is pinned to the message; pulling the pin out takes it off. */}
     {onRemove && <button type="button" className="context-card-remove" aria-label={t("移除“{0}”", item.label)}
-      onClick={onRemove}><X size={12} /></button>}
+      title={t("取下")} onClick={onRemove}><PushPin /></button>}
   </span>;
 }
 
@@ -2180,6 +2213,11 @@ export default function App() {
   } | null>(null);
   // Graph objects attached to the message being written ("就问这个"), sent with it like files and then cleared.
   const [contextCards, setContextCards] = useState<ConversationSelection[]>([]);
+  const pinColorsRef = useRef<Map<string, number>>(new Map());
+  const pinColors = useMemo(() => {
+    pinColorsRef.current = assignPinColors(pinColorsRef.current, contextCards.map(contextKey));
+    return pinColorsRef.current;
+  }, [contextCards]);
   const isMobile = useMediaQuery('(max-width: 680px)');
   const isPhone = usePhoneDevice();
   const landscape = useMediaQuery('(orientation: landscape)');
@@ -3828,7 +3866,7 @@ export default function App() {
                 <div className="composer-surface"><InkOutline paper />
                   {contextCards.length > 0 && (
                     <div className="composer-context-cards" role="list" aria-label={t("附加到这条消息的内容")}>
-                      {contextCards.map(item => <ContextCard key={contextKey(item)} item={item}
+                      {contextCards.map(item => <ContextCard key={contextKey(item)} item={item} pinColor={pinColors.get(contextKey(item))}
                         onRemove={() => setContextCards(current => current.filter(card => contextKey(card) !== contextKey(item)))} />)}
                     </div>
                   )}

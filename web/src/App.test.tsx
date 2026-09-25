@@ -325,7 +325,7 @@ vi.mock('./SketchDoodle', () => ({
 }));
 
 import { apiClient } from './api';
-import App from './App';
+import App, { assignPinColors, PIN_COLORS } from './App';
 
 const settings: SettingsResponse = {
   base_url: 'https://example.invalid/v1',
@@ -3738,4 +3738,16 @@ describe('chat concurrency admission feedback', () => {
       expect(screen.queryByText('回答失败')).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
     });
+});
+
+it('gives every attached card its own random pin colour and keeps it while the card stays', () => {
+  const keys = Array.from({ length: PIN_COLORS }, (_, index) => `component:${index}`);
+  const all = assignPinColors(new Map(), keys);
+  expect(new Set(all.values()).size).toBe(PIN_COLORS);
+  const kept = assignPinColors(all, [...keys.slice(1), 'component:new'], () => 0);
+  expect(kept.get('component:1')).toBe(all.get('component:1'));
+  // The only free colour is the one the removed card gave back.
+  expect(kept.get('component:new')).toBe(all.get('component:0'));
+  const draws = new Set(Array.from({ length: 40 }, (_, index) => assignPinColors(new Map(), ['a'], () => index / 40).get('a')));
+  expect(draws.size).toBe(PIN_COLORS);
 });

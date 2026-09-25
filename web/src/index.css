@@ -467,14 +467,32 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .context-card-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .context-card-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 13px/1.35 var(--font-reading); }
 .context-card-text small { color: var(--fg-muted); font: 11.5px/1.3 var(--font-ui); }
+/* A flat push pin stuck through the card's corner: a coloured head, a lighter cap and the card's own hard
+   shadow, no shine or blur. Each card on the composer gets its own colour (App assigns data-pin 0-7 at random). */
+.context-card { --pin: #c8553d; }
+.context-card[data-pin="1"] { --pin: #d8a23a; }
+.context-card[data-pin="2"] { --pin: #4f7cac; }
+.context-card[data-pin="3"] { --pin: #8e5c8a; }
+.context-card[data-pin="4"] { --pin: #d97a92; }
+.context-card[data-pin="5"] { --pin: #34506f; }
+.context-card[data-pin="6"] { --pin: #e08a3c; }
+.context-card[data-pin="7"] { --pin: #b9a47e; }
 .context-card-remove {
-  position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; display: grid; place-items: center; padding: 0;
-  border: 1.2px solid var(--border-strong); border-radius: var(--radius-sketch-circle); background: var(--panel); color: var(--fg-muted);
-  cursor: pointer; opacity: 0; transition: opacity .14s var(--ease-out), color .14s var(--ease-out), border-color .14s var(--ease-out);
+  position: absolute; top: -11px; right: -10px; width: 28px; height: 28px; display: grid; place-items: center; padding: 0;
+  border: 0; background: none; cursor: pointer;
 }
-.context-card:hover .context-card-remove, .context-card-remove:focus-visible { opacity: 1; }
-.context-card-remove:hover { color: var(--err); border-color: var(--err); }
-@media (hover: none) { .context-card-remove { opacity: 1; } }
+.push-pin { overflow: visible; }
+.push-pin-head { fill: var(--pin); }
+.push-pin-cap { fill: color-mix(in srgb, var(--pin) 62%, #fff); }
+.push-pin-shadow { fill: color-mix(in srgb, var(--border-strong) 45%, transparent); }
+.push-pin-top, .push-pin-shadow { transform-box: view-box; transition: transform .18s var(--ease-spring); }
+/* Pointing at the pin starts to pull it out: the head rises off its shadow. */
+.context-card-remove:hover .push-pin-top, .context-card-remove:focus-visible .push-pin-top { transform: translate(-.5px, -1.5px); }
+.context-card-remove:hover .push-pin-shadow, .context-card-remove:focus-visible .push-pin-shadow { transform: translate(.8px, 1px); }
+.context-card-remove:active .push-pin-top { transform: translate(-1px, -2.6px); transition-duration: .08s; }
+.context-card-remove:active .push-pin-shadow { transform: translate(1.4px, 1.8px); transition-duration: .08s; }
+.context-card-remove:focus-visible { outline: none; }
+.context-card-remove:focus-visible .push-pin-head { stroke: var(--fg); stroke-width: 1.2; }
 @keyframes context-card-in { from { opacity: 0; transform: translateY(4px) scale(.96); } }
 .composer-context-cards { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 10px 2px; }
 .message-context-cards { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }

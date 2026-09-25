@@ -58,6 +58,7 @@ export const englishMessages: Record<string, string> = {
   '附加到这条消息的内容': 'Attached to this message',
   '附加的内容': 'Attached',
   '移除“{0}”': 'Remove “{0}”',
+  '取下': 'Unpin',
   '跳过这一步': 'Skip this step',
   '跳过“{0}”的理解检查，直接进入下一步': 'Skip the understanding check for “{0}” and go to the next step',
   '跳过这一步的理解检查，直接进入下一步。': 'Skip the understanding check for this step and go to the next step.',
