@@ -1414,10 +1414,16 @@ export class FileStore implements ProductStore {
         const metadataPath = join(this.dirs.publicSnapshots, safePublicKey(oldSnapshot.public_snapshot_key), "metadata.json");
         const oldRaw = await readJson<Record<string, unknown>>(metadataPath);
         if (!oldRaw) continue;
-        oldRaw.retired_at ??= timestamp;
         const grace = input.snapshotGraceHours;
-        const graceHours = grace !== undefined && Number.isInteger(grace) && grace >= 1 && grace <= 168 ? grace : 24;
-        oldRaw.purge_after ??= new Date(Date.parse(timestamp) + graceHours * 60 * 60 * 1000).toISOString();
+        const graceHours = grace !== undefined && Number.isInteger(grace) && grace >= 1 && grace <= 168 ? grace : 1;
+        // Only the version just replaced gets the grace; older ones expire now (in-flight reads still finish).
+        if (oldRaw.retired_at) {
+          const purgeAfter = typeof oldRaw.purge_after === "string" ? oldRaw.purge_after : timestamp;
+          oldRaw.purge_after = Date.parse(purgeAfter) < Date.parse(timestamp) ? purgeAfter : timestamp;
+        } else {
+          oldRaw.retired_at = timestamp;
+          oldRaw.purge_after = new Date(Date.parse(timestamp) + graceHours * 60 * 60 * 1000).toISOString();
+        }
         await this.writeJsonWithAnalysisLease(metadataPath, oldRaw, fenceForWrite());
       }
       const targetMetadata = await this.loadPublicSnapshotMetadata(input.publicKey);

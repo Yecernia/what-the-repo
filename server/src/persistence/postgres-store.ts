@@ -309,7 +309,7 @@ function repositoryHeadFromRow(row: Record<string, unknown>): RepositoryHead {
 }
 
 function snapshotGraceHours(value: number | undefined): number {
-  return value !== undefined && Number.isInteger(value) && value >= 1 && value <= 168 ? value : 24;
+  return value !== undefined && Number.isInteger(value) && value >= 1 && value <= 168 ? value : 1;
 }
 
 function repositoryUpdateFromRow(row: Record<string, unknown>): RepositoryUpdate {
@@ -2276,10 +2276,13 @@ export class PostgresStore extends FileStore {
           [update.repository_identity, previousPublicKey, input.publicKey, input.completedAt],
         );
       }
+      // Only the version just replaced gets the grace; older ones expire now (in-flight reads still finish).
       await client.query(
         `UPDATE canonical_public_repository_snapshots
-         SET retired_at = COALESCE(retired_at, $2::timestamptz),
-             purge_after = COALESCE(purge_after, $2::timestamptz + ($4::int * interval '1 hour'))
+         SET purge_after = CASE WHEN retired_at IS NULL
+               THEN $2::timestamptz + ($4::int * interval '1 hour')
+               ELSE LEAST(COALESCE(purge_after, $2::timestamptz), $2::timestamptz) END,
+             retired_at = COALESCE(retired_at, $2::timestamptz)
          WHERE repository_identity = $1
            AND public_snapshot_key <> $3 AND payload_purged_at IS NULL`,
         [

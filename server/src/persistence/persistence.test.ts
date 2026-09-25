@@ -210,11 +210,48 @@ test("file store shares one repository update and completes waiter projects on p
     const migratedLegacy = await store.loadProject(legacyProject.project_id);
     assert.equal(migratedLegacy?.analysis.snapshot_id, "snap:test:shared");
     assert.equal(migratedLegacy?.repository_migration?.status, "executed");
-    // Old pages keep reading the retired version for the default 24-hour grace.
+    // Old pages keep reading the retired version for the default one-hour grace.
     const retired = await store.loadPublicSnapshotMetadata(previousPublicKey);
-    assert.equal(Date.parse(retired!.purge_after!) - Date.parse(retired!.retired_at!), 24 * 3600_000);
+    assert.equal(Date.parse(retired!.purge_after!) - Date.parse(retired!.retired_at!), 3600_000);
     assert.equal((await store.loadJob(waiter.job.job_id))?.status, "succeeded");
     assert.equal((await store.loadRepositoryHead(identity))?.current_commit_sha, "a".repeat(40));
+
+    // A later publication ends the older version's grace at once; only the version it replaces gets one.
+    await store.savePublicSnapshot({
+      publicKey: "b".repeat(64),
+      repository: identity.repository,
+      commitSha: "a".repeat(40),
+      snapshotId: "snap:test:shared",
+      analyzerBundleVersion: identity.analyzerBundleVersion,
+      analysisConfigDigest: identity.analysisConfigDigest,
+      view: { snapshot_id: "snap:test:shared" },
+      analysis: { snapshot_id: "snap:test:shared" },
+    });
+    const next = await store.createOrJoinRepositoryUpdate({
+      project: leaderProject,
+      job: newAnalysisJob(leaderProject.project_id, "analysis:shared:next"),
+      identity,
+      targetCommitSha: "c".repeat(40),
+      newProject: false,
+    });
+    assert.equal((await store.claimAnalysisJob("worker:shared", 60))?.job_id, next.job.job_id);
+    const nextPublishedAt = new Date(Date.now() + 60_000).toISOString();
+    await store.publishRepositoryUpdate({
+      updateId: next.update.update_id,
+      publicKey: "c".repeat(64),
+      commitSha: "c".repeat(40),
+      snapshotId: "snap:test:next",
+      fileCount: 10,
+      symbolCount: 20,
+      callCount: 30,
+      languages: ["typescript"],
+      completedAt: nextPublishedAt,
+      readyLanguage: "zh-CN",
+      redirects: [],
+    });
+    assert.equal((await store.loadPublicSnapshotMetadata(previousPublicKey))?.purge_after, nextPublishedAt);
+    const replaced = await store.loadPublicSnapshotMetadata("b".repeat(64));
+    assert.equal(Date.parse(replaced!.purge_after!) - Date.parse(nextPublishedAt), 3600_000);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

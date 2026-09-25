@@ -283,7 +283,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     repositoryBackgroundMaxActive: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_ACTIVE', 1, 1, 32),
     repositoryBackgroundMaxQueued: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_QUEUED', 4, 1, 100),
     repositoryBackgroundUserMemoryReserveRatio: boundedDecimal(env.WHAT_THE_REPO_REPOSITORY_BACKGROUND_USER_MEMORY_RESERVE_RATIO, 0.25, 0.9),
-    repositorySnapshotGraceHours: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_SNAPSHOT_GRACE_HOURS', 24, 1, 168),
+    repositorySnapshotGraceHours: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_SNAPSHOT_GRACE_HOURS', 1, 1, 168),
     repositoryReadLeaseMaxMinutes: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_READ_LEASE_MAX_MINUTES', 30, 1, 30),
     databasePoolMax: positiveInt(env.WHAT_THE_REPO_DB_POOL_MAX, 10),
     databaseConnectionReserve: nonNegativeInt(env.WHAT_THE_REPO_DB_CONNECTION_RESERVE, 10),
