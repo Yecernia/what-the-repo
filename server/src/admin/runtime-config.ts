@@ -55,7 +55,7 @@ export function adminDocuments(store: ProductStore) {
   if (!docs) {
     docs = new AdminDocuments(
       store.root,
-      store instanceof PostgresStore ? store.pool : undefined,
+      store instanceof PostgresStore ? store.adminPool : undefined,
     );
     instances.set(store, docs);
   }

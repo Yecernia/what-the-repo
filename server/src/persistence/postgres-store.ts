@@ -367,6 +367,8 @@ export class PostgresStore extends FileStore {
   private readonly limits: QuotaLimits;
   readonly snapshotObjects: SnapshotObjectStore;
   readonly controlPool: Pool;
+  /** Small lane for authenticated management reads when application queries fill the main pool. */
+  readonly adminPool: Pool;
   private readonly sourceManifestCache = new Map<string, CachedSourceManifest>();
   private readonly analysisChunkCompression: boolean;
   /** Pool connections left for parallel directory loading beside the publication transaction. */
@@ -400,6 +402,10 @@ export class PostgresStore extends FileStore {
       idleTimeoutMillis: 10000 });
     this.controlPool.on('error', () => console.error('database_control_unavailable'));
     registerControlPool(pool, this.controlPool);
+    this.adminPool = new Pool({ connectionString: options.databaseUrl, max: 2,
+      application_name: postgresApplicationName((options.applicationRole ?? 'api') + ':admin'),
+      connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, statement_timeout: 5000 });
+    this.adminPool.on('error', () => console.error('database_admin_unavailable'));
     this.snapshotObjects = boundedObjectStore(options.objectStore ?? new LocalSnapshotObjectStore(options.root),
       new ResourceScheduler(options.objectAdmissionStore ?? new PostgresPermitStore(this.controlPool)), options.objectStoreConcurrency ?? 8);
   }
@@ -425,7 +431,7 @@ export class PostgresStore extends FileStore {
   }
 
   override async close(): Promise<void> {
-    await Promise.all([this.pool.end(), this.controlPool.end()]);
+    await Promise.all([this.pool.end(), this.controlPool.end(), this.adminPool.end()]);
   }
 
   override async checkHealth(): Promise<void> {
@@ -3451,6 +3457,19 @@ export class PostgresStore extends FileStore {
 
   override async listJobs(): Promise<AnalysisJob[]> {
     const result = await this.pool.query("SELECT j.*,a.state AS participation_state FROM analysis_jobs j LEFT JOIN analysis_participants a USING(job_id) ORDER BY created_at");
+    return result.rows.map(jobFromRow);
+  }
+
+  async adminJobCounts(): Promise<Record<string,number>> {
+    const result=await this.adminPool.query("SELECT status,count(*)::int AS n FROM analysis_jobs WHERE status IN ('queued','running','failed') GROUP BY status");
+    return Object.fromEntries(result.rows.map(row=>[String(row.status),Number(row.n)]));
+  }
+
+  async adminRecentJobs(limit=500): Promise<AnalysisJob[]> {
+    const result=await this.adminPool.query(
+      'SELECT j.*,a.state AS participation_state FROM analysis_jobs j LEFT JOIN analysis_participants a USING(job_id) ORDER BY j.created_at DESC LIMIT $1',
+      [limit],
+    );
     return result.rows.map(jobFromRow);
   }
 

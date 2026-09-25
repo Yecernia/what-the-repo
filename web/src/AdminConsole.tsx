@@ -39,6 +39,15 @@ const pages = [
   ['audit', '操作记录'],
 ] as const;
 type Page = (typeof pages)[number][0];
+function adminPagePath(page: Page, userPage: number, repositoryPage: number, storedPage: number) {
+  if (page === 'activity') return `/activity?user_page=${userPage}&repository_page=${repositoryPage}`;
+  if (page === 'storage') return `/storage?repository_page=${storedPage}`;
+  return `/${page}`;
+}
+const pageFreshMs: Record<Page, number> = {
+  overview: 10_000, activity: 10_000, audit: 15_000,
+  budgets: 30_000, feedback: 30_000, storage: 60_000, config: 60_000,
+};
 interface Auth {
   enabled: boolean;
   authenticated: boolean;
@@ -121,14 +130,41 @@ export default function AdminConsole() {
     [userPage, setUserPage] = useState(1),
     [repositoryPage, setRepositoryPage] = useState(1),
     [storedPage, setStoredPage] = useState(1),
-    [data, setData] = useState<AdminRow | null>(null),
+    [pageData, setPageData] = useState<{ path: string; value: AdminRow } | null>(null),
+    [capacityData, setCapacityData] = useState<AdminRow | null>(null),
+    [capacityError, setCapacityError] = useState(''),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false);
   const requestSequence = useRef(0);
-  const setPage = (next: Page) => {
+  const activePage = useRef(page);
+  activePage.current = page;
+  const cachedPages = useRef(new Map<string, { value: AdminRow; fetchedAt: number }>());
+  const capacitySequence = useRef(0);
+  const pendingCapacity = useRef<Promise<void> | null>(null);
+  const capacityController = useRef<AbortController | null>(null);
+  const pendingLoad = useRef<{
+    path: string;
+    sequence: number;
+    completion: Promise<void>;
+    controller: AbortController;
+  } | null>(null);
+  const reloadAfterMutation = useRef<(() => Promise<void>) | null>(null);
+  const invalidateLoad = useCallback(() => {
     requestSequence.current++;
-    setData(null);
+    pendingLoad.current?.controller.abort();
+    pendingLoad.current = null;
+    reloadAfterMutation.current = null;
+  }, []);
+  const invalidateCapacity = useCallback(() => {
+    capacitySequence.current++;
+    capacityController.current?.abort();
+    capacityController.current = null;
+    pendingCapacity.current = null;
+  }, []);
+  const setPage = (next: Page) => {
+    if (next === page) return;
+    invalidateLoad();
     setPageValue(next);
   };
   const [code, setCode] = useState(''),
@@ -142,43 +178,134 @@ export default function AdminConsole() {
     [recoverMode, setRecoverMode] = useState(false);
   const loadAuth = useCallback(async () => {
     try {
-      setAuth(await adminRequest<Auth>('/auth/status'));
+      const status = await adminRequest<Auth>('/auth/status');
+      if (!status.authenticated) {
+        cachedPages.current.clear();
+        invalidateLoad();
+        setPageData(null);
+        invalidateCapacity();
+        setCapacityData(null);
+      }
+      setAuth(status);
     } catch (e) {
+      cachedPages.current.clear();
+      invalidateLoad();
+      setPageData(null);
+      invalidateCapacity();
+      setCapacityData(null);
       setAuth(null);
       setError((e as Error).message);
     }
-  }, []);
-  const load = useCallback(async () => {
+  }, [invalidateCapacity, invalidateLoad]);
+  const pagePath = adminPagePath(page, userPage, repositoryPage, storedPage);
+  const data = pageData?.path === pagePath
+    ? pageData.value : cachedPages.current.get(pagePath)?.value ?? null;
+  const load = useCallback(async ({ force = false }: { force?: boolean } = {}) => {
     if (!auth?.authenticated) return;
+    // Polls and refresh clicks share the current read without invalidating it.
+    const pending = pendingLoad.current;
+    if (!force && pending?.path === pagePath && pending.sequence === requestSequence.current)
+      return pending.completion;
+
+    pending?.controller.abort();
     const sequence = ++requestSequence.current;
-    try {
-      const result = await adminRequest('/' + page + (page === 'activity' ? '?user_page=' + userPage + '&repository_page=' + repositoryPage : page === 'storage' ? '?repository_page=' + storedPage : ''));
-      if (sequence === requestSequence.current) setData(result);
-    } catch (e) {
-      if (sequence !== requestSequence.current) return;
-      setError((e as Error).message);
-      await loadAuth();
-    }
-  }, [page, userPage, repositoryPage, storedPage, auth?.authenticated, loadAuth]);
+    const controller = new AbortController();
+    const completion = (async () => {
+      try {
+        const result = await adminRequest(pagePath, 'GET', undefined, undefined, controller.signal);
+        if (sequence !== requestSequence.current) return;
+        // This cache belongs only to the current admin session, never browser storage.
+        cachedPages.current.delete(pagePath);
+        cachedPages.current.set(pagePath, { value: result, fetchedAt: Date.now() });
+        if (cachedPages.current.size > 32) cachedPages.current.delete(cachedPages.current.keys().next().value!);
+        setPageData({ path: pagePath, value: result });
+        setError('');
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        if (sequence !== requestSequence.current) return;
+        setError((e as Error).message);
+        await loadAuth();
+      } finally {
+        // An obsolete request must not release a newer request's slot.
+        if (pendingLoad.current?.sequence === sequence) pendingLoad.current = null;
+      }
+    })();
+    pendingLoad.current = { path: pagePath, sequence, completion, controller };
+    return completion;
+  }, [pagePath, auth?.authenticated, loadAuth]);
+  const loadCapacity = useCallback(async ({ force = false }: { force?: boolean } = {}) => {
+    if (!auth?.authenticated) return;
+    if (!force && pendingCapacity.current) return pendingCapacity.current;
+    capacityController.current?.abort();
+    const sequence = ++capacitySequence.current;
+    const controller = new AbortController();
+    capacityController.current = controller;
+    const completion = (async () => {
+      try {
+        const result = await adminRequest('/storage/capacity', 'GET', undefined, undefined, controller.signal);
+        if (sequence !== capacitySequence.current) return;
+        cachedPages.current.delete('/storage/capacity');
+        cachedPages.current.set('/storage/capacity', { value: result, fetchedAt: Date.now() });
+        if (cachedPages.current.size > 32) cachedPages.current.delete(cachedPages.current.keys().next().value!);
+        setCapacityData(result);
+        setCapacityError('');
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        if (sequence !== capacitySequence.current) return;
+        setCapacityError((e as Error).message);
+        await loadAuth();
+      } finally {
+        if (sequence === capacitySequence.current) {
+          pendingCapacity.current = null;
+          capacityController.current = null;
+        }
+      }
+    })();
+    pendingCapacity.current = completion;
+    return completion;
+  }, [auth?.authenticated, loadAuth]);
   useEffect(() => {
     document.title = '管理台 · what-the-repo';
     void loadAuth();
   }, [loadAuth]);
   useEffect(() => {
-    setData(null);
     setError('');
-    void load();
-  }, [load]);
+    // A mutation may finish after navigation; refresh the page visible then.
+    reloadAfterMutation.current = () => load({ force: true });
+    const cached = cachedPages.current.get(pagePath);
+    if (!cached || Date.now() - cached.fetchedAt > pageFreshMs[page]) void load();
+    return invalidateLoad;
+  }, [load, invalidateLoad, page, pagePath]);
+  useEffect(() => {
+    if (page !== 'storage' || !auth?.authenticated) return;
+    const cached = cachedPages.current.get('/storage/capacity');
+    if (cached) setCapacityData(cached.value);
+    if (!cached || Date.now() - cached.fetchedAt > 30_000) void loadCapacity();
+    return invalidateCapacity;
+  }, [page, auth?.authenticated, loadCapacity, invalidateCapacity]);
+  useEffect(() => {
+    if (page !== 'storage' || !auth?.authenticated) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      if (document.visibilityState === 'visible') await loadCapacity();
+      if (!stopped) timer = setTimeout(() => void refresh(), 30_000);
+    };
+    timer = setTimeout(() => void refresh(), 30_000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [page, auth?.authenticated, loadCapacity]);
   useEffect(() => {
     if (!auth?.authenticated) return;
-    const timer = setInterval(() => {
-      if (
-        document.visibilityState === 'visible' &&
-        ['overview', 'activity', 'audit'].includes(page)
-      )
-        void load();
-    }, 15_000);
-    return () => clearInterval(timer);
+    if (!['overview', 'activity', 'audit'].includes(page)) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      if (document.visibilityState === 'visible') await load();
+      // Wait after completion so a slow response does not queue another poll.
+      if (!stopped) timer = setTimeout(() => void refresh(), 15_000);
+    };
+    timer = setTimeout(() => void refresh(), 15_000);
+    return () => { stopped = true; clearTimeout(timer); };
   }, [auth?.authenticated, page, load]);
   async function action(path: string, body: unknown = {}, method = 'POST') {
     setBusy(true);
@@ -186,8 +313,10 @@ export default function AdminConsole() {
     setNotice('');
     try {
       const result = await adminRequest(path, method, body, auth?.csrf);
-      setNotice('操作已完成。');
-      await load();
+      setNotice(path === '/storage/inventory' ? '已开始采集对象用量，完成后会自动更新。' : '操作已完成。');
+      // A read started before the mutation cannot confirm its updated state.
+      cachedPages.current.clear();
+      await Promise.all([reloadAfterMutation.current?.(), activePage.current === 'storage' ? loadCapacity({ force: true }) : undefined]);
       return result;
     } catch (e) {
       setError((e as Error).message);
@@ -374,7 +503,10 @@ export default function AdminConsole() {
             onClick={async () => {
               if (await action('/auth/logout')) {
                 setAuth(null);
-                setData(null);
+                cachedPages.current.clear();
+                setPageData(null);
+                invalidateCapacity();
+                setCapacityData(null);
                 await loadAuth();
               }
             }}
@@ -395,7 +527,7 @@ export default function AdminConsole() {
           <button
             className="admin-refresh"
             disabled={busy}
-            onClick={() => void load()}
+            onClick={() => { void load(); if (page === 'storage') void loadCapacity({ force: true }); }}
           >
             <RefreshCw size={17} />
             刷新
@@ -456,7 +588,8 @@ export default function AdminConsole() {
             act={(id, a, b) => action('/evolution/' + id + '/' + a, b)}
           />
         ) : page === 'storage' ? (
-          <Storage data={data} busy={busy} act={action} onRepositoryPage={setStoredPage} />
+          <Storage data={data} capacity={capacityData} capacityError={capacityError}
+            busy={busy} act={action} onRepositoryPage={setStoredPage} />
         ) : (
           <Card title="最近的管理操作">
             <p className="admin-muted">
@@ -1174,7 +1307,7 @@ function StoredRepositories({data,busy,act,onPage}: {data:AdminRow;busy:boolean;
       ['users','使用者',(_,r)=><><span className="admin-user-count">共 {text(r.user_count)} 位</span><RepositoryUsers row={r} kind="storage"/></>],
       ['cos_bytes','COS 完整占用',(v,r)=><div>{r.cos_enabled ? bytes(v) : '未启用 COS'}<small className="admin-cell-note">{r.cos_enabled ? '含对象保留历史版本' : '对象保存在本机文件中'}{r.cos_enabled && !r.inventory_fresh ? ' · 统计已过期' : ''}</small></div>],
       ['host_file_bytes','服务器文件',(v)=><div>{bytes(v)}<small className="admin-cell-note">快照、安全源码及本地副本</small></div>],
-      ['database_bytes','数据库与索引',(v,r)=><div>{bytes(Number(v)+Number(r.database_index_bytes))}<small className="admin-cell-note">记录 {bytes(v)} · 索引 {bytes(r.database_index_bytes)}<br/>共享数据库空间按记录数分摊估算</small></div>],
+      ['database_bytes','数据库与索引',(v,r)=><div>{bytes(typeof v==='number'&&typeof r.database_index_bytes==='number'?v+r.database_index_bytes:null)}<small className="admin-cell-note">记录 {bytes(v)} · 索引 {bytes(r.database_index_bytes)}<br/>共享数据库空间按记录数分摊估算 · 采集 {time(r.observedAt)}</small></div>],
       ['last_conversation_at','最后用于对话',v=>v ? time(v) : '尚无可确认的对话记录'],
       ['repository_identity','操作',(_,r)=><button className="admin-danger-button" disabled={busy||loading} onClick={()=>void inspect(r)}>查看并清理</button>],
     ]}/>
@@ -1183,7 +1316,7 @@ function StoredRepositories({data,busy,act,onPage}: {data:AdminRow;busy:boolean;
     {loading && <p>正在读取清理影响…</p>}{planError && <p role="alert">{planError}</p>}
     {plan && <AdminModal title={'清理仓库 · '+text(plan.repository_identity)} close={()=>{if(!busy)setPlan(null);}}>
       <p>{text(plan.impact)}</p>
-      <p>预计清理 COS 对象 {bytes(plan.cos_bytes)}、服务器文件 {bytes(plan.host_file_bytes)}。相关数据库与索引占用约 {bytes(Number(plan.database_bytes)+Number(plan.database_index_bytes))}，其中对话历史保留，不计作可回收空间。</p>
+      <p>预计清理 COS 对象 {bytes(plan.cos_bytes)}、服务器文件 {bytes(plan.host_file_bytes)}。相关数据库与索引占用约 {bytes(typeof plan.database_bytes==='number'&&typeof plan.database_index_bytes==='number'?plan.database_bytes+plan.database_index_bytes:null)}，其中对话历史保留，不计作可回收空间。</p>
       <p>影响 {text(plan.affected_projects)} 个对话项目、{text(plan.user_count)} 位使用者和 {text(plan.versions)} 个仓库版本。</p>
       <RepositoryUsers row={plan} kind="storage"/>
       {Number(plan.active_tasks)>0 && <p role="alert">仍有分析任务执行或排队，暂不能删除。</p>}
@@ -1198,12 +1331,28 @@ function StoredRepositories({data,busy,act,onPage}: {data:AdminRow;busy:boolean;
 }
 function Storage({
   data,
+  capacity,
+  capacityError,
   busy,
   act,
   onRepositoryPage,
 }: {
   data: AdminRow;
+  capacity: AdminRow | null;
+  capacityError: string;
   onRepositoryPage: (page:number) => void;
+  busy: boolean;
+  act: (path: string, b?: unknown, method?: string) => Promise<AdminRow | null>;
+}) {
+  return <>
+    <StoredRepositories data={data} busy={busy} act={act} onPage={onRepositoryPage} />
+    {capacity && capacityError && <p className="admin-error" role="alert">容量状态刷新失败：{capacityError}。以下是上次读取结果。</p>}
+    {capacity ? <StorageCapacity data={capacity} busy={busy} act={act} />
+      : <Card title="容量状态"><p>{capacityError || '正在读取容量状态…'}</p></Card>}
+  </>;
+}
+function StorageCapacity({data,busy,act}: {
+  data: AdminRow;
   busy: boolean;
   act: (path: string, b?: unknown, method?: string) => Promise<AdminRow | null>;
 }) {
@@ -1231,7 +1380,6 @@ function Storage({
         。已为 {text(status.activeTasks)} 个排队或执行任务预留{' '}
         {bytes(status.reservedBytes)}。
       </p>
-      <StoredRepositories data={data} busy={busy} act={act} onPage={onRepositoryPage} />
       <Card title="主机与数据卷">
         <Table
           data={rows(status.volumes)}

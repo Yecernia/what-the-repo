@@ -39,18 +39,19 @@ test('repository directory, shared participants, accounting and destructive clea
       }
     }
     await store.pool.query(`INSERT INTO online_presence(owner_id,kind,seen_at) VALUES('github:repo-case-2','github',clock_timestamp())`);
-    await docs.change('object-inventory',{observedAt:'',objects:[] as Array<{key:string;bytes:number}>},r=>{
-      r.observedAt=new Date().toISOString();r.objects=[{key:`public-repository-snapshots/${keys[0]}/view.json`,bytes:5},{key:`public-repository-snapshots/${keys[0]}/view.json`,bytes:7}];
+    await docs.change('object-inventory',{observedAt:'',totalBytes:0,snapshotBytes:{} as Record<string,number>},r=>{
+      r.observedAt=new Date().toISOString();r.totalBytes=12;r.snapshotBytes[keys[0]]=12;
     });
     await t.test('repository pagination and cohorts exclude post-completion reuse; names and online ordering',async()=>{
       const list=await admin.activity(1);assert.equal(list.repositories.length,25);assert.ok((await admin.activity(2)).repositories.length>=4);
       const cohort=await admin.users('repo-case/r0','analysis','case-batch-0',2);
       assert.equal(cohort.user_count,3);assert.equal(cohort.users.length,2);assert.equal(cohort.users[0].login,'repo-user-2');
       assert.equal((await admin.users('repo-case/r0','analysis','case-batch-0')).users.length,3);
+      await admin.refreshAccounting();
       const stored=await admin.stored(1);const row=stored.storedRepositories.find(r=>r.repository_identity==='repo-case/r0')!;
       assert.equal(row.user_count,4);assert.equal(row.cos_bytes,12,'retained COS versions counted once, never multiplied by users');
       assert.ok(row.database_bytes>0);assert.ok(row.database_index_bytes>0);assert.ok(row.last_conversation_at);
-      await docs.change('object-inventory',{observedAt:'',objects:[]},r=>{r.observedAt='2000-01-01T00:00:00Z';});
+      await docs.change('object-inventory',{observedAt:'',totalBytes:0,snapshotBytes:{}},r=>{r.observedAt='2000-01-01T00:00:00Z';});
       assert.equal((await admin.stored(1)).storedRepositories.find(r=>r.repository_identity==='repo-case/r0')!.cos_bytes,null);
     });
     await t.test('changed references and running analysis reject deletion',async()=>{

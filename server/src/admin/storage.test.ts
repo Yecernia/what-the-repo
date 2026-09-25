@@ -7,7 +7,7 @@ import { FileStore } from '../persistence/file-store.js';
 import { loadConfig } from '../config.js';
 import { newAnalysisJob } from '../domain/jobs.js';
 import { createProject } from '../domain/conversation.js';
-import { StorageManager, DEFAULT_STORAGE_POLICY } from './storage.js';
+import { StorageManager, DEFAULT_STORAGE_POLICY, EMPTY_OBJECT_INVENTORY } from './storage.js';
 const GiB = 1024 ** 3;
 async function projectJob(store: FileStore, key: string) {
   const owner = 'guest:storage-fixture';
@@ -28,16 +28,22 @@ test('inventory refresh skips fresh samples and preserves the old timestamp afte
     inventory: async () => { calls++; if (fail) throw new Error('AccessDenied'); return [{key:'snapshot.json', bytes:123}]; },
   }));
   try {
+    await manager.docs.change('object-inventory', {observedAt:'',objects:[{key:'old',bytes:999}]}, () => undefined);
     assert.equal(await manager.refreshInventoryIfDue(), 'refreshed');
-    const original = await manager.docs.read('object-inventory', {observedAt:'',objects:[]});
+    let original = await manager.docs.read('object-inventory', EMPTY_OBJECT_INVENTORY);
+    assert.equal(original.totalBytes,123);
+    assert.equal('objects' in original,false);
     assert.equal(await manager.refreshInventoryIfDue(), 'fresh');
     assert.equal(calls, 1);
+    assert.equal(await manager.refreshInventoryIfDue(Date.now(),true), 'refreshed');
+    assert.equal(calls, 2);
+    original = await manager.docs.read('object-inventory', EMPTY_OBJECT_INVENTORY);
     fail = true;
     await assert.rejects(() => manager.refreshInventoryIfDue(Date.now() + 300_000));
     assert.deepEqual(await manager.docs.read('object-inventory', {}), original);
     fail = false;
     assert.equal(await manager.refreshInventoryIfDue(Date.now() + 300_000), 'refreshed');
-    assert.equal(calls, 3);
+    assert.equal(calls, 4);
   } finally { await store.close(); await rm(root, {recursive:true,force:true}); }
 });
 
@@ -127,12 +133,11 @@ test('COS uses actual object bytes, unknown inventory is not zero, and deletion 
     assert.equal((await manager.status()).state, 'blocked');
     await manager.docs.change(
       'object-inventory',
-      { observedAt: '', objects: [] as Array<{ key: string; bytes: number }> },
+      EMPTY_OBJECT_INVENTORY,
       (row) => {
         row.observedAt = new Date().toISOString();
-        row.objects = [
-          { key: `public-repository-snapshots/${key}/one`, bytes: GiB },
-        ];
+        row.totalBytes = GiB;
+        row.snapshotBytes = {[key]:GiB};
       },
     );
     store.listPurgeablePublicSnapshots = async () => [

@@ -25,6 +25,7 @@ import { audienceCounts } from './audience.js';
 import { AdminRepositories } from './repositories.js';
 import { defaultRuntimeMetrics } from '../observability/metrics.js';
 import { CONFIGURABLE_PROVIDER_IDS } from '../agent/provider-catalog.js';
+import { PostgresStore } from '../persistence/postgres-store.js';
 
 export const ADMIN_SESSION = 'what_the_repo_admin';
 export const ADMIN_CHALLENGE = 'what_the_repo_admin_challenge';
@@ -234,8 +235,12 @@ export function registerAdminRoutes(
           () => true,
           () => false,
         );
-        await deps.metricsRefresh?.().catch(() => undefined);
-        const jobs = await store.listJobs();
+        const jobCounts = store instanceof PostgresStore
+          ? await store.adminJobCounts()
+          : Object.fromEntries(['queued','running','failed'].map(status=>[status,0]));
+        if (!(store instanceof PostgresStore))
+          for (const job of await store.listJobs())
+            jobCounts[job.status] = (jobCounts[job.status]??0)+1;
         const now = Date.now();
         const presence = docs.pool
           ? (
@@ -280,13 +285,13 @@ export function registerAdminRoutes(
             guestApproximate: true,
           },
           jobs: {
-            queued: jobs.filter((j) => j.status === 'queued').length,
-            running: jobs.filter((j) => j.status === 'running').length,
-            failed: jobs.filter((j) => j.status === 'failed').length,
+            queued: jobCounts.queued??0,
+            running: jobCounts.running??0,
+            failed: jobCounts.failed??0,
           },
           metrics: (deps.metrics ?? defaultRuntimeMetrics).snapshot(),
           observations,
-          budgets: (await readBudgets()).budgets,
+          budgets: (await readBudgets(true)).budgets,
           tuning: {
             chatConcurrency: config.chatConcurrency ?? 8,
             chatOwnerConcurrency: config.chatOwnerConcurrency ?? 2,
@@ -350,7 +355,7 @@ export function registerAdminRoutes(
           userPagination: { page: userPage, pageSize, total: totalUsers, pages: userPages },
           projects,
           ...(docs.pool ? await repositories.activity((request.query as { repository_page?: string }).repository_page) : { repositories:[], repositoryPagination:{total:0,pages:1,page:1,pageSize:25} }),
-          jobs: (await store.listJobs()).slice(-500).reverse(),
+          jobs: store instanceof PostgresStore ? await store.adminRecentJobs() : (await store.listJobs()).slice(-500).reverse(),
           limit: 500,
         };
       });
@@ -384,7 +389,7 @@ export function registerAdminRoutes(
         });
         return result;
       });
-      const readBudgets = async () => {
+      const readBudgets = async (summaryOnly = false) => {
         const policies = withBudgetDefaults(await docs.read('budgets', DEFAULT_BUDGET_POLICIES)),
           day = beijingBudgetDay();
         // Background refresh keeps its own ledger on the same Beijing calendar day.
@@ -394,7 +399,7 @@ export function registerAdminRoutes(
              FROM repository_background_daily_usage WHERE usage_date=$1::date`,
             [new Date(day.start + 8 * 3600_000).toISOString().slice(0, 10)])).rows[0] ?? { used: 0, reserved: 0 }
           : { used: 0, reserved: 0 };
-        const repositoryUpdates = docs.pool
+        const repositoryUpdates = docs.pool && !summaryOnly
           ? (await docs.pool.query(
             `SELECT update.update_id, update.repository_identity, update.update_trigger AS trigger, update.status,
                     update.created_at,
@@ -409,7 +414,7 @@ export function registerAdminRoutes(
              GROUP BY update.update_id ORDER BY update.created_at DESC LIMIT 1000`)).rows
           : [];
         // Background scheduler passes of the last day; each keeps per-repository reasons.
-        const backgroundRuns = docs.pool
+        const backgroundRuns = docs.pool && !summaryOnly
           ? (await docs.pool.query(
             `SELECT run_id, started_at, finished_at, outcome, error FROM repository_background_runs
              WHERE started_at >= now() - interval '1 day' ORDER BY started_at DESC LIMIT 300`)).rows
@@ -417,7 +422,7 @@ export function registerAdminRoutes(
         const rows = docs.pool
           ? (
               await docs.pool.query(
-                `SELECT business,payer,agent_role,connection_id,config_version,task_id,COUNT(*)::int AS calls,COUNT(*) FILTER(WHERE usage_known IS DISTINCT FROM true)::int AS unknown_calls,COALESCE(SUM(cost_usd) FILTER(WHERE usage_known),0)::float8 AS used,COALESCE(SUM(reserved_cost_usd) FILTER(WHERE usage_known IS DISTINCT FROM true),0)::float8 AS reserved,COALESCE(SUM(input_tokens) FILTER(WHERE usage_known),0)::float8 AS input_tokens,COALESCE(SUM(cached_tokens) FILTER(WHERE usage_known),0)::float8 AS cached_tokens,COALESCE(SUM(cache_write_tokens) FILTER(WHERE usage_known),0)::float8 AS cache_write_tokens FROM provider_usage_events WHERE started_at >= $1 GROUP BY business,payer,agent_role,connection_id,config_version,task_id`,
+                `SELECT business,payer,${summaryOnly ? '' : 'agent_role,connection_id,config_version,task_id,'}COUNT(*)::int AS calls,COUNT(*) FILTER(WHERE usage_known IS DISTINCT FROM true)::int AS unknown_calls,COALESCE(SUM(cost_usd) FILTER(WHERE usage_known),0)::float8 AS used,COALESCE(SUM(reserved_cost_usd) FILTER(WHERE usage_known IS DISTINCT FROM true),0)::float8 AS reserved,COALESCE(SUM(input_tokens) FILTER(WHERE usage_known),0)::float8 AS input_tokens,COALESCE(SUM(cached_tokens) FILTER(WHERE usage_known),0)::float8 AS cached_tokens,COALESCE(SUM(cache_write_tokens) FILTER(WHERE usage_known),0)::float8 AS cache_write_tokens FROM provider_usage_events WHERE started_at >= $1 GROUP BY business,payer${summaryOnly ? '' : ',agent_role,connection_id,config_version,task_id'}`,
                 [new Date(day.start).toISOString()],
               )
             ).rows
@@ -440,7 +445,7 @@ export function registerAdminRoutes(
                   cache_write_tokens: e.report?.usageKnown ? e.report.cacheWriteTokens : 0,
                 }))
             : [];
-        const taskRows = docs.pool
+        const taskRows = docs.pool && !summaryOnly
           ? (
               await docs.pool.query(
                 `SELECT task_id,COALESCE(SUM(cost_usd) FILTER(WHERE usage_known),0)::float8 AS used,COALESCE(SUM(reserved_cost_usd) FILTER(WHERE usage_known IS DISTINCT FROM true),0)::float8 AS reserved,COUNT(*) FILTER(WHERE usage_known IS DISTINCT FROM true)::int AS unknown_calls FROM provider_usage_events WHERE business='evolution' AND payer='platform' GROUP BY task_id ORDER BY MAX(started_at) DESC LIMIT 100`,
@@ -560,7 +565,7 @@ export function registerAdminRoutes(
           }),
         };
       };
-      admin.get('/budgets', readBudgets);
+      admin.get('/budgets', () => readBudgets());
       admin.put('/budgets', async (request) => {
         let policies;
         try {
@@ -681,24 +686,26 @@ export function registerAdminRoutes(
           throw error;
         }
       });
-      admin.get('/storage', async (request) => ({...await storage.candidates(),
-        ...(docs.pool ? await repositories.stored((request.query as {repository_page?:string}).repository_page) : {storedRepositories:[],storedPagination:{total:0,pages:1,page:1,pageSize:25}})}));
+      admin.get('/storage', async (request) => docs.pool
+        ? repositories.stored((request.query as {repository_page?:string}).repository_page)
+        : {storedRepositories:[],storedPagination:{total:0,pages:1,page:1,pageSize:25}});
+      admin.get('/storage/capacity', async () => storage.candidates());
       admin.put('/storage/policy', async (request) => {
         await storage.updatePolicy(request.body as StoragePolicy, actor);
         return storage.status();
       });
       admin.post('/storage/inventory', async () => {
-        const result = await storage.refreshInventory();
+        // A full COS listing may take minutes; lease coordination and publication
+        // happen in the background while the browser keeps the last observation.
+        void storage.refreshInventoryIfDue(Date.now(),true).catch(error =>
+          console.error('admin_storage_inventory_refresh_failed',error instanceof Error?error.name:'unknown'));
         await docs.audit({
           actor,
           action: 'storage.inventory',
           target: 'object_store',
           outcome: 'success',
         });
-        return {
-          observedAt: result.observedAt,
-          objects: result.objects.length,
-        };
+        return {state:'requested'};
       });
       admin.post('/storage/:key/delete', async (request) => {
         const key = (request.params as { key: string }).key;

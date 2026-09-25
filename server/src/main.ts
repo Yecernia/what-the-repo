@@ -1,6 +1,7 @@
 import { collectRuntimeObservations } from './admin/observations.js';
 import { collectStorageInventory } from './admin/storage.js';
 import { collectAudience } from './admin/audience.js';
+import { collectStoredRepositoryAccounting } from './admin/repositories.js';
 import { adminDocuments } from './admin/runtime-config.js';
 import { DEFAULT_BUDGET_POLICIES } from './agent/provider-budget.js';
 import { assertApiSessionSecret, loadConfig } from "./config.js";
@@ -31,6 +32,7 @@ const store = createProductStore(config, "api");
 await store.init();
 const stopObservations = collectRuntimeObservations(store, 'api', defaultRuntimeMetrics);
 const stopStorageInventory = collectStorageInventory(store, config);
+const stopStoredAccounting = config.adminGithubId ? collectStoredRepositoryAccounting(store, config) : async () => undefined;
 const stopAudience = collectAudience(adminDocuments(store).pool);
 const databaseMetrics = store instanceof PostgresStore
   ? new DatabaseMetricsCollector({
@@ -41,6 +43,17 @@ const databaseMetrics = store instanceof PostgresStore
       deploymentReserve: config.databaseConnectionReserve ?? 10,
     })
   : null;
+let pendingDatabaseMetrics: Promise<void> | undefined;
+const refreshDatabaseMetrics = async () => {
+  if (!databaseMetrics) return;
+  pendingDatabaseMetrics ??= databaseMetrics.refresh().finally(() => { pendingDatabaseMetrics = undefined; });
+  await pendingDatabaseMetrics?.catch(() => undefined);
+};
+void refreshDatabaseMetrics().catch(() => undefined);
+const databaseMetricsTimer = databaseMetrics
+  ? setInterval(() => { void refreshDatabaseMetrics().catch(() => undefined); }, 30_000)
+  : null;
+databaseMetricsTimer?.unref();
 const sessions = new PiSessionStore(
   store instanceof PostgresStore
     ? new PostgresPiSessionBackend(store.pool)
@@ -87,7 +100,7 @@ const app = buildApp({
   providerGateFactory,
   providerBudget,
   metrics: defaultRuntimeMetrics,
-  metricsRefresh: databaseMetrics ? async () => { await databaseMetrics.refresh(); } : undefined,
+  metricsRefresh: databaseMetrics ? refreshDatabaseMetrics : undefined,
 });
 
 // Compose runs retention in the singleton scheduler service. Direct local
@@ -107,6 +120,9 @@ const shutdown = async (): Promise<void> => {
   stopObservations();
   await stopAudience();
   await stopStorageInventory();
+  await stopStoredAccounting();
+  if (databaseMetricsTimer) clearInterval(databaseMetricsTimer);
+  await pendingDatabaseMetrics?.catch(() => undefined);
   clearInterval(queueMetricsTimer);
   await retentionScheduler?.stop();
   await analysis.stop();

@@ -26,11 +26,13 @@ export async function adminRequest<T = AdminRow>(
   method = 'GET',
   body?: unknown,
   csrf?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch('/api/admin' + path, {
     method,
     credentials: 'same-origin',
     cache: 'no-store',
+    signal,
     headers: {
       'content-type': 'application/json',
       'x-admin-request': '1',
