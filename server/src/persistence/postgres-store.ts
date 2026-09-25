@@ -2155,6 +2155,13 @@ export class PostgresStore extends FileStore {
         [input.job.job_id, input.project.project_id, input.job.idempotency_key,
           input.job.max_attempts, input.now, updateId, input.job.config_version ?? null],
       );
+      // The leader project participates like a manual requester; publication checks this binding.
+      await client.query(
+        `INSERT INTO repository_analysis_update_projects(update_id, project_id, created_at)
+         VALUES ($1, $2, now())
+         ON CONFLICT(update_id, project_id) DO NOTHING`,
+        [updateId, input.project.project_id],
+      );
       await client.query(
         `UPDATE repository_background_daily_usage SET starts=starts+1,
            reserved_usd=reserved_usd+$2 WHERE usage_date=$1::date`,

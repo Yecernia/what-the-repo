@@ -108,6 +108,8 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
         job: newAnalysisJob(reader.project_id, 'background:first'), now }), 'queued');
       const active = await store.loadActiveRepositoryUpdate(repository);
       assert.equal(active?.trigger, 'background');
+      // Publication requires the leader project to be bound to the update it runs.
+      assert.equal((await store.loadRepositoryUpdateForProject(reader.project_id))?.update_id, active?.update_id);
       assert.equal(await store.createBackgroundRepositoryUpdate({ ...background, minUpdateIntervalHours: 0,
         job: newAnalysisJob(reader.project_id, 'background:second'), now }), 'deferred:active_update', 'one active update per repository');
       const usage = await store.pool.query('SELECT starts, reserved_usd::float AS reserved FROM repository_background_daily_usage');
