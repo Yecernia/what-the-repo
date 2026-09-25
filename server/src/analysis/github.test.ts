@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchPublicGithubHead, fetchPublicGithubSource, fetchResearchPage, safeResearchUrl, readGithubArchive } from "./github.js";
+import { fetchPublicGithubHead, githubCommitTime, fetchPublicGithubSource, fetchResearchPage, safeResearchUrl, readGithubArchive } from "./github.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -127,7 +127,8 @@ test("GitHub head lookup uses the bounded gateway transport when configured", as
         return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
       }
       if (body.kind === "commit") {
-        return new Response(JSON.stringify({ sha: "0123456789abcdef0123456789abcdef01234567" }), { status: 200 });
+        return new Response(JSON.stringify({ sha: "0123456789abcdef0123456789abcdef01234567",
+          commit: { author: { date: "2026-09-20T08:00:00Z" }, committer: { date: "2026-09-21T09:30:00+08:00" } } }), { status: 200 });
       }
       throw new Error(`unexpected gateway request: ${JSON.stringify(body)}`);
     }) as typeof fetch;
@@ -146,6 +147,8 @@ test("GitHub head lookup uses the bounded gateway transport when configured", as
       repo: "Spoon-Knife",
       repository: "octocat/Spoon-Knife",
       commitSha: "0123456789abcdef0123456789abcdef01234567",
+      // The committer date (when it reached the branch), normalised to UTC.
+      committedAt: "2026-09-21T01:30:00.000Z",
     });
     assert.deepEqual(requests.map((request) => request.url), [
       "https://github.example.com/v1/github/fetch",
@@ -192,4 +195,12 @@ test("research URLs reject internal aliases and block redirects to private addre
   assert.equal(page, null);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.init?.redirect, "manual");
+});
+
+test("GitHub commit time prefers the committer date and ignores invalid values", () => {
+  assert.equal(githubCommitTime({ commit: { author: { date: "2026-09-20T08:00:00Z" } } }), "2026-09-20T08:00:00.000Z");
+  assert.equal(githubCommitTime({ commit: { committer: { date: "not a date" }, author: { date: "2026-09-20T08:00:00Z" } } }),
+    "2026-09-20T08:00:00.000Z");
+  assert.equal(githubCommitTime({ sha: "a".repeat(40) }), null);
+  assert.equal(githubCommitTime(null), null);
 });

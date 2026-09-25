@@ -39,10 +39,6 @@ export function useSmoothChatScroll(conversationId: string | null, messageCount:
     };
     const start = () => {
       if (!following || animation !== null) return;
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        writeTop(Math.max(0, element.scrollHeight - element.clientHeight));
-        return;
-      }
       previousTime = null;
       animation = requestAnimationFrame(follow);
     };

@@ -75,10 +75,17 @@ type SelectedItem =
   | { kind: 'value-point'; value: ValuePoint }
   | { kind: 'learning-step'; value: LearningStep };
 
-function firstTabSelection(snapshot: Snapshot, tab: WorkspaceTab): SelectedItem | null {
-  if (tab === 'architecture' && snapshot.graph.nodes[0]) return { kind: 'component', value: snapshot.graph.nodes[0] };
+function firstTabSelection(snapshot: Snapshot, tab: WorkspaceTab, project?: Project): SelectedItem | null {
+  // The architecture view starts with nothing picked: the details panel waits for a component or relation the
+  // learner clicks, instead of describing the whole repository, which is never drawn as a node of its own.
+  if (tab === 'architecture') return null;
   if (tab === 'value-points' && snapshot.value_points[0]) return { kind: 'value-point', value: snapshot.value_points[0] };
-  if (tab === 'learning-plan' && snapshot.learning_plan.steps[0]) return { kind: 'learning-step', value: snapshot.learning_plan.steps[0] };
+  if (tab === 'learning-plan') {
+    // The route shown is the learner's own when one was generated; open on the step they are at.
+    const plan = project?.study.dynamic_learning_plan?.length ? project.study.dynamic_learning_plan : snapshot.learning_plan.steps;
+    const step = plan[Math.min(project?.study.current_step ?? 0, plan.length - 1)] ?? plan[0];
+    return step ? { kind: 'learning-step', value: step } : null;
+  }
   return null;
 }
 
@@ -125,6 +132,10 @@ function conversationSelection(item: SelectedItem, snapshot: Snapshot): Conversa
   return { snapshot_id: snapshotId, kind: 'learning_step', stable_id: item.value.step_id, label: item.value.title, ...metadata };
 }
 
+function detailSelectedFor(item: SelectedItem | null, snapshot: Snapshot): ConversationSelection | null {
+  return item ? conversationSelection(item, snapshot) : null;
+}
+
 function refreshSelection(snapshot: Snapshot, project: Project, item: SelectedItem): SelectedItem | null {
   if (item.kind === 'component') {
     const value = snapshot.graph.nodes.find(node => node.id === item.value.id);
@@ -145,9 +156,23 @@ function refreshSelection(snapshot: Snapshot, project: Project, item: SelectedIt
   return value ? (value === item.value ? item : { ...item, value }) : null;
 }
 
-export type TopicRequest =
-  | { kind: 'prompt'; prompt: string }
-  | { kind: 'value-point'; stableId: string; prompt: string };
+/** What "就问这个" needs: the object as a conversation card, whether it is already attached, and how to attach it. */
+type TopicCard = { selection: ConversationSelection; attached: boolean; onAdd: (selection: ConversationSelection) => void };
+
+/** Attaches the object to the message being written, like a file added to a chat, instead of writing a prompt. */
+function AddContextButton({ topic }: { topic: TopicCard | null }) {
+  if (!topic) return null;
+  return <button type="button" className={`btn btn-primary workspace-topic-button${topic.attached ? ' attached' : ''}`}
+    disabled={topic.attached} onClick={() => topic.onAdd(topic.selection)}>
+    {topic.attached
+      ? <><CheckCircle2 size={14} /> {t('已添加到对话')}</>
+      : <><MessageSquarePlus size={14} /> {t(' 就问这个')}</>}
+  </button>;
+}
+
+export function contextKey(selection: Pick<ConversationSelection, 'kind' | 'stable_id'>): string {
+  return `${selection.kind}:${selection.stable_id}`;
+}
 
 function ComponentNode({ data, selected }: NodeProps<ComponentFlowNode>) {
   useUiLanguage();
@@ -171,7 +196,7 @@ function ComponentNode({ data, selected }: NodeProps<ComponentFlowNode>) {
       </div>
       <div className="component-node-title">{component.name}</div>
       <div className="component-node-responsibility">
-        {component.responsibility}
+        <InlineWorkspaceText text={component.responsibility} />
       </div>
       <div className="component-node-meta">
         <span>{component.member_count} {t(" 项代码")}</span>
@@ -210,7 +235,7 @@ function LayerNode({ data }: NodeProps<LayerFlowNode>) {
       </div>
       <div className="layer-node-title">{layer.name}</div>
       <div className="layer-node-description">
-        {layer.responsibility}
+        <InlineWorkspaceText text={layer.responsibility} />
       </div>
       <div className="layer-node-meta">{meta}</div>
       {data.onOverviewEnter && <button type="button" className="overview-node-enter nodrag nopan"
@@ -389,27 +414,39 @@ function InlineWorkspaceText({
   evidence?: GraphEvidence[];
   onOpenEvidence?: (item: GraphEvidence) => void;
 }): ReactNode {
+  // Model text marks identifiers with Markdown backticks; show them as code, never as raw marks.
+  const codePattern = /`([^`\n]+)`/g;
   const tokenPattern = /[A-Za-z0-9_@+$~./\\-]+(?::\d+(?:-\d+)?)?/g;
   const nodes: ReactNode[] = [];
+  const fileLabel = (key: string, value: string, reference: WorkspaceFileReference) => (
+    <WorkspaceFileLabel key={key} reference={reference} text={value} evidence={evidence} onOpenEvidence={onOpenEvidence} />
+  );
+  const pushPlain = (segment: string, offset: number) => {
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+    tokenPattern.lastIndex = 0;
+    while ((match = tokenPattern.exec(segment)) !== null) {
+      const reference = parseWorkspaceFileReference(match[0]);
+      if (!reference) continue;
+      if (match.index > cursor) nodes.push(segment.slice(cursor, match.index));
+      nodes.push(fileLabel(`${offset + match.index}:${match[0]}`, match[0], reference));
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < segment.length) nodes.push(segment.slice(cursor));
+  };
   let cursor = 0;
   let match: RegExpExecArray | null;
-  while ((match = tokenPattern.exec(text)) !== null) {
-    const reference = parseWorkspaceFileReference(match[0]);
-    if (!reference) continue;
-    if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
-    nodes.push(
-      <WorkspaceFileLabel
-        key={`${match.index}:${match[0]}`}
-        reference={reference}
-        text={match[0]}
-        evidence={evidence}
-        onOpenEvidence={onOpenEvidence}
-      />,
-    );
+  while ((match = codePattern.exec(text)) !== null) {
+    if (match.index > cursor) pushPlain(text.slice(cursor, match.index), cursor);
+    const value = match[1].trim();
+    const reference = parseWorkspaceFileReference(value);
+    nodes.push(reference
+      ? fileLabel(`${match.index}:${value}`, value, reference)
+      : <code key={`${match.index}:${value}`} className="workspace-inline-code">{value}</code>);
     cursor = match.index + match[0].length;
   }
-  if (!nodes.length) return text;
-  if (cursor < text.length) nodes.push(text.slice(cursor));
+  if (cursor < text.length) pushPlain(text.slice(cursor), cursor);
+  if (nodes.length === 1 && typeof nodes[0] === 'string') return nodes[0];
   return <>{nodes}</>;
 }
 
@@ -433,21 +470,31 @@ function DetailsPanel({
   detailStatus,
   onRetryDetail,
   onOpenEvidence,
-  onQueueTopic,
+  topic,
+  tab,
 }: {
+  tab: WorkspaceTab;
   selected: SelectedItem | null;
   detailStatus?: 'loading' | 'error';
   onRetryDetail?: () => void;
   onOpenEvidence: (evidence: GraphEvidence) => void;
-  onQueueTopic: (request: TopicRequest) => void;
+  topic: TopicCard | null;
 }) {
   useUiLanguage();
   if (!selected) {
     return (
       <div className="workspace-details-empty">
         <Focus size={22} />
-        <strong>{t("选择一个组件或关系")}</strong>
-        <span>{t("查看它的作用、相关代码和组件关系。")}</span>
+        {tab === 'architecture' ? <>
+          <strong>{t("选择一个组件或关系")}</strong>
+          <span>{t("查看它的作用、相关代码和组件关系。")}</span>
+        </> : tab === 'value-points' ? <>
+          <strong>{t("选择一个价值点")}</strong>
+          <span>{t("查看它解决的问题、实现方式和相关代码。")}</span>
+        </> : <>
+          <strong>{t("选择一个学习步骤")}</strong>
+          <span>{t("查看这一步的目标和完成检查。")}</span>
+        </>}
       </div>
     );
   }
@@ -466,11 +513,10 @@ function DetailsPanel({
       <div key={component.id} className="workspace-details-scroll" data-testid="component-details">
         <div className="workspace-detail-heading">
           <div>
-            <div className="workspace-eyebrow">{t(component.entity_kind === 'repository' ? "仓库" : "组件")}</div>
+            <div className="workspace-eyebrow">{t("组件")}</div>
             <h3>{component.name}</h3>
           </div>
         </div>
-        {component.entity_kind !== 'repository' && <>
         <section>
           <h4>{t("作用")}</h4>
           <p><InlineWorkspaceText text={component.responsibility} evidence={component.evidence} onOpenEvidence={onOpenEvidence} /></p>
@@ -486,7 +532,7 @@ function DetailsPanel({
             <p className="workspace-secondary"><InlineWorkspaceText text={component.architecture_layer_rationale} evidence={component.evidence} onOpenEvidence={onOpenEvidence} /></p>
           )}
         </section>
-        </>}
+        <AddContextButton topic={topic} />
         <section>
           <h4>{t("相关代码")}</h4>
           <EvidenceList key={component.id}
@@ -494,14 +540,6 @@ function DetailsPanel({
             onOpenEvidence={onOpenEvidence}
           />
         </section>
-        <button
-          className="btn btn-primary workspace-topic-button"
-          onClick={() => onQueueTopic({
-            kind: 'prompt',
-            prompt: t("讲讲“{0}”的作用、输入输出，以及它怎样与其他组件配合。请结合相关源码说明。", component.name),
-          })}
-        >
-          <MessageSquarePlus size={14} /> {t(" 就问这个")}</button>
       </div>
     );
   }
@@ -524,18 +562,11 @@ function DetailsPanel({
           <h4>{t("解释")}</h4>
           <p><InlineWorkspaceText text={relation.description} evidence={relation.evidence} onOpenEvidence={onOpenEvidence} /></p>
         </section>
+        <AddContextButton topic={topic} />
         <section>
           <h4>{t("代码参考")}</h4>
           <EvidenceList key={relation.id} evidence={relation.evidence} onOpenEvidence={onOpenEvidence} />
         </section>
-        <button
-          className="btn btn-primary workspace-topic-button"
-          onClick={() => onQueueTopic({
-            kind: 'prompt',
-            prompt: t("讲讲“{0}”这条关系：两端组件怎么配合？请结合相关源码说明。", relation.label),
-          })}
-        >
-          <MessageSquarePlus size={14} /> {t(" 就问这个")}</button>
       </div>
     );
   }
@@ -557,19 +588,11 @@ function DetailsPanel({
         {point.transfer_conditions && (
           <section><h4>{t("什么时候适合借鉴")}</h4><p><InlineWorkspaceText text={point.transfer_conditions} evidence={point.evidence} onOpenEvidence={onOpenEvidence} /></p></section>
         )}
+        <AddContextButton topic={topic} />
         <section>
           <h4>{t("代码参考")}</h4>
           <EvidenceList key={point.stable_id} evidence={point.evidence} onOpenEvidence={onOpenEvidence} />
         </section>
-        <button
-          className="btn btn-primary workspace-topic-button"
-          onClick={() => onQueueTopic({
-            kind: 'value-point',
-            stableId: point.stable_id,
-            prompt: t("我想学习价值点“{0}”，请从第一步带我开始，并附上相关代码位置。", point.title),
-          })}
-        >
-          <MessageSquarePlus size={14} /> {t(" 就问这个")}</button>
       </div>
     );
   }
@@ -584,16 +607,9 @@ function DetailsPanel({
         </div>
         <BookOpenCheck size={18} />
       </div>
-      <section><h4>{t("目标")}</h4><p>{step.objective}</p></section>
-      <section><h4>{t("完成检查")}</h4><p>{step.completion_check}</p></section>
-      <button
-        className="btn btn-primary workspace-topic-button"
-        onClick={() => onQueueTopic({
-          kind: 'prompt',
-          prompt: t("从第 {0} 步“{1}”开始，结合代码讲解，再检查我是否理解。", step.order, step.title),
-        })}
-      >
-        <MessageSquarePlus size={14} /> {t(" 从这一步开始")}</button>
+      <section><h4>{t("目标")}</h4><p><InlineWorkspaceText text={step.objective} /></p></section>
+      <section><h4>{t("完成检查")}</h4><p><InlineWorkspaceText text={step.completion_check} /></p></section>
+      <AddContextButton topic={topic} />
     </div>
   );
 }
@@ -992,7 +1008,7 @@ function ValuePointsView({
             <span>{String(index + 1).padStart(2, '0')}</span>
           </div>
           <h3>{point.title}</h3>
-          <p>{point.problem?.trim() || point.claim}</p>
+          <p><InlineWorkspaceText text={point.problem?.trim() || point.claim} /></p>
           <div className="value-point-card-meta">
             <span><Link2 size={12} /> {point.evidence.length} {t(" 处代码参考")}</span>
           </div>
@@ -1030,7 +1046,7 @@ function LearningPlanView({
             <div className="learning-step-index">{completed ? <CheckCircle2 size={15} /> : step.order}</div>
             <div>
               <div className="learning-step-title">{step.title}</div>
-              <p>{step.objective}</p>
+              <p><InlineWorkspaceText text={step.objective} /></p>
               <span>{step.component_ids.length} {t(" 个组件 · ")}{step.evidence_refs.length} {t(" 处代码参考")}</span>
             </div>
           </button>
@@ -1046,15 +1062,17 @@ export function RepositoryWorkspace({
   snapshot,
   project,
   onOpenEvidence,
-  onQueueTopic,
-  onSelectionChange,
+  onAddContext,
+  attachedContexts = [],
   detailsVisible = true,
 }: {
   snapshot: Snapshot;
   project: Project;
   onOpenEvidence: (evidence: GraphEvidence) => void;
-  onQueueTopic: (request: TopicRequest) => void;
-  onSelectionChange: (selection: ConversationSelection | null) => void;
+  /** Adds the object to the message being written ("就问这个"). Browsing the graph attaches nothing by itself. */
+  onAddContext: (selection: ConversationSelection) => void;
+  /** Objects already attached to that message, so their button can say so. */
+  attachedContexts?: ConversationSelection[];
   detailsVisible?: boolean;
 }) {
   const [tab, setTab] = useState<WorkspaceTab>('architecture');
@@ -1127,24 +1145,23 @@ export function RepositoryWorkspace({
     const refreshed = !snapshotChanged && selected ? refreshSelection(snapshot, project, selected) : null;
     if (refreshed) {
       if (refreshed !== selected) setSelected(refreshed);
-      onSelectionChange(conversationSelection(refreshed, snapshot));
       return;
     }
-    const item = firstTabSelection(snapshot, tab);
-    setSelected(item);
-    onSelectionChange(item ? conversationSelection(item, snapshot) : null);
-  }, [onSelectionChange, project, selected, snapshot, tab]);
+    setSelected(firstTabSelection(snapshot, tab, project));
+  }, [project, selected, snapshot, tab]);
 
-  const select = useCallback((item: SelectedItem | null) => {
-    setSelected(item);
-    onSelectionChange(item ? conversationSelection(item, snapshot) : null);
-  }, [snapshot, onSelectionChange]);
+  const select = useCallback((item: SelectedItem | null) => { setSelected(item); }, []);
+  const attachedKeys = useMemo(() => new Set(attachedContexts.map(contextKey)), [attachedContexts]);
+  const topicSelection = useMemo(() => detailSelectedFor(selected, snapshot), [selected, snapshot]);
+  const topic = useMemo<TopicCard | null>(() => topicSelection
+    ? { selection: topicSelection, attached: attachedKeys.has(contextKey(topicSelection)), onAdd: onAddContext }
+    : null, [attachedKeys, onAddContext, topicSelection]);
 
   function switchTab(next: WorkspaceTab) {
     if (next === tab) return;
     if (selected) tabSelections.current[tab] = selected;
     const saved = tabSelections.current[next];
-    const item = (saved ? refreshSelection(snapshot, project, saved) : null) ?? firstTabSelection(snapshot, next);
+    const item = (saved ? refreshSelection(snapshot, project, saved) : null) ?? firstTabSelection(snapshot, next, project);
     setTab(next);
     select(item);
   }
@@ -1228,7 +1245,8 @@ export function RepositoryWorkspace({
             detailStatus={detailStatus}
             onRetryDetail={retryDetail}
             onOpenEvidence={onOpenEvidence}
-            onQueueTopic={onQueueTopic}
+            topic={topic}
+            tab={tab}
           />
         </aside>
       </div>

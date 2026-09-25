@@ -47,7 +47,7 @@ export function useWorkspaceSplit(enabled: boolean) {
   }, [stopMotion]);
   const animateClosed = useCallback((from: number) => {
     stopMotion(); value.current = from;
-    if (from >= 1 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (from >= 1) {
       settle(1); return;
     }
     snap.current = { from, startedAt: performance.now() };

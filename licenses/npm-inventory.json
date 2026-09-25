@@ -13,11 +13,11 @@
     },
     {
       "path": "web/package.json",
-      "sha256": "3aed45fd51c8c840cfdaec5897ac0ebad61640447c4392b362b4a648f10fbfdb"
+      "sha256": "db386953091d31f8e8b726403e8a35630e6bbdb028322e9c8749838e675409e2"
     },
     {
       "path": "web/package-lock.json",
-      "sha256": "2edaa11690888a4a4445641dfa544e7755c2e568f72a914c777d07ad1ff3b570"
+      "sha256": "7e9862690b4817439ab3552416bbd88514f3b7673a62a5c0748031e93746d9ab"
     },
     {
       "path": "evolution/pi/package.json",
@@ -2192,62 +2192,6 @@
           "path": "licenses/npm/d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665.txt",
           "sha256": "d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665",
           "source": "npm:@csstools/css-tokenizer@3.0.4/LICENSE.md"
-        }
-      ]
-    },
-    {
-      "name": "@dagrejs/dagre",
-      "version": "3.1.1",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "https://github.com/dagrejs/dagre.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40dagrejs%2Fdagre/3.1.1",
-      "integrity": "sha512-zroZB1dFOFiGgv4Xcrn1DckB1o4aOikPqD2NDQPV0WM//CXGcS6xiD0rNkqHmw6FEg4tabt4nxPLwgCWT+Vb2A==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@dagrejs/dagre",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015.txt",
-          "sha256": "6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015",
-          "source": "npm:@dagrejs/dagre@3.1.1/LICENSE"
-        }
-      ]
-    },
-    {
-      "name": "@dagrejs/graphlib",
-      "version": "4.0.5",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "https://github.com/dagrejs/graphlib.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/%40dagrejs%2Fgraphlib/4.0.5",
-      "integrity": "sha512-7xrBTqIts3o+PMUZX97wSc+7TUbW+/rULzGNCTP6yooNVDXbzw4Wutg/H/xOutTB/c/k0YqOAavgPh4/Zk9PFA==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/@dagrejs/graphlib",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015.txt",
-          "sha256": "6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015",
-          "source": "npm:@dagrejs/graphlib@4.0.5/LICENSE"
         }
       ]
     },
@@ -12770,34 +12714,6 @@
       ]
     },
     {
-      "name": "hachure-fill",
-      "version": "0.5.2",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/pshihn/hachure-fill.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/hachure-fill/0.5.2",
-      "integrity": "sha512-3GKBOn+m2LX9iq+JC1064cSFprJY4jL1jCXTcpnfER5HYE2l/4EfWSGzkPa/ZDBmYI0ZOEj5VHV/eKnPGkHuOg==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/hachure-fill",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/5e807b516a9be9229ed459880bf353a336e2d947867247290680d437017be391.txt",
-          "sha256": "5e807b516a9be9229ed459880bf353a336e2d947867247290680d437017be391",
-          "source": "npm:hachure-fill@0.5.2/LICENSE"
-        }
-      ]
-    },
-    {
       "name": "has-symbols",
       "version": "1.1.0",
       "license": "MIT",
@@ -16877,34 +16793,6 @@
       ]
     },
     {
-      "name": "path-data-parser",
-      "version": "0.1.0",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/pshihn/path-data-parser.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/path-data-parser/0.1.0",
-      "integrity": "sha512-NOnmBpt5Y2RWbuv0LMzsayp3lVylAHLPUTut412ZA3l+C4uw4ZVkQbjShYCQ8TCpUMdPapr4YjUqLYD6v68j+w==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/path-data-parser",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71.txt",
-          "sha256": "e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71",
-          "source": "npm:path-data-parser@0.1.0/LICENSE"
-        }
-      ]
-    },
-    {
       "name": "path-expression-matcher",
       "version": "1.5.0",
       "license": "MIT",
@@ -17620,62 +17508,6 @@
           "path": "licenses/npm/6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d.txt",
           "sha256": "6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d",
           "source": "npm:playwright@1.62.1/NOTICE"
-        }
-      ]
-    },
-    {
-      "name": "points-on-curve",
-      "version": "0.2.0",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/pshihn/bezier-points.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/points-on-curve/0.2.0",
-      "integrity": "sha512-0mYKnYYe9ZcqMCWhUjItv/oHjvgEsfKvnUTg8sAtnHr3GVy7rGkXCb6d5cSyqrWqL4k81b9CPg3urd+T7aop3A==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/points-on-curve",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71.txt",
-          "sha256": "e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71",
-          "source": "npm:points-on-curve@0.2.0/LICENSE"
-        }
-      ]
-    },
-    {
-      "name": "points-on-path",
-      "version": "0.2.1",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/pshihn/points-on-path.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/points-on-path/0.2.1",
-      "integrity": "sha512-25ClnWWuw7JbWZcgqY/gJ4FQWadKxGWk+3kR/7kD0tCaDtPPMj7oHu2ToLaVhfpnHrZzYby2w6tUA0eOIuUg8g==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/points-on-path",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/b6fc1f7f1d96a48bc97176f3dcef959e364c5c17ba44167511de421500a86c6c.txt",
-          "sha256": "b6fc1f7f1d96a48bc97176f3dcef959e364c5c17ba44167511de421500a86c6c",
-          "source": "npm:points-on-path@0.2.1/LICENSE"
         }
       ]
     },
@@ -18911,34 +18743,6 @@
           "path": "licenses/npm/fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8.txt",
           "sha256": "fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8",
           "source": "npm:rollup@4.62.4/LICENSE.md"
-        }
-      ]
-    },
-    {
-      "name": "roughjs",
-      "version": "4.6.6",
-      "license": "MIT",
-      "additionalLicenses": [],
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/pshihn/rough.git"
-      },
-      "metadataSource": "https://registry.npmjs.org/roughjs/4.6.6",
-      "integrity": "sha512-ZUz/69+SYpFN/g/lUlo2FXcIjRkSu3nDarreVdGGndHEBJ6cXPdKguS8JGxwj5HA5xIbVKSmLgr5b3AWxtRfvQ==",
-      "uses": [
-        {
-          "scope": "web",
-          "location": "node_modules/roughjs",
-          "dev": false,
-          "optional": false
-        }
-      ],
-      "noticeStatus": "notice-collected",
-      "notices": [
-        {
-          "path": "licenses/npm/dca9a392272606ac748ac0976a2a1133f14eef841c27beaa51a844d53c56a09d.txt",
-          "sha256": "dca9a392272606ac748ac0976a2a1133f14eef841c27beaa51a844d53c56a09d",
-          "source": "npm:roughjs@4.6.6/LICENSE"
         }
       ]
     },

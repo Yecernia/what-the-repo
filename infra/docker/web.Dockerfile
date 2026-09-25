@@ -5,7 +5,8 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY web ./
 ARG VITE_ICP_RECORD=
-RUN VITE_ICP_RECORD="$VITE_ICP_RECORD" npm run build
+ARG VITE_PUBLIC_SECURITY_RECORD=
+RUN VITE_ICP_RECORD="$VITE_ICP_RECORD" VITE_PUBLIC_SECURITY_RECORD="$VITE_PUBLIC_SECURITY_RECORD" npm run build
 
 FROM nginx:1.27.4-alpine
 

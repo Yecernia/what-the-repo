@@ -27,6 +27,7 @@ import {
   type TeachingWorkerTrace,
 } from "./teaching-workers.js";
 import { createLearningActionProposal } from "./learning-actions.js";
+import { isExplicitAdvanceRequest, learningStatusText } from "./prompts.js";
 import { readSourcePage } from "./source-read.js";
 import { STATIC_FILE_INPUT, staticFilePage } from "./static-file-facts.js";
 
@@ -104,7 +105,8 @@ export interface ConversationToolContext {
   profile: LearnerProfile;
   agentMemories: PiMemoryRecord[];
   store: ProductStore;
-  selected: { snapshot_id: string; kind: string; stable_id: string; label: string } | null;
+  /** Graph objects the learner attached to the current message (possibly none). */
+  selected: Array<{ snapshot_id: string; kind: string; stable_id: string; label: string }>;
   exposedEvidence: Map<string, SnapshotEvidence>;
   exposedPaths: Set<string>;
   toolsUsed: string[];
@@ -133,7 +135,7 @@ export function createFeedbackHintTool(holder: FeedbackHintHolder): AgentTool {
   return {
     name: "report_feedback_hint",
     label: "记录反馈候选",
-    description: "当当前用户消息可能是在评价上一条回答时，提交一个简短候选；普通追问、换话题或继续学习不要调用。调用后仍要正常回答用户。",
+    description: "Submit a short candidate when the current message may be evaluating your previous answer. Do not call it for follow-up questions, topic changes or continued learning. Still answer the user normally afterwards.",
     parameters: FEEDBACK_HINT_SCHEMA,
     execute: async (_toolCallId, params) => {
       acceptFeedbackHint(holder, params as Static<typeof FEEDBACK_HINT_SCHEMA>);
@@ -346,11 +348,11 @@ export function createConversationTools(
   const overview = call(
     "get_project_overview",
     "正在读取项目概览",
-    "读取项目规模、语言质量、组件和已有价值点。普通聊天不需要调用。",
+    "Read the project's size, language coverage, components and discovered value points. Not needed for ordinary chat.",
     EMPTY_INPUT,
     async () => {
       const summary = await compactSummary();
-      if (!summary) return errorResult("get_project_overview", "项目分析尚未完成。");
+      if (!summary) return errorResult("get_project_overview", "The project analysis has not finished.");
       const points = bounded(summary.value_points, 8).map((point) => ({
         stable_id: point.stable_id,
         title: point.title,
@@ -382,11 +384,11 @@ export function createConversationTools(
   const values = call(
     "list_value_points",
     "正在整理值得学习的项目价值点",
-    "列出分析快照中全部已发现的价值点；数量由仓库内容决定。",
+    "List every value point discovered in the analysis snapshot; the number depends on the repository.",
     VALUE_POINT_INPUT,
     async (_id, params, signal) => {
       const summary = await compactSummary();
-      if (!summary) return errorResult("list_value_points", "项目分析尚未完成。");
+      if (!summary) return errorResult("list_value_points", "The project analysis has not finished.");
       const limit = Number((params as { limit?: number }).limit ?? (summary.value_points.length || 1));
       const rows = bounded(summary.value_points, Math.min(limit, 8)).map((point) => ({
         ...point,
@@ -403,12 +405,12 @@ export function createConversationTools(
   const query = call(
     "query_code_evidence",
     "正在检索代码证据",
-    "按关键词、路径、语言、组件或关系查询证据图谱。回答仓库事实前先调用。",
+    "Query the evidence graph by keyword, path, language, component or relation. Call it before stating repository facts.",
     EVIDENCE_QUERY_INPUT,
     async (_id, params, signal) => {
       const snapshot = publicSnapshotKey && snapshotId ? null : await fullSnapshot();
       if (!(publicSnapshotKey && snapshotId) && !snapshot) {
-        return errorResult("query_code_evidence", "完整证据图谱暂不可用。");
+        return errorResult("query_code_evidence", "The full evidence graph is not available right now.");
       }
       if (publicSnapshotKey && snapshotId) await context.assertSnapshotBinding?.();
       const input = params as {
@@ -493,22 +495,21 @@ export function createConversationTools(
   const component = call(
     "get_component_context",
     "正在查询组件职责和相邻关系",
-    "读取当前图选择的组件或精确关系；不会读取任意源码。",
+    "Read a component or an exact relation, defaulting to the first one the learner attached. It does not read arbitrary source.",
     COMPONENT_INPUT,
     async (_id, params) => {
       const snapshot = await fullSnapshot();
-      if (!snapshot) return errorResult("get_component_context", "项目分析尚未完成。");
+      if (!snapshot) return errorResult("get_component_context", "The project analysis has not finished.");
       const input = params as { component_id?: string; relation_id?: string };
-      const selected = context.selected?.snapshot_id === snapshot.snapshot_id
-        ? context.selected
-        : null;
+      const selected = context.selected.filter((item) => item.snapshot_id === snapshot.snapshot_id);
+      // Without an explicit id, fall back to the attached component or relation (the first, if several).
       const componentId = input.component_id
-        ?? (selected?.kind === "component" ? selected.stable_id : undefined);
+        ?? selected.find((item) => item.kind === "component")?.stable_id;
       const relationId = input.relation_id
-        ?? (selected?.kind === "relation" ? selected.stable_id : undefined);
+        ?? selected.find((item) => item.kind === "relation")?.stable_id;
       if (componentId) {
         const node = nodeById(snapshot, componentId);
-        if (!node) return errorResult("get_component_context", "找不到这个组件。");
+        if (!node) return errorResult("get_component_context", "No such component in this snapshot.");
         return textResult(
           "get_component_context",
           { ok: true, component: componentPayload(context, snapshot, node) },
@@ -517,7 +518,7 @@ export function createConversationTools(
       }
       if (relationId) {
         const edge = edgeById(snapshot, relationId);
-        if (!edge) return errorResult("get_component_context", "找不到这条关系。");
+        if (!edge) return errorResult("get_component_context", "No such relation in this snapshot.");
         const source = nodeById(snapshot, edge.source);
         const target = nodeById(snapshot, edge.target);
         const evidence = expose(context, bounded(edge.evidence, 8));
@@ -539,14 +540,14 @@ export function createConversationTools(
           { evidence_ids: evidence.map((row) => row.stable_id) },
         );
       }
-      return errorResult("get_component_context", "需要提供组件或关系 ID。");
+      return errorResult("get_component_context", "Provide a component or relation ID, or have the learner attach one.");
     },
   );
 
   const source = call(
     "read_source_excerpt",
     "正在读取有限源码片段",
-    "按 1-based offset/limit 读取已经由证据工具暴露的安全源码；truncated 时根据 next_offset 继续。",
+    "Read source that an evidence tool has already exposed, using a 1-based offset and limit. When truncated, continue from next_offset only if needed.",
     SOURCE_INPUT,
     async (_id, params) => {
       const input = params as { path: string; offset?: number; limit?: number };
@@ -559,12 +560,12 @@ export function createConversationTools(
       ) {
         return errorResult(
           "read_source_excerpt",
-          "请先通过证据或组件工具取得这个文件路径。",
+          "Expose this file path with an evidence or component tool first.",
         );
       }
       const currentSnapshotId = publicSnapshotKey && snapshotId
         ? snapshotId : (await fullSnapshot())?.snapshot_id;
-      if (!currentSnapshotId) return errorResult("read_source_excerpt", "源码快照暂不可用。");
+      if (!currentSnapshotId) return errorResult("read_source_excerpt", "The source snapshot is not available right now.");
       if (publicSnapshotKey) await context.assertSnapshotBinding?.();
       try {
         const result = await readSourcePage({
@@ -589,7 +590,7 @@ export function createConversationTools(
           { evidence_ids: evidence.map((row) => row.stable_id), paths: [normalized] },
         );
       } catch {
-        return errorResult("read_source_excerpt", "这段源码暂时无法安全读取。");
+        return errorResult("read_source_excerpt", "This source range cannot be read safely right now.");
       }
     },
     "sequential",
@@ -598,17 +599,17 @@ export function createConversationTools(
   const staticFacts = call(
     "get_static_file_facts",
     "正在查询文件的静态调用与导入",
-    "分页读取已由证据或组件工具暴露的文件的调用点、导入或导出。保留未解析、候选、外部依赖与标准库状态；静态绑定不证明唯一运行时目标。query是表达式/模块名的字面包含匹配。offset从0开始。",
+    "Page through call sites, imports or exports of a file already exposed by an evidence or component tool. Unresolved, candidate, external and standard-library states are preserved; a static binding does not prove a unique runtime target. query is a literal substring match on an expression or module name. offset starts at 0.",
     STATIC_FILE_INPUT,
     async (_id, params) => {
       const input = params as Static<typeof STATIC_FILE_INPUT>;
       const path = input.path.replaceAll("\\", "/");
       if (!context.exposedPaths.has(path) || path.startsWith("/") || path.split("/").includes("..")) {
-        return errorResult("get_static_file_facts", "请先通过证据或组件工具取得这个文件路径。");
+        return errorResult("get_static_file_facts", "Expose this file path with an evidence or component tool first.");
       }
       const snapshot = publicSnapshotKey && snapshotId ? null : await fullSnapshot();
       const currentSnapshotId = publicSnapshotKey && snapshotId ? snapshotId : snapshot?.snapshot_id;
-      if (!currentSnapshotId) return errorResult("get_static_file_facts", "请先通过证据或组件工具取得这个文件路径。");
+      if (!currentSnapshotId) return errorResult("get_static_file_facts", "Expose this file path with an evidence or component tool first.");
       if (publicSnapshotKey) await context.assertSnapshotBinding?.();
       const indexed = snapshot?.static_analysis?.files.find(file => file.path === path)
         ?? await context.store.readStaticFile(context.project.project_id, currentSnapshotId, path);
@@ -623,11 +624,11 @@ export function createConversationTools(
   const learning = call(
     "get_learning_context",
     "正在读取学习路线和进度",
-    "读取持久化学习进度；读取本身不会修改状态。",
+    "Read the saved learning route and progress. Reading changes nothing. Describe the result to the learner in plain words (see plain_status); never quote its field names or values.",
     EMPTY_INPUT,
     async () => {
       const snapshot = await fullSnapshot();
-      if (!snapshot) return errorResult("get_learning_context", "学习路线尚未生成。");
+      if (!snapshot) return errorResult("get_learning_context", "No learning route has been generated yet.");
       const plan = {
         ...snapshot.learning_plan,
         steps: context.project.study.dynamic_learning_plan?.length
@@ -657,6 +658,7 @@ export function createConversationTools(
         "get_learning_context",
         {
           ok: true,
+          plain_status: learningStatusText(context.project.study),
           study: context.project.study,
           learning_plan: { ...plan, steps: plan.steps.slice(0, 8) },
           has_active_route: plan.steps.length > 0 && context.project.study.phase !== "completed",
@@ -679,14 +681,14 @@ export function createConversationTools(
   const profile = call(
     "get_learner_profile",
     "正在读取学习画像",
-    "读取用户已启用的明确画像和带来源的推断画像。",
+    "Read the learner's explicit profile and sourced inferences, when the learner has enabled the profile.",
     EMPTY_INPUT,
     async () => {
       if (!context.profile.enabled) {
         return textResult("get_learner_profile", {
           ok: true,
           enabled: false,
-          message: "用户已关闭学习画像，本轮不使用画像内容。",
+          message: "The learner has turned the profile off; do not use profile content this turn.",
         });
       }
       return textResult("get_learner_profile", {
@@ -713,18 +715,18 @@ export function createConversationTools(
   const assessment = call(
     "assess_understanding",
     "正在判断当前理解和遗漏",
-    "仅在用户回答当前学习步骤的理解检验时调用。原始回答由程序绑定；评估只返回判断，不推进课程。",
+    "Call only when the learner is answering the current step's check question. The program binds their original answer; the assessment returns a judgment and never advances the course.",
     ASSESSMENT_INPUT,
     async (_id, params, signal) => {
       const snapshot = await fullSnapshot();
-      if (!snapshot) return errorResult("assess_understanding", "学习路线尚未生成。");
+      if (!snapshot) return errorResult("assess_understanding", "No learning route has been generated yet.");
       if (
         !context.project.study.dynamic_learning_plan?.length
         || context.project.study.current_step >= context.project.study.dynamic_learning_plan.length
       ) {
         return errorResult(
           "assess_understanding",
-          "当前没有可评估的学习步骤，学习进度没有改变。",
+          "There is no current learning step to assess; progress is unchanged.",
         );
       }
       const input = params as { evidence_ids?: string[] };
@@ -732,7 +734,7 @@ export function createConversationTools(
       if (!rows.length) {
         return errorResult(
           "assess_understanding",
-          "请先读取当前学习步骤和证据，再判断理解。",
+          "Read the current learning step and its evidence before assessing.",
         );
       }
       const result = await (context.workerServices?.assess ?? runUnderstandingAssessment)({
@@ -748,7 +750,7 @@ export function createConversationTools(
       if (!result.completed || !result.feedback || !result.verdict) {
         return errorResult(
           "assess_understanding",
-          "这次理解判断没有形成可靠结果，学习进度保持不变。",
+          "The assessment did not produce a reliable result; progress is unchanged.",
         );
       }
       context.assessment.value = {
@@ -781,15 +783,15 @@ export function createConversationTools(
   const proposeLearningAction = call(
     "propose_learning_action",
     "正在准备学习选择卡片",
-    "提出开始路线、切换目标、进入下一步或停止引导的动作建议；开始路线、切换目标和停止引导需要确认卡。用户已经明确要求直接进入下一步时，Supervisor 会把该建议记录为 skipped_steps 并直接推进；工具本身不生成路线、不评估理解、不修改状态。",
+    "Propose starting a route, switching the target, advancing to the next step or stopping guided learning. Starting, switching and stopping always show the learner a confirmation card; a normal advance after mastery does too. When the current message explicitly asks to go straight to the next step, the program records the proposal as a skipped step after the turn. The tool itself never builds a route, assesses understanding or changes state.",
     LEARNING_ACTION_INPUT,
     async (_id, params) => {
       const snapshot = await fullSnapshot();
-      if (!snapshot) return errorResult("propose_learning_action", "项目分析尚未完成。");
+      if (!snapshot) return errorResult("propose_learning_action", "The project analysis has not finished.");
       if (context.pendingLearningAction.value) {
         return errorResult(
           "propose_learning_action",
-          "本轮已经提出一个学习选择，不能重复创建卡片。",
+          "A learning action was already proposed this turn; only one card per turn.",
         );
       }
       const input = params as {
@@ -820,22 +822,29 @@ export function createConversationTools(
       } catch {
         return errorResult(
           "propose_learning_action",
-          "这个学习动作或目标与当前快照、路线不匹配。",
+          "This action or target does not match the current snapshot or route.",
         );
       }
+      // An explicit "go straight to the next step" in this message is applied after the turn without a card
+      // confirmation; every other proposal waits for the learner.
+      const appliedAfterTurn = Boolean(context.pendingLearningAction.value.skip_understanding_check)
+        && isExplicitAdvanceRequest(context.currentUserMessage);
       return textResult(
         "propose_learning_action",
         {
           ok: true,
           proposal: {
-            action_id: context.pendingLearningAction.value.action_id,
             action: context.pendingLearningAction.value.action,
-            target: context.pendingLearningAction.value.target,
-            title: context.pendingLearningAction.value.title,
+            target_label: context.pendingLearningAction.value.target?.label ?? null,
             skipped_understanding_check: context.pendingLearningAction.value.skip_understanding_check ?? false,
           },
           state_changed: false,
-          confirmation_required: true,
+          confirmation_required: !appliedAfterTurn,
+          for_reply: appliedAfterTurn
+            ? "The step will be recorded as skipped (not mastered) once this reply completes; the learner can revisit it. "
+              + "Say so in plain words. Do not mention this tool, the action name or any ID."
+            : "The interface shows a confirmation card under your reply. In one or two plain sentences, say what confirming "
+              + "will do and that nothing changes until the learner confirms. Do not repeat the card title, action name or any ID.",
         },
         {
           state_changed: false,

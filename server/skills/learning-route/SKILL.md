@@ -1,46 +1,40 @@
 ---
 name: learning-route
-description: 把用户已确认的系统学习目标转成由真实组件和证据支撑的动态阅读路线；不用于普通问答或自动推进课程。
+description: Turn a learning target the learner has confirmed into a reading route backed by real components and evidence; not for ordinary questions or for advancing a course automatically.
 ---
 
 # Learning Route
 
-你只处理已经通过结构化确认卡批准的目标。路线是帮助学习者建立可复述心智模型的主线，不是目录清单，也不直接改变学习状态。
+You only handle a target the learner has already approved through a confirmation card. A route is the main thread that lets a learner build a mental model they can explain back; it is not a table of contents, and building it does not change learning state.
 
-## 用户可见语言
+## Learner-visible language
 
-- 输入中的 `display_language` 是本轮用户可见语言。`title`、`objective` 和 `completion_check` 必须使用该语言。
-- 文件路径、符号名、包名、命令和代码片段保持原样并嵌在目标语言说明中；不要把技术标识翻译成不存在的名字。
-- 语言不匹配不能成为删除步骤或返回空路线的理由；收到提交语言校验错误时，保留 component/Evidence 绑定并改写自然语言字段后重新提交。
-- 只有证据不足时才减少步骤或返回空路线，也不要用通用教材填充。
+- `display_language` in the input is the learner's language for this route. Write `title`, `objective` and `completion_check` in it.
+- Keep file paths, symbols, package names, commands and code exactly as they are, embedded in sentences of the target language. Do not translate a technical identifier into a name that does not exist.
+- These fields are read by a learner, not by the program: describe goals and checks in ordinary words, and never put component IDs, evidence IDs, tool names or schema field names into them.
+- A language mismatch is never a reason to drop steps or return an empty route. When submission reports a language error, keep the component and evidence bindings, rewrite the natural-language fields and submit again.
+- Reduce steps or return an empty route only when evidence is insufficient, and never pad with generic textbook material.
 
-## 取证
+## Gather evidence
 
-1. 先解释 `confirmed_target` 的边界：repository 需要找到能说明主流程的入口；value point 需要围绕其实现；component 或 layer 只在目标范围内展开。
-2. 用 `list_repository_components` 分页建立候选地图，遇到 `next_offset` 继续；用 `get_repository_component` 分页看成员/关系，用 `query_repository_relations` 追踪输入到输出的协作。
-3. 用 `get_repository_evidence` 核对 Evidence ID。知道文件但不知道实现行号时，先用 `get_repository_file_outline` 定位，再用 `read_repository_source` 读取目标与必要上下文；首次访问成员文件时两工具均提供 `component_id` 和 `path`，不必先翻成员页。源码 `next_offset` 只表示还有后文，仅待核对问题跨页时续读，不能凭未读部分补因果，也不机械通读全文件。
-4. 目标范围不应阻止理解必要的外部邻居；可以读取邻居摘要和关系，但路线步骤的 component ID 必须来自当前快照并服务于已确认目标。
+1. Interpret the scope of `confirmed_target` first. A repository target needs the entry points that reveal the main flow; a value point needs its implementation; a component or layer is explored inside its own boundary.
+2. Build a candidate map by paging through `list_repository_components` until there is no `next_offset`. Page members and relations with `get_repository_component`, and follow collaborations from input to output with `query_repository_relations`.
+3. Confirm evidence IDs with `get_repository_evidence`. When you know a file but not where the implementation is, locate it with `get_repository_file_outline`, then read the target and the context it needs with `read_repository_source`. On first access to a member file, pass both `component_id` and `path`; you do not need to page members first. A source `next_offset` only means more text exists: continue when the open question crosses the page, never infer cause from unread lines, and do not read whole files mechanically.
+4. The target's scope must not prevent understanding a necessary neighbour. You may read neighbour summaries and relations, but every step's component ID must come from the current snapshot and serve the confirmed target.
+5. Preserve the granularity the learner asked for. If they asked to learn the whole project, `confirmed_target` may be a reasonable component starting point, but do not silently narrow a repository-level intent to "just this component". State the starting point, the coverage and the plan to return to the main runtime path in the route metadata or the first step. Narrow the scope only when the learner explicitly chose one component or value point.
 
-5. 先保存用户表达的目标粒度。用户说“完整学习项目”时，`confirmed_target` 可以是一个合理的组件起点，
-   但不能把仓库级意图静默改写成“只学这个组件”。在路线元数据或首步说明中写出起点选择、覆盖范围和后续回到
-   主运行链的计划；用户明确只学某个组件/价值点时才收窄范围。
+## Plan
 
-## 规划
+- Decide the target question and its prerequisites first, then form a traceable main thread through entry points, collaboration, state and side effects. Do not follow architecture layers by rote.
+- Each step answers one question and binds the smallest set of component and evidence IDs. `objective` states the connection the step builds; `completion_check` asks the learner to explain, in their own words, the goal, flow, evidence or boundary.
+- Adapt the starting point and step size to the learner profile; skip repeated, irrelevant or premature detail. Dependencies decide the number of steps; there is no fixed count.
+- Every step must be backed by components and evidence in the current snapshot. Drop any step you cannot support.
+- A repository-level route first establishes one traceable backbone: project identity and entry → core orchestration or runtime → key state and side effects → testing or deployment boundary. Workspace, build, lint or release configuration belongs only where it explains a necessary part of that backbone; easy evidence is not a reason to fill the route with it.
+- Check coverage before submitting: does each step answer a different question, does each depend on the one before, is there at least one core-behaviour step rather than only configuration, and can the learner use each check to restate facts, order and known unknowns? If the route drifts into a configuration list, query the core components and relations again and reorder instead of submitting the first draft.
+- When a repository-level target can only start from one component, the first step may cover entry or configuration, but later steps must follow what that entry calls. Never present a component-level start as full-project coverage.
 
-- 先确定目标问题和必要前置，再形成一条入口/协作/状态/副作用的可追踪主线；不要固定按架构层顺序。
-- 每步只解决一个问题，绑定最小的 component ID 和 Evidence ID。`objective` 写本步建立的联系，`completion_check` 要求用户用自己的话说明目标、流程、证据或边界。
-- 根据用户画像调整起点和步幅，跳过重复、无关或过早细节。步数由依赖关系决定，不设固定数量。
-- 每个步骤都必须能在当前快照中找到组件和 Evidence；无法证明的步骤删除，不用通用教材填充。
-- 仓库级路线至少先建立一条可追踪主干：项目身份/入口 → 核心编排或运行时 → 关键状态/副作用 → 测试或部署边界。
-  workspace、构建、lint、发布等配置步骤只有在解释这条主干的必要关系时加入，不能因为证据容易取得就占满路线。
-- 路线生成后做一次覆盖自检：每步是否回答一个不同问题，是否存在从前一步到后一步的依赖，是否有至少一个核心
-  行为步骤而不全是配置介绍，是否能让用户通过 `completion_check` 复述事实、顺序和未知边界。发现路线偏向配置清单时，
-  继续查询核心组件/关系并重排，而不是直接提交第一版。
-- 当仓库级目标暂时只能从组件开始时，首步可以是入口/配置，但后续步骤要主动追踪入口调用的核心组件；不能把
-  “组件级起点”误写成“完整项目已经覆盖”。
+## Gaps and stopping
 
-## 不足与停止
+Complete the narrower route the evidence supports. If evidence cannot support any reliable step, return empty `steps` and keep the gap visible. Web pages, READMEs, component names or model knowledge alone are not route evidence. Stop when the target's main thread is covered and further queries would only repeat it.
 
-先完成能由证据支持的窄路线；如果证据不足以支撑任何可靠步骤，返回空 `steps` 并保留缺口。网页、README、组件名称或模型常识不能单独成为路线证据。已覆盖目标主线且新增查询只会重复时停止。
-- 如果某批 Evidence 或源码读取失败，保留已确认步骤并标明缺口；不要用相邻配置文件填满步数，也不要把 Provider
-  失败写成“仓库没有这条主线”。
+If a batch of evidence or a source read fails, keep the confirmed steps and mark the gap. Do not fill the step count with neighbouring configuration files, and do not report a provider failure as "the repository has no such flow".

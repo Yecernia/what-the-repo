@@ -4,8 +4,6 @@ Original project code: MIT, copyright 2026 Yecernia.
 Third-party materials retain their own terms. Logos do not imply endorsement.
 
 Browser runtime dependencies (unmodified npm packages):
-@dagrejs/dagre@3.1.1: MIT
-@dagrejs/graphlib@4.0.5: MIT
 @sketchyicons/react@0.5.0: MIT
 @types/d3-color@3.1.3: MIT
 @types/d3-drag@3.0.7: MIT
@@ -52,7 +50,6 @@ devlop@1.1.0: MIT
 escape-string-regexp@5.0.0: MIT
 estree-util-is-identifier-name@3.0.0: MIT
 extend@3.0.2: MIT
-hachure-fill@0.5.2: MIT
 hast-util-to-jsx-runtime@2.3.6: MIT
 hast-util-whitespace@3.0.0: MIT
 highlight.js@11.12.0: BSD-3-Clause
@@ -110,9 +107,6 @@ micromark-util-types@2.0.2: MIT
 micromark@4.0.2: MIT
 ms@2.1.3: MIT
 parse-entities@4.0.2: MIT
-path-data-parser@0.1.0: MIT
-points-on-curve@0.2.0: MIT
-points-on-path@0.2.1: MIT
 property-information@7.2.0: MIT
 react-dom@19.2.8: MIT
 react-markdown@10.1.0: MIT
@@ -121,7 +115,6 @@ remark-gfm@4.0.1: MIT
 remark-parse@11.0.0: MIT
 remark-rehype@11.1.2: MIT
 remark-stringify@11.0.0: MIT
-roughjs@4.6.6: MIT
 scheduler@0.27.0: MIT
 space-separated-tokens@2.0.2: MIT
 stringify-entities@4.0.4: MIT
@@ -179,6 +172,7 @@ The table below lists the icons, fonts and illustrations used in the product. [a
 | `web/public/file-icons/iconpark/` | [IconPark](https://github.com/bytedance/IconPark), [Apache-2.0](upstream/iconpark.txt); theme coloring is adapted |
 | `web/public/providers/` | [LobeHub Icons](upstream/lobehub-icons.txt) and [SVGL](upstream/svgl.txt), MIT; per-file sources and matching evidence are in the inventory |
 | `web/public/github.svg` | [Simple Icons](https://simpleicons.org/), [CC0](upstream/simple-icons-cc0.txt), with its [brand disclaimer](upstream/simple-icons-disclaimer.md) |
+| `web/public/public-security-filing.png` | [National Internet Security Management Service Platform](https://beian.mps.gov.cn/); official filing badge, used unmodified solely beside the configured filing number; see [usage notice](upstream/public-security-filing.txt) |
 | `web/public/fonts/JasonHandwriting6p.woff2` | [Jason / Yu Ching Sung](https://github.com/jasonhandwriting/JasonHandwriting), [SIL OFL 1.1](upstream/jason-handwriting.txt); retained for the existing README wordmark artwork |
 | `web/public/fonts/JasonHandwriting9p.ttf` | [Jason / Yu Ching Sung](https://github.com/jasonhandwriting/JasonHandwriting), [SIL OFL 1.1](upstream/jason-handwriting.txt); official proportional 9p font bundled unmodified for the live handwritten UI |
 | Sketchy Icons used in the frontend | [Sketchy Icons NOTICE](upstream/sketchyicons-NOTICE.txt), which preserves Lucide ISC and Feather MIT notices in addition to Sketchy Icons MIT |
@@ -737,33 +731,6 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ============================================================
-licenses/npm/5e807b516a9be9229ed459880bf353a336e2d947867247290680d437017be391.txt
-============================================================
-
-MIT License
-
-Copyright (c) 2023 Preet Shihn
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-============================================================
 licenses/npm/63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf.txt
 ============================================================
 
@@ -816,31 +783,6 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-
-
-============================================================
-licenses/npm/6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015.txt
-============================================================
-
-Copyright (c) 2012-2014 Chris Pettitt
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
 
 
 ============================================================
@@ -1206,33 +1148,6 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ============================================================
-licenses/npm/b6fc1f7f1d96a48bc97176f3dcef959e364c5c17ba44167511de421500a86c6c.txt
-============================================================
-
-MIT License
-
-Copyright (c) 2020 Preet
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-============================================================
 licenses/npm/b989d9085148d21ff64a75e14462aefa06b2589a55553b07b1460c70081c7d08.txt
 ============================================================
 
@@ -1463,33 +1378,6 @@ PERFORMANCE OF THIS SOFTWARE.
 
 
 ============================================================
-licenses/npm/dca9a392272606ac748ac0976a2a1133f14eef841c27beaa51a844d53c56a09d.txt
-============================================================
-
-MIT License
-
-Copyright (c) 2019 Preet Shihn
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-============================================================
 licenses/npm/dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb.txt
 ============================================================
 
@@ -1561,33 +1449,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
-
-
-============================================================
-licenses/npm/e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71.txt
-============================================================
-
-MIT License
-
-Copyright (c) 2020 Preet Shihn
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 
 
 ============================================================
@@ -2006,6 +1867,26 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+============================================================
+licenses/upstream/public-security-filing.txt
+============================================================
+
+Official public security website filing badge
+
+Source: https://beian.mps.gov.cn/web/assets/logo01.6189a29f.png
+Retrieved: 2026-09-24
+
+The National Internet Security Management Service Platform provides this badge
+for display immediately before an approved website filing number in the footer.
+The original PNG is bundled unmodified for that identification purpose only.
+No open-source license is asserted for this official emblem. It is not covered
+by the project's MIT license and must not be used as project branding or to
+imply endorsement. Display is conditional on a configured filing record.
+
+Official instructions:
+https://ga.sz.gov.cn/ZT/HLWSYSQ/WSBLLC/content/post_10206896.html
 
 
 ============================================================

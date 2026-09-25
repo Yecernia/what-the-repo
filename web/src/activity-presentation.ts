@@ -122,7 +122,7 @@ export const phaseIcons: Record<ActivityPhaseKey, ActivityIconName> = {
 
 export const analysisIcons: Record<string, ActivityIconName> = {
   ...Object.fromEntries(detailedAnalysisStages.map(stage => [stage.id, stage.icon])),
-  checking_existing: 'archive', confirming_upstream: 'version', reusing_snapshot: 'reuse',
+  checking_existing: 'lookup', confirming_upstream: 'version', reusing_snapshot: 'reuse',
   fetching_source: 'download', comparing_versions: 'version', full_analysis: 'scan',
   incremental_analysis: 'edit', scanning: 'files', interpreting: 'relations',
   completed: 'save', failed: 'warning', cancelled: 'stop', idle: 'wait', fetching: 'download',

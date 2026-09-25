@@ -179,8 +179,8 @@ export class FeedbackAnalysisWorker {
         thinkingLevel: "low",
         schema: FEEDBACK_RESULT,
         systemPrompt: [
-          "程序已经绑定目标回答、相邻对话、脱敏 Trace、按钮投票和 Skill 白名单；当前 Skill 负责反馈语义判断方法。",
-          "输出必须符合 feedback-analysis Schema，不能复述源码、API Key 或完整对话；结果只作为诊断候选，不是修改 Skill 的授权。必须调用 submit_result。",
+          "The program has bound the target answer, the neighbouring conversation, redacted traces, the button vote and the Skill allow-list; this Skill judges what the feedback means.",
+          "Output must match the feedback-analysis schema and must not repeat source code, API keys or the whole conversation. The result is a diagnostic candidate, not permission to change a Skill. Finish by calling submit_result.",
         ].join("\n"),
         userPrompt: JSON.stringify({
           vote: input.vote ?? null,

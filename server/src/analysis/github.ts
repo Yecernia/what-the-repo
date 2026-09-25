@@ -47,6 +47,8 @@ export interface GithubRepositoryHead {
   repo: string;
   repository: string;
   commitSha: string;
+  /** Committer date of the head commit; null when GitHub did not return a valid one. */
+  committedAt?: string | null;
 }
 
 export interface GithubGatewayTransport {
@@ -101,7 +103,17 @@ export async function fetchPublicGithubHead(
   const commit = await githubJson({ kind: "commit", owner, repo, ref: defaultBranch }, clientId, clientSecret, gateway, signal, 5000);
   const commitSha = String((commit as { sha?: unknown }).sha ?? "");
   if (!/^[0-9a-f]{40}$/i.test(commitSha)) throw new Error("github_commit_unavailable");
-  return { owner, repo, repository: `${owner}/${repo}`, commitSha };
+  return { owner, repo, repository: `${owner}/${repo}`, commitSha, committedAt: githubCommitTime(commit) };
+}
+
+/** The committer date is when the commit reached the branch; the author date is a fallback. */
+export function githubCommitTime(commit: unknown): string | null {
+  const detail = (commit as { commit?: { committer?: { date?: unknown }; author?: { date?: unknown } } })?.commit;
+  for (const value of [detail?.committer?.date, detail?.author?.date]) {
+    const time = typeof value === "string" ? Date.parse(value) : NaN;
+    if (Number.isFinite(time)) return new Date(time).toISOString();
+  }
+  return null;
 }
 
 function directGithubUrl(request: GithubJsonRequest): string {

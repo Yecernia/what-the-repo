@@ -1,31 +1,33 @@
 ---
 name: understanding-assessment
-description: 根据当前学习目标和有限证据评估用户自己的解释是否形成正确心智模型；不把术语或表达风格当作理解程度。
+description: Judge whether the learner's own explanation shows a correct mental model for the current learning step, using the bounded evidence; terminology and style are not understanding.
 ---
 
 # Understanding Assessment
 
-评估程序绑定的 `original_user_answer` 与当前步骤目标，不替用户重写答案，也不把评估结果直接当作进度提交。
+Assess the program-bound `original_user_answer` against the current step's goal. Do not rewrite the learner's answer, and do not treat your verdict as committed progress.
 
-## 判定
+## Verdicts
 
-- `mastered`：目标核心、因果方向和关键边界正确，并把判断落到输入 Evidence；少量术语不精确不影响掌握。
-- `partial`：主方向正确，但遗漏关键环节、证据连接或边界，下一步仍需要补强。
-- `misconception`：对象、调用方向、数据流，或事实与推断的关系被理解反，足以改变心智模型。
-- `unclear`：回答或输入证据不足以可靠区分前三类。
+- `mastered`: the core of the goal, the direction of cause and effect and the key boundaries are right, and the judgment rests on the supplied evidence. A few imprecise terms do not prevent mastery.
+- `partial`: the main direction is right, but a key link, the connection to evidence or a boundary is missing, so the next turn still needs reinforcement.
+- `misconception`: the object, call direction or data flow, or the line between fact and inference, is reversed badly enough to change the mental model.
+- `unclear`: the answer or the evidence is not enough to tell the first three apart reliably.
 
-遇到“两个入口最终都到同一入口文件”的题型，必须拆成至少两个判断：
-1. 每条命令实际执行源码还是发布/构建产物；
-2. 哪个显式脚本或 `bin` 声明建立了到入口的映射；
-3. 用户是否把“相同逻辑入口”误说成“相同物理文件”。
-其中任一因果方向错误通常是 `partial` 或 `misconception`，不能被一句正确的总结抵消。
+Judge only what the current step actually asks. Work through: is the goal clear → is the flow or causality right → is it tied to evidence → does the learner know the unknown boundary. Not every step needs all four.
 
-只评价当前步骤真正要求的部分。按“目标是否清楚 -> 流程/因果是否正确 -> 是否连接证据 -> 是否知道未知边界”判断；不是每步都强求四项。
+Some questions hide several judgments in one. For "both commands end up at the same entry file", check separately: whether each command executes source or published/build output; which script or `bin` declaration maps it to the entry; and whether the learner confused "the same logical entry" with "the same physical file". A wrong direction in any of these is usually `partial` or `misconception`, and one correct summary sentence does not cancel it.
 
-## 输出纪律
+## Output
 
-`feedback` 先指出用户已经说对的内容，再指出最重要的一个缺口和如何验证。`mastered_items` 只记录回答真实体现的掌握点；`misconceptions` 只记录会改变模型的具体错误，不把表达风格或不熟悉术语当错误。
+Write `feedback`, `mastered_items` and `misconceptions` in the language of the learner's answer; the tutor relays them to the learner. Plain words only: no evidence IDs, verdict names, field names or tool names inside these texts.
 
-除 `unclear` 外至少引用一个能支持判定的输入 Evidence ID；`unclear` 可为空。证据不足时保持保守，不为了让结果完整而添加 ID。`mastered` 允许 Primary 提出普通“进入下一步”确认卡，用户未确认前不能推进状态。用户若在当前轮明确要求直接进入下一步，Primary 可以提出 `advance_learning_step` 提案；该明确指令本身授权窄范围主动跳过，服务在本轮成功完成后只记录跳过的稳定步骤 ID，不得写入 `mastered`，也不改变本次评估结论。若本轮被暂停、取消或失败，不能提交跳过。
+`feedback` first names what the learner got right, then the single most important gap and how to check it. `mastered_items` records only mastery the answer actually shows. `misconceptions` records only specific errors that change the model; unfamiliar terms or unpolished wording are not errors.
 
-`partial` 时按“已掌握项 → 一个最重要的因果/边界错误 → 可由当前 Evidence 验证的重述任务”输出，避免泛泛说“再学一下”。不要因术语不熟或表达不漂亮降级；只指出会改变系统心智模型的错误。
+Except for `unclear`, cite at least one supplied evidence ID in `evidence_ids` that supports the verdict; `unclear` may cite none. When evidence is thin, stay conservative rather than adding IDs to look complete.
+
+For `partial`, structure the feedback as: what is already mastered → the one most important causal or boundary error → a restatement task the learner can verify against the current evidence. Avoid a vague "study this again". Do not downgrade for unfamiliar terms or style.
+
+## What the verdict allows
+
+A `mastered` verdict lets the tutor offer the normal "next step" confirmation; nothing advances until the learner confirms. If the learner explicitly asked in this turn to go straight to the next step, the tutor may propose the advance; that explicit request authorises a narrow, deliberate skip, which the program records as skipped rather than mastered once the turn succeeds, without changing your verdict. A paused, cancelled or failed turn commits no skip.

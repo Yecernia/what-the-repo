@@ -315,6 +315,7 @@ services:
       dockerfile: infra/docker/web.Dockerfile
       args:
         VITE_ICP_RECORD: ${VITE_ICP_RECORD:-}
+        VITE_PUBLIC_SECURITY_RECORD: ${VITE_PUBLIC_SECURITY_RECORD:-}
     image: what-the-repo-web:${WTR_IMAGE_TAG:-local}
     restart: unless-stopped
     ports:

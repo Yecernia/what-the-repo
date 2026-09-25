@@ -5,8 +5,6 @@ import type { Edge, Node } from '@xyflow/react';
 import { RepositoryWorkspace } from './RepositoryWorkspace';
 import { apiClient } from './api';
 import {
-  buildComponentFlow,
-  buildHumanProjectionFlow,
   buildLayerOverviewFlow,
   buildLayerScopeFlow,
   getArchitectureLayers,
@@ -464,10 +462,21 @@ function makeTwoFrameSnapshot(): Snapshot {
   return result;
 }
 
+/** Browsing the graph attaches nothing; "就问这个" hands the shown object to the conversation. */
+/** The architecture view starts with nothing picked; open the first component's details. */
+function pickFirstNode(graph: { graph: { nodes: Array<{ name: string }> } } = snapshot) {
+  fireEvent.click(screen.getByRole('button', { name: `node:${graph.graph.nodes[0]!.name}` }));
+}
+
+function askAbout<T>(onAddContext: T): T {
+  fireEvent.click(screen.getByRole('button', { name: /就问这个/ }));
+  return onAddContext;
+}
+
 describe('component graph contract', () => {
   it('previews overview connections on hover and keeps them after a click without requiring hover', () => {
     render(<RepositoryWorkspace snapshot={snapshot} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+      onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
     const entry = screen.getByRole('button', { name: 'node:入口编排' });
     expect(screen.queryByRole('button', { name: 'edge:1 条关系' })).not.toBeInTheDocument();
     fireEvent.mouseEnter(entry);
@@ -488,7 +497,7 @@ describe('component graph contract', () => {
     graph.graph.layers.push({ ...graph.graph.layers[0], id: 'layer:isolated', name: '独立层',
       component_ids: ['component:isolated'] });
     render(<RepositoryWorkspace snapshot={graph} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+      onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
     const toggle = screen.getByRole('button', { name: "显示所有关系" });
     const entry = screen.getByRole('button', { name: 'node:入口编排' });
     const domain = screen.getByRole('button', { name: 'node:领域服务' });
@@ -527,16 +536,16 @@ describe('component graph contract', () => {
 
   it('shows language guidance only for a different result language and updates it when the interface changes', () => {
     const view = render(<RepositoryWorkspace snapshot={{ ...snapshot, display_language: 'zh-CN' }} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+      onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
     expect(view.container.querySelector('.snapshot-language-notice')).toBeNull();
     view.rerender(<RepositoryWorkspace snapshot={{ ...snapshot, display_language: 'en' }} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+      onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
     expect(screen.getByRole('status')).toHaveTextContent('可新建项目选择中文分析。');
     try {
       act(() => setUiLanguage('en'));
       expect(view.container.querySelector('.snapshot-language-notice')).toBeNull();
       view.rerender(<RepositoryWorkspace snapshot={{ ...snapshot, display_language: 'zh-CN' }} project={project}
-        onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+        onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
       expect(screen.getByRole('status')).toHaveTextContent('Create a new project to choose analysis in English.');
     } finally {
       act(() => setUiLanguage('zh-CN'));
@@ -547,7 +556,7 @@ describe('component graph contract', () => {
     const graph = structuredClone(snapshot);
     graph.value_points[0].problem = '避免请求处理和业务规则混在一起。';
     const view = render(<RepositoryWorkspace snapshot={graph} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+      onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
     fireEvent.click(screen.getByRole('tab', { name: '价值点' }));
     expect(view.container.querySelector('.value-point-card p')).toHaveTextContent(graph.value_points[0].problem);
     expect(screen.getByTestId('value-point-details')).toHaveTextContent(graph.value_points[0].claim);
@@ -559,7 +568,7 @@ describe('component graph contract', () => {
     const graph = structuredClone(snapshot);
     graph.value_points.push({ ...graph.value_points[0], stable_id: 'value:second', title: '第二个学习点' });
     const selectionChange = vi.fn();
-    const props = { project, onOpenEvidence: vi.fn(), onQueueTopic: vi.fn(), onSelectionChange: selectionChange };
+    const props = { project, onOpenEvidence: vi.fn(), onAddContext: selectionChange };
     const view = render(<RepositoryWorkspace snapshot={graph} {...props} />);
     fireEvent.click(screen.getByRole('button', { name: 'node:入口编排' }));
     fireEvent.click(screen.getByRole('button', { name: "展开" }));
@@ -575,7 +584,7 @@ describe('component graph contract', () => {
     expect(canvas).toBeVisible();
     expect(view.container.querySelector('.architecture-breadcrumb')).toHaveTextContent('入口层');
     expect(screen.getByTestId('component-details')).toHaveTextContent('领域服务');
-    expect(selectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'component', stable_id: 'component:domain' }));
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'component', stable_id: 'component:domain' }));
 
     fireEvent.click(screen.getByRole('tab', { name: /价值点/ }));
     expect(screen.getByTestId('value-point-details')).toHaveTextContent('第二个学习点');
@@ -585,12 +594,12 @@ describe('component graph contract', () => {
     expect(screen.getByTestId('value-point-details')).not.toHaveTextContent('第二个学习点');
     fireEvent.click(screen.getByRole('tab', { name: /架构图/ }));
     expect(view.container.querySelector('.architecture-breadcrumb')).toHaveTextContent('架构总览');
-    expect(screen.getByTestId('component-details')).toHaveTextContent('入口编排');
+    expect(screen.queryByTestId('component-details')).toBeNull();
   });
 
   it('opens a singleton directly with its external relations and resets details only on a different component', () => {
     const { container } = render(<RepositoryWorkspace snapshot={snapshot} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+      onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
     const clickNode = (name: string) => fireEvent.click(screen.getByRole('button', { name: `node:${name}` }));
     expect(screen.queryByRole('button', { name: 'node:入口层' })).not.toBeInTheDocument();
     clickNode('入口编排');
@@ -637,7 +646,7 @@ describe('component graph contract', () => {
     expect(singleLink).toMatchObject({ source: single.id, target: 'component:entry' });
 
     const { container } = render(<RepositoryWorkspace snapshot={graph} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+      onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
     const clickNode = (name: string) => fireEvent.click(screen.getByRole('button', { name: `node:${name}` }));
     clickNode('独立主组件');
     fireEvent.click(screen.getByRole('button', { name: "展开" }));
@@ -662,7 +671,7 @@ describe('component graph contract', () => {
     graph.graph.layers[0].component_ids.push(single.id);
     graph.graph.edges.push({ ...snapshot.graph.edges[0], id: 'relation:direct-domain', source: single.id });
     const { container } = render(<RepositoryWorkspace snapshot={graph} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+      onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
     const clickNode = (name: string) => fireEvent.click(screen.getByRole('button', { name: `node:${name}` }));
     clickNode('入口层');
     fireEvent.click(screen.getByRole('button', { name: "展开" }));
@@ -797,7 +806,7 @@ describe('component graph contract', () => {
   it('switches and collapses the two frames in place while component clicks preserve both', () => {
     const { container } = render(<RepositoryWorkspace
       snapshot={makeTwoFrameSnapshot()} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()}
+      onOpenEvidence={vi.fn()} onAddContext={vi.fn()}
     />);
     const clickNode = (name: string) => fireEvent.click(screen.getByRole('button', { name: `node:${name}` }));
     const frameIds = () => screen.queryAllByTestId('scope-frame').map(frame => frame.getAttribute('data-node-id'));
@@ -837,78 +846,6 @@ describe('component graph contract', () => {
     fireEvent.click(screen.getByRole('button', { name: '收起分组：请求记录职责' }));
     expect(frameIds()).toHaveLength(0);
     expect(screen.getByRole('button', { name: 'node:请求记录职责' })).toBeInTheDocument();
-  });
-
-  it('lays out every semantic component and relation with finite positions', () => {
-    const flow = buildComponentFlow(snapshot);
-
-    expect(flow.nodes).toHaveLength(snapshot.graph.nodes.length);
-    expect(flow.edges).toHaveLength(snapshot.graph.edges.length);
-    expect(new Set(flow.nodes.map(node => node.id)).size).toBe(flow.nodes.length);
-    expect(flow.nodes.every(node => Number.isFinite(node.position.x) && Number.isFinite(node.position.y))).toBe(true);
-    expect(flow.edges[0]).toMatchObject({
-      source: 'component:entry',
-      target: 'component:domain',
-      label: '入口调用领域服务',
-    });
-  });
-
-  it('aggregates parallel component relations into one visual edge', () => {
-    const parallelSnapshot: Snapshot = {
-      ...snapshot,
-      graph: {
-        ...snapshot.graph,
-        edges: [
-          snapshot.graph.edges[0],
-          {
-            ...snapshot.graph.edges[0],
-            id: 'relation:entry-domain-static',
-            relation_kind: 'static_dependency',
-            label: '静态依赖',
-          },
-        ],
-      },
-    };
-
-    const flow = buildComponentFlow(parallelSnapshot);
-    expect(flow.edges).toHaveLength(1);
-    expect(Number((flow.edges[0].data as { lane: number }).lane)).toBe(0);
-    expect((flow.edges[0].data as { relationIds: string[] }).relationIds)
-      .toEqual(['relation:entry-domain', 'relation:entry-domain-static']);
-    expect(flow.edges[0].label).toBe('2 条关系');
-    expect(flow.edges.every(edge => edge.type === 'relation')).toBe(true);
-  });
-
-  it('keeps dense component graphs compact and bounded for the canvas', () => {
-    const nodes = Array.from({ length: 24 }, (_, index) => ({
-      ...snapshot.graph.nodes[index % snapshot.graph.nodes.length],
-      id: `component:dense-${index}`,
-      name: `组件 ${index}`,
-      architecture_layer_id: index < 12 ? 'layer:entry' : 'layer:domain',
-      fan_in: 4,
-      fan_out: 4,
-    }));
-    const edges = Array.from({ length: 600 }, (_, index) => ({
-      ...snapshot.graph.edges[0],
-      id: `relation:dense-${index}`,
-      source: nodes[index % nodes.length].id,
-      target: nodes[(index * 7 + 3) % nodes.length].id,
-      weight: 1,
-    })).filter(edge => edge.source !== edge.target);
-    const denseSnapshot: Snapshot = {
-      ...snapshot,
-      snapshot_id: 'snapshot-dense',
-      graph: { ...snapshot.graph, nodes, edges },
-    };
-
-    const flow = buildComponentFlow(denseSnapshot);
-    const maxX = Math.max(...flow.nodes.map(node => node.position.x));
-    const maxY = Math.max(...flow.nodes.map(node => node.position.y));
-    expect(flow.nodes).toHaveLength(nodes.length);
-    expect(flow.edges.length).toBeLessThanOrEqual(160);
-    expect(flow.omittedEdgeCount).toBeGreaterThan(0);
-    expect(maxX).toBeLessThan(3_000);
-    expect(maxY).toBeLessThan(3_000);
   });
 
   it('bounds dense responsibility-scope edges while preserving the full graph in the snapshot', () => {
@@ -1032,33 +969,20 @@ describe('component graph contract', () => {
       .toMatchObject({ stroke: 'var(--accent)' });
   });
 
-  it('uses the human projection and maps projected clicks to canonical entities and evidence', () => {
-    const flow = buildHumanProjectionFlow(projectedSnapshot);
-    expect(flow).not.toBeNull();
-    expect(flow?.nodes.map(node => node.id)).toEqual([
-      'human:entity:component:entry',
-      'human:entity:component:domain',
-    ]);
-    expect(flow?.edges[0]?.data).toMatchObject({
-      aggregate: true,
-      relationIds: ['relation:entry-domain', 'relation:entry-domain-static'],
-      evidenceIds: [evidence.stable_id],
-    });
-
+  it('maps projected clicks to canonical entities and evidence', () => {
     const selectionChange = vi.fn();
     render(
       <RepositoryWorkspace
         snapshot={projectedSnapshot}
         project={project}
         onOpenEvidence={vi.fn()}
-        onQueueTopic={vi.fn()}
-        onSelectionChange={selectionChange}
+        onAddContext={selectionChange}
       />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: "显示所有关系" }));
     fireEvent.click(screen.getByRole('button', { name: 'edge:2 条关系' }));
-    expect(selectionChange).toHaveBeenLastCalledWith({
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith({
       snapshot_id: 'snapshot-projection',
       kind: 'relation',
       stable_id: 'relation:entry-domain',
@@ -1068,7 +992,7 @@ describe('component graph contract', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'node:入口编排' }));
-    expect(selectionChange).toHaveBeenLastCalledWith({
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith({
       snapshot_id: 'snapshot-projection',
       kind: 'component',
       stable_id: 'component:entry',
@@ -1079,7 +1003,7 @@ describe('component graph contract', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /价值点/ }));
     fireEvent.click(screen.getByRole('button', { name: /入口与领域职责分离/ }));
-    expect(selectionChange).toHaveBeenLastCalledWith({
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith({
       snapshot_id: 'snapshot-projection',
       kind: 'value_point',
       stable_id: 'value:orchestration',
@@ -1090,7 +1014,7 @@ describe('component graph contract', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /学习路线/ }));
     fireEvent.click(screen.getByRole('button', { name: /先看入口编排/ }));
-    expect(selectionChange).toHaveBeenLastCalledWith({
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith({
       snapshot_id: 'snapshot-projection',
       kind: 'learning_step',
       stable_id: 'step-1',
@@ -1144,8 +1068,7 @@ describe('component graph contract', () => {
         snapshot={inferredSnapshot}
         project={project}
         onOpenEvidence={vi.fn()}
-        onQueueTopic={vi.fn()}
-        onSelectionChange={vi.fn()}
+        onAddContext={vi.fn()}
       />,
     );
 
@@ -1154,25 +1077,39 @@ describe('component graph contract', () => {
     expect(screen.queryByText('静态推断')).not.toBeInTheDocument();
   });
 
+  it('attaches an object only when asked, and marks one that is already attached', () => {
+    const addContext = vi.fn();
+    const view = render(<RepositoryWorkspace snapshot={snapshot} project={project} onOpenEvidence={vi.fn()} onAddContext={addContext} />);
+    fireEvent.click(screen.getByRole('button', { name: 'node:领域服务' }));
+    fireEvent.click(screen.getByRole('button', { name: "展开" }));
+    expect(addContext).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /就问这个/ }));
+    expect(addContext).toHaveBeenCalledTimes(1);
+    const attached = addContext.mock.calls[0]![0];
+    view.rerender(<RepositoryWorkspace snapshot={snapshot} project={project} onOpenEvidence={vi.fn()} onAddContext={addContext}
+      attachedContexts={[attached]} />);
+    expect(screen.getByRole('button', { name: /已添加到对话/ })).toBeDisabled();
+  });
+
   it('links graph, value points, learning steps, evidence, and topic prompts', () => {
     const openEvidence = vi.fn();
-    const queueTopic = vi.fn();
     const selectionChange = vi.fn();
     render(
       <RepositoryWorkspace
         snapshot={snapshot}
         project={project}
         onOpenEvidence={openEvidence}
-        onQueueTopic={queueTopic}
-        onSelectionChange={selectionChange}
+        onAddContext={selectionChange}
       />,
     );
 
+    expect(screen.queryByTestId('component-details')).toBeNull();
+    pickFirstNode();
     expect(screen.getByTestId('component-details')).toHaveTextContent('入口编排');
     fireEvent.click(screen.getByRole('button', { name: 'node:领域服务' }));
     fireEvent.click(screen.getByRole('button', { name: "展开" }));
     expect(screen.getByTestId('component-details')).toHaveTextContent('执行核心业务规则');
-    expect(selectionChange).toHaveBeenLastCalledWith({
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith({
       snapshot_id: 'snapshot-1',
       kind: 'component',
       stable_id: 'component:domain',
@@ -1183,7 +1120,7 @@ describe('component graph contract', () => {
     fireEvent.click(screen.getByRole('button', { name: "显示所有关系" }));
     fireEvent.click(screen.getByRole('button', { name: 'edge:1 条关系' }));
     expect(screen.getByTestId('relation-details')).toHaveTextContent('入口组件把已校验输入交给领域服务');
-    expect(selectionChange).toHaveBeenLastCalledWith({
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith({
       snapshot_id: 'snapshot-1',
       kind: 'relation',
       stable_id: 'relation:entry-domain',
@@ -1193,17 +1130,11 @@ describe('component graph contract', () => {
     fireEvent.click(screen.getByRole('tab', { name: /价值点/ }));
     fireEvent.click(screen.getByRole('button', { name: /入口与领域职责分离/ }));
     expect(screen.getByTestId('value-point-details')).toHaveTextContent('避免接口层承载业务规则');
-    expect(selectionChange).toHaveBeenLastCalledWith({
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith({
       snapshot_id: 'snapshot-1',
       kind: 'value_point',
       stable_id: 'value:orchestration',
       label: '入口与领域职责分离',
-    });
-    fireEvent.click(screen.getByRole('button', { name: "就问这个" }));
-    expect(queueTopic).toHaveBeenCalledWith({
-      kind: 'value-point',
-      stableId: 'value:orchestration',
-      prompt: expect.stringContaining('入口与领域职责分离'),
     });
 
     fireEvent.click(screen.getByRole('button', { name: /main\.main/ }));
@@ -1212,7 +1143,7 @@ describe('component graph contract', () => {
     fireEvent.click(screen.getByRole('tab', { name: /学习路线/ }));
     fireEvent.click(screen.getByRole('button', { name: /先看入口编排/ }));
     expect(screen.getByTestId('learning-step-details')).toHaveTextContent('能指出入口没有实现业务规则');
-    expect(selectionChange).toHaveBeenLastCalledWith({
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith({
       snapshot_id: 'snapshot-1',
       kind: 'learning_step',
       stable_id: 'step-1',
@@ -1240,10 +1171,10 @@ describe('component graph contract', () => {
         snapshot={richSnapshot}
         project={project}
         onOpenEvidence={openEvidence}
-        onQueueTopic={vi.fn()}
-        onSelectionChange={vi.fn()}
+        onAddContext={vi.fn()}
       />,
     );
+    pickFirstNode();
 
     expect(screen.getByText('devcontainer.json').closest('.markdown-file-reference-label'))
       .not.toBeNull();
@@ -1256,9 +1187,43 @@ describe('component graph contract', () => {
     expect(screen.getByRole('button', { name: '打开源码 main.py:4' })).toBeVisible();
   });
 
+  it('renders backtick code spans instead of showing raw backticks', () => {
+    const codeSnapshot: Snapshot = {
+      ...snapshot,
+      graph: {
+        ...snapshot.graph,
+        nodes: snapshot.graph.nodes.map((node, index) => index === 0
+          ? { ...node, responsibility: '解析 `argv`，读取 `main.py:4` 后启动。' }
+          : node),
+      },
+      learning_plan: {
+        ...snapshot.learning_plan,
+        steps: snapshot.learning_plan.steps.map((step, index) => index === 0
+          ? { ...step, objective: '理解 `ctx.agents` 如何注册。', completion_check: '说明 `next-turn` 队列的作用。' }
+          : step),
+      },
+    };
+    render(
+      <RepositoryWorkspace snapshot={codeSnapshot} project={project}
+        onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />,
+    );
+    pickFirstNode(codeSnapshot);
+
+    const component = screen.getByTestId('component-details');
+    expect(component).not.toHaveTextContent('`');
+    expect(screen.getAllByText('argv').some(node => node.matches('code.workspace-inline-code'))).toBe(true);
+    expect(screen.getByRole('button', { name: '打开源码 main.py:4' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('tab', { name: /学习路线/ }));
+    fireEvent.click(screen.getByRole('button', { name: /先看入口编排/ }));
+    expect(screen.getByTestId('learning-plan')).not.toHaveTextContent('`');
+    expect(screen.getByTestId('learning-step-details')).not.toHaveTextContent('`');
+    expect(screen.getByTestId('learning-step-details').querySelector('code.workspace-inline-code')).toHaveTextContent('ctx.agents');
+  });
+
   it('refreshes selected and saved details from a same-id language variant', () => {
     const selectionChange = vi.fn();
-    const props = { project, onOpenEvidence: vi.fn(), onQueueTopic: vi.fn(), onSelectionChange: selectionChange };
+    const props = { project, onOpenEvidence: vi.fn(), onAddContext: selectionChange };
     const view = render(<RepositoryWorkspace {...props} snapshot={snapshot} />);
     fireEvent.click(screen.getByRole('button', { name: "显示所有关系" }));
     fireEvent.click(screen.getByRole('button', { name: 'edge:1 条关系' }));
@@ -1271,30 +1236,8 @@ describe('component graph contract', () => {
     expect(screen.getByTestId('value-point-details')).toHaveTextContent('Translated value details');
     fireEvent.click(screen.getByRole('tab', { name: /架构图/ }));
     expect(screen.getByTestId('relation-details')).toHaveTextContent('Translated relation details');
-    expect(selectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ stable_id: 'relation:entry-domain', label: 'Calls the domain service' }));
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith(expect.objectContaining({ stable_id: 'relation:entry-domain', label: 'Calls the domain service' }));
     expect(screen.getByRole('status')).toHaveTextContent('暂无中文分析结果，当前展示英文');
-  });
-
-  it('localizes application-owned repository details without changing snapshot text', () => {
-    const responsibility = '承载当前 commit 的全部架构层、职责范围和组件。';
-    const rootSnapshot: Snapshot = { ...snapshot, graph: { ...snapshot.graph,
-      nodes: snapshot.graph.nodes.map((node, index) => index === 0 ? {
-        ...node, entity_kind: 'repository', responsibility,
-        grouping_rationale: '仓库是当前分析快照的唯一主层级根节点。',
-      } : node),
-    } };
-    render(<RepositoryWorkspace snapshot={rootSnapshot} project={project}
-      onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
-    try {
-      act(() => setUiLanguage('en'));
-      expect(screen.getByTestId('component-details')).not.toHaveTextContent('Contains all architecture layers');
-      expect(screen.getByTestId('component-details')).not.toHaveTextContent('The repository is the root');
-      expect(screen.getByTestId('component-details')).toHaveTextContent('Related code');
-      expect(screen.getByTestId('component-details').querySelector('.certainty')).toBeNull();
-      expect(rootSnapshot.graph.nodes[0].responsibility).toBe(responsibility);
-    } finally {
-      act(() => setUiLanguage('zh-CN'));
-    }
   });
 
   it('preserves a valid relation selection when the same snapshot reloads', () => {
@@ -1304,8 +1247,7 @@ describe('component graph contract', () => {
         snapshot={snapshot}
         project={project}
         onOpenEvidence={vi.fn()}
-        onQueueTopic={vi.fn()}
-        onSelectionChange={selectionChange}
+        onAddContext={selectionChange}
       />,
     );
 
@@ -1318,13 +1260,12 @@ describe('component graph contract', () => {
         snapshot={{ ...snapshot, graph: { ...snapshot.graph } }}
         project={project}
         onOpenEvidence={vi.fn()}
-        onQueueTopic={vi.fn()}
-        onSelectionChange={selectionChange}
+        onAddContext={selectionChange}
       />,
     );
 
     expect(screen.getByTestId('relation-details')).toBeVisible();
-    expect(selectionChange).toHaveBeenLastCalledWith({
+    expect(askAbout(selectionChange)).toHaveBeenLastCalledWith({
       snapshot_id: 'snapshot-1',
       kind: 'relation',
       stable_id: 'relation:entry-domain',
@@ -1348,7 +1289,8 @@ it('keeps only the minimap extension and restores via the divider without remoun
   });
   const bounds = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ x:0, y:0, left:0, top:0, right:600, bottom:1000, width:600, height:1000, toJSON: () => ({}) });
   const view = render(<RepositoryWorkspace snapshot={snapshot} project={project}
-    onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+    onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
+  pickFirstNode();
   try {
     const graph = screen.getByTestId('mock-flow'), details = screen.getByTestId('component-details');
     // JSDOM does not evaluate @container visibility; assert the mounted control/state, not a browser layout.
@@ -1382,8 +1324,9 @@ it('keeps only the minimap extension and restores via the divider without remoun
 });
 it('updates built-in graph control labels and memoized details with the interface language', () => {
   const view = render(<RepositoryWorkspace snapshot={snapshot} project={project}
-    onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+    onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
   const labels = () => JSON.parse(screen.getByTestId('mock-flow').getAttribute('data-control-labels')!);
+  pickFirstNode();
   try {
     expect(labels()).toMatchObject({ 'controls.zoomIn.ariaLabel': '放大', 'controls.zoomOut.ariaLabel': '缩小', 'controls.fitView.ariaLabel': '适应视图' });
     expect(screen.getByTestId('component-details')).toHaveTextContent('相关代码');
@@ -1407,7 +1350,8 @@ it('loads only the selected full detail and ignores a late response after select
     edges: projectedSnapshot.graph.edges.map(edge => ({ ...edge, detail_available: true, evidence_total: 2 })),
   } };
   const view = render(<RepositoryWorkspace snapshot={thin} project={project}
-    onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+    onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
+  pickFirstNode(thin);
   try {
     await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
     expect(screen.getByText('正在加载完整代码参考…')).toBeVisible();
@@ -1442,7 +1386,8 @@ it('shows detail load failure and retries the selected entity', async () => {
     .mockResolvedValueOnce({ snapshot_id: thin.snapshot_id, display_language: 'zh-CN', kind: 'component',
       item: { ...thin.graph.nodes[0], members: [evidence, { ...evidence, stable_id: 'extra', path: 'extra.py' }] } });
   const view = render(<RepositoryWorkspace snapshot={thin} project={project}
-    onOpenEvidence={vi.fn()} onQueueTopic={vi.fn()} onSelectionChange={vi.fn()} />);
+    onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
+  pickFirstNode(thin);
   try {
     await waitFor(() => expect(screen.getByText('完整代码参考加载失败。')).toBeVisible());
     act(() => setUiLanguage('en'));
@@ -1463,8 +1408,9 @@ it('defers the default full detail while the desktop pane is folded and resumes 
     snapshot_id: thin.snapshot_id, display_language: 'zh-CN', kind: 'component',
     item: { ...thin.graph.nodes[0], members: [evidence, { ...evidence, stable_id: 'extra', path: 'extra.py' }] },
   });
-  const props = { snapshot: thin, project, onOpenEvidence: vi.fn(), onQueueTopic: vi.fn(), onSelectionChange: vi.fn() };
+  const props = { snapshot: thin, project, onOpenEvidence: vi.fn(), onAddContext: vi.fn() };
   const view = render(<RepositoryWorkspace {...props} detailsVisible={false} />);
+  pickFirstNode(thin);
   try {
     expect(request).not.toHaveBeenCalled();
     view.rerender(<RepositoryWorkspace {...props} detailsVisible />);

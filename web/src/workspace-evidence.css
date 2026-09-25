@@ -1,14 +1,45 @@
-.workspace-evidence-help { margin: 0 0 6px; color: var(--fg-muted); font-size: 11px; }
-.workspace-evidence-window {
-  height: min(378px, 50vh);
-  min-height: 108px;
-  overflow: auto;
-  contain: layout paint;
-  overflow-anchor: none;
-  scrollbar-gutter: stable;
-  -webkit-overflow-scrolling: touch;
+/* The path under each file name is shown in full, so no hover hint is needed. */
+.workspace-evidence-list .workspace-evidence-path { white-space: normal; overflow-wrap: anywhere; }
+.workspace-evidence-more {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; margin-top: 2px; padding: 4px 2px;
+  border: 0; background: transparent; color: var(--fg-muted); font: 13px var(--font-ui); cursor: pointer;
 }
-.workspace-evidence-window-space { position: relative; width: 100%; }
-.workspace-evidence-window-row { position: absolute; inset: 0 0 auto; box-sizing: border-box; padding: 2px; }
-.workspace-evidence-window-row .workspace-evidence { width: 100%; height: 49px; box-sizing: border-box; }
-.workspace-evidence-window .workspace-evidence:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.workspace-evidence-more:hover { color: var(--accent); }
+.workspace-evidence-more svg { transition: transform .18s var(--ease-out); }
+.workspace-evidence-more[aria-expanded="true"] svg { transform: rotate(180deg); }
+
+/* Unfolded: a sketched search line above the page, a small pager below it. */
+.workspace-evidence-paged { display: flex; flex-direction: column; gap: 8px; }
+.workspace-evidence-search {
+  display: flex; align-items: center; gap: 7px; padding: 5px 10px;
+  border: 1.2px solid var(--border); border-radius: var(--radius-sketch-sm);
+  background: color-mix(in srgb, var(--paper-base) 55%, transparent); color: var(--fg-muted);
+  transition: border-color .14s var(--ease-out), background-color .14s var(--ease-out);
+}
+.workspace-evidence-search:focus-within { border-color: var(--accent); background: var(--panel); color: var(--accent); }
+.workspace-evidence-search svg { flex: 0 0 auto; }
+.workspace-evidence-search input {
+  flex: 1; min-width: 0; padding: 3px 0; border: 0; outline: none; background: transparent;
+  color: var(--fg); font: 13px/1.5 var(--font-reading);
+}
+.workspace-evidence-search input::placeholder { color: var(--fg-tertiary); font-family: var(--font-ui); }
+.workspace-evidence-search input::-webkit-search-cancel-button { cursor: pointer; }
+.workspace-evidence-count { flex: 0 0 auto; color: var(--fg-tertiary); font: 12px var(--font-ui); white-space: nowrap; }
+.workspace-evidence-empty { padding: 10px 2px; }
+.workspace-evidence-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; }
+.workspace-evidence-footer .workspace-evidence-more { margin-top: 0; }
+.workspace-evidence-pager { display: flex; align-items: center; gap: 2px; color: var(--fg-muted); font: 13px var(--font-ui); }
+.workspace-evidence-pager button {
+  min-width: 30px; height: 30px; display: inline-grid; place-items: center; padding: 0 6px;
+  border: 0; border-radius: var(--radius-sketch-sm); background: transparent; color: inherit; font: inherit; cursor: pointer;
+  transition: color .14s var(--ease-out), background-color .14s var(--ease-out);
+}
+.workspace-evidence-pager button:hover:not(:disabled) { color: var(--accent); background: var(--accent-soft); }
+.workspace-evidence-pager button:disabled { opacity: .35; cursor: default; }
+.workspace-evidence-page-number { display: inline-flex; align-items: center; gap: 5px; margin: 0 4px; white-space: nowrap; }
+.workspace-evidence-page-number input {
+  height: 26px; padding: 0 4px; text-align: center; box-sizing: content-box;
+  border: 0; border-bottom: 1.3px solid var(--border-strong); border-radius: 0; outline: none;
+  background: transparent; color: var(--fg); font: 13px var(--font-ui);
+}
+.workspace-evidence-page-number input:focus { border-bottom-color: var(--accent); color: var(--accent); }

@@ -33,7 +33,6 @@ Direct dependencies for each module, with versions taken from the lockfiles.
 | server | @types/node | 24.13.3 | development | MIT |
 | server | @types/pg | 8.21.0 | development | MIT |
 | server | tsx | 4.20.6 | development | MIT |
-| web | @dagrejs/dagre | 3.1.1 | runtime | MIT |
 | web | @types/qrcode | 1.5.6 | development | MIT |
 | web | qrcode | 1.5.4 | runtime | MIT |
 | web | @sketchyicons/react | 0.5.0 | runtime | MIT |
@@ -43,7 +42,6 @@ Direct dependencies for each module, with versions taken from the lockfiles.
 | web | react-dom | 19.2.8 | runtime | MIT |
 | web | react-markdown | 10.1.0 | runtime | MIT |
 | web | remark-gfm | 4.0.1 | runtime | MIT |
-| web | roughjs | 4.6.6 | runtime | MIT |
 | web | @playwright/test | 1.62.1 | development | Apache-2.0 |
 | web | @testing-library/jest-dom | 7.0.1 | development | MIT |
 | web | @testing-library/react | 16.3.2 | development | MIT |

@@ -16,7 +16,10 @@ test("product skills load from reviewed files and enforce their runtime contract
   const skill = await loadProductSkill("primary-conversational-supervisor");
 
   assert.equal(skill.skill.name, "primary-conversational-supervisor");
-  assert.match(skill.skill.content, /闲聊|换话题/u);
+  assert.match(skill.skill.content, /Small talk|change of topic/u);
+  // The learner-visible contract separates repository content from platform internals.
+  assert.match(skill.skill.content, /## Write for the learner/u);
+  assert.match(skill.skill.content, /Never write platform internals in the reply/u);
   assert.doesNotThrow(() => assertProductSkillRun(skill, {
     toolNames: skill.allowedTools,
     inputSchemaId: skill.inputSchemaId,

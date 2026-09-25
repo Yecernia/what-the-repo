@@ -18,7 +18,7 @@ describe('streamed messages', () => {
       headers: { 'content-type': 'text/event-stream' },
     }));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(apiClient.sendMessageStream('project', 'hello', null, () => undefined)).rejects.toMatchObject({ code: 'site_project_chat_size_limit' });
+    await expect(apiClient.sendMessageStream('project', 'hello', [], () => undefined)).rejects.toMatchObject({ code: 'site_project_chat_size_limit' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it('daily business budgets say tomorrow; disabled services and upstream balances do not', () => {
@@ -32,7 +32,7 @@ describe('streamed messages', () => {
   it('a streamed business budget error is not retried as a disconnect', async () => {
     const fetchMock=vi.fn().mockResolvedValue(new Response('event: error\ndata: {"code":"site_chat_budget_exhausted","detail":"budget"}\n\n',{headers:{'content-type':'text/event-stream'}}));
     vi.stubGlobal('fetch',fetchMock);
-    await expect(apiClient.sendMessageStream('project-1','hello',null,()=>undefined)).rejects.toMatchObject({code:'site_chat_budget_exhausted'});
+    await expect(apiClient.sendMessageStream('project-1','hello',[],()=>undefined)).rejects.toMatchObject({code:'site_chat_budget_exhausted'});
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it('temporary and insufficient reservations never claim that the daily budget is spent', () => {
@@ -46,8 +46,19 @@ describe('streamed messages', () => {
   it('also includes the selected language in non-streaming requests', async () => {
     setUiLanguage('en');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
-    await apiClient.sendMessage('project-1', 'hello', null);
+    await apiClient.sendMessage('project-1', 'hello', []);
     expect(JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string)).toMatchObject({ content: 'hello', display_language: 'en' });
+  });
+  it('sends every attached card with the message', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    const cards = [
+      { snapshot_id: 's1', kind: 'component' as const, stable_id: 'component:a', label: '入口' },
+      { snapshot_id: 's1', kind: 'relation' as const, stable_id: 'relation:a-b', label: '入口调用服务' },
+    ];
+    await apiClient.sendMessage('project-1', 'hello', cards);
+    const body = JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string);
+    expect(body.ui_contexts).toEqual(cards);
+    expect(body).not.toHaveProperty('ui_context');
   });
   it('returns the final answer after the stream sends its done frame', async () => {
     setUiLanguage('en');
@@ -77,7 +88,7 @@ describe('streamed messages', () => {
     await expect(apiClient.sendMessageStream(
       'project-1',
       '你好',
-      null,
+      [],
       () => undefined,
       false,
       'last-user',
@@ -116,7 +127,7 @@ describe('streamed messages', () => {
       body: { getReader: () => ({ read, cancel: vi.fn().mockResolvedValue(undefined) }) },
     }));
 
-    await apiClient.sendMessageStream('project-1', '你好', null, onProgress);
+    await apiClient.sendMessageStream('project-1', '你好', [], onProgress);
 
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({
       run_id: 'run-1',
@@ -142,7 +153,7 @@ describe('streamed messages', () => {
     await expect(apiClient.sendMessageStream(
       'project-1',
       '取消测试',
-      null,
+      [],
       () => undefined,
     )).rejects.toMatchObject({
       message: '已取消。',
@@ -181,7 +192,7 @@ describe('streamed messages', () => {
       });
     vi.stubGlobal('fetch', fetchMock);
 
-    const resultPromise = apiClient.sendMessageStream('project-1', '你好', null, () => undefined);
+    const resultPromise = apiClient.sendMessageStream('project-1', '你好', [], () => undefined);
     await vi.advanceTimersByTimeAsync(500);
     await expect(resultPromise).resolves.toMatchObject(payload);
 
@@ -230,7 +241,7 @@ describe('streamed messages', () => {
       .mockResolvedValueOnce({ ok: true, status: 200, body: { getReader: () => ({ read: secondRead }) } });
     vi.stubGlobal('fetch', fetchMock);
 
-    const resultPromise = apiClient.sendMessageStream('project-1', '你好', null, progress);
+    const resultPromise = apiClient.sendMessageStream('project-1', '你好', [], progress);
     await vi.advanceTimersByTimeAsync(500);
     await expect(resultPromise).resolves.toMatchObject(payload);
 
@@ -248,7 +259,7 @@ describe('streamed messages', () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('network down'));
     vi.stubGlobal('fetch', fetchMock);
 
-    const resultPromise = apiClient.sendMessageStream('project-1', '你好', null, () => undefined);
+    const resultPromise = apiClient.sendMessageStream('project-1', '你好', [], () => undefined);
     const rejection = expect(resultPromise).rejects.toMatchObject({ code: 'client_network_error' });
     await vi.runAllTimersAsync();
     await rejection;

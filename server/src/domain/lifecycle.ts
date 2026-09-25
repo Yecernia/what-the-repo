@@ -6,6 +6,8 @@ export interface RepositoryHead {
   generation?: number;
   published_at?: string | null;
   upstream_commit_sha?: string | null;
+  /** Commit time of the upstream head found by the last check. */
+  upstream_committed_at?: string | null;
   behind_commits?: number | null;
   relation?: 'same' | 'ahead' | 'diverged' | 'rewound' | 'unknown';
   check_error_code?: string | null;
@@ -301,6 +303,8 @@ export interface RepositoryViewStatus {
   freshness: {
     base_snapshot_id: string | null;
     upstream_commit_sha: string | null;
+    /** When the upstream head was committed (GitHub committer date), not when we checked. */
+    upstream_committed_at: string | null;
     behind_commits: number | null;
     relation: "same" | "ahead" | "diverged" | "rewound" | "unknown";
     check_status: "idle" | "checking" | "ok" | "failed";

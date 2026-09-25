@@ -18,13 +18,13 @@ export function relativeAge(iso: string | null | undefined, now = Date.now()): s
 /** Freshness is relative to the repository's current version, never guessed. */
 export function freshnessText(status: RepositoryViewStatus): string {
   const freshness = status.freshness;
-  if (freshness.check_status === 'failed') return t('暂时无法检查最新代码');
-  if (freshness.relation === 'diverged' || freshness.relation === 'rewound') return t('上游历史已变化');
-  if (freshness.relation === 'same' && freshness.behind_commits === 0) return t('与上次检查的最新代码一致');
+  if (freshness.check_status === 'failed') return t('暂时无法检查仓库有没有新提交');
+  if (freshness.relation === 'diverged' || freshness.relation === 'rewound') return t('仓库的提交历史被改写过');
+  if (freshness.relation === 'same' && freshness.behind_commits === 0) return freshness.stale ? t('上次检查时已是最新版本') : t('已是最新版本');
   if (freshness.relation === 'ahead' && freshness.behind_commits !== null) {
     return freshness.stale
-      ? t('上次检查落后 {0} 个提交', freshness.behind_commits)
-      : t('落后最新代码 {0} 个提交', freshness.behind_commits);
+      ? t('上次检查时仓库有 {0} 个新提交', freshness.behind_commits)
+      : t('仓库有 {0} 个新提交', freshness.behind_commits);
   }
-  return freshness.check_status === 'checking' ? t('正在检查最新代码…') : t('尚未确认最新代码');
+  return freshness.check_status === 'checking' ? t('正在检查仓库有没有新提交…') : t('还没检查仓库有没有新提交');
 }

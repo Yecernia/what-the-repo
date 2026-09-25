@@ -309,12 +309,12 @@ async function fixture(root: string): Promise<{
     profile: emptyProfile(),
     agentMemories: [],
     store,
-    selected: {
+    selected: [{
       snapshot_id: snapshotId,
       kind: "component",
       stable_id: "component:entry",
       label: "入口层",
-    },
+    }],
     exposedEvidence: new Map(),
     exposedPaths: new Set(),
     toolsUsed: [],
@@ -357,7 +357,7 @@ test("fabricated graph identifiers fail closed without exposing evidence", async
     assert.ok(tool);
     await assert.rejects(
       tool.execute("fabricated", { component_id: "component:invented" }),
-      /找不到这个组件/,
+      /No such component/,
     );
     assert.equal(context.exposedEvidence.size, 0);
     assert.equal(context.exposedPaths.size, 0);
@@ -550,9 +550,9 @@ test("conversation service keeps the displayed unverified reply in the next Pi r
     const originalRun = PiConversationRuntime.prototype.run;
     t.mock.method(PiConversationRuntime.prototype, "run", function(this: PiConversationRuntime, options: PiAgentRunOptions,
       finalize: (result: PiRunResult) => Promise<PiRunFinalization<unknown>>) {
-      assert.match(options.systemPrompt, /界面会精简显示名称/); // Actual loaded Skill + dynamic prompt.
-      assert.match(options.systemPrompt, /界面默认语言：English/);
-      assert.match(options.systemPrompt, /当前用户提问的主要语言/);
+      assert.match(options.systemPrompt, /the interface shortens the displayed name/); // Actual loaded Skill + dynamic prompt.
+      assert.match(options.systemPrompt, /use the interface language: English/);
+      assert.match(options.systemPrompt, /main language of the current message/);
       assert.match(options.systemPrompt, /hello/);
       assert.equal(options.modelRuntime.model.id, "deepseek-chat", "role overrides must preserve the selected chat model");
       for (const role of ["understanding-assessment", "citation-review", "memory-maintenance"] as const) {

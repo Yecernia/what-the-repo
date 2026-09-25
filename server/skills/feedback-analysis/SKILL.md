@@ -1,37 +1,39 @@
 ---
 name: feedback-analysis
-description: 判断按钮或自然语言是否在评价指定回答，提取可审核的质量信号并区分 Skill、证据、程序或 Provider 根因；不直接触发修改。
+description: Decide whether a button vote or natural-language reaction evaluates a given answer, extract reviewable quality signals and separate Skill, evidence, program and provider causes; never triggers a change by itself.
 ---
 
 # Feedback Analysis
 
-先确认反馈指向，再提取可观察问题，最后才做 Skill 假设。输出只是待聚合信号，不直接修改、创建候选或发布。
+First confirm what the feedback points at, then extract observable problems, and only then form Skill hypotheses. The output is a signal to aggregate later; it never edits a Skill, creates a candidate or publishes anything.
 
-## 判断反馈指向
+Operators read `strengths`, `issues` and `skill_hypotheses` in the admin console, so write them in Simplified Chinese, describing patterns rather than quoting the user at length.
 
-按钮投票证明用户给出总体评价，但不证明原因。自然语言只有在语义上评价 `target_answer` 时才是反馈；普通追问、继续任务、纠正仓库事实或换话题不自动构成反馈。评价和新请求可同时存在。`feedback_hint` 只是 Primary 线索，必须结合目标回答与相邻对话独立确认；考虑反讽、委婉表达和好坏并存。
+## Does the feedback target the answer?
 
-非反馈时输出 neutral、空 strengths/issues/skill hypotheses 和保守 confidence，不从主题词猜评价。
+A button vote proves an overall judgment, not its reason. Natural language counts as feedback only when it semantically evaluates `target_answer`. Follow-up questions, continuing a task, correcting a repository fact or changing topic are not automatically feedback; an evaluation and a new request can appear together. `feedback_hint` is only the tutor's lead: confirm it independently against the target answer and the neighbouring conversation, and allow for irony, understatement and mixed feelings.
 
-## 先判断回答出了什么问题
+When it is not feedback, output neutral sentiment, empty strengths, issues and hypotheses, and conservative confidence. Do not infer an evaluation from topic words.
 
-按用户原问题检查目标回答的可观察行为：是否真正回答所问对象，仓库事实是否有直接相关证据，事实、推断和未知是否分开，解释是否适合用户，路线确认是否越权，是否遗漏完成请求所需的关键步骤。`strengths`/`issues` 描述这些行为，不直接写根因结论。
+## What went wrong in the answer?
 
-混合反馈保留 `mixed`，分别记录优点和问题，不强行压成赞或踩。把相同问题归一成可复现模式，避免复述整段用户原话或保存敏感内容。
+Check the target answer's observable behaviour against the user's original question: did it answer the object that was asked about, are repository facts backed by directly relevant evidence, are fact, inference and unknown kept apart, does the explanation suit the user, did it overstep on route confirmation, did it miss a step the request needed, and did it expose internal identifiers such as tool names, action names or IDs to the user? `strengths` and `issues` describe these behaviours, not root-cause conclusions.
 
-按钮没有文字原因时只能记录总体正负信号，不要编造“引用准确”或“没有回答问题”等具体原因。用户情绪不等于人格、稳定偏好或产品根因。
+Keep mixed feedback as `mixed` and record strengths and problems separately instead of forcing a thumbs up or down. Normalise the same problem into a reproducible pattern; do not copy whole user messages or store sensitive content.
 
-## 再区分根因
+A button without a written reason supports only an overall positive or negative signal; do not invent specific reasons such as "accurate citations" or "did not answer the question". The user's emotion is not their personality, a stable preference or a product root cause.
 
-结合 `recent_traces` 按以下顺序排除替代解释：
+## Separate the root cause
 
-1. 快照或工具结果本身没有所需事实时，这是证据输入不足，不能假定改写 Skill 就能补出不存在的事实。
-2. `stop_reason`、模型返回或相邻运行显示超时、网络失败、Provider 异常、截断或明显偶发波动时，记录可观察问题但不归因给 Skill。一次正常完成也不能排除 Provider 生成波动，所以单样本归因保持保守。
-3. Schema 校验、权限、持久化、工具执行或前端交互失败属于程序/工具问题；它们需要代码修复，而不是给 Skill 增加绕过规则。
-4. 只有运行正常、所需事实和工具可用，而且失败表现落在某个已运行 Skill 的查询、选择、排序、解释或停止方法内，才形成 Skill 假设。
+Rule out alternatives with `recent_traces`, in this order:
 
-只有同时满足以下条件才加入 `skill_hypotheses`：问题落在允许 Skill 的职责内；Trace 表明该 Skill 参与了相关行为；观察到的问题可由其方法规则改变。Primary 可影响最终取证和表达；专项 Skill 只在对应 Worker 真正运行时归因。若多环节都可能导致同一问题，保留最少且最直接的候选，不把整条调用链全部列为责任方。
+1. When the snapshot or tool results lack the needed fact, the evidence input was insufficient; rewriting a Skill cannot produce facts that do not exist.
+2. When `stop_reason`, the model output or neighbouring runs show timeouts, network failures, provider errors, truncation or obvious random variation, record the observable problem but do not blame a Skill. One normal completion does not rule out provider variation either, so single-sample attributions stay conservative.
+3. Schema validation, permissions, persistence, tool execution or front-end interaction failures are program or tool problems; they need code fixes, not Skill workarounds.
+4. Only when the run was normal, the needed facts and tools were available, and the failure lies in how a Skill that actually ran queried, selected, ranked, explained or stopped, form a Skill hypothesis.
 
-无法区分回答方法、仓库特殊性和 Provider 波动时保持假设为空，只在 `issues` 中描述可观察现象。不要把反馈分析本身或进化方法 Skill 作为回答归因目标。
+Add to `skill_hypotheses` only when all hold: the problem is within an allowed Skill's responsibility; the trace shows that Skill took part in the relevant behaviour; and its method rules could change the observed problem. The primary tutor Skill can affect final evidence gathering and wording; a specialised Skill is attributable only when its worker actually ran. If several stages could cause the same problem, keep the fewest, most direct candidates rather than listing the whole chain.
 
-`confidence` 同时反映三件事：反馈是否确实指向目标回答、问题是否具体可复现、根因是否有 Trace 支持。对回答不满可以高置信，但 Skill 归因仍可能低置信；不要把两者混为一谈。一次反馈只能形成待验证信号，重复聚合和固定 Eval 才能支持改进任务。
+When you cannot separate answering method, repository peculiarities and provider variation, leave hypotheses empty and describe only the observable issue. Never attribute to feedback analysis itself or to the evolution method Skill.
+
+`confidence` reflects three things at once: whether the feedback really targets the answer, whether the problem is concrete and reproducible, and whether traces support the cause. Dissatisfaction can be high confidence while the Skill attribution stays low; do not conflate the two. One piece of feedback is a signal to verify; only repeated aggregation and fixed evals justify an improvement task.

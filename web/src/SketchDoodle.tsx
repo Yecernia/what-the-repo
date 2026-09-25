@@ -1,6 +1,3 @@
-import { useEffect, useRef } from 'react';
-import rough from 'roughjs/bin/rough';
-
 type SketchDoodleVariant = 'spark' | 'orbit' | 'underline' | 'wave' | 'circle';
 
 const VIEW_BOXES: Record<SketchDoodleVariant, string> = {
@@ -11,6 +8,16 @@ const VIEW_BOXES: Record<SketchDoodleVariant, string> = {
   circle: '0 0 132 44',
 };
 
+// Each doodle is one confident pen stroke: a flick at the end of an underline,
+// a ring that overshoots where it started, never a scribbled double line.
+const PATHS: Record<SketchDoodleVariant, string[]> = {
+  spark: ['M26 5 L26.5 15', 'M40 12 L34.5 19', 'M47 27 L37 27.5', 'M12 12 L18 18.5', 'M6 28 L15 27.5'],
+  orbit: ['M118 22 C88 4 22 12 12 44 C4 72 70 86 116 72 C146 62 146 34 120 24 C104 18 86 18 70 21'],
+  underline: ['M5 15 C40 9.5 88 10 126 12.5 C140 13.5 149 12.5 155 8.5'],
+  wave: ['M3 17 C9 8 15 7 20 14.5 C25 22 31 23.5 36 15.5 C41 8 47 6.5 52 14 C57 21.5 63 22.5 68 15 C72 10 77 9 81 12'],
+  circle: ['M108 10 C80 3.5 20 6 8 19 C0 30 28 40 64 40 C100 40 128 33 126 19 C124 7 98 0 68 2'],
+};
+
 export function SketchDoodle({
   variant,
   className = '',
@@ -18,65 +25,19 @@ export function SketchDoodle({
   variant: SketchDoodleVariant;
   className?: string;
 }) {
-  const svgRef = useRef<SVGSVGElement>(null);
-
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    svg.replaceChildren();
-    const sketch = rough.svg(svg);
-    const options = {
-      stroke: 'currentColor',
-      strokeWidth: 1.7,
-      roughness: 1.35,
-      bowing: 1.15,
-      seed: variant.length * 97,
-    };
-
-    if (variant === 'spark') {
-      [[26, 4, 26, 15], [26, 37, 26, 48], [4, 26, 15, 26], [37, 26, 48, 26],
-        [9, 9, 17, 17], [35, 35, 43, 43], [43, 9, 35, 17], [17, 35, 9, 43]]
-        .forEach(([x1, y1, x2, y2], index) => {
-          svg.appendChild(sketch.line(x1, y1, x2, y2, { ...options, seed: 701 + index }));
-        });
-      return;
-    }
-
-    if (variant === 'orbit') {
-      svg.appendChild(sketch.ellipse(75, 46, 132, 68, { ...options, seed: 811 }));
-      svg.appendChild(sketch.path('M 22 58 Q 67 5 130 36', { ...options, seed: 812 }));
-      return;
-    }
-
-    if (variant === 'underline') {
-      svg.appendChild(sketch.path('M 5 14 Q 48 7 84 13 T 155 11', { ...options, seed: 907 }));
-      return;
-    }
-
-    if (variant === 'circle') {
-      svg.appendChild(sketch.ellipse(66, 22, 124, 36, {
-        ...options,
-        strokeWidth: 2,
-        roughness: 1.7,
-        bowing: 1.4,
-        seed: 967,
-      }));
-      return;
-    }
-
-    svg.appendChild(sketch.path('M 3 16 Q 13 5 23 16 T 43 16 T 63 16 T 81 14', {
-      ...options,
-      seed: 1013,
-    }));
-  }, [variant]);
-
   return (
     <svg
-      ref={svgRef}
       className={`sketch-doodle ${className}`.trim()}
       viewBox={VIEW_BOXES[variant]}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
-    />
+    >
+      {PATHS[variant].map(d => <path key={d} d={d} vectorEffect="non-scaling-stroke" />)}
+    </svg>
   );
 }

@@ -74,6 +74,23 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
       assert.equal(await store.historicalPublicKey(reader.project_id, 'snap:old'), null);
       assert.equal(await store.purgePublicSnapshotPayload(newKey, later), false, 'the current version is never cleaned');
 
+      // The upstream commit time follows the checked head, not the check itself.
+      const check = (at: string, sha: string | null, committed?: string | null) => store.saveRepositoryFreshness({
+        repository, baseSnapshotKey: newKey, upstreamCommitSha: sha, behindCommits: sha ? 3 : null,
+        relation: sha ? 'ahead' : 'unknown', checkedAt: at, nextCheckAt: at, errorCode: sha ? null : 'github_check_failed',
+        ...(committed === undefined ? {} : { upstreamCommittedAt: committed }) });
+      const committedAt = async () => (await store.loadCurrentRepositoryHead(repository))?.upstream_committed_at;
+      const checkTime = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+      await check(checkTime(1), 'b'.repeat(40), '2026-09-20T08:00:00.000Z');
+      assert.equal(await committedAt(), '2026-09-20T08:00:00.000Z');
+      await check(checkTime(2), 'b'.repeat(40));
+      assert.equal(await committedAt(), '2026-09-20T08:00:00.000Z', 'an unchanged head keeps its known time');
+      await check(checkTime(3), 'c'.repeat(40));
+      assert.equal(await committedAt(), null, 'a new head never shows the previous head time');
+      await check(checkTime(4), 'c'.repeat(40), '2026-09-22T08:00:00.000Z');
+      await check(checkTime(5), null);
+      assert.equal(await committedAt(), null, 'a failed check has no head time');
+
       // Background admission needs recent real use and reserves one start.
       const background = { project: reader, identity, targetCommitSha: 'c'.repeat(40),
         maxStartsPerDay: 2, maxActive: 1, maxQueued: 4, minUpdateIntervalHours: 24, activeWindowDays: 7 };

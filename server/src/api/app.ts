@@ -27,7 +27,7 @@ import { FAILURE_MESSAGES, failureMessage, analysisFailureCode } from "../agent/
 import type { PiMemoryRepository } from "../agent/memory-store.js";
 import { generateMemorySummary, sanitizeMemorySummary } from "../agent/memory-summary.js";
 import { PiSessionStore, projectSessionId } from "../agent/session-store.js";
-import type { UiSelection } from "../agent/prompts.js";
+import { parseUiSelections } from "../agent/prompts.js";
 import {
   availableModels,
   decodeModelSelector,
@@ -1766,26 +1766,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     await repository.refreshMigrationNotice(owner.owner_id, projectId);
     const body = objectBody(request);
     const content = textField(body, "content", 20_000, true);
-    const rawSelection = body.ui_context;
-    const selection = (
-      rawSelection
-      && typeof rawSelection === "object"
-      && !Array.isArray(rawSelection)
-      && typeof (rawSelection as Record<string, unknown>).snapshot_id === "string"
-      && typeof (rawSelection as Record<string, unknown>).stable_id === "string"
-      && typeof (rawSelection as Record<string, unknown>).kind === "string"
-    ) ? {
-        snapshot_id: String((rawSelection as Record<string, unknown>).snapshot_id),
-        stable_id: String((rawSelection as Record<string, unknown>).stable_id),
-        kind: String((rawSelection as Record<string, unknown>).kind),
-        label: String((rawSelection as Record<string, unknown>).label ?? "").slice(0, 500),
-        entity_id: typeof (rawSelection as Record<string, unknown>).entity_id === "string"
-          ? String((rawSelection as Record<string, unknown>).entity_id).slice(0, 256)
-          : null,
-        evidence_id: typeof (rawSelection as Record<string, unknown>).evidence_id === "string"
-          ? String((rawSelection as Record<string, unknown>).evidence_id).slice(0, 256)
-          : null,
-      } as UiSelection : null;
+    const selections = parseUiSelections(body);
     const requestedRunId = typeof body.run_id === "string" && /^[A-Za-z0-9_-]{16,128}$/u.test(body.run_id)
       ? body.run_id
       : null;
@@ -1815,7 +1796,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       replaceMessageId: typeof body.replace_message_id === "string" ? body.replace_message_id : undefined,
       viewSnapshotId: typeof body.view_snapshot_id === "string" ? body.view_snapshot_id.slice(0, 200) : undefined,
       retryRunId: typeof body.retry_run_id === "string" ? body.retry_run_id.slice(0, 128) : undefined,
-      selection,
+      selections,
       reviewEvidence: body.review_evidence === true,
       runId,
       signal: controller.signal,

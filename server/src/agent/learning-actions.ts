@@ -190,7 +190,7 @@ function proposalCopy(
   if (action === "start_learning_route") {
     return {
       title: `为“${target?.label ?? project.source.display_name}”制定学习路线`,
-      description: "确认后才会调用路线 Agent、生成步骤并开始引导学习。",
+      description: "确认后才会生成学习步骤并开始引导学习。",
     };
   }
   if (action === "switch_learning_target") {

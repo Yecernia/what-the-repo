@@ -1,5 +1,5 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';
-import { penPath } from './pen-path';
+import { scrollInkPath } from './scroll-ink';
 import { t } from './ui-language';
 
 /** Native wheel/touch scrolling, with a draggable pen mark only when the sheet overflows. */
@@ -57,7 +57,7 @@ export function PaperScroll({ children, label = t('滚动设置') }: { children:
       }}>
       <svg className="paper-scroll-mark" aria-hidden="true" width="8" height={thumb}
         style={{ transform: `translateY(${12 + metrics.top / max * travel}px)` }}>
-        <path d={penPath([[4,2,.6],[3.4,thumb * .24,1.15],[4.5,thumb * .51,.8],[3.7,thumb * .77,1.1],[4,thumb - 2,.55]], 2.6)} fill="currentColor" />
+        <path d={scrollInkPath(Math.round(thumb))} fill="currentColor" />
       </svg>
     </div>}
   </div>;

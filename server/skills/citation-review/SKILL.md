@@ -1,41 +1,36 @@
 ---
 name: citation-review
-description: 逐主张复核最终回答中的仓库事实是否被现有 Evidence packet 直接支持；用于用户开启证据复核时，不重新检索或改写回答。
+description: Check claim by claim whether the repository facts in a final answer are directly supported by the supplied evidence packets; used when evidence review is on, without new retrieval or rewriting.
 ---
 
 # Citation Review
 
-你只能复核程序提供的 `final_answer` 和 Evidence packets。不要补查源码、猜测缺失证据或重写回答。
+Review only the program-supplied `final_answer` and evidence packets. Do not look up more source, guess missing evidence or rewrite the answer.
 
-## 逐主张判定
+## Judge each claim
 
-1. 把答案拆成会改变读者心智模型的最小仓库主张。对象存在、对象职责、调用方向、数据流、状态变化、适用范围、因果和设计约束分别判定；一句话同时说“有什么、怎样协作、为什么这样设计”时拆成多条。
-2. 标出主张性质。仓库事实需要代码或配置证据；明确写成“根据这些事实推断”的结论需要证据支撑其前提，但不能被当成已确认事实；建议、鼓励、用户偏好和明确未知不需要代码证明。
-3. 对每条仓库主张逐项核对主体、行为、方向、条件、范围词和版本。任一关键部分没有被证明，就不能因为句子其余部分正确而整条通过。
-4. 为通过的主张选择最小充分证据集。调用链需要覆盖关键边，数据流需要覆盖输入、转换和输出，配置行为通常需要同时看到配置声明与消费位置；不要用大量弱相关 packet 掩盖缺失的一环。
+1. Split the answer into the smallest repository claims that would change a reader's mental model. Judge separately that an object exists, what it is responsible for, call direction, data flow, state changes, scope, causality and design constraints. A sentence that says what exists, how it collaborates and why it was designed that way is several claims.
+2. Classify each claim. A repository fact needs code or configuration evidence. A conclusion explicitly framed as an inference needs evidence for its premises but must not be treated as confirmed. Suggestions, encouragement, user preferences and stated unknowns need no code proof.
+3. For each repository claim, check subject, behaviour, direction, conditions, scope words and version. If any key part is unproven, the claim fails even when the rest of the sentence is right.
+4. For each supported claim choose the smallest sufficient evidence set. A call chain needs its key edges; a data flow needs input, transformation and output; configured behaviour usually needs both the declaration and the place that consumes it. Do not hide a missing link behind many weakly related packets.
+5. Normalise paths and media before judging:
+   - Remove `./`, repeated separators and non-repository prefixes left by build tools. A normalised path must exist among the current snapshot's source files.
+   - Build output such as `lib/*.js`, dist or bundles is a post-build mapping or a build fact. Unless the evidence actually read that artefact, it is not direct evidence for `.ts` source lines.
+   - Relative fragments without a repository root such as `src/bin.ts`, targets the snapshot never exposed such as `profile-boot.ts`, and paths only mentioned by a step or the user are `unverified_reference`; never put them in `accepted_evidence_ids`.
+   - When one answer mentions both a source entry and a published-package entry, check the script or caller, the `bin` declaration, the build mapping and the execution conditions separately. "Both end at the same logical entry" does not prove "the same file executes".
 
-5. 先做路径和介质规范化，再判定证据：
-   - 去掉 `./`、重复分隔符和构建工具留下的非仓库前缀；规范路径必须能在当前快照的源码文件集合中找到。
-   - `lib/*.js`、dist/bundle 等构建产物只能作为“发布后映射”或构建事实；除非 Evidence 明确读取了该产物，不能当作
-     `.ts` 源码行的直接证据。
-   - `src/bin.ts` 这类没有仓库根路径的相对片段、`profile-boot.ts` 这类未被快照暴露的目标，以及“步骤/用户提到的路径”
-     都是 `unverified_reference`，不得放入 `accepted_evidence_ids`。
-   - 同一回答同时出现“源码入口”和“发布包入口”时，分别核对脚本/调用者、`bin` 声明、构建映射和执行条件；“最终都进入
-     同一逻辑入口”不自动证明“执行同一文件”。
+## Levels of support
 
-## 支持等级
+- **Direct**: the evidence alone establishes the whole claim, including object, direction, scope words and conditions.
+- **Partial**: it only shows that a file or symbol exists, a local behaviour, or a correlation; it cannot establish the full flow, the global scope or the design reason.
+- **Unsupported or conflicting**: the evidence is unrelated, points the other way, covers a narrower scope, or lacks a key link.
 
-- **直接支持**：Evidence 本身足以推出完整主张，包括对象、方向、范围词和条件。
-- **部分支持**：只证明文件/符号存在、局部行为或相关性，不能证明完整流程、全局范围或设计原因。
-- **不支持/冲突**：证据无关、方向相反、范围更窄，或缺少关键一环。
+`unverified_reference` is not partial support: the path or lead itself has not been confirmed by this turn's evidence. Feedback may suggest retrieving it again, but it cannot be cited as fact.
 
-`unverified_reference` 不是“部分支持”：它表示路径或线索本身尚未在本轮 Evidence 中确认。可以在反馈中提示模型
-重新检索，但不能把它当作可引用事实。
+When source code or a deterministic relation conflicts with a README, comment or component summary, the more direct code fact wins and the claim is listed as conflicting. Matching paths, similar names, adjacent definitions, README self-descriptions and component grouping do not prove runtime behaviour. Strong scope words such as "all", "only", "always", "never" or "the core reason" need matching coverage: one call edge does not prove a global call chain, and one implementation does not prove the maintainers' motive. A comment can show intent or a mapping lead, but not runtime behaviour unless the implementation agrees.
 
-源码或确定性关系与 README、注释、组件摘要冲突时，以更直接的代码事实为准并把该主张列为冲突。路径相同、名称相似、相邻定义、README 自述和组件归组都不能自动证明运行行为。“所有、只、一定、从不、核心原因”等强范围词需要相应覆盖；一条调用边不能证明全局调用链，一段实现不能证明维护者动机。注释可以证明作者意图或映射线索，但除非实现证据吻合，不能单独证明运行时行为。
+## Result
 
-## 结果
+`accepted_evidence_ids` holds only the smallest set of IDs that directly support at least one important claim; leave out evidence that is related but insufficient, and list each ID once.
 
-`accepted_evidence_ids` 只收录至少直接支持一个重要主张的最小 ID 集合，不把“相关但不充分”的 Evidence 混入。若同一 Evidence 同时支持多条主张，只保留一次。
-
-所有重要仓库主张都直接支持时 `supported=true`。任一会改变答案含义的主张只有部分支持、未知或冲突时为 false；`unsupported_claims` 要写出具体主张以及缺的是对象、方向、范围、链路还是设计依据，不能只写“证据不足”。没有仓库事实主张时可返回 true 和空 ID，并说明无需复核。无法确定时保守不通过；不要用总体相关性掩盖局部证据缺口。
+Set `supported=true` when every important repository claim is directly supported. If any claim that changes the answer's meaning is only partially supported, unknown or conflicting, set it to false and describe in `unsupported_claims` the specific claim and whether the object, direction, scope, link or design basis is missing; "insufficient evidence" alone is not enough. Write those descriptions in the language of `final_answer`. An answer without repository claims may return true with no IDs and a note that no review was needed. When unsure, do not pass; overall relevance must not hide a local gap.

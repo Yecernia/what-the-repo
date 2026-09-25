@@ -81,7 +81,7 @@ function publishedSkill(value: {
 const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   "primary-conversational-supervisor": {
     id: "primary-conversational-supervisor",
-    version: "4.0.5",
+    version: "5.0.0",
     allowedTools: [
       "get_project_overview",
       "list_value_points",
@@ -140,7 +140,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "understanding-assessment": {
     id: "understanding-assessment",
-    version: "4.0.2",
+    version: "5.0.0",
     allowedTools: ["submit_result"],
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
@@ -149,7 +149,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "citation-review": {
     id: "citation-review",
-    version: "4.1.1",
+    version: "5.0.0",
     allowedTools: ["submit_result"],
     inputSchemaId: "citation-review-input-v1",
     outputSchemaId: "citation-review-output-v1",
@@ -158,7 +158,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "memory-maintenance": {
     id: "memory-maintenance",
-    version: "4.1.0",
+    version: "5.0.0",
     allowedTools: ["submit_result"],
     inputSchemaId: "memory-maintenance-input-v1",
     outputSchemaId: "memory-maintenance-output-v1",
@@ -197,7 +197,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "learning-route": {
     id: "learning-route",
-    version: "4.0.5",
+    version: "5.0.0",
     allowedTools: [
       "list_repository_components",
       "get_repository_component",
@@ -214,7 +214,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "feedback-analysis": {
     id: "feedback-analysis",
-    version: "4.1.0",
+    version: "5.0.0",
     allowedTools: ["submit_result"],
     inputSchemaId: "feedback-analysis-input-v2",
     outputSchemaId: "feedback-analysis-output-v2",
@@ -223,7 +223,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "skill-evolution": {
     id: "skill-evolution",
-    version: "3.0.0",
+    version: "4.0.0",
     allowedTools: ["submit_result"],
     inputSchemaId: "skill-evolution-input-v1",
     outputSchemaId: "skill-evolution-output-v1",

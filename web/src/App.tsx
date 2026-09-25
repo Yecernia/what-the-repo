@@ -18,7 +18,6 @@ import { createPortal } from 'react-dom';
 import hljs from 'highlight.js/lib/common';
 import ReactMarkdown, { type Components as MarkdownComponents } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import Box from '@sketchyicons/react/icons/box';
 import LogIn from '@sketchyicons/react/icons/log-in';
 import Check from '@sketchyicons/react/icons/check';
 import MoreHorizontal from '@sketchyicons/react/icons/more-horizontal';
@@ -34,7 +33,6 @@ import { apiClient, userFacingError, conversationErrorMessage } from './api';
 import { hasLanguageGlyph, LanguageGlyph, languageFromPath } from './language-glyph';
 import { RepositoryThumbnail } from './RepositoryThumbnail';
 import { LazyLoadBoundary } from './LazyLoadBoundary';
-import type { TopicRequest } from './RepositoryWorkspace';
 const RepositoryWorkspace = lazy(() => import('./RepositoryWorkspace').then(module => ({ default: module.RepositoryWorkspace })));
 import type {
   ConversationSelection,
@@ -56,6 +54,9 @@ import { clearSnapshotCache, getMemorySnapshot, readCachedSnapshot, removeSnapsh
 import { SketchDoodle } from './SketchDoodle';
 import { FieldIllustration, FieldMark, FieldScene } from './FieldIllustration';
 import { InkOutline } from './InkOutline';
+import { TabDoneBadge } from './TabDoneBadge';
+import { InkSpinner } from './InkSpinner';
+import { ProjectActivityMark, type ProjectActivity } from './ProjectActivityMark';
 import { PaperScroll } from './PaperScroll';
 import { ProviderModelList } from './ProviderModelList';
 import './index.css';
@@ -204,12 +205,15 @@ function MarkdownFileReferenceButton({
 function MarkdownFileReferenceLabel({
   reference,
   text,
+  unresolved = false,
 }: {
   reference: MarkdownFileReference;
   text: string;
+  unresolved?: boolean;
 }) {
   return (
-    <span className="markdown-file-reference-label">
+    <span className={`markdown-file-reference-label${unresolved ? ' unresolved' : ''}`}
+      data-tooltip={unresolved ? t('未能在代码中核实这个位置') : undefined}>
       <LanguageGlyph language={languageFromPath(reference.path)} />
       <code>{text}</code>
     </span>
@@ -234,7 +238,7 @@ function createMarkdownComponents(onFileReference: (reference: MarkdownFileRefer
     // Older messages without validation metadata still require matching evidence.
     return reference.line !== null && !isUnresolved && (resolved || unresolved !== undefined)
       ? <MarkdownFileReferenceButton reference={canonical} text={label} onOpen={onFileReference} />
-      : <MarkdownFileReferenceLabel reference={canonical} text={label} />;
+      : <MarkdownFileReferenceLabel reference={canonical} text={label} unresolved={isUnresolved} />;
   };
   return {
     a: ({ children, href }) => {
@@ -265,10 +269,17 @@ const ICP_RECORD_URL = 'https://beian.miit.gov.cn/';
 
 function ComplianceFooter() {
   const record = import.meta.env.VITE_ICP_RECORD?.trim();
-  if (!record) return null;
+  const publicSecurityRecord = import.meta.env.VITE_PUBLIC_SECURITY_RECORD?.trim();
+  const publicSecurityCode = publicSecurityRecord?.match(/\d{14}/)?.[0];
+  if (!record && !publicSecurityCode) return null;
   return (
     <footer className="site-compliance-footer" aria-label={t("网站备案信息")}>
-      <a href={ICP_RECORD_URL} target="_blank" rel="noreferrer">{record}</a>
+      {record && <a href={ICP_RECORD_URL} target="_blank" rel="noreferrer">{record}</a>}
+      {publicSecurityCode && <a href={`https://beian.mps.gov.cn/#/query/webSearch?code=${publicSecurityCode}`}
+        target="_blank" rel="noreferrer">
+        <img src="/public-security-filing.png" width="16" height="17" alt="" />
+        <span>{publicSecurityRecord}</span>
+      </a>}
     </footer>
   );
 }
@@ -1014,11 +1025,14 @@ function SettingsDialog({
   const [explanationPreference, setExplanationPreference] = useState('');
   const [memorySummaryDraft, setMemorySummaryDraft] = useState('');
   const [showMemorySummary, setShowMemorySummary] = useState(false);
+  const [editingMemorySummary, setEditingMemorySummary] = useState(false);
   const memoryDialogRef = useRef<HTMLDivElement>(null);
   const memoryPreviewRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (showMemorySummary) memoryDialogRef.current?.focus(); }, [showMemorySummary]);
   const closeMemorySummary = () => {
     setShowMemorySummary(false);
+    setEditingMemorySummary(false);
+    setMemorySummaryDraft(profile?.memory_summary ?? '');
     requestAnimationFrame(() => memoryPreviewRef.current?.focus());
   };
   const [msg, setMsgText] = useState('');
@@ -1271,6 +1285,7 @@ function SettingsDialog({
     try {
       const response = await apiClient.updateMemorySummary(memorySummaryDraft);
       applyProfile(response.profile);
+      setEditingMemorySummary(false);
       setMsg(t("记忆摘要已保存"), 'success');
     } catch (e: unknown) {
       setMsg(userFacingError(e, t("记忆摘要保存失败，请稍后重试。")));
@@ -1446,7 +1461,7 @@ function SettingsDialog({
           <button ref={memoryPreviewRef} className="memory-summary-preview" type="button" aria-label={t("记忆摘要")}
             onClick={() => { setMsg(''); setShowMemorySummary(true); }}>
             <span className="memory-summary-preview-heading"><strong>{t("记忆摘要")}</strong><ChevronRight size={18} /></span>
-            <p>{memorySummaryDraft || t("还没有形成稳定的记忆摘要。")}</p>
+            <p>{memorySummaryPreview(profile?.memory_summary ?? '') || t("还没有形成稳定的记忆摘要。")}</p>
             <small>{summaryUpdatedLabel(profile?.memory_summary_updated_at)} · {profile?.memory_summary_mode === 'edited' ? t("已手动修改") : t("自动生成")}</small>
           </button>
           <div className="settings-preference-fields">
@@ -1474,7 +1489,7 @@ function SettingsDialog({
             onKeyDown={event => {
               if (event.key === 'Escape') { event.stopPropagation(); closeMemorySummary(); }
               if (event.key !== 'Tab') return;
-              const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), textarea')];
+              const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), textarea, a[href]')];
               const first = controls[0], last = controls[controls.length - 1];
               if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) {
                 event.preventDefault(); last?.focus();
@@ -1486,21 +1501,44 @@ function SettingsDialog({
               <button className="btn btn-icon settings-symbol-button" type="button" aria-label={t("关闭记忆摘要")}
                 onClick={closeMemorySummary}><X size={20} /></button>
             </div>
-            <textarea className="form-input memory-summary-input" aria-label={t("记忆摘要")}
-              value={memorySummaryDraft} onChange={event => setMemorySummaryDraft(event.target.value)}
-              placeholder={t("还没有形成稳定的记忆摘要。")}
-              maxLength={4000} />
+            {editingMemorySummary
+              ? <textarea className="form-input memory-summary-input" aria-label={t("记忆摘要")} autoFocus
+                  value={memorySummaryDraft} onChange={event => setMemorySummaryDraft(event.target.value)}
+                  placeholder={t("还没有形成稳定的记忆摘要。")}
+                  maxLength={4000} />
+              : <div className="memory-summary-view" data-testid="memory-summary-view">
+                  {profile?.memory_summary
+                    ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{profile.memory_summary}</ReactMarkdown>
+                    : <p className="memory-summary-empty">{t("还没有形成稳定的记忆摘要。")}</p>}
+                </div>}
             {msg && <p className={`memory-status${isOk ? ' success' : ''}`}>{msg}</p>}
             <div className="memory-dialog-actions">
-              <button className="btn" type="button" onClick={regenerateMemorySummary} disabled={loading || !profile}>
-                <RefreshCw size={14} /> {t("重新整理记忆摘要")}</button>
-              <button className="btn btn-primary" type="button" onClick={saveMemorySummary} disabled={loading || !profile}>
-                <Check size={14} /> {t(" 保存摘要")}</button>
+              {editingMemorySummary ? <>
+                <button className="btn" type="button" disabled={loading} onClick={() => {
+                  setEditingMemorySummary(false); setMemorySummaryDraft(profile?.memory_summary ?? ''); setMsg('');
+                }}>{t("取消")}</button>
+                <button className="btn btn-primary" type="button" onClick={saveMemorySummary} disabled={loading || !profile}>
+                  <Check size={14} /> {t(" 保存摘要")}</button>
+              </> : <>
+                <button className="btn" type="button" onClick={regenerateMemorySummary} disabled={loading || !profile}>
+                  <RefreshCw size={14} /> {t("重新整理记忆摘要")}</button>
+                <button className="btn" type="button" disabled={loading || !profile}
+                  onClick={() => { setMsg(''); setEditingMemorySummary(true); }}>{t("编辑")}</button>
+              </>}
             </div>
           </div>
         </div>, document.body)}
     </div>
   );
+}
+
+/** Two plain lines for the settings card: the summary's points without its Markdown headings and markers. */
+function memorySummaryPreview(summary: string): string {
+  return summary.split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
+    .map(line => line.replace(/^[-*+]\s+|^\d+\.\s+/, '').replace(/\\([\\`*_[\]#<>|])/g, '$1').replace(/\*\*|__/g, ''))
+    .join('；');
 }
 
 function splitList(value: string): string[] {
@@ -1541,7 +1579,7 @@ function NewProjectForm({ onCreated, onClose }: { onCreated: (id: string) => voi
       <div className="new-project-heading">
         <h2 id="new-project-title">{t("新的学习项目")}</h2>
         <LanguagePicker value={projectLanguage} onChange={setProjectLanguage} label={t('项目语言')} />
-        <button className="btn btn-icon" type="button" aria-label={t('关闭弹窗')} onClick={onClose}><X size={14} /></button>
+        <button className="btn btn-icon settings-symbol-button" type="button" aria-label={t('关闭弹窗')} onClick={onClose}><X size={20} /></button>
       </div>
       <div>
         <label className="form-label" htmlFor="new-project-source">{t("公开 GitHub 仓库地址")}</label>
@@ -1553,7 +1591,7 @@ function NewProjectForm({ onCreated, onClose }: { onCreated: (id: string) => voi
         <input id="new-project-name" className="form-input" value={title} onChange={e => setTitle(e.target.value)}
           placeholder={t("留空则使用仓库名称")} />
       </div>
-      {error && <div style={{ fontSize: 12, color: 'var(--err)' }}>{error}</div>}
+      {error && <div className="new-project-error" role="alert">{error}</div>}
       <button className="btn btn-primary" type="submit"
         disabled={loading}>
         {loading ? t("创建中…") : t("开始分析")}
@@ -1621,7 +1659,7 @@ function SourceModal({ projectId, snapshotId, path, line, stableId, onClose }: {
             <LanguageGlyph language={languageFromPath(path)} />
             <code className="source-dialog-path">{path}:{line}</code>
           </div>
-          <button className="btn btn-icon" aria-label={t("关闭源码预览")} onClick={onClose}><X size={14} /></button>
+          <button className="btn btn-icon settings-symbol-button" aria-label={t("关闭源码预览")} onClick={onClose}><X size={20} /></button>
         </div>
         {err && <div style={{ color: 'var(--err)', fontSize: 12 }}>{err}</div>}
         {data && (
@@ -1649,7 +1687,7 @@ function SourceModal({ projectId, snapshotId, path, line, stableId, onClose }: {
             </div>
           </>
         )}
-        {!data && !err && <div className="spinner" />}
+        {!data && !err && <InkSpinner size={22} />}
       </div>
     </div>
   );
@@ -1668,6 +1706,37 @@ const MessageMarkdown = memo(function MessageMarkdown({ msg, onEvidenceClick }: 
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{msg.content}</ReactMarkdown>;
 });
 
+const MAX_CONTEXT_CARDS = 8;
+const contextKey = (item: Pick<ConversationSelection, 'kind' | 'stable_id'>) => `${item.kind}:${item.stable_id}`;
+const CONTEXT_CARD_LOOK: Record<ConversationSelection['kind'], { icon: import('./ActivityIcon').ActivityIconName; label: string }> = {
+  component: { icon: 'components', label: '组件' },
+  relation: { icon: 'relations', label: '组件关系' },
+  value_point: { icon: 'discovery', label: '价值点' },
+  learning_step: { icon: 'learn', label: '学习步骤' },
+};
+
+/** A graph object attached to a message, shown as a small paper tile like an attached file. */
+function ContextCard({ item, onRemove }: { item: ConversationSelection; onRemove?: () => void }) {
+  const look = CONTEXT_CARD_LOOK[item.kind];
+  return <span className="context-card" role="listitem">
+    <ActivityIcon name={look.icon} size={20} />
+    <span className="context-card-text">
+      <strong>{item.label}</strong>
+      <small>{t(look.label)}</small>
+    </span>
+    {onRemove && <button type="button" className="context-card-remove" aria-label={t("移除“{0}”", item.label)}
+      onClick={onRemove}><X size={12} /></button>}
+  </span>;
+}
+
+function analysisRunning(stage: import('./types').AnalysisStage): boolean {
+  return !['done', 'failed', 'idle'].includes(stage);
+}
+
+const LEARNING_ACTION_ICONS: Record<import('./types').LearningActionStatus, import('./ActivityIcon').ActivityIconName> = {
+  pending: 'learn', confirmed: 'done', executed: 'done', declined: 'stop', failed: 'failure', expired: 'wait',
+};
+
 function MsgBubble({
   msg,
   activity,
@@ -1682,6 +1751,7 @@ function MsgBubble({
   onEdit,
   onResend,
   edit,
+  skipStep,
 }: {
   msg: Message;
   activity?: RuntimeProgressEvent[];
@@ -1696,6 +1766,8 @@ function MsgBubble({
   onEdit?: () => void;
   onResend?: () => void;
   edit?: { content?: string; onCancel: () => void; onSubmit: (content: string) => void };
+  /** The current learning step, offered as a one-tap skip under the latest tutor reply. */
+  skipStep?: { title: string; onSkip: () => void };
 }) {
   if (edit) return <div className="msg user editing" ref={messageRef}><div className="msg-content">
     <InlineMessageEditor content={edit.content ?? msg.content} onCancel={edit.onCancel} onSubmit={edit.onSubmit} />
@@ -1708,6 +1780,10 @@ function MsgBubble({
     ? activity
     : (msg.thinking_summary ?? []);
   const evidenceFileCount = msg.role === 'assistant' ? messageEvidenceFileCount(msg) : 0;
+  const lastActivity = activityEvents.at(-1);
+  const failureReason = msg.error && msg.error !== 'cancelled'
+    ? conversationErrorMessage(msg.error) ?? (lastActivity?.status === 'failed' && lastActivity.kind === 'summary' && lastActivity.stage === 'failed' ? lastActivity.label : null)
+    : null;
   const actionPending = action?.status === 'pending';
   const actionResolving = Boolean(actionPending && learningActionPending);
   const routeResolving = Boolean(actionResolving && (
@@ -1717,6 +1793,11 @@ function MsgBubble({
   return (
     <div className={`msg ${msg.role}`} ref={messageRef}>
       <div className="msg-content">
+        {msg.role === 'user' && msg.attachments?.length ? (
+          <div className="message-context-cards" role="list" aria-label={t("附加的内容")}>
+            {msg.attachments.map(item => <ContextCard key={contextKey(item)} item={item} />)}
+          </div>
+        ) : null}
         {msg.role === 'assistant' && !msg.placeholder
           && (activityEvents.length > 0
             || typeof msg.trace_id === 'string'
@@ -1733,11 +1814,13 @@ function MsgBubble({
         ) : null}
         <div className="msg-bubble">
           {msg.placeholder && (
-            <div className="placeholder-notice">{t("⚠ 未接入模型 · 以下为静态分析结果")}</div>
+            <div className="placeholder-notice"><ActivityIcon name="warning" size={16} />{t("未接入模型 · 以下为静态分析结果")}</div>
           )}
           {msg.role === 'assistant'
             ? <MessageMarkdown msg={msg} onEvidenceClick={onEvidenceClick} />
            : <p style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</p>}
+          {/* Why the answer stopped reads like the tutor saying it, under the one-line "回答失败" summary. */}
+          {failureReason && <p className="message-failure-text">{failureReason}</p>}
           {msg.evidence.length > 0 && (
             <div className="evidence-chips">
               {evidenceFiles.map((ev, i) => {
@@ -1759,19 +1842,21 @@ function MsgBubble({
               className={`learning-action-card learning-action-${action.status}${actionResolving ? ' learning-action-processing' : ''}`}
               aria-busy={actionResolving}
             >
+              <InkOutline paper={actionPending} />
               <div className="learning-action-card-heading">
                 <strong>{action.title}</strong>
-                <span aria-live="polite">{actionResolving
-                  ? (routeResolving ? t("正在生成路线") : t("正在执行"))
-                  : action.status === 'pending' ? t("需要你的确认") : (
-                  action.status === 'executed' ? t("已完成") :
+                <span className="learning-action-status" aria-live="polite">{actionResolving
+                  ? <><ActivityIcon name="wait" size={17} live />{routeResolving ? t("正在生成路线") : t("正在执行")}</>
+                  : <><ActivityIcon name={LEARNING_ACTION_ICONS[action.status]} size={17} />{
+                    action.status === 'pending' ? t("需要你的确认") :
+                    action.status === 'executed' ? t("已完成") :
                     action.status === 'declined' ? t("已跳过") :
-                      action.status === 'failed' ? t("暂未完成") : t("已处理")
-                )}</span>
+                    action.status === 'failed' ? t("暂未完成") :
+                    action.status === 'expired' ? t("已失效") : t("已处理")}</>}</span>
               </div>
               <p>{action.description}</p>
               {action.error && <p className="learning-action-error">{t("这项学习操作暂时未完成，请稍后重试。")}</p>}
-              {actionPending && (
+              {actionPending && !actionResolving && (
                 <div className="learning-action-controls">
                   <button
                     type="button"
@@ -1779,11 +1864,7 @@ function MsgBubble({
                     disabled={Boolean(learningActionPending)}
                     onClick={() => onLearningAction(action.action_id, 'confirm')}
                   >
-                    {actionResolving ? (
-                      <><span className="spinner learning-action-spinner" aria-hidden="true" /> {routeResolving ? t("正在生成") : t("正在执行")}</>
-                    ) : (
-                      <><Check size={14} /> {t(" 确认")}</>
-                    )}
+                    <Check size={14} /> {t(" 确认")}
                   </button>
                   <button
                     type="button"
@@ -1794,6 +1875,16 @@ function MsgBubble({
                     <X size={14} /> {t(" 暂不")}</button>
                 </div>
               )}
+            </div>
+          )}
+          {skipStep && (
+            <div className="learning-skip-option">
+              <button type="button" className="learning-skip-button" onClick={skipStep.onSkip}
+                title={t("跳过“{0}”的理解检查，直接进入下一步", skipStep.title)}>
+                <span>{t("跳过这一步")}</span>
+                <small>{skipStep.title}</small>
+                <ChevronRight size={15} />
+              </button>
             </div>
           )}
           {feedbackEnabled && msg.role === 'assistant' && !msg.error && !msg.placeholder && (
@@ -1940,7 +2031,8 @@ function ActivityDisclosure({
           <button type="button" className="activity-toggle" aria-expanded={expanded}
             onClick={() => setExpanded(value => !value)}>
             <ChevronRight size={13} aria-hidden="true" />
-            <ActivityIcon name={summaryIcon} className="activity-step-icon" />
+            <ActivityIcon name={summaryIcon} className="activity-step-icon"
+              live={!complete && !['failed', 'cancelled', 'paused'].includes(current?.latest.status ?? 'running')} />
             {complete || statusLabel ? <span>{summaryLabel}</span> : <ShinyText text={summaryLabel} />}
           </button>
         ) : (
@@ -2086,7 +2178,8 @@ export default function App() {
     line: number;
     stableId?: string | null;
   } | null>(null);
-  const [conversationSelection, setConversationSelection] = useState<ConversationSelection | null>(null);
+  // Graph objects attached to the message being written ("就问这个"), sent with it like files and then cleared.
+  const [contextCards, setContextCards] = useState<ConversationSelection[]>([]);
   const isMobile = useMediaQuery('(max-width: 680px)');
   const isPhone = usePhoneDevice();
   const landscape = useMediaQuery('(orientation: landscape)');
@@ -2168,6 +2261,13 @@ export default function App() {
     streamRenderFrame.current = null;
   }, []);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const addContextCard = useCallback((selection: ConversationSelection) => {
+    setContextCards(current => current.some(item => contextKey(item) === contextKey(selection)) || current.length >= MAX_CONTEXT_CARDS
+      ? current : [...current, selection]);
+    // On a phone the project view covers the chat; go back to it so the new card is in sight.
+    if (singlePageProject) setRepositoryOpen(false);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, [singlePageProject]);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
   const conversationActivityRef = useRef<RuntimeProgressEvent[]>([]);
@@ -2181,6 +2281,18 @@ export default function App() {
   const analysisTimerStartsRef = useRef(new Map<string, number>());
   const projectCacheRef = useRef(new Map<string, Project>());
   const pendingConversationsRef = useRef(new Map<string, PendingConversation>());
+  // Sidebar markers for projects the learner is not looking at: an answer still running there, or an answer or
+  // analysis that finished (or failed) since the project was last opened.
+  const [projectActivity, setProjectActivity] = useState<Record<string, ProjectActivity>>({});
+  const markProject = useCallback((projectId: string, state: ProjectActivity | null) => {
+    setProjectActivity(current => {
+      if ((current[projectId] ?? null) === state) return current;
+      const next = { ...current };
+      if (state) next[projectId] = state; else delete next[projectId];
+      return next;
+    });
+  }, []);
+  const projectsRef = useRef<import('./types').ProjectSummary[]>([]);
   const [analysisJobStatus, setAnalysisJobStatus] = useState<string | null>(null);
   const [analysisDismissed, setAnalysisDismissed] = useState(false);
   activeIdRef.current = activeId;
@@ -2261,6 +2373,25 @@ export default function App() {
         }
       : item));
   }, []);
+
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
+  // Analyses keep running for projects the learner has left; poll the list now and then so their cards can show
+  // when one finishes.
+  const backgroundAnalysis = projects.some(item => item.project_id !== activeId && analysisRunning(item.analysis_stage));
+  useEffect(() => {
+    if (!backgroundAnalysis) return;
+    const timer = window.setInterval(() => {
+      void apiClient.listProjects().then(list => {
+        for (const next of list) {
+          const previous = projectsRef.current.find(item => item.project_id === next.project_id);
+          if (!previous || !analysisRunning(previous.analysis_stage) || analysisRunning(next.analysis_stage)) continue;
+          if (next.project_id !== activeIdRef.current) markProject(next.project_id, next.analysis_stage === 'failed' ? 'failed' : 'done');
+        }
+        setProjects(current => current.map(item => list.find(next => next.project_id === item.project_id) ?? item));
+      }).catch(() => undefined);
+    }, 6000);
+    return () => window.clearInterval(timer);
+  }, [backgroundAnalysis, markProject]);
 
   const submitMessageFeedback = useCallback(async (
     messageId: string,
@@ -2495,10 +2626,12 @@ export default function App() {
     setAnalysisJobDetails(null);
     setAnalysisJobStatus(null);
     setAnalysisDismissed(false);
-    setConversationSelection(null);
+    setContextCards([]);
     setSourceModal(null);
     setInput('');
     const pendingConversation = activeId ? pendingConversationsRef.current.get(activeId) : null;
+    if (activeId) setProjectActivity(current => current[activeId] && current[activeId] !== 'running'
+      ? Object.fromEntries(Object.entries(current).filter(([id]) => id !== activeId)) : current);
     setSending(Boolean(pendingConversation));
     setConversationStartedAt(pendingConversation?.startedAt ?? null);
     setStreamingAssistant(pendingConversation?.streamingAssistant ?? null);
@@ -2609,9 +2742,8 @@ export default function App() {
 
   useEffect(() => {
     const snapshotId = snapshot?.snapshot_id;
-    setConversationSelection(current => (
-      current && current.snapshot_id === snapshotId ? current : null
-    ));
+    setContextCards(current => current.every(item => item.snapshot_id === snapshotId)
+      ? current : current.filter(item => item.snapshot_id === snapshotId));
     setSourceModal(current => (
       current
       && current.projectId === activeId
@@ -2646,6 +2778,7 @@ export default function App() {
     setSettings(null);
     setCompletedActivities({});
     pendingConversationsRef.current.clear();
+    setProjectActivity({});
     setAccountMenuOpen(false);
     setShowSettings(false);
     setShowNew(false);
@@ -2653,7 +2786,9 @@ export default function App() {
 
   useEffect(() => { setEditingMessageId(null); setRejectedEdit(null); }, [activeId]);
 
-  async function sendMessage(replacement?: { messageId: string; content: string }) {
+  // `replacement` with a message id edits or resends that message; without one it sends the given text as a new
+  // message and leaves the learner's draft alone (used by the one-tap learning options).
+  async function sendMessage(replacement?: { messageId?: string; content: string; contexts?: ConversationSelection[] }) {
     const text = (replacement?.content ?? input).trim();
     if (
       !text
@@ -2674,6 +2809,9 @@ export default function App() {
       setConversationError({ projectId, text: t('此项目已达到聊天上限'), capacity: true });
       return;
     }
+    // A new message carries the attached cards; an edit or resend carries what the original message had.
+    const sentContexts = (replacement ? replacement.contexts ?? [] : contextCards)
+      .filter(item => item.snapshot_id === snapshot?.snapshot_id);
     const optimisticId = `client:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     const pendingToken = `conversation:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     const startedAt = Date.now();
@@ -2688,8 +2826,9 @@ export default function App() {
       latency_ms: null,
       error: null,
       placeholder: false,
+      ...(sentContexts.length ? { attachments: sentContexts } : {}),
     };
-    if (!replacement) setInput('');
+    if (!replacement) { setInput(''); setContextCards([]); }
     setEditingMessageId(null);
     setRejectedEdit(null);
     setConversationError(null);
@@ -2711,6 +2850,7 @@ export default function App() {
     };
     setConversationStartedAt(startedAt);
     setStreamingAssistant(initialStreamingAssistant);
+    markProject(projectId, 'running');
     pendingConversationsRef.current.set(projectId, {
       token: pendingToken,
       optimisticId,
@@ -2725,14 +2865,11 @@ export default function App() {
       ? { ...current, messages: [...(targetIndex >= 0 ? current.messages.slice(0, targetIndex) : current.messages), optimisticUser] }
       : current);
     try {
-      const currentSelection = conversationSelection?.snapshot_id === snapshot?.snapshot_id
-        ? conversationSelection
-        : null;
       const response = typeof apiClient.sendMessageStream === 'function'
         ? await apiClient.sendMessageStream(
             projectId,
             text,
-            currentSelection,
+            sentContexts,
             event => {
               const pending = pendingConversationsRef.current.get(projectId);
               if (!pending || pending.token !== pendingToken) return;
@@ -2768,7 +2905,7 @@ export default function App() {
             retryRunId,
             snapshot?.snapshot_id ?? null,
           )
-        : await apiClient.sendMessage(projectId, text, currentSelection, reviewEvidence, replaceMessageId, retryRunId,
+        : await apiClient.sendMessage(projectId, text, sentContexts, reviewEvidence, replaceMessageId, retryRunId,
           snapshot?.snapshot_id ?? null);
       const cachedAfterResponse = projectCacheRef.current.get(projectId);
       if (cachedAfterResponse) {
@@ -2779,6 +2916,8 @@ export default function App() {
       }
       if (pendingConversationsRef.current.get(projectId)?.token === pendingToken) {
         pendingConversationsRef.current.delete(projectId);
+        markProject(projectId, activeIdRef.current === projectId || response.error?.code === 'cancelled' ? null
+          : response.error ? 'failed' : 'done');
       }
       if (activeIdRef.current === projectId) {
         if (response.error && response.error.code !== 'cancelled') setConversationError({
@@ -2824,6 +2963,7 @@ export default function App() {
         : null;
       if (pendingConversationsRef.current.get(projectId)?.token === pendingToken) {
         pendingConversationsRef.current.delete(projectId);
+        markProject(projectId, activeIdRef.current === projectId || streamErrorCode === 'cancelled' ? null : 'failed');
       }
       const admissionRejected = isChatCapacityError(streamErrorCode)
         || ['chat_owner_busy', 'chat_queue_full', 'chat_wait_timeout', 'session_busy'].includes(streamErrorCode ?? '');
@@ -2853,11 +2993,12 @@ export default function App() {
           ? { projectId, text: t('此项目已达到聊天上限'), capacity: true }
           : { projectId, text: userFacingError(e, t('服务器错误，请稍后重试。')) });
         setProject(current => current?.project_id === projectId ? { ...current, messages: originalMessages } : current);
-        if (replacement) {
+        if (replacement?.messageId) {
           setRejectedEdit({ projectId, messageId: replacement.messageId, content: replacement.content });
           setEditingMessageId(replacement.messageId);
-        } else {
+        } else if (!replacement) {
           setInput(current => current || text);
+          setContextCards(current => current.length ? current : sentContexts);
         }
         void loadProject(projectId);
         return;
@@ -2978,12 +3119,6 @@ export default function App() {
       window.localStorage.setItem(REVIEW_PREFERENCE_KEY, String(next));
       return next;
     });
-  }
-
-  async function queueTopic(request: TopicRequest) {
-    setInput(request.prompt);
-    if (singlePageProject) setRepositoryOpen(false);
-    requestAnimationFrame(() => composerRef.current?.focus());
   }
 
   function openEvidence(evidence: GraphEvidence) {
@@ -3111,7 +3246,7 @@ export default function App() {
       setProject(nextProject);
       setSnapshot(nextSnapshot);
       setSnapshotTarget({ projectId, snapshotId: nextSnapshotId });
-      setConversationSelection(null);
+      setContextCards([]);
       setSourceModal(null);
       setAnalysisJobId(detail.analysis_job?.job_id ?? null);
       setAnalysisJobDetails(detail.analysis_job ?? null);
@@ -3266,7 +3401,7 @@ export default function App() {
   if (!authReady) {
     return (
       <main className="auth-shell" aria-label={t("正在加载")}>
-        <div className="auth-loading"><div className="spinner" /><span>{t("正在加载…")}</span></div>
+        <div className="auth-loading"><InkSpinner size={28} /><span>{t("正在加载…")}</span></div>
         <ComplianceFooter />
       </main>
     );
@@ -3365,7 +3500,7 @@ export default function App() {
         style={{ width: sidebarCollapsed ? 48 : Math.max(sidebarMinWidth, sidebarWidth), minWidth: sidebarCollapsed ? 48 : Math.max(sidebarMinWidth, sidebarWidth) }}
       >
         <div ref={sidebarHeaderRef} className="sidebar-header">
-          {!sidebarCollapsed && <span className="sidebar-title"><FieldMark /><span className="sidebar-product-name">what-the-repo</span><SketchDoodle variant="underline" className="sidebar-title-doodle" /></span>}
+          {!sidebarCollapsed && <span className="sidebar-title"><FieldMark busy={sending || isAnalyzing} /><span className="sidebar-product-name">what-the-repo</span><SketchDoodle variant="underline" className="sidebar-title-doodle" /></span>}
           <div className="sidebar-actions">
             <button className="btn btn-icon" data-tooltip={sidebarCollapsed ? t("展开项目栏") : t("收起项目栏")}
               aria-label={sidebarCollapsed ? t("展开项目栏") : t("收起项目栏")}
@@ -3416,6 +3551,9 @@ export default function App() {
               ) : (
                 <>
                   <div className="project-item-title">{p.title}</div>
+                  {activeId !== p.project_id && <ProjectActivityMark
+                    state={projectActivity[p.project_id] === 'running' || analysisRunning(p.analysis_stage) ? 'running' : projectActivity[p.project_id]}
+                    analysis={analysisRunning(p.analysis_stage)} />}
                   <div className="project-menu-wrap" onPointerDown={event => event.stopPropagation()}>
                     <button className="btn btn-icon project-menu-button" type="button"
                       aria-label={t("打开 {0} 项目菜单", p.title)} aria-expanded={projectMenuId === p.project_id}
@@ -3476,7 +3614,7 @@ export default function App() {
               <div className="account-menu" role="menu" aria-label={t("账户菜单")}>
                 {identity.kind === 'guest'
                   ? <button type="button" role="menuitem" onClick={() => { window.location.href = apiClient.githubLoginUrl('/'); }}>
-                      <UserRound size={18} /> {t("使用 GitHub 登录")}</button>
+                      <img className="inline-brand-icon github-login-icon" src="/github.svg" alt="" /> {t("使用 GitHub 登录")}</button>
                   : <button type="button" role="menuitem" className="danger" onClick={logout}>
                       <LogOut size={16} strokeWidth={2.1} /> {t(" 退出登录")}</button>}
                 <div className="account-language-title">{t('界面语言')}</div>
@@ -3607,9 +3745,10 @@ export default function App() {
                     onResolveReview={(stepId, action) => { void resolveLearningReview(stepId, action); }} />
                 )}
                 {project.messages.length === 0 && (
-                  <div className="chat-empty">
-                    <FieldIllustration compact />
-                    {isAnalyzing ? t("仓库准备好后就可以尽情提问。") : (
+                  <div className={`chat-empty${isAnalyzing ? ' chat-empty-waiting' : ''}`}>
+                    <FieldIllustration compact pose={isAnalyzing ? 'waiting' : analysisCanRetry ? 'puzzled' : 'rest'} />
+                    {/* When the analysis failed there is no project view to open; the notice above says what happened. */}
+                    {isAnalyzing ? t("仓库准备好后就可以尽情提问。") : analysisCanRetry ? null : (
                       <span>{t("尽情提问，或从右上角打开")}<span className="chat-empty-project-view">{t("项目视图")}<SketchDoodle variant="circle" className="chat-empty-project-circle" />
                         </span>{t('。')}
                       </span>
@@ -3617,6 +3756,10 @@ export default function App() {
                   </div>
                 )}
                 {project.messages.map((msg, index) => {
+                  const routeStep = ['explaining', 'assessing', 'remediating'].includes(project.study.phase)
+                    ? project.study.dynamic_learning_plan?.[project.study.current_step] : undefined;
+                  const offerSkip = Boolean(routeStep) && !sending && index === project.messages.length - 1
+                    && msg.role === 'assistant' && !msg.error && !msg.placeholder && msg.learning_action?.status !== 'pending';
                   const previousModel = [...project.messages.slice(0, index)]
                     .reverse()
                     .find(message => message.role === 'assistant' && message.model)?.model ?? null;
@@ -3632,7 +3775,7 @@ export default function App() {
                       {modelChanged && (
                         <div className="message-model-change" role="separator">
                           <span />
-                          <Box size={13} aria-hidden="true" />
+                          <ActivityIcon name="kettle" size={16} />
                           <span>{t("模型已从 ")}{modelLabel(previousModel ?? '', settings)} {t(" 更改为 ")}{modelLabel(nextAssistantModel ?? '', settings)}{t('。')}</span>
                           <span />
                         </div>
@@ -3644,16 +3787,20 @@ export default function App() {
                           content: rejectedEdit?.projectId === project.project_id && rejectedEdit.messageId === msg.message_id
                             ? rejectedEdit.content : undefined,
                           onCancel: () => setEditingMessageId(null),
-                          onSubmit: content => { void sendMessage({ messageId: msg.message_id, content }); },
+                          onSubmit: content => { void sendMessage({ messageId: msg.message_id, content, contexts: msg.attachments }); },
                         } : undefined}
                         onResend={!sending && msg.role === 'user' && !project.messages.slice(index + 1).some(message => message.role === 'user')
-                          ? () => { void sendMessage({ messageId: msg.message_id, content: msg.content }); } : undefined}
+                          ? () => { void sendMessage({ messageId: msg.message_id, content: msg.content, contexts: msg.attachments }); } : undefined}
                         activity={completedActivities[activityCacheKey(project.project_id, msg.message_id)]}
                         onEvidenceClick={openMessageEvidence}
                         onFeedback={submitMessageFeedback}
                         onLearningAction={resolveLearningAction}
                         feedbackPending={Boolean(feedbackPending[msg.message_id])}
                         learningActionPending={Boolean(learningActionPending[msg.learning_action?.action_id ?? ''])}
+                        skipStep={offerSkip && routeStep ? {
+                          title: routeStep.title,
+                          onSkip: () => { void sendMessage({ content: t('跳过这一步的理解检查，直接进入下一步。') }); },
+                        } : undefined}
                         messageRef={node => registerMessageRef(msg.message_id, node)} />
                     </Fragment>
                   );
@@ -3671,6 +3818,7 @@ export default function App() {
                     startedAt={conversationStartedAt} />
                 ) : null}
                 {!sending && (conversationError?.projectId === project.project_id
+                  && !(project.messages.at(-1)?.message_id.startsWith('client:failed:') && !conversationError.capacity)
                   ? <ConversationErrorNotice text={conversationError.capacity ? t('此项目已达到聊天上限') : conversationError.text} />
                   : newMessageBlocked && <ConversationErrorNotice text={t('此项目已达到聊天上限')} />)}
                 </div>
@@ -3678,6 +3826,12 @@ export default function App() {
               <div className="composer-wrap">
                 <div className="composer-inner">
                 <div className="composer-surface"><InkOutline paper />
+                  {contextCards.length > 0 && (
+                    <div className="composer-context-cards" role="list" aria-label={t("附加到这条消息的内容")}>
+                      {contextCards.map(item => <ContextCard key={contextKey(item)} item={item}
+                        onRemove={() => setContextCards(current => current.filter(card => contextKey(card) !== contextKey(item)))} />)}
+                    </div>
+                  )}
                   <textarea className="composer-textarea" rows={1} enterKeyHint="enter"
                     ref={composerRef}
                     placeholder={t("尽情提问")}
@@ -3686,7 +3840,7 @@ export default function App() {
                        setConversationError(current => current?.projectId === project.project_id && current.capacity ? null : current);
                      }}
                     onKeyDown={handleKeyDown} />
-                  <div className="composer-controls"
+                  <div className={`composer-controls${sending ? ' composer-watering' : ''}`}
                     onPointerDownCapture={event => {
                       // Keep an existing editing session focused while tapping controls or menu options.
                       // Cancelling pointer focus does not cancel click or native menu scrolling.
@@ -3778,17 +3932,17 @@ export default function App() {
                     return window.confirm(t('重新加载会中断当前回答并清除未发送的内容。请先复制保存草稿。仍要继续吗？'));
                   }
                   return true;
-                }}><Suspense fallback={<div className="workspace-loading"><div className="spinner" /></div>}><RepositoryWorkspace
+                }}><Suspense fallback={<div className="workspace-loading"><InkSpinner size={24} /></div>}><RepositoryWorkspace
                   snapshot={snapshot}
                   project={project}
                   detailsVisible={repositoryOpen}
                   onOpenEvidence={openEvidence}
-                  onQueueTopic={queueTopic}
-                  onSelectionChange={setConversationSelection}
+                  onAddContext={addContextCard}
+                  attachedContexts={contextCards}
                 /></Suspense></LazyLoadBoundary>
               ) : (
                 <div className="workspace-loading">
-                  {isAnalyzing && <div className="spinner" />}
+                  {isAnalyzing && <InkSpinner size={24} />}
                   <strong>{isAnalyzing ? stageLabel(analysisStage) : t("分析结果尚未可用")}</strong>
                   {project.analysis.error && <span>{t("分析结果暂时不可用，请稍后重试。")}</span>}
                 </div>
@@ -3798,6 +3952,7 @@ export default function App() {
         )}
         <ComplianceFooter />
       </div>
+      <TabDoneBadge working={sending || isAnalyzing} />
 
       {showNew && <NewProjectDialog onCreated={handleProjectCreated} onClose={() => setShowNew(false)} />}
       {showSettings && (

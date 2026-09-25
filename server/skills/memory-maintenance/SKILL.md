@@ -1,29 +1,31 @@
 ---
 name: memory-maintenance
-description: 从近期用户原话中维护跨项目仍有用的稳定偏好、背景和学习画像，处理更新与冲突；不记录仓库事实、临时任务或敏感内容。
+description: Keep the stable preferences, background and learning profile from the learner's own recent words that stay useful across projects, handling updates and conflicts; never store repository facts, temporary tasks or sensitive content.
 ---
 
 # Memory Maintenance
 
-只把用户消息当个人信息来源；Assistant 内容用于理解指代，不能成为记忆证据。目标是让未来项目少问一次真正有用的问题，而不是保存对话摘要。
+Only user messages are a source of personal information. Assistant messages help you resolve what the user refers to, but they are never evidence for a memory. The goal is to save the next project one genuinely useful question, not to keep a conversation summary.
 
-## 决策顺序
+## Decide in this order
 
-1. 先识别候选在说哪个稳定概念，并与 `existing_memories` 的 key 或现有画像主张对齐。相同概念沿用稳定 key；不要因为措辞变化创建同义重复。
-2. 再分类：用户明确自述且跨项目可直接使用的背景、偏好或长期目标进入 `memories`；从用户实际回答表现得到的局部学习判断进入 `profile_claims`。一次答对或答错只能支持窄范围、低置信推断，不能诊断人格或固定能力。
-3. 判断它是新增、明确更新、撤回还是暂时表达。只有新增和有替代值的明确更新才输出；每个候选都绑定真实 user message ID，并引用其中可逐字找到的短证据。
-4. 最后检查未来价值与敏感性。不能让下一次对话少问一个真正有用问题的内容不保存。
+1. Identify which stable concept a candidate is about and align it with a key in `existing_memories` or an existing profile claim. Reuse the stable key for the same concept; different wording is not a new memory.
+2. Classify it. Background, preferences or long-term goals the user states explicitly about themselves, usable across projects, go into `memories`. Local learning judgments drawn from how the user actually answered go into `profile_claims`. One right or wrong answer supports only a narrow, low-confidence inference; it never diagnoses personality or fixed ability.
+3. Decide whether it is new, an explicit update, a retraction or a passing remark. Output only new items and explicit updates that give a replacement value. Bind each candidate to a real user message ID and quote short evidence that appears verbatim in it.
+4. Finally check future value and sensitivity. Content that would not save a future conversation a useful question is not stored.
 
-一次清楚的长期陈述可以直接成立；重复的临时行为不会自动变长期。项目目标、当前待办、一次性命令、当前仓库事实、短期情绪、Assistant 建议、代码内容、账号标识、密钥和其他敏感信息全部排除。
+One clear long-term statement is enough; repeated temporary behaviour does not become long-term by itself. Exclude project goals, current to-dos, one-off commands, facts about the current repository, short-lived emotions, assistant suggestions, code, account identifiers, secrets and other sensitive information.
 
-## 更新、撤回与冲突
+Write memory values in the language the user used for that statement, keeping their meaning rather than paraphrasing it into something they did not say.
 
-较新的明确自述优先于旧记忆和旧推断。用户给出替代值时，用同一 key 输出新值，让程序更新原记录；不要同时保留互相冲突的旧说法。明确事实优先于基于行为的推断，窄范围陈述不能被扩大成通用能力。
+## Updates, retractions and conflicts
 
-用户只撤回旧信息而没有提供替代值时，当前输出不能表达删除：不要把否定句改写成新的正面记忆，也不要重新输出旧值。把该概念留空，不能靠措辞掩盖删除能力缺口。新旧陈述无法判断是永久变化、当前项目例外还是临时条件时，同样不更新；临时条件句不能覆盖稳定偏好。
+A newer explicit self-statement outranks older memories and inferences. When the user gives a replacement value, output it under the same key so the program updates the record; do not keep contradictory versions. Explicit facts outrank behaviour-based inferences, and a narrow statement must not be widened into a general ability.
 
-不要把两个冲突说法折中成用户从未说过的第三种结论。已有记录本身可能错误；没有新的用户原话时，不因为它已经存在就继续强化。
+If the user only retracts something without a replacement, this output cannot express deletion: do not turn the negation into a new positive memory and do not re-emit the old value. Leave the concept alone rather than hiding the missing delete capability with wording. Also leave it alone when you cannot tell whether a change is permanent, a project-specific exception or a temporary condition; a conditional sentence must not overwrite a stable preference.
 
-## 置信与停止
+Never merge two conflicting statements into a third conclusion the user never stated. An existing record may itself be wrong; without new words from the user, do not reinforce it just because it exists.
 
-明确、无条件的用户自述可以较高；带条件、刚发生变化或仍可能只适用于当前项目的陈述降低置信度。行为推断必须更低，并只描述观察到的范围。没有会改善未来对话的稳定信息时返回空数组。不要为填满输出保存弱、重复或敏感候选。
+## Confidence and stopping
+
+Clear, unconditional self-statements can be high confidence. Conditional statements, fresh changes or statements that may apply only to the current project are lower. Behaviour-based inferences are lower still and describe only the observed scope. Return empty arrays when nothing stable would improve future conversations. Do not save weak, duplicate or sensitive candidates to fill the output.

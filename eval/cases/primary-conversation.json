@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
   "eval_id": "typescript-primary-conversation-v3",
-  "expected_case_count": 20,
+  "expected_case_count": 21,
   "description": "全 TypeScript + Pi 在线主对话的确定性行为契约；不声称替代真实 Provider 或人工质量判断。",
   "cases": [
     {
@@ -103,6 +103,11 @@
       "case_id": "empty_route_preserves_state",
       "requirement": "证据不足时可以返回空路线，不产生学习状态候选。",
       "node_test": "learning route may return an honest empty result"
+    },
+    {
+      "case_id": "learner_visible_reply_hides_internals",
+      "requirement": "回复只用自然语言描述学习状态和确认卡：工具名、动作名、阶段枚举和各类 ID 不交给用户，确认卡 ID 也不交给模型。",
+      "node_test": "the tutor is told not to show internal identifiers"
     }
   ]
 }

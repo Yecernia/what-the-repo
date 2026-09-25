@@ -77,8 +77,6 @@ Generated from four lockfiles, including runtime, development and optional platf
 | @csstools/css-color-parser@3.1.0 | MIT | web (dev) | [1](npm/d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665.txt) |
 | @csstools/css-parser-algorithms@3.0.5 | MIT | web (dev) | [1](npm/d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665.txt) |
 | @csstools/css-tokenizer@3.0.4 | MIT | web (dev) | [1](npm/d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665.txt) |
-| @dagrejs/dagre@3.1.1 | MIT | web | [1](npm/6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015.txt) |
-| @dagrejs/graphlib@4.0.5 | MIT | web | [1](npm/6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015.txt) |
 | @earendil-works/pi-agent-core@0.84.1 | MIT | server, evolution/pi | [1](npm/0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48.txt) |
 | @earendil-works/pi-ai@0.84.1 | MIT | server, evolution/pi | [1](npm/0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48.txt) |
 | @earendil-works/pi-client@0.84.1 | MIT | evolution/pi | [1](npm/0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48.txt) |
@@ -445,7 +443,6 @@ Generated from four lockfiles, including runtime, development and optional platf
 | gopd@1.2.0 | MIT | server | [1](npm/d90bf0a089da4cf43d644ed240a0b3825dcdb705e64e38371d56995a4cc9e4c5.txt) |
 | graceful-fs@4.2.11 | ISC | evolution/pi | [1](npm/f65c5d9f22a317b2a10803bd1868461ce6499c2ed7217bc80c0cc772a748789c.txt) |
 | grok-mermaid@0.2.2 | Apache-2.0 | evolution/pi | [1](npm/d7aefc12620699f8cebff08097f5ec76b984d1ab19d4f5f10608b916fa62ba2f.txt) |
-| hachure-fill@0.5.2 | MIT | web | [1](npm/5e807b516a9be9229ed459880bf353a336e2d947867247290680d437017be391.txt) |
 | has-symbols@1.1.0 | MIT | server | [1](npm/206c1adcf206dc0031b11232f5b054ec5f1662407ab1ca415247921cab2068ab.txt) |
 | has-tostringtag@1.0.2 | MIT | server | [1](npm/e2560e002e13281578c75c850061d9255c33d16d732939e8c2db64c2506642fa.txt) |
 | hasown@2.0.4 | MIT | server | [1](npm/bf9b0d665be2a689851eea667ca9f42066ea1d903b38349c51e6a44b2577680a.txt) |
@@ -598,7 +595,6 @@ Generated from four lockfiles, including runtime, development and optional platf
 | parseley@0.13.1 | MIT | server | [1](npm/ddd4eaafae6009e31c12abb70cf4369034db2fe17de7074ea89aecd3e95d7ffc.txt) |
 | parseurl@1.3.3 | MIT | server | [1](npm/11d017c3b9f1ee3f44caf7203035f0461d5b57e0db8ce1bc03a9af34fa7d3f6b.txt) |
 | partial-json@0.1.7 | MIT | server, evolution/pi | [1](npm/cd519ad3d7e012427f978dfb2e3b92ee403d189d7b859ba6bf68fd7e12ca456f.txt) |
-| path-data-parser@0.1.0 | MIT | web | [1](npm/e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71.txt) |
 | path-exists@4.0.0 | MIT | web | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
 | path-expression-matcher@1.5.0 | MIT | evolution/pi | [1](npm/75486ea0af9309140ca6e2c401d7e67bea8f4892344e5707f6394dc5e83dfc44.txt) |
 | path-key@3.1.1 | MIT | server, evolution/pi | [1](npm/48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0.txt) |
@@ -624,8 +620,6 @@ Generated from four lockfiles, including runtime, development and optional platf
 | playwright-core@1.62.1 | Apache-2.0 | web (dev) | [1](npm/45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb.txt) [2](npm/6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d.txt) |
 | playwright@1.62.1 | Apache-2.0 | web (dev) | [1](npm/45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb.txt) [2](npm/6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d.txt) |
 | pngjs@5.0.0 | MIT | web | [1](npm/176b07a18c0bb3836aaeb61088fd0bf11a38f66e6f15e3fbda85faa225250d6e.txt) |
-| points-on-curve@0.2.0 | MIT | web | [1](npm/e9754a00aebde654e80f40bcf41dab667d6a41dfbbd2912bcf14fb07d468bf71.txt) |
-| points-on-path@0.2.1 | MIT | web | [1](npm/b6fc1f7f1d96a48bc97176f3dcef959e364c5c17ba44167511de421500a86c6c.txt) |
 | postcss@8.5.26 | MIT | web (dev) | [1](npm/5be1f3465bba68a626777f984878814aaf35e7ef8e9fd314d469bcf887050fb8.txt) |
 | postgres-array@2.0.0 | MIT | server, evolution/pi | [1](npm/f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393.txt) |
 | postgres-bytea@1.0.1 | MIT | server, evolution/pi | [1](npm/f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393.txt) |
@@ -671,7 +665,6 @@ Generated from four lockfiles, including runtime, development and optional platf
 | reusify@1.1.0 | MIT | server, infra/docker/github-gateway | [1](npm/93a1506953b08ad4874e1cc0971a1d2ac387ca510da91e4d05e460a6c4966fa3.txt) |
 | rfdc@1.4.1 | MIT | server, infra/docker/github-gateway | [1](npm/1ce941682a96c7b898ecd125d0f2e22319758ea6f3adbf498a65d649b0f3f7dd.txt) |
 | rollup@4.62.4 | MIT | web (dev) | [1](npm/fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8.txt) |
-| roughjs@4.6.6 | MIT | web | [1](npm/dca9a392272606ac748ac0976a2a1133f14eef841c27beaa51a844d53c56a09d.txt) |
 | router@2.2.0 | MIT | server | [1](npm/d0bca4e517157b7a6120c085f5fe43a35b90c095e3bbeb9e67f220c608506a16.txt) |
 | rrweb-cssom@0.8.0 | MIT | web (dev) | [1](npm/e539937c489c4928ad7461669ec017f4d916fb3565fc26f5b8a0ce816d2ed23c.txt) |
 | safe-buffer@5.2.1 | MIT | server, evolution/pi | [1](npm/c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac.txt) |

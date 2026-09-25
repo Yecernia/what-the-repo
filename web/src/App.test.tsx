@@ -217,7 +217,10 @@ it('keeps partial output and a failed summary after reconnect attempts end', asy
   expect(await screen.findByText('已输出的部分内容')).toBeVisible();
   expect(screen.getByTestId('answer-activity')).toHaveAttribute('data-status', 'failed');
   expect(screen.getByText('回答失败')).toBeVisible();
-  expect(document.querySelector('.conversation-error')).not.toBeNull();
+  // The reason reads like part of the answer under the one-line failed summary, not a second notice.
+  expect(screen.getByTestId('answer-activity').querySelector('.activity-failure-reason')).toBeNull();
+  expect(document.querySelector('.msg-bubble .message-failure-text')).not.toBeNull();
+  expect(document.querySelector('.conversation-error')).toBeNull();
 });
 
 vi.mock('./api', () => ({
@@ -270,20 +273,14 @@ vi.mock('./RepositoryWorkspace', () => ({
   RepositoryWorkspace: ({
     snapshot,
     project,
-    onQueueTopic,
+    onAddContext,
     onOpenEvidence,
-    onSelectionChange,
     detailsVisible,
   }: {
     snapshot: Snapshot;
     project: Project;
-    onQueueTopic: (request: {
-      kind: 'value-point';
-      stableId: string;
-      prompt: string;
-    }) => void;
+    onAddContext: (selection: ConversationSelection) => void;
     onOpenEvidence: (evidence: GraphEvidence) => void;
-    onSelectionChange: (selection: ConversationSelection) => void;
     detailsVisible?: boolean;
   }) => (
     <div data-testid="repository-workspace" data-details-visible={String(detailsVisible)}>
@@ -292,14 +289,15 @@ vi.mock('./RepositoryWorkspace', () => ({
       <span>selected:{project.study.selected_value_point ?? 'none'}</span>
       <span>step:{project.study.current_step}/{project.study.total_steps}</span>
       <button
-        onClick={() => onQueueTopic({
-          kind: 'value-point',
-          stableId: 'value:entry',
-          prompt: '学习入口职责边界',
+        onClick={() => onAddContext({
+          snapshot_id: snapshot.snapshot_id,
+          kind: 'value_point',
+          stable_id: 'value:entry',
+          label: '入口职责边界',
         })}
       >选择入口职责边界</button>
       <button
-        onClick={() => onSelectionChange({
+        onClick={() => onAddContext({
           snapshot_id: snapshot.snapshot_id,
           kind: 'component',
           stable_id: 'component:domain',
@@ -561,7 +559,9 @@ it('keeps the readable view through a shared update and switches only after refr
   const refreshed = { ...repositoryViewStatus,
     current: { snapshot_id: 'snapshot-2', commit_sha: 'def456', published_at: '2026-08-17T00:00:00Z', generation: 2 },
     refresh_required: true };
-  let currentStatus: RepositoryViewStatus = repositoryViewStatus;
+  // Update is offered only once the check has found newer commits.
+  let currentStatus: RepositoryViewStatus = { ...repositoryViewStatus, freshness: { ...repositoryViewStatus.freshness,
+    upstream_commit_sha: 'def456', behind_commits: 3, relation: 'ahead' } };
   let firstProjectRead = true;
   vi.mocked(apiClient.getProject).mockImplementation(async (_id, viewId) => {
     if (viewId === 'snapshot-1') return detail(oldProject, null, true);
@@ -583,15 +583,15 @@ it('keeps the readable view through a shared update and switches only after refr
   fireEvent.click(screen.getByText('python-edge-cases'));
   await flushReact();
   expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-1');
-  fireEvent.click(screen.getByRole('button', { name: '更新' }));
+  fireEvent.click(screen.getByRole('button', { name: '更新代码' }));
   await flushReact();
   expect(screen.getByText('已加入共享更新，正在排队')).toBeVisible();
   expect(screen.getByRole('button', { name: '已加入更新' })).toBeDisabled();
   expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-1');
   expect(screen.getByPlaceholderText('尽情提问')).toBeEnabled();
   // Polling is fast only while an update is queued or running.
-  for (const [next, label, wait] of [[running, '共享更新正在进行，完成后会提示刷新', 5_000],
-    [failed, '共享更新失败，当前内容仍可使用', 5_000], [refreshed, '仓库已更新，点击刷新', 30_000]] as const) {
+  for (const [next, label, wait] of [[running, '共享更新正在进行，完成后可以切换到新版本', 5_000],
+    [failed, '共享更新失败，当前内容仍可使用', 5_000], [refreshed, '仓库已有新版本', 30_000]] as const) {
     currentStatus = next;
     await act(async () => { await vi.advanceTimersByTimeAsync(wait); });
     await flushReact();
@@ -605,8 +605,8 @@ it('keeps the readable view through a shared update and switches only after refr
   fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
   // The turn is pinned to the version this page shows, not the newer current one.
   expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[7]).toBe('snapshot-1');
-  fireEvent.click(screen.getByRole('button', { name: '刷新到新版本' }));
-  expect(screen.getByRole('button', { name: '本轮结束后刷新' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: '切换到新版本' }));
+  expect(screen.getByRole('button', { name: '本轮回答结束后切换' })).toBeVisible();
   expect(screen.getByTestId('repository-workspace')).toHaveTextContent('snapshot:snapshot-1');
   const userMessage: Message = { message_id: 'old-view-user', role: 'user', content: '旧版问题',
     created_at: '2026-08-17T00:00:00Z', evidence: [], model: null, usage: null, latency_ms: null,
@@ -735,6 +735,10 @@ afterEach(() => {
 });
 
 describe('public compliance', () => {
+  beforeEach(() => {
+    vi.stubEnv('VITE_ICP_RECORD', '');
+    vi.stubEnv('VITE_PUBLIC_SECURITY_RECORD', '');
+  });
   it('omits the filing footer when no record is configured', async () => {
     vi.stubEnv('VITE_ICP_RECORD', '');
     render(<App />);
@@ -747,6 +751,22 @@ describe('public compliance', () => {
 
     const record = await screen.findByRole('link', { name: '蜀ICP备2000000000号-1' });
     expect(record).toHaveAttribute('href', 'https://beian.miit.gov.cn/');
+  });
+  it('displays both filings with the official badge and record-specific query link', async () => {
+    vi.stubEnv('VITE_ICP_RECORD', '蜀ICP备2000000000号-2');
+    vi.stubEnv('VITE_PUBLIC_SECURITY_RECORD', '川公网安备51010000000001号');
+    render(<App />);
+    const record = await screen.findByRole('link', { name: '川公网安备51010000000001号' });
+    expect(record).toHaveAttribute('href', 'https://beian.mps.gov.cn/#/query/webSearch?code=51010000000001');
+    expect(record).toHaveAttribute('target', '_blank');
+    expect(record).toHaveAttribute('rel', 'noreferrer');
+    expect(record.querySelector('img')).toHaveAttribute('src', '/public-security-filing.png');
+    expect(screen.getByRole('link', { name: '蜀ICP备2000000000号-2' })).toBeInTheDocument();
+  });
+  it('can display a public security filing independently of the ICP label', async () => {
+    vi.stubEnv('VITE_PUBLIC_SECURITY_RECORD', '川公网安备51010000000001号');
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('link', { name: '川公网安备51010000000001号' })).toBeInTheDocument());
   });
 });
 
@@ -894,8 +914,8 @@ describe('App project state synchronization', () => {
     await userEvent.click(await screen.findByRole('button', { name: '确认' }));
 
     expect(await screen.findByText('正在生成路线')).toBeVisible();
-    expect(screen.getByRole('button', { name: '正在生成' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '暂不' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '确认' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '暂不' })).not.toBeInTheDocument();
 
     await act(async () => {
       finishAction({ project: resolvedProject, action: executedAction, state_changed: true });
@@ -1477,6 +1497,34 @@ describe('App project state synchronization', () => {
     expect(activity.querySelector('.activity-history')).toBeNull();
   });
 
+  it('offers a one-tap skip for the current learning step without touching the draft', async () => {
+    const step = (order: number, title: string) => ({
+      step_id: `step-${order}`, order, title, objective: '看懂入口', evidence_refs: [], component_ids: [], completion_check: '说出入口',
+    });
+    const assistant: Message = {
+      message_id: 'assistant-check', role: 'assistant', content: '请回答本步的理解检查。',
+      created_at: '2026-08-16T00:00:01Z', evidence: [], model: 'test-model',
+      usage: null, latency_ms: 700, error: null, placeholder: false,
+    };
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({
+      messages: [assistant],
+      study: { ...project().study, phase: 'explaining', current_step: 0, total_steps: 2,
+        dynamic_learning_plan: [step(1, '入口在哪里'), step(2, '消息怎么排队')] },
+    }), null, true));
+    vi.mocked(apiClient.sendMessage).mockReturnValue(new Promise(() => undefined));
+
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await userEvent.type(screen.getByPlaceholderText('尽情提问'), '还没写完的问题');
+    await userEvent.click(await screen.findByRole('button', { name: /跳过这一步/ }));
+
+    await waitFor(() => expect(apiClient.sendMessage).toHaveBeenCalledWith(
+      'project-1', '跳过这一步的理解检查，直接进入下一步。', [], false,
+    ));
+    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('还没写完的问题');
+    expect(document.querySelector('.learning-skip-button')).toBeNull();
+  });
+
   it('passes the optional evidence review choice with each message', async () => {
     const userMessage: Message = {
       message_id: 'user-review', role: 'user', content: '核对入口职责',
@@ -1510,7 +1558,7 @@ describe('App project state synchronization', () => {
     await waitFor(() => expect(apiClient.sendMessage).toHaveBeenCalledWith(
       'project-1',
       userMessage.content,
-      null,
+      [],
       true,
     ));
   });
@@ -2002,7 +2050,8 @@ describe('App project state synchronization', () => {
     await userEvent.click(await screen.findByText('python-edge-cases'));
     await openRepositoryPanel();
     await userEvent.click(await screen.findByRole('button', { name: '选择入口职责边界' }));
-    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('学习入口职责边界');
+    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('');
+    expect(screen.getByRole('list', { name: '附加到这条消息的内容' })).toHaveTextContent('入口职责边界');
     expect(apiClient.selectValuePoint).not.toHaveBeenCalled();
     expect(screen.getByTestId('repository-workspace')).toHaveTextContent('selected:none');
 
@@ -2011,6 +2060,7 @@ describe('App project state synchronization', () => {
       'snapshot:snapshot-2',
     );
     expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('');
+    expect(screen.queryByRole('list', { name: '附加到这条消息的内容' })).toBeNull();
     expect(screen.getByTestId('repository-workspace')).toHaveTextContent('selected:none');
     expect(vi.mocked(apiClient.getProject).mock.calls.filter(([id]) => id === 'project-1'))
       .toHaveLength(1);
@@ -2054,7 +2104,8 @@ describe('App project state synchronization', () => {
     await userEvent.click(await screen.findByText('python-edge-cases'));
     await openRepositoryPanel();
     await userEvent.click(await screen.findByRole('button', { name: '选择入口职责边界' }));
-    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('学习入口职责边界');
+    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('');
+    expect(screen.getByRole('list', { name: '附加到这条消息的内容' })).toHaveTextContent('入口职责边界');
     await userEvent.click(screen.getByText('second-project'));
     expect(await screen.findByTestId('repository-workspace')).toHaveTextContent(
       'snapshot:snapshot-2',
@@ -2532,7 +2583,8 @@ describe('App project state synchronization', () => {
     expect(apiClient.selectValuePoint).not.toHaveBeenCalled();
     expect(apiClient.getProject).toHaveBeenCalledTimes(1);
     expect(apiClient.getSnapshot).toHaveBeenCalledTimes(1);
-    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('学习入口职责边界');
+    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('');
+    expect(screen.getByRole('list', { name: '附加到这条消息的内容' })).toHaveTextContent('入口职责边界');
     expect(apiClient.sendMessage).not.toHaveBeenCalled();
   });
 
@@ -2601,18 +2653,41 @@ describe('App project state synchronization', () => {
     expect(apiClient.sendMessage).toHaveBeenCalledWith(
       'project-1',
       '我理解入口只负责编排。',
-      {
+      [{
         snapshot_id: 'snapshot-1',
         kind: 'component',
         stable_id: 'component:domain',
         label: '领域服务',
-      },
+      }],
       false,
     );
     expect(apiClient.getProject).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the same validated selection across consecutive questions', async () => {
+  it('lets the learner attach several cards, remove one, and see the rest on the sent message', async () => {
+    const card = (kind: 'value_point' | 'component', stable_id: string, label: string) => ({ snapshot_id: 'snapshot-1', kind, stable_id, label });
+    const kept = card('component', 'component:domain', '领域服务');
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project(), null, true));
+    vi.mocked(apiClient.sendMessage).mockReturnValue(new Promise(() => undefined));
+
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await openRepositoryPanel();
+    await userEvent.click(await screen.findByRole('button', { name: '选择入口职责边界' }));
+    await userEvent.click(screen.getByRole('button', { name: '选择领域服务组件' }));
+    await userEvent.click(screen.getByRole('button', { name: '选择领域服务组件' }));
+    const attached = screen.getByRole('list', { name: '附加到这条消息的内容' });
+    expect(within(attached).getAllByRole('listitem')).toHaveLength(2);
+    await userEvent.click(within(attached).getByRole('button', { name: '移除“入口职责边界”' }));
+    await userEvent.type(screen.getByPlaceholderText('尽情提问'), '它们怎么配合？');
+    await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+
+    await waitFor(() => expect(apiClient.sendMessage).toHaveBeenCalledWith('project-1', '它们怎么配合？', [kept], false));
+    expect(screen.queryByRole('list', { name: '附加到这条消息的内容' })).toBeNull();
+    expect(await screen.findByRole('list', { name: '附加的内容' })).toHaveTextContent('领域服务');
+  });
+
+  it('sends an attached card with the next question only, like an attached file', async () => {
     const firstReply = project({
       messages: [
         {
@@ -2692,14 +2767,14 @@ describe('App project state synchronization', () => {
       1,
       'project-1',
       '第一个问题',
-      expectedSelection,
+      [expectedSelection],
       false,
     );
     expect(apiClient.sendMessage).toHaveBeenNthCalledWith(
       2,
       'project-1',
       '第二个问题',
-      expectedSelection,
+      [],
       false,
     );
   });
@@ -2807,7 +2882,8 @@ describe('App project state synchronization', () => {
     expect(apiClient.selectValuePoint).not.toHaveBeenCalled();
     expect(screen.queryByTestId('conversation-activity')).not.toBeInTheDocument();
     expect(screen.getByTestId('repository-workspace')).toHaveTextContent('selected:none');
-    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('学习入口职责边界');
+    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('');
+    expect(screen.getByRole('list', { name: '附加到这条消息的内容' })).toHaveTextContent('入口职责边界');
   });
 
   it('shows a natural fallback without exposing an internal error code', async () => {
@@ -3246,6 +3322,10 @@ describe('learner profile settings', () => {
     await userEvent.click(await screen.findByRole('button', { name: '设置' }));
 
     await userEvent.click(await screen.findByRole('button', { name: '记忆摘要' }));
+    const view = await screen.findByTestId('memory-summary-view');
+    expect(view).toHaveTextContent(learnerProfile.memory_summary ?? '');
+    expect(screen.queryByRole('textbox', { name: '记忆摘要' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '编辑' }));
     const summaryInput = await screen.findByRole('textbox', { name: '记忆摘要' });
     expect(summaryInput).toHaveValue(learnerProfile.memory_summary);
     await userEvent.clear(summaryInput);
@@ -3254,13 +3334,13 @@ describe('learner profile settings', () => {
 
     expect(apiClient.updateMemorySummary).toHaveBeenCalledWith(editedProfile.memory_summary);
     expect(await within(screen.getByRole('dialog', { name: '记忆摘要' })).findByText('记忆摘要已保存')).toBeInTheDocument();
-    expect(summaryInput).toHaveValue(editedProfile.memory_summary);
+    expect(screen.getByTestId('memory-summary-view')).toHaveTextContent(editedProfile.memory_summary ?? '');
 
     await userEvent.click(screen.getByRole('button', { name: '重新整理记忆摘要' }));
 
     expect(apiClient.regenerateMemorySummary).toHaveBeenCalledTimes(1);
     expect(await within(screen.getByRole('dialog', { name: '记忆摘要' })).findByText('记忆摘要已重新整理')).toBeInTheDocument();
-    expect(summaryInput).toHaveValue(regeneratedProfile.memory_summary);
+    expect(screen.getByTestId('memory-summary-view')).toHaveTextContent(regeneratedProfile.memory_summary ?? '');
   });
 
   it('presents memory settings without exposing internal inferred-claim editors', async () => {

@@ -26,7 +26,7 @@ function metadata(overrides: Partial<PublicSnapshotMetadata> = {}): PublicSnapsh
 }
 
 function updateStore(project: ReturnType<typeof readableProject>, latest: RepositoryUpdate | null) {
-  const calls = { freshness: 0, created: 0 };
+  const calls = { freshness: 0, created: 0, committedAt: undefined as string | null | undefined };
   const store = {
     loadProject: async () => project,
     // Reading the current version records the learning route's version once.
@@ -39,7 +39,9 @@ function updateStore(project: ReturnType<typeof readableProject>, latest: Reposi
       current_commit_sha: current, analyzer_bundle_version: ANALYZER_BUNDLE_VERSION,
       analysis_config_digest: ANALYSIS_CONFIG_DIGEST, last_checked_at: null, updated_at: "" }),
     loadPublicSnapshotMetadata: async () => metadata(),
-    saveRepositoryFreshness: async () => { calls.freshness++; return true; },
+    saveRepositoryFreshness: async (input: { upstreamCommittedAt?: string | null }) => {
+      calls.freshness++; calls.committedAt = input.upstreamCommittedAt; return true;
+    },
     createOrJoinRepositoryUpdate: async () => { calls.created++; throw new Error("must not start paid work"); },
   } as unknown as ProductStore;
   return { store, calls };
@@ -49,12 +51,14 @@ test("an explicit update at the current commit is up to date and creates no anal
   const project = readableProject();
   const { store, calls } = updateStore(project, null);
   const service = new RepositoryService(store, {
-    resolveGithubHead: async () => ({ owner: "example", repo: "repo", repository: "example/repo", commitSha: current }),
+    resolveGithubHead: async () => ({ owner: "example", repo: "repo", repository: "example/repo", commitSha: current,
+      committedAt: "2026-09-20T08:00:00.000Z" }),
   });
   const result = await service.requestRepositoryUpdate({ owner_id: project.owner_id, kind: "guest" }, project.project_id);
   assert.equal(result.outcome, "up_to_date");
   assert.equal(result.job_id, null);
   assert.equal(calls.freshness, 1, "the confirmed head is cached for the status card");
+  assert.equal(calls.committedAt, "2026-09-20T08:00:00.000Z", "the head commit time is cached with it");
   assert.equal(calls.created, 0);
 });
 

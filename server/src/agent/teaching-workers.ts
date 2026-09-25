@@ -58,8 +58,8 @@ function learningRouteLanguageError(
   ].filter(([, value]) => !languageHasNaturalText(value, language))
     .map(([field]) => field);
   return fields.length
-    ? "字段 " + fields.join(", ") + " 没有使用" + displayLanguageLabel(language)
-      + "；请保留代码标识，但把学习说明改写成用户语言。"
+    ? "Fields " + fields.join(", ") + " are not written in " + displayLanguageLabel(language)
+      + ". Keep code identifiers, but rewrite the learning text in the learner's language."
     : null;
 }
 
@@ -122,8 +122,8 @@ export async function runUnderstandingAssessment(input: {
     signal: input.signal,
     schema: ASSESSMENT_RESULT,
     systemPrompt: [
-      "程序已经把当前步骤、原始用户消息和有界证据绑定到本次 Worker。",
-      "不要读取其他仓库内容或替换原始回答；Evidence ID 只能来自输入，必须调用 submit_result。",
+      "The program has bound the current step, the learner's original message and bounded evidence to this run.",
+      "Do not read other repository content or replace the original answer. Evidence IDs must come from the input. Finish by calling submit_result.",
     ].join("\n"),
     userPrompt: JSON.stringify({
       current_step: step,
@@ -221,8 +221,8 @@ export async function generateLearningRoute(input: {
     tools: exploration.tools,
     systemPrompt: [
       displayLanguageInstruction(displayLanguage),
-      "用户已经通过结构化确认卡批准为指定目标制定路线。",
-      "程序绑定当前快照和目标，并校验最终 component_id/evidence_id；路线本身不直接写状态。",
+      "The learner approved building a route for this target through a confirmation card.",
+      "The program binds the current snapshot and target and validates the final component and evidence IDs; the route itself writes no state.",
     ].join("\n"),
     userPrompt: JSON.stringify({
       repository: input.project.source.display_name,

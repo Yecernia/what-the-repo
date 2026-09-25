@@ -157,8 +157,8 @@ export class MemoryMaintenance {
         thinkingLevel: "low",
         schema: MEMORY_RESULT,
         systemPrompt: [
-          "程序已经提供有界近期对话、当前画像和长期记忆；当前 Skill 负责提取与冲突处理方法。",
-          "每条候选必须绑定输入 user message ID 和逐字证据；程序会再次校验敏感内容、来源和权限。必须调用 submit_result。",
+          "The program supplies a bounded recent conversation, the current profile and long-term memories; this Skill decides what to extract and how to resolve conflicts.",
+          "Every candidate must bind an input user message ID and verbatim evidence; the program re-checks sensitivity, source and permission. Finish by calling submit_result.",
         ].join("\n"),
         userPrompt: JSON.stringify({
           existing_profile: profile,

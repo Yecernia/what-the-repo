@@ -95,16 +95,3 @@ it('keeps a single smooth animation following new chunks without jumping backwar
   view.unmount();
   expect(frames.size).toBe(0);
 });
-
-it('respects reduced motion by following without animation', () => {
-  vi.stubGlobal('matchMedia', () => ({ matches: true }));
-  function Chat({ text }: { text: string }) {
-    const ref = useSmoothChatScroll('project', 1, text);
-    return <div ref={ref}>{text}</div>;
-  }
-  const view = render(<Chat text="a" />);
-  const viewport = view.container.firstElementChild as HTMLElement;
-  Object.defineProperties(viewport, { scrollHeight: { value: 1200 }, clientHeight: { value: 400 } });
-  view.rerender(<Chat text="ab" />);
-  expect(viewport.scrollTop).toBe(800);
-});

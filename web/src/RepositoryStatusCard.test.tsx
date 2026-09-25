@@ -42,18 +42,20 @@ describe('relativeAge', () => {
 
 describe('freshnessText', () => {
   it('never shows zero when the comparison is unknown or failed', () => {
-    expect(freshnessText(base)).toBe('落后最新代码 12 个提交');
-    expect(freshnessText({ ...base, freshness: { ...base.freshness, stale: true } })).toBe('上次检查落后 12 个提交');
+    expect(freshnessText(base)).toBe('仓库有 12 个新提交');
+    expect(freshnessText({ ...base, freshness: { ...base.freshness, stale: true } })).toBe('上次检查时仓库有 12 个新提交');
     expect(freshnessText({ ...base, freshness: { ...base.freshness, relation: 'same', behind_commits: 0 } }))
-      .toBe('与上次检查的最新代码一致');
+      .toBe('已是最新版本');
+    expect(freshnessText({ ...base, freshness: { ...base.freshness, relation: 'same', behind_commits: 0, stale: true } }))
+      .toBe('上次检查时已是最新版本');
     expect(freshnessText({ ...base, freshness: { ...base.freshness, relation: 'unknown', behind_commits: null } }))
-      .toBe('尚未确认最新代码');
+      .toBe('还没检查仓库有没有新提交');
     expect(freshnessText({ ...base, freshness: { ...base.freshness, relation: 'unknown', behind_commits: null, check_status: 'checking' } }))
-      .toBe('正在检查最新代码…');
+      .toBe('正在检查仓库有没有新提交…');
     expect(freshnessText({ ...base, freshness: { ...base.freshness, check_status: 'failed' } }))
-      .toBe('暂时无法检查最新代码');
+      .toBe('暂时无法检查仓库有没有新提交');
     expect(freshnessText({ ...base, freshness: { ...base.freshness, relation: 'rewound', behind_commits: null } }))
-      .toBe('上游历史已变化');
+      .toBe('仓库的提交历史被改写过');
   });
 });
 
@@ -71,18 +73,40 @@ describe('RepositoryStatusCard', () => {
     expect(screen.getByRole('button', { name: '已加入更新' })).toBeDisabled();
   });
 
-  it('shows the refresh action instead of the old page age after a newer version is published', () => {
+  it('shows the switch action after a newer version is published', () => {
     render(<RepositoryStatusCard status={{ ...base, refresh_required: true }} refreshPending={false}
       updatePending={false} notice={null} onRefresh={noop} onUpdate={noop} />);
-    expect(screen.getByRole('button', { name: '刷新到新版本' })).toBeEnabled();
-    expect(screen.queryByText(/更新于/)).toBeNull();
+    expect(screen.getByRole('button', { name: '切换到新版本' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: '更新代码' })).toBeNull();
+  });
+
+  it('offers no update when a fresh check found no new commits', () => {
+    const same = { ...base.freshness, relation: 'same' as const, behind_commits: 0 };
+    const { rerender } = render(<RepositoryStatusCard status={{ ...base, freshness: same }} refreshPending={false}
+      updatePending={false} notice={null} onRefresh={noop} onUpdate={noop} />);
+    expect(screen.getByText('已是最新版本')).toBeVisible();
+    expect(screen.queryByRole('button')).toBeNull();
+    rerender(<RepositoryStatusCard status={{ ...base, freshness: { ...same, stale: true } }} refreshPending={false}
+      updatePending={false} notice={null} onRefresh={noop} onUpdate={noop} />);
+    expect(screen.getByRole('button', { name: '更新代码' })).toBeEnabled();
+  });
+
+  it('shows the upstream commit time only when the check has read it', () => {
+    const { rerender } = render(<RepositoryStatusCard status={{ ...base, freshness: { ...base.freshness,
+      upstream_committed_at: new Date(Date.now() - 3 * 3_600_000).toISOString() } }} refreshPending={false}
+      updatePending={false} notice={null} onRefresh={noop} onUpdate={noop} />);
+    expect(screen.getByLabelText('最新提交于 3小时前')).toHaveTextContent('3小时前');
+    rerender(<RepositoryStatusCard status={{ ...base, freshness: { ...base.freshness, upstream_committed_at: null } }}
+      refreshPending={false} updatePending={false} notice={null} onRefresh={noop} onUpdate={noop} />);
+    expect(screen.queryByLabelText(/最新提交于/)).toBeNull();
+    expect(screen.getByText('仓库有 12 个新提交')).toBeVisible();
   });
 
   it('explains a cooldown with the time another update may start', () => {
     render(<RepositoryStatusCard status={{ ...base, update_eligibility: { allowed: false, reason: 'cooldown',
       retry_after: new Date(now + 30 * 60_000).toISOString() } }} refreshPending={false}
       updatePending={false} notice={null} onRefresh={noop} onUpdate={noop} />);
-    expect(screen.getByRole('button', { name: '更新' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '更新代码' })).toBeDisabled();
     expect(screen.getByText(/后可以再次更新/)).toBeVisible();
   });
 

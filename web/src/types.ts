@@ -128,6 +128,8 @@ export interface Message {
   trace_id?: string | null;
   thinking_summary?: MessageThinkingSummaryEvent[] | null;
   learning_action?: LearningActionCard | null;
+  /** Graph objects the learner attached to this (user) message. */
+  attachments?: ConversationSelection[];
 }
 
 export interface RepoSource {
@@ -250,6 +252,8 @@ export interface RepositoryViewStatus {
   freshness: {
     base_snapshot_id: string | null;
     upstream_commit_sha: string | null;
+    /** When the upstream head was committed; null until a check has read it. */
+    upstream_committed_at?: string | null;
     behind_commits: number | null;
     relation: 'same' | 'ahead' | 'diverged' | 'rewound' | 'unknown';
     check_status: 'idle' | 'checking' | 'ok' | 'failed';

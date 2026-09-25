@@ -103,7 +103,8 @@ export interface ConversationRunInput {
   viewSnapshotId?: string | null;
   /** A browser may lose the response before learning the persisted message ID. */
   retryRunId?: string;
-  selection?: UiSelection | null;
+  /** Graph objects the learner attached to this message. */
+  selections?: UiSelection[];
   reviewEvidence?: boolean;
   runId?: string;
   signal?: AbortSignal;
@@ -465,14 +466,13 @@ export class ConversationService {
     if (profile.memory_summary_mode !== "edited") {
       profile.memory_summary = generateMemorySummary(profile, agentMemories);
     }
-    const selection = input.selection?.snapshot_id === project.analysis.snapshot_id
-      ? input.selection
-      : null;
+    const selections = (input.selections ?? []).filter((item) => item.snapshot_id === project.analysis.snapshot_id);
     const userMessage = createMessage("user", content, {
       trace_id: runId,
       analysis_snapshot_id: project.analysis.snapshot_id,
       analysis_commit_sha: project.source.commit_sha,
     });
+    if (selections.length) userMessage.attachments = selections.map((item) => ({ ...item }));
     if (input.replaceMessageId) userMessage.message_id = input.replaceMessageId;
     project.messages = [...beforeTurn, userMessage];
 
@@ -498,7 +498,7 @@ export class ConversationService {
       profile,
       agentMemories,
       store: this.store,
-      selected: selection,
+      selected: selections,
       exposedEvidence,
       exposedPaths,
       toolsUsed,
@@ -780,7 +780,7 @@ export class ConversationService {
       systemPrompt: formatSkillInvocation(primarySkill.skill, primarySystemPrompt({
         project,
         profile,
-        selection,
+        selections,
         currentUserMessage: content,
         displayLanguage: input.displayLanguage,
       })),

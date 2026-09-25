@@ -63,6 +63,30 @@ test("generated summary only includes high-confidence user memories", () => {
     },
   ]);
   assert.match(summary, /Go/);
-  assert.match(summary, /preferred-style/);
-  assert.doesNotMatch(summary, /不确定的偏好|sk-hidden-secret|api-key/);
+  assert.match(summary, /先给输入输出，再解释实现/);
+  assert.doesNotMatch(summary, /preferred-style|不确定的偏好|sk-hidden-secret|api-key/);
+});
+
+test("generated summary reads as short Markdown sections without internal keys or doubled full stops", () => {
+  const profile = normalizeProfile({
+    ...emptyProfile(),
+    languages: ["TypeScript"],
+    experience_level: "能读一些代码",
+    goals: ["理解调用链。"],
+  });
+  const memory = (key: string, value: string) => ({
+    memoryId: key, ownerId: "owner", scope: "user" as const, key, value, sourceMessageIds: ["message"], confidence: 0.9,
+    createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-01T00:00:00.000Z",
+  });
+  const summary = generateMemorySummary(profile, [
+    memory("experience_level", "能读一些代码，但对 Agent 运行时还不熟悉。"),
+    memory("explanation_style", "先讲整体，再讲 *细节*"),
+    memory("timezone", "UTC+8"),
+  ]);
+  assert.equal(summary, [
+    "### 技术背景", "", "- 熟悉 TypeScript", "- 能读一些代码，但对 Agent 运行时还不熟悉", "",
+    "### 学习目标", "", "- 理解调用链", "",
+    "### 讲解偏好", "", "- 先讲整体，再讲 \\*细节\\*", "",
+    "### 其他记住的事", "", "- UTC+8",
+  ].join("\n"));
 });

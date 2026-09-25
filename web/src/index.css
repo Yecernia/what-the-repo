@@ -176,6 +176,9 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; overflow-x: clip; }
+/* A text caret belongs only where the learner can type; clicked labels, switches and messages never show one. */
+body { caret-color: transparent; }
+:is(input, textarea, select, [contenteditable]:not([contenteditable="false"])) { caret-color: auto; }
 
 body {
   background: var(--bg);
@@ -234,7 +237,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
   flex-direction: column; justify-content: flex-start;
 }
 .sidebar-title { position: relative; display: flex; align-items: center; gap: 6px; color: var(--fg); font-size: 13px; font-weight: 600; letter-spacing: -.025em; }
-.sidebar-title .field-mark { width: 25px; height: 29px; flex-shrink: 0; }
+.sidebar-title .field-mark { width: 28px; height: 28px; flex-shrink: 0; }
 
 
 .sidebar-actions { display: flex; flex: 0 0 auto; margin-left: auto; gap: 4px; align-items: center; }
@@ -272,7 +275,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .account-action small { color: var(--fg-muted); font: var(--text-hand-caption)/1.5 var(--font-ui); overflow-wrap: anywhere; }
 .account-user-icon { flex: 0 0 auto; color: var(--fg); }
 .account-menu {
-  position: absolute; z-index: 70; left: 4px; bottom: calc(100% + 7px); min-width: 152px; padding: 6px;
+  position: absolute; z-index: 70; left: 4px; bottom: calc(100% + 7px); width: max-content; min-width: 152px; max-width: calc(100vw - 24px); padding: 6px;
   border: 1.2px solid var(--border-strong); border-radius: var(--radius-sketch);
   background: var(--panel-strong); box-shadow: 2px 3px 0 var(--accent-soft);
   animation: sketch-menu-in .16s var(--ease-spring) both;
@@ -280,11 +283,12 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .account-menu button {
   width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 9px; border: 0;
   border-radius: 7px 6px 9px 5px; background: transparent; color: var(--fg); font: 400 var(--text-hand-control)/1.5 var(--font-ui); cursor: pointer;
+  white-space: nowrap;
 }
 .account-menu button:hover { background: var(--control-hover); color: var(--accent); }
 .account-menu button.danger:hover { color: var(--err); }
 .account-language-title { margin: 5px 3px 2px; padding: 8px 6px 2px; border-top: 1px solid var(--border); color: var(--fg-muted); font: var(--text-hand-label)/1.5 var(--font-ui); }
-.account-menu [role="menuitemradio"] { justify-content: space-between; font-family: var(--font-reading); }
+.account-menu [role="menuitemradio"] { justify-content: space-between; font-family: var(--font-ui); }
 .account-menu [aria-checked="true"] { background: var(--accent-soft); color: var(--accent); }
 .sidebar-theme-button { color: var(--accent); background: transparent; --icon-hover-color: var(--moon-hover); }
 :root[data-theme="dark"] .sidebar-theme-button { --icon-hover-color: var(--sun-hover); }
@@ -314,7 +318,7 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 
 .project-item {
   position: relative; margin: 5px 10px; padding: 10px 7px 10px 12px; cursor: pointer;
-  min-height: 40px; display: grid; grid-template-columns: minmax(0, 1fr) 28px;
+  min-height: 40px; display: grid; grid-template-columns: minmax(0, 1fr) auto 28px;
   align-items: center; gap: 5px;
   border: 1px solid transparent; border-radius: var(--radius-sketch-sm);
   transition: background-color .14s var(--ease-out), transform .08s var(--ease-out),
@@ -332,8 +336,40 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
   font-size: 13px; font-weight: 500; letter-spacing: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.project-menu-wrap { position: relative; display: flex; align-items: center; justify-content: flex-end; }
+.project-menu-wrap { grid-column: 3; position: relative; display: flex; align-items: center; justify-content: flex-end; }
 .project-menu-button { opacity: 0; color: var(--fg-muted); }
+/* A one-tap option under the latest tutor reply while a learning route is running. */
+.learning-skip-option { display: flex; margin-top: 10px; }
+.learning-skip-button {
+  display: inline-flex; align-items: baseline; gap: 8px; max-width: 100%; padding: 7px 12px 7px 14px;
+  border: 1.2px dashed var(--border-strong); border-radius: var(--radius-sketch-sm); background: transparent;
+  color: var(--fg); font: 14px/1.4 var(--font-reading); cursor: pointer;
+  transition: border-color .14s var(--ease-out), background-color .14s var(--ease-out), color .14s var(--ease-out);
+}
+.learning-skip-button > span { flex: 0 0 auto; white-space: nowrap; }
+.learning-skip-button small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font: 12.5px/1.4 var(--font-reading); }
+.learning-skip-button svg { align-self: center; flex: 0 0 auto; color: var(--fg-muted); transition: transform .16s var(--ease-out); }
+.learning-skip-button:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.learning-skip-button:hover svg { transform: translateX(2px); color: var(--accent); }
+/* Project card markers, drawn in ink: a circle drawn and erased over and over while something runs, a tick
+   drawn once for a new result, a red "!" when it failed. */
+.project-activity { grid-column: 2; display: inline-flex; width: 15px; height: 15px; color: var(--accent); }
+.project-activity svg { width: 100%; height: 100%; overflow: visible; }
+.project-activity-running svg, .ink-spinner { animation: project-activity-turn 4.8s linear infinite; }
+.project-activity-running path, .ink-spinner path { stroke-dasharray: .14 .86; animation: ink-chase 1.6s linear infinite; }
+/* The same ink loop wherever a page or panel is loading. */
+.ink-spinner { flex: 0 0 auto; overflow: visible; color: var(--accent); }
+.project-activity-done path { stroke-dasharray: 1 1; animation: project-activity-tick .5s .1s ease-out both; }
+.project-activity-failed { color: var(--err); }
+/* The dash pattern is exactly one loop long, so an offset of -1 is the same picture as 0: the head races ahead,
+   then the tail catches up, and the next cycle continues from there. */
+@keyframes ink-chase {
+  0% { stroke-dasharray: .14 .86; stroke-dashoffset: 0; animation-timing-function: cubic-bezier(.45, 0, .55, 1); }
+  50% { stroke-dasharray: .7 .3; stroke-dashoffset: -.12; animation-timing-function: cubic-bezier(.45, 0, .55, 1); }
+  100% { stroke-dasharray: .14 .86; stroke-dashoffset: -1; }
+}
+@keyframes project-activity-turn { to { transform: rotate(360deg); } }
+@keyframes project-activity-tick { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 .project-item:hover .project-menu-button,
 .project-item:focus-within .project-menu-button,
 .project-menu-button[aria-expanded='true'] { opacity: 1; }
@@ -370,11 +406,16 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 
 .site-compliance-footer {
   font-family: var(--font-reading); font-weight: 400;
-  flex: 0 0 25px; min-height: 25px; display: flex; align-items: center; justify-content: center;
-  padding: 3px 12px; border-top: 1px dashed var(--border); background: var(--chat-bg);
-  color: var(--fg-tertiary); font-size: 10px; line-height: 1.2;
+  flex: 0 0 auto; min-height: 28px; display: flex; align-items: center; justify-content: center;
+  flex-wrap: wrap; gap: 4px 16px;
+  padding: 4px 12px; border-top: 1px dashed var(--border); background: var(--chat-bg);
+  color: var(--fg-tertiary); font-size: 11px; line-height: 1.5;
 }
-.site-compliance-footer a { color: inherit; text-decoration: none; }
+.site-compliance-footer a {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: inherit; text-decoration: none; white-space: nowrap;
+}
+.site-compliance-footer img { flex: none; object-fit: contain; }
 .site-compliance-footer a:hover, .site-compliance-footer a:focus-visible {
   color: var(--accent); text-decoration: underline; text-underline-offset: 2px;
 }
@@ -413,6 +454,31 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .msg.user { justify-content: flex-end; }
 .msg-content { min-width: 0; width: 100%; }
 .msg.user .msg-content { width: auto; max-width: min(76%, 640px); }
+/* Graph objects attached to a message: small paper tiles, like files attached to a chat. */
+.context-card {
+  position: relative; display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 220px;
+  padding: 7px 12px 7px 9px; border: 1.2px solid var(--border-strong); border-radius: 9px 12px 10px 8px;
+  background: color-mix(in srgb, var(--paper-base) 72%, transparent); color: var(--fg);
+  box-shadow: 1px 1.5px 0 color-mix(in srgb, var(--border-strong) 45%, transparent); transform: rotate(-.4deg);
+  animation: context-card-in .22s var(--ease-spring) both;
+}
+.context-card:nth-child(even) { transform: rotate(.5deg); }
+.context-card > svg { flex: 0 0 auto; color: var(--accent); }
+.context-card-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.context-card-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 13px/1.35 var(--font-reading); }
+.context-card-text small { color: var(--fg-muted); font: 11.5px/1.3 var(--font-ui); }
+.context-card-remove {
+  position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; display: grid; place-items: center; padding: 0;
+  border: 1.2px solid var(--border-strong); border-radius: var(--radius-sketch-circle); background: var(--panel); color: var(--fg-muted);
+  cursor: pointer; opacity: 0; transition: opacity .14s var(--ease-out), color .14s var(--ease-out), border-color .14s var(--ease-out);
+}
+.context-card:hover .context-card-remove, .context-card-remove:focus-visible { opacity: 1; }
+.context-card-remove:hover { color: var(--err); border-color: var(--err); }
+@media (hover: none) { .context-card-remove { opacity: 1; } }
+@keyframes context-card-in { from { opacity: 0; transform: translateY(4px) scale(.96); } }
+.composer-context-cards { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 10px 2px; }
+.message-context-cards { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
+.message-context-cards .context-card { animation: none; }
 .msg-bubble {
   background: transparent; border: 0;
   border-radius: var(--radius); padding: 2px 0;
@@ -435,9 +501,15 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 }
 .msg-bubble h1:first-child, .msg-bubble h2:first-child,
 .msg-bubble h3:first-child, .msg-bubble h4:first-child { margin-top: .1em; }
-.msg-bubble h1 { font-size: 17px; }
-.msg-bubble h2 { font-size: 15.5px; }
-.msg-bubble h3, .msg-bubble h4 { font-size: 14.5px; }
+.msg-bubble h1 { font-size: 19px; }
+.msg-bubble h2 { font-size: 17px; }
+.msg-bubble h3 { font-size: 15.5px; }
+.msg-bubble h4 { font-size: 14.5px; color: var(--fg-muted); }
+/* A short ink stroke under section headings keeps long answers scannable. */
+.msg-bubble :is(h1, h2)::after {
+  content: ''; display: block; width: 34px; height: 3px; margin-top: 5px; border-radius: 3px 1px 2px 1px;
+  background: color-mix(in srgb, var(--accent) 50%, transparent); transform: rotate(-1.5deg);
+}
 .msg-bubble strong { font-weight: 650; }
 .msg-bubble ul, .msg-bubble ol { margin: .35em 0 .7em; padding-left: 1.4em; }
 .msg-bubble li { margin: .2em 0; }
@@ -446,7 +518,22 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
   margin: .5em 0; padding: 2px 0 2px 12px;
   border-left: 2px solid var(--border-strong); color: var(--fg-muted);
 }
-.msg-bubble hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+.msg-bubble hr { border: 0; border-top: 1.5px dashed var(--border); margin: 1em 0; }
+.msg-bubble ul.contains-task-list { list-style: none; padding-left: .2em; }
+.msg-bubble .task-list-item input[type="checkbox"] {
+  appearance: none; position: relative; width: 15px; height: 15px; margin: 0 8px 0 0; vertical-align: -2px;
+  border: 1.5px solid var(--fg-muted); border-radius: 4px 3px 5px 3px / 3px 5px 3px 4px; background: transparent;
+  transform: rotate(-2deg);
+}
+.msg-bubble .task-list-item input[type="checkbox"]:checked { border-color: var(--accent); }
+.msg-bubble .task-list-item input[type="checkbox"]:checked::after {
+  content: ''; position: absolute; left: 3.5px; top: -1px; width: 5px; height: 9px;
+  border: solid var(--accent); border-width: 0 2.2px 2.2px 0; border-radius: 0 1px 2px 0; transform: rotate(38deg);
+}
+.markdown-file-reference-label.unresolved {
+  color: var(--fg-muted); font-weight: 500;
+  text-decoration: underline dotted color-mix(in srgb, var(--warn) 70%, transparent); text-underline-offset: 3px;
+}
 .msg-bubble table { border-collapse: collapse; margin: .6em 0; font-size: 13px; }
 .msg-bubble th, .msg-bubble td { border: 1px solid var(--border); padding: 6px 11px; text-align: left; }
 .msg-bubble th { background: var(--control-bg); font-weight: 600; }
@@ -478,6 +565,7 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .activity-toggle-static { cursor: default; }
 .activity-toggle:disabled { cursor: default; }
 .activity-toggle > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-toggle > span { flex: 0 1 auto; white-space: nowrap; }
 .activity-toggle > svg { flex: 0 0 auto; transition: transform .18s var(--ease-out); }
 .conversation-activity.expanded .activity-toggle > .hand-icon:first-child { transform: rotate(90deg); }
 .activity-history {
@@ -495,10 +583,8 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .activity-step-icon { width: 22px; height: 22px; flex: 0 0 auto; color: var(--accent); }
 .shiny-text { color: var(--accent); background: linear-gradient(110deg, var(--accent) 28%, var(--primary-hover) 42%, #fff 50%, var(--accent) 62%); background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: shiny-text-sweep 1.9s linear infinite; }
 @keyframes shiny-text-sweep { from { background-position: 180% 0; } to { background-position: -40% 0; } }
-@media (prefers-reduced-motion: reduce) { .shiny-text { animation: none; background: none; -webkit-text-fill-color: currentColor; } }
-.activity-technical { display: flex; flex-wrap: wrap; gap: 8px; color: var(--fg-tertiary); font-size: var(--text-hand-caption); }
 .placeholder-notice {
-  display: inline-block; font-size: 12px; color: var(--warn);
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--warn);
   background: var(--warn-soft); border-radius: var(--radius-sm);
   padding: 4px 9px; margin-bottom: 8px;
 }
@@ -513,36 +599,41 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .evidence-chip-label { text-decoration: none; }
 .evidence-chip:hover .evidence-chip-label { text-decoration: underline; text-underline-offset: 3px; }
 .evidence-chip-icon, .evidence-chip-icon * { text-decoration: none !important; }
-.evidence-chip.unverified { color: var(--warn); background: var(--warn-soft); }
-.evidence-chip.unverified:hover { box-shadow: 0 0 0 2px var(--warn-soft); }
-.evidence-chip.out-of-scope { color: var(--fg-muted); background: var(--tag-bg); }
-.evidence-chip.out-of-scope:hover { box-shadow: 0 0 0 2px var(--border); }
 .learning-action-card {
-  margin-top: 12px; padding: 12px;
-  border: 1.5px solid var(--border-strong); border-radius: 8px;
-  background: var(--panel-strong);
+  position: relative; isolation: isolate; margin-top: 14px; padding: 13px 15px 13px;
+  border: 1.5px solid transparent; border-radius: var(--radius-sketch);
+  --paper-fill: var(--panel-strong);
 }
 .learning-action-card-heading {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
 }
 .learning-action-card-heading strong { font-size: 14px; line-height: 1.4; }
-.learning-action-card-heading span { flex: 0 0 auto; font-size: 11px; color: var(--fg-tertiary); }
+.learning-action-status {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+  font: 400 var(--text-hand-control, 14px)/1.2 var(--font-ui); color: var(--fg-muted); white-space: nowrap;
+}
+.learning-action-status > svg { flex: 0 0 auto; }
 .learning-action-card p { margin: 6px 0 0; font-size: 13px; color: var(--fg-secondary); }
 .learning-action-card .learning-action-error { color: var(--warn); }
-.learning-action-controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.learning-action-controls { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .learning-action-controls .btn { min-height: 30px; padding: 5px 10px; }
-.learning-action-processing { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
-.learning-action-spinner { width: 14px; height: 14px; border-width: 1.5px; }
-.learning-action-executed { border-color: color-mix(in srgb, var(--success) 55%, var(--border)); }
+.learning-action-pending .learning-action-status { color: var(--accent); }
+.learning-action-processing::before { --tape: color-mix(in srgb, var(--accent) 55%, transparent); }
+.learning-action-executed .learning-action-status { color: var(--ok); }
 .learning-action-declined,
 .learning-action-expired { opacity: .72; }
-.learning-action-failed { border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); }
+.learning-action-failed .learning-action-status { color: var(--warn); }
+.learning-action-failed::before { --tape: color-mix(in srgb, var(--warn) 40%, transparent); }
+/* One quiet row per answer: feedback first, then model and version as small print. */
 .message-feedback {
-  min-height: 24px; margin-top: 8px;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-height: 26px; margin-top: 8px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px;
 }
-.message-model-name { color: var(--fg-tertiary); font-size: 10px; line-height: 1.2; }
-.message-feedback-actions { display: flex; align-items: center; gap: 3px; }
+.message-model-name { color: var(--fg-tertiary); font-size: 11px; line-height: 1.2; }
+.message-feedback-actions { order: -1; display: flex; align-items: center; gap: 3px; margin-left: -4px; }
+.message-feedback .message-version-meta { margin: 0; color: var(--fg-tertiary); }
+.message-feedback .message-model-name + .message-version-meta::before { content: "·"; margin-right: 8px; }
+.message-feedback .message-version-meta code { color: var(--fg-muted); }
 .message-feedback-button {
   width: 26px; height: 26px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -557,14 +648,46 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .message-version-meta { margin-top: 8px; color: var(--fg-muted); font-size: 11px; }
 .message-version-meta code, .repository-version-strip code { font-family: var(--mono); color: var(--fg); }
 .repository-version-strip { margin: 4px 0 8px; color: var(--fg-muted); font-size: 11px; }
-.repository-status-card { display: grid; gap: 7px; margin: 8px 0 14px; padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--radius-sketch-sm); background: var(--panel); font-size: 12px; }
+.repository-status-card {
+  position: relative; isolation: isolate; display: grid; gap: 7px; margin: 8px 0 14px; padding: 11px 14px;
+  border: 1.5px solid transparent; border-radius: var(--radius-sketch-sm); font-size: 12px;
+}
+/* Loose paper notes: no pen outline, only the torn sheet, its shadow and a strip of tape. */
+:is(.repository-status-card, .learning-action-card) > .ink-outline .ink-stroke { display: none; }
+:is(.repository-status-card, .learning-action-card) { --paper-shadow: rgba(55, 59, 40, .17); }
+:is(.repository-status-card, .learning-action-card)::before {
+  content: ''; position: absolute; top: -8px; left: 26px; width: 58px; height: 17px; pointer-events: none;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 5px, rgba(255, 255, 255, .22) 5px 6px),
+    var(--tape, color-mix(in srgb, color-mix(in srgb, var(--accent) 30%, var(--paper-base)) 78%, transparent));
+  clip-path: polygon(0 14%, 4% 0, 34% 7%, 70% 1%, 96% 6%, 100% 24%, 97% 44%, 100% 63%, 96% 82%, 100% 100%, 62% 94%, 30% 100%, 3% 95%, 0 78%, 3% 58%, 0 40%, 3% 25%);
+  transform: rotate(-4deg); opacity: .9;
+}
+.learning-action-card::before { left: auto; right: 34px; transform: rotate(3deg); }
+:root[data-theme="dark"] :is(.repository-status-card, .learning-action-card) { --paper-shadow: rgba(0, 0, 0, .38); }
 .repository-status-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-.repository-status-row strong { font-weight: 600; }
+.repository-status-row strong { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.repository-status-icon { flex: 0 0 auto; color: var(--fg-muted); }
+.repository-status-heading { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
+.repository-status-time { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-tertiary); font-size: 12px; white-space: nowrap; }
+.repository-status-time > svg { flex: 0 0 auto; }
 .repository-status-card p { margin: 0; color: var(--fg-muted); line-height: 1.5; }
-.repository-status-card > .btn { justify-self: start; }
 .learning-review ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .learning-review li { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
-.learning-review-actions { display: inline-flex; gap: 6px; }
+.learning-review-actions { display: inline-flex; gap: 14px; }
+/* A note, not a toolbar: its actions are pencil-underlined words instead of more framed boxes. */
+.repository-status-card .btn {
+  min-height: 24px; padding: 2px 1px 5px; gap: 5px; color: var(--accent-dim); font-size: 12.5px;
+}
+.repository-status-card .btn:not(.btn-icon)::after { display: none; }
+.repository-status-card .btn:not(.btn-icon)::before {
+  inset: auto -1px 0; height: 6px; background: currentColor; opacity: .45;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 6' preserveAspectRatio='none'%3E%3Cpath d='M1 4 Q28 1.6 54 3.4 T99 2.4' fill='none' stroke='white' stroke-width='1.3' stroke-linecap='round' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+  transition: opacity .16s;
+}
+.repository-status-card .btn:hover { transform: none; }
+.repository-status-card .btn:hover:not([disabled])::before { opacity: 1; }
+:root[data-theme="dark"] .repository-status-card .btn { color: var(--accent); }
 /* Composer — floating rounded surface, the hero control of the chat */
 .composer-wrap {
   padding: 10px 22px 20px; border: 0; background: var(--chat-bg);
@@ -717,7 +840,7 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .btn-icon:is(:hover,:focus-visible):not(:disabled) { color: var(--icon-hover-color, var(--accent)); }
 /* Share ink feedback across hand-drawn controls without recoloring GitHub images
    or paper outlines. Explicit warning actions keep their semantic red. */
-button:is(.danger,.btn-danger,.model-remove-button,.cancel-edit):has(svg),
+button:is(.danger,.btn-danger,.model-remove-button):has(svg),
 button:has(.hand-close-icon),
 .conversation-activity[data-status="failed"] .activity-toggle { --icon-hover-color: var(--err); }
 button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.hand-icon,.activity-ink-icon,.sketch-control-icon,svg[stroke="currentColor"]):not(.ink-outline) {
@@ -733,11 +856,11 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .empty-state > .field-scene { width: min(440px, 80%); }
 .empty-state .field-scene > .field-illustration { max-height: 35vh; }
 .field-scene { margin: 0; text-align: center; }
-.field-scene figcaption { margin-top: -10px; color: var(--accent); font: 400 clamp(32px, 3.4vw, 46px)/1.25 var(--font-display); letter-spacing: -.025em; }
-.brand-wordmark { display: block; width: 5.64em; max-width: 100%; height: auto; margin: 0 auto; overflow: visible; }
-.field-name-line { display: block; width: 62%; max-width: 260px; height: 14px; margin: 3px auto -6px; overflow: visible; }
-.field-name-line path { fill: none; stroke: #846747; stroke-width: 1.4; stroke-linecap: round; opacity: .8; }
-:root[data-theme="dark"] .field-name-line path { stroke: #c6a980; }
+.field-scene figcaption { margin-top: -10px; color: var(--fg); font: 400 clamp(32px, 3.4vw, 46px)/1.25 var(--font-display); letter-spacing: -.025em; }
+.brand-wordmark { display: block; width: 5.2em; max-width: 100%; height: auto; margin: 0 auto; overflow: visible; }
+/* Each stroke of the name is drawn once, in writing order (timings come from the component). */
+.brand-wordmark-stroke { stroke-dasharray: 1 2; animation: brand-stroke both linear; }
+@keyframes brand-stroke { from { stroke-dashoffset: 1.02; } to { stroke-dashoffset: 0; } }
 .empty-state h2 { color: var(--fg); font: 400 26px/1.25 var(--font-display); letter-spacing: -.02em; }
 .empty-state p { max-width: 420px; font-size: var(--text-hand-control); }
 .empty-state > .btn { margin-top: 9px; min-width: 155px; min-height: 44px; font-size: var(--text-hand-control); }
@@ -784,32 +907,17 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   display: flex; flex-direction: column; gap: 14px;
 }
 .form-label { font-size: 12px; color: var(--fg-muted); margin-bottom: 4px; display: block; }
-.form-input, .form-select {
+.form-input {
   width: 100%; background: color-mix(in srgb, var(--paper-base) 65%, transparent); border: 1.2px solid var(--border);
   border-radius: var(--radius-sketch-sm); color: var(--fg); font: 13px inherit;
   padding: 9px 12px; outline: none;
   transition: border-color .14s var(--ease-out), background-color .14s var(--ease-out), box-shadow .14s var(--ease-out);
 }
-.form-input:hover, .form-select:hover { background-color: color-mix(in srgb, var(--paper-base) 85%, transparent); }
-.form-input:focus, .form-select:focus {
+.form-input:hover { background-color: color-mix(in srgb, var(--paper-base) 85%, transparent); }
+.form-input:focus {
   border: 2px solid var(--accent); padding: 8.2px 11.2px;
   background-color: var(--panel); box-shadow: 0 0 0 2px var(--accent-soft);
 }
-.form-select option { background: var(--panel); }
-.form-select {
-  -webkit-appearance: none; appearance: none; padding-right: 32px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6' fill='none'%3E%3Cpath d='m1 1.2 3.5 3.6L8 1.2' stroke='%238a8a92' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 12px center;
-}
-.source-tabs { display: flex; gap: 4px; }
-.source-tab {
-  flex: 1; padding: 7px; border: 0;
-  border-radius: 8px; background: var(--control-bg); color: var(--fg-muted);
-  font: 12px inherit; cursor: pointer; text-align: center;
-  transition: transform .08s var(--ease-out), background-color .14s var(--ease-out);
-}
-.source-tab.active { background: var(--primary); border-color: transparent; color: var(--primary-fg); }
-.source-tab:active { transform: scale(.98); }
 
 /* Settings overlay */
 .settings-panel {
@@ -836,8 +944,11 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .settings-page-scroll { min-height: 0; max-height: calc(94dvh - 26px); overflow-x: hidden; overflow-y: auto; border-radius: 8px; scrollbar-width: none; }
 .settings-page-scroll::-webkit-scrollbar { display: none; }
 .settings-paper-content { padding: 14px 20px; display: flex; flex-direction: column; gap: 12px; }
-.paper-scroll-rail { position: absolute; inset: 0 -11px 0 auto; width: 22px; color: var(--fg-muted); cursor: grab; touch-action: none; outline-offset: -5px; }
-.paper-scroll-rail:active { cursor: grabbing; color: var(--accent); }
+.paper-scroll-rail { position: absolute; inset: 0 -11px 0 auto; width: 22px; color: var(--scrollbar-ink); cursor: grab; touch-action: none; outline-offset: -5px; }
+.paper-scroll-rail:hover { color: var(--scrollbar-ink-hover); }
+.paper-scroll-rail:active { cursor: grabbing; color: var(--scrollbar-ink-active); }
+.paper-scroll-mark { transition: color .12s ease-out; }
+.paper-scroll-rail:active .paper-scroll-mark path { transform: scaleX(1.3); transform-origin: 4px 0; transform-box: view-box; }
 .paper-scroll-rail:focus-visible { outline: 1px dashed var(--accent); }
 .paper-scroll-mark { display: block; margin-inline: auto; pointer-events: none; }
 .settings-preference-fields > div { min-width: 0; }
@@ -852,8 +963,6 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .settings-dialog h2 { font-size: 19px; font-weight: 700; letter-spacing: 0; line-height: 1.2; }
 .settings-section { display: flex; flex-direction: column; gap: 10px; }
 .settings-section h3 { font-size: 12px; font-weight: 650; color: var(--fg-muted); display: flex; align-items: center; gap: 6px; }
-.key-row { display: flex; gap: 8px; align-items: center; }
-.key-masked { font-family: var(--mono); font-size: 12px; color: var(--fg-muted); }
 .settings-connection-list { display: flex; flex-direction: column; gap: 4px; }
 .settings-connection-item {
   position: relative; width: 100%; min-width: 0; padding: 5px 6px 5px 8px; border: 1.2px dashed var(--border-strong);
@@ -909,9 +1018,6 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .provider-choice { min-width: 0; min-height: 70px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 7px 4px; border: 1.2px dashed var(--border); border-radius: var(--radius-sketch-sm); background: transparent; color: var(--fg-muted); font-size: 10px; cursor: pointer; transition: transform .12s var(--ease-out), border-color .14s var(--ease-out), background-color .14s var(--ease-out); }
 .provider-choice:hover { border-color: var(--accent); color: var(--fg); transform: translateY(-1px) rotate(-.4deg); }
 .provider-choice.active { border-style: solid; border-color: var(--accent); background: var(--accent-soft); color: var(--fg); box-shadow: var(--shadow-sm); }
-.provider-model-help { margin-top: 4px; color: var(--fg-muted); font-size: 10px; line-height: 1.45; }
-.connection-verify-link { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--accent); font: 11px inherit; cursor: pointer; }
-.connection-verify-link:hover { color: var(--accent-dim); text-decoration: underline; }
 .connection-verification { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1.2px dashed var(--border-strong); border-radius: var(--radius-sketch-sm); font-size: 11px; }
 .connection-verification.loading { color: var(--fg-muted); background: var(--control-bg); }
 .connection-verification.success { color: var(--ok); background: var(--ok-soft); border-color: var(--ok); }
@@ -960,6 +1066,15 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .memory-dialog { width: 720px; height: min(660px, 90dvh); padding: 28px; overflow: visible; isolation: isolate; background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; --fg-muted: var(--paper-ink-muted); --fg-tertiary: var(--paper-ink-tertiary); }
 .memory-dialog:focus { outline: none; }
 .memory-summary-input { flex: 1; min-height: 0; resize: none; font: 15px/1.8 var(--font-reading); }
+/* The summary reads like a short note: small section headings, roomy bullet points. */
+.memory-summary-view { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px 12px; color: var(--fg); font: 15px/1.8 var(--font-reading); }
+.memory-summary-view :is(h1,h2,h3,h4) { margin: 1.1em 0 .3em; color: var(--fg); font: 18px/1.5 var(--font-ui); letter-spacing: .04em; }
+.memory-summary-view > :first-child { margin-top: 0; }
+.memory-summary-view p { margin: 0 0 .7em; }
+.memory-summary-view ul, .memory-summary-view ol { margin: 0 0 .5em; padding-left: 1.3em; }
+.memory-summary-view li { margin: .15em 0; }
+.memory-summary-view li::marker { color: var(--fg-muted); }
+.memory-summary-empty { color: var(--fg-muted); }
 .memory-dialog-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .memory-status { font-size: 13px; color: var(--err); }
 .memory-status.success { color: var(--ok); }
@@ -979,6 +1094,18 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .profile-switch.active { color: var(--accent); }
 .profile-switch.active span { transform: translateX(16px); }
 .profile-switch:disabled { cursor: default; opacity: .55; }
+/* Hand-drawn switches: a second, offset stroke and a hollow knob that fills in when on. */
+.profile-switch, .review-toggle i {
+  transform: rotate(-1.2deg);
+  box-shadow: .8px 1.3px 0 -.2px color-mix(in srgb, currentColor 42%, transparent);
+  transition: color .16s var(--ease-out), background-color .16s var(--ease-out);
+}
+.profile-switch.active, .review-toggle.active i { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.profile-switch span, .review-toggle i::after {
+  box-sizing: border-box; background: transparent; border: 1.6px solid currentColor;
+  transition: transform .2s var(--ease-spring), background-color .16s var(--ease-out);
+}
+.profile-switch.active span, .review-toggle.active i::after { background: currentColor; }
 .source-code {
   flex: 1; min-height: 0; overflow: auto; background: var(--code-bg);
   border: 1.5px solid var(--border); padding: 12px 0; border-radius: var(--radius-sketch-sm);
@@ -1040,59 +1167,60 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .guest-notice { display: flex; align-items: flex-start; gap: 8px; color: var(--fg-muted); font: var(--text-reading-note)/1.7 var(--font-reading); padding: 0 2px; }
 .guest-notice svg { flex: 0 0 auto; margin-top: 3px; color: var(--accent); }
 .auth-error { color: var(--err); font: var(--text-reading-note)/1.7 var(--font-reading); overflow-wrap: anywhere; }
-.auth-loading { display: flex; align-items: center; gap: 10px; color: var(--fg-muted); }
+.auth-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--fg-muted); font-size: var(--text-hand-prompt); }
+.new-project-error { color: var(--err); }
+/* Error messages are read carefully, so they use the plain reading font; only the thinking summary's
+   own failure line keeps the hand. Headings such as "加载失败" stay handwritten. */
+.new-project-error, .global-notice-error > span, .chat-analysis-error > span, .workspace-error > span,
+.workspace-loading > span, .conversation-error > span, .learning-action-error, .connection-verification.error p {
+  font: var(--text-reading-note)/1.7 var(--font-reading);
+}
+.chat-analysis-error > span, .conversation-error > span { font-size: 14px; }
 
 
 .global-notice {
   position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 200;
-  display: flex; align-items: center; gap: 10px; max-width: min(720px, calc(100vw - 24px));
+  display: flex; align-items: center; gap: 10px; width: max-content; max-width: min(720px, calc(100vw - 24px));
   padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sketch-sm);
   background: var(--panel); color: var(--fg); box-shadow: var(--shadow-sm); font-size: 12px;
 }
 .global-notice > span { overflow-wrap: anywhere; }
 .global-notice .btn { flex: 0 0 auto; }
-.global-notice-error { border-color: var(--err); background: var(--err-soft); color: var(--err); }
-.repository-migration-card {
-  margin: 8px 0 14px; padding: 12px 14px; border: 1px solid var(--accent);
-  border-radius: var(--radius-sketch-sm); background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+.global-notice {
+  background: color-mix(in srgb, var(--panel) 36%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4);
 }
-.repository-migration-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.repository-migration-heading span { color: var(--fg-muted); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-.repository-migration-card p { margin: 7px 0 10px; color: var(--fg-muted); font-size: 12px; line-height: 1.55; }
-.private-source-scrim { z-index: 120; }
-.private-source-notice {
-  width: min(440px, calc(100vw - 32px)); padding: 22px;
-  display: flex; flex-direction: column; gap: 12px;
-  border: 1.5px solid var(--border-strong); border-radius: var(--radius-sketch-lg);
-  background: var(--panel-strong); box-shadow: var(--shadow-md);
-}
-.private-source-notice > svg { color: var(--accent); }
-.private-source-notice h2 { font-size: 17px; line-height: 1.25; letter-spacing: -.01em; }
-.private-source-notice p { color: var(--fg-muted); font-size: 13px; line-height: 1.6; }
+/* Frosted: the page behind stays hinted at but blurred, so the message itself is always readable. */
+.global-notice-error { border-color: var(--err); background: color-mix(in srgb, var(--err) 9%, color-mix(in srgb, var(--panel) 36%, transparent)); color: var(--err); }
 /* Misc */
-.tag {
-  display: inline-flex; align-items: center; gap: 4px;
-  background: transparent; border: 1.2px dashed var(--border-strong);
-  border-radius: 999px; padding: 2px 9px; font-size: 12px;
-}
-.tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .tier-verified { color: var(--ok); }
 .tier-degraded { color: var(--warn); }
 .tier-unavailable { color: var(--err); }
 .spinner { width: 16px; height: 16px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
-/* The browser sizes and moves each thumb; only the pen-shaped artwork is custom. */
+/* The browser sizes and moves each thumb; only the pen-shaped artwork is custom (generated by
+   scripts/generate-scrollbar-art.mjs from scroll-ink.ts). */
 :root {
-  --scrollbar-vertical: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2012%20100%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20fill%3D%22%236c715e%22%2F%3E%3C%2Fsvg%3E");
-  --scrollbar-horizontal: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%2012%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%236c715e%22%2F%3E%3C%2Fsvg%3E");
-  --scrollbar-vertical-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2012%20100%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20fill%3D%22%2339815a%22%2F%3E%3C%2Fsvg%3E");
-  --scrollbar-horizontal-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%2012%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%2339815a%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-ink: #5a4332;
+  --scrollbar-ink-hover: #3e2c20;
+  --scrollbar-ink-active: #39815a;
+  --scrollbar-vertical: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2244%22%20viewBox%3D%220%200%2012%2044%22%3E%3Cpath%20d%3D%22M5.66%201L5.56%202L5.46%203L5.37%204L5.28%205L5.2%206L5.12%207L5.05%208L4.99%209L4.94%2010L4.9%2011L4.87%2012L4.86%2013L4.85%2014L4.85%2030L4.86%2031L4.87%2032L4.9%2033L4.94%2034L4.99%2035L5.05%2036L5.12%2037L5.2%2038L5.28%2039L5.37%2040L5.46%2041L5.56%2042L5.66%2043L6.35%2043L6.44%2042L6.54%2041L6.63%2040L6.72%2039L6.8%2038L6.88%2037L6.95%2036L7.01%2035L7.06%2034L7.1%2033L7.13%2032L7.14%2031L7.15%2030L7.15%2014L7.14%2013L7.13%2012L7.1%2011L7.06%2010L7.01%209L6.95%208L6.88%207L6.8%206L6.72%205L6.63%204L6.54%203L6.44%202L6.35%201Z%22%20fill%3D%22%235a4332%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-horizontal: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2244%22%20height%3D%2212%22%20viewBox%3D%220%200%2044%2012%22%3E%3Cpath%20d%3D%22M5.66%201L5.56%202L5.46%203L5.37%204L5.28%205L5.2%206L5.12%207L5.05%208L4.99%209L4.94%2010L4.9%2011L4.87%2012L4.86%2013L4.85%2014L4.85%2030L4.86%2031L4.87%2032L4.9%2033L4.94%2034L4.99%2035L5.05%2036L5.12%2037L5.2%2038L5.28%2039L5.37%2040L5.46%2041L5.56%2042L5.66%2043L6.35%2043L6.44%2042L6.54%2041L6.63%2040L6.72%2039L6.8%2038L6.88%2037L6.95%2036L7.01%2035L7.06%2034L7.1%2033L7.13%2032L7.14%2031L7.15%2030L7.15%2014L7.14%2013L7.13%2012L7.1%2011L7.06%2010L7.01%209L6.95%208L6.88%207L6.8%206L6.72%205L6.63%204L6.54%203L6.44%202L6.35%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%235a4332%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-vertical-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2244%22%20viewBox%3D%220%200%2012%2044%22%3E%3Cpath%20d%3D%22M5.54%201L5.4%202L5.28%203L5.15%204L5.03%205L4.92%206L4.82%207L4.72%208L4.64%209L4.57%2010L4.52%2011L4.48%2012L4.46%2013L4.45%2014L4.45%2030L4.46%2031L4.48%2032L4.52%2033L4.57%2034L4.64%2035L4.72%2036L4.82%2037L4.92%2038L5.03%2039L5.15%2040L5.28%2041L5.4%2042L5.54%2043L6.47%2043L6.6%2042L6.72%2041L6.85%2040L6.97%2039L7.08%2038L7.18%2037L7.28%2036L7.36%2035L7.43%2034L7.48%2033L7.52%2032L7.54%2031L7.55%2030L7.55%2014L7.54%2013L7.52%2012L7.48%2011L7.43%2010L7.36%209L7.28%208L7.18%207L7.08%206L6.97%205L6.85%204L6.72%203L6.6%202L6.47%201Z%22%20fill%3D%22%2339815a%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-horizontal-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2244%22%20height%3D%2212%22%20viewBox%3D%220%200%2044%2012%22%3E%3Cpath%20d%3D%22M5.54%201L5.4%202L5.28%203L5.15%204L5.03%205L4.92%206L4.82%207L4.72%208L4.64%209L4.57%2010L4.52%2011L4.48%2012L4.46%2013L4.45%2014L4.45%2030L4.46%2031L4.48%2032L4.52%2033L4.57%2034L4.64%2035L4.72%2036L4.82%2037L4.92%2038L5.03%2039L5.15%2040L5.28%2041L5.4%2042L5.54%2043L6.47%2043L6.6%2042L6.72%2041L6.85%2040L6.97%2039L7.08%2038L7.18%2037L7.28%2036L7.36%2035L7.43%2034L7.48%2033L7.52%2032L7.54%2031L7.55%2030L7.55%2014L7.54%2013L7.52%2012L7.48%2011L7.43%2010L7.36%209L7.28%208L7.18%207L7.08%206L6.97%205L6.85%204L6.72%203L6.6%202L6.47%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%2339815a%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-vertical-hover: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2244%22%20viewBox%3D%220%200%2012%2044%22%3E%3Cpath%20d%3D%22M5.61%201L5.5%202L5.39%203L5.29%204L5.19%205L5.09%206L5.01%207L4.93%208L4.86%209L4.8%2010L4.76%2011L4.73%2012L4.71%2013L4.7%2014L4.7%2030L4.71%2031L4.73%2032L4.76%2033L4.8%2034L4.86%2035L4.93%2036L5.01%2037L5.09%2038L5.19%2039L5.29%2040L5.39%2041L5.5%2042L5.61%2043L6.39%2043L6.5%2042L6.61%2041L6.71%2040L6.81%2039L6.91%2038L6.99%2037L7.07%2036L7.14%2035L7.2%2034L7.24%2033L7.27%2032L7.29%2031L7.3%2030L7.3%2014L7.29%2013L7.27%2012L7.24%2011L7.2%2010L7.14%209L7.07%208L6.99%207L6.91%206L6.81%205L6.71%204L6.61%203L6.5%202L6.39%201Z%22%20fill%3D%22%233e2c20%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-horizontal-hover: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2244%22%20height%3D%2212%22%20viewBox%3D%220%200%2044%2012%22%3E%3Cpath%20d%3D%22M5.61%201L5.5%202L5.39%203L5.29%204L5.19%205L5.09%206L5.01%207L4.93%208L4.86%209L4.8%2010L4.76%2011L4.73%2012L4.71%2013L4.7%2014L4.7%2030L4.71%2031L4.73%2032L4.76%2033L4.8%2034L4.86%2035L4.93%2036L5.01%2037L5.09%2038L5.19%2039L5.29%2040L5.39%2041L5.5%2042L5.61%2043L6.39%2043L6.5%2042L6.61%2041L6.71%2040L6.81%2039L6.91%2038L6.99%2037L7.07%2036L7.14%2035L7.2%2034L7.24%2033L7.27%2032L7.29%2031L7.3%2030L7.3%2014L7.29%2013L7.27%2012L7.24%2011L7.2%2010L7.14%209L7.07%208L6.99%207L6.91%206L6.81%205L6.71%204L6.61%203L6.5%202L6.39%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%233e2c20%22%2F%3E%3C%2Fsvg%3E");
 }
 :root[data-theme="dark"] {
-  --scrollbar-vertical: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2012%20100%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20fill%3D%22%23adb49c%22%2F%3E%3C%2Fsvg%3E");
-  --scrollbar-horizontal: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%2012%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%23adb49c%22%2F%3E%3C%2Fsvg%3E");
-  --scrollbar-vertical-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2012%20100%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20fill%3D%22%238cca98%22%2F%3E%3C%2Fsvg%3E");
-  --scrollbar-horizontal-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%2012%22%20preserveAspectRatio%3D%22none%22%3E%3Cpath%20d%3D%22M5.2%201C5.7%2012%203.9%2022%204.6%2035S6.4%2061%205.1%2077L5.4%2099L6.8%2099C7.5%2087%207.6%2082%207.4%2076S7.4%2060%207%2050S6.2%2033%206.7%2024L6.6%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%238cca98%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-ink: #b9a994;
+  --scrollbar-ink-hover: #d8c9b3;
+  --scrollbar-ink-active: #8cca98;
+  --scrollbar-vertical: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2244%22%20viewBox%3D%220%200%2012%2044%22%3E%3Cpath%20d%3D%22M5.66%201L5.56%202L5.46%203L5.37%204L5.28%205L5.2%206L5.12%207L5.05%208L4.99%209L4.94%2010L4.9%2011L4.87%2012L4.86%2013L4.85%2014L4.85%2030L4.86%2031L4.87%2032L4.9%2033L4.94%2034L4.99%2035L5.05%2036L5.12%2037L5.2%2038L5.28%2039L5.37%2040L5.46%2041L5.56%2042L5.66%2043L6.35%2043L6.44%2042L6.54%2041L6.63%2040L6.72%2039L6.8%2038L6.88%2037L6.95%2036L7.01%2035L7.06%2034L7.1%2033L7.13%2032L7.14%2031L7.15%2030L7.15%2014L7.14%2013L7.13%2012L7.1%2011L7.06%2010L7.01%209L6.95%208L6.88%207L6.8%206L6.72%205L6.63%204L6.54%203L6.44%202L6.35%201Z%22%20fill%3D%22%23b9a994%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-horizontal: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2244%22%20height%3D%2212%22%20viewBox%3D%220%200%2044%2012%22%3E%3Cpath%20d%3D%22M5.66%201L5.56%202L5.46%203L5.37%204L5.28%205L5.2%206L5.12%207L5.05%208L4.99%209L4.94%2010L4.9%2011L4.87%2012L4.86%2013L4.85%2014L4.85%2030L4.86%2031L4.87%2032L4.9%2033L4.94%2034L4.99%2035L5.05%2036L5.12%2037L5.2%2038L5.28%2039L5.37%2040L5.46%2041L5.56%2042L5.66%2043L6.35%2043L6.44%2042L6.54%2041L6.63%2040L6.72%2039L6.8%2038L6.88%2037L6.95%2036L7.01%2035L7.06%2034L7.1%2033L7.13%2032L7.14%2031L7.15%2030L7.15%2014L7.14%2013L7.13%2012L7.1%2011L7.06%2010L7.01%209L6.95%208L6.88%207L6.8%206L6.72%205L6.63%204L6.54%203L6.44%202L6.35%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%23b9a994%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-vertical-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2244%22%20viewBox%3D%220%200%2012%2044%22%3E%3Cpath%20d%3D%22M5.54%201L5.4%202L5.28%203L5.15%204L5.03%205L4.92%206L4.82%207L4.72%208L4.64%209L4.57%2010L4.52%2011L4.48%2012L4.46%2013L4.45%2014L4.45%2030L4.46%2031L4.48%2032L4.52%2033L4.57%2034L4.64%2035L4.72%2036L4.82%2037L4.92%2038L5.03%2039L5.15%2040L5.28%2041L5.4%2042L5.54%2043L6.47%2043L6.6%2042L6.72%2041L6.85%2040L6.97%2039L7.08%2038L7.18%2037L7.28%2036L7.36%2035L7.43%2034L7.48%2033L7.52%2032L7.54%2031L7.55%2030L7.55%2014L7.54%2013L7.52%2012L7.48%2011L7.43%2010L7.36%209L7.28%208L7.18%207L7.08%206L6.97%205L6.85%204L6.72%203L6.6%202L6.47%201Z%22%20fill%3D%22%238cca98%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-horizontal-active: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2244%22%20height%3D%2212%22%20viewBox%3D%220%200%2044%2012%22%3E%3Cpath%20d%3D%22M5.54%201L5.4%202L5.28%203L5.15%204L5.03%205L4.92%206L4.82%207L4.72%208L4.64%209L4.57%2010L4.52%2011L4.48%2012L4.46%2013L4.45%2014L4.45%2030L4.46%2031L4.48%2032L4.52%2033L4.57%2034L4.64%2035L4.72%2036L4.82%2037L4.92%2038L5.03%2039L5.15%2040L5.28%2041L5.4%2042L5.54%2043L6.47%2043L6.6%2042L6.72%2041L6.85%2040L6.97%2039L7.08%2038L7.18%2037L7.28%2036L7.36%2035L7.43%2034L7.48%2033L7.52%2032L7.54%2031L7.55%2030L7.55%2014L7.54%2013L7.52%2012L7.48%2011L7.43%2010L7.36%209L7.28%208L7.18%207L7.08%206L6.97%205L6.85%204L6.72%203L6.6%202L6.47%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%238cca98%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-vertical-hover: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2244%22%20viewBox%3D%220%200%2012%2044%22%3E%3Cpath%20d%3D%22M5.61%201L5.5%202L5.39%203L5.29%204L5.19%205L5.09%206L5.01%207L4.93%208L4.86%209L4.8%2010L4.76%2011L4.73%2012L4.71%2013L4.7%2014L4.7%2030L4.71%2031L4.73%2032L4.76%2033L4.8%2034L4.86%2035L4.93%2036L5.01%2037L5.09%2038L5.19%2039L5.29%2040L5.39%2041L5.5%2042L5.61%2043L6.39%2043L6.5%2042L6.61%2041L6.71%2040L6.81%2039L6.91%2038L6.99%2037L7.07%2036L7.14%2035L7.2%2034L7.24%2033L7.27%2032L7.29%2031L7.3%2030L7.3%2014L7.29%2013L7.27%2012L7.24%2011L7.2%2010L7.14%209L7.07%208L6.99%207L6.91%206L6.81%205L6.71%204L6.61%203L6.5%202L6.39%201Z%22%20fill%3D%22%23d8c9b3%22%2F%3E%3C%2Fsvg%3E");
+  --scrollbar-horizontal-hover: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2244%22%20height%3D%2212%22%20viewBox%3D%220%200%2044%2012%22%3E%3Cpath%20d%3D%22M5.61%201L5.5%202L5.39%203L5.29%204L5.19%205L5.09%206L5.01%207L4.93%208L4.86%209L4.8%2010L4.76%2011L4.73%2012L4.71%2013L4.7%2014L4.7%2030L4.71%2031L4.73%2032L4.76%2033L4.8%2034L4.86%2035L4.93%2036L5.01%2037L5.09%2038L5.19%2039L5.29%2040L5.39%2041L5.5%2042L5.61%2043L6.39%2043L6.5%2042L6.61%2041L6.71%2040L6.81%2039L6.91%2038L6.99%2037L7.07%2036L7.14%2035L7.2%2034L7.24%2033L7.27%2032L7.29%2031L7.3%2030L7.3%2014L7.29%2013L7.27%2012L7.24%2011L7.2%2010L7.14%209L7.07%208L6.99%207L6.91%206L6.81%205L6.71%204L6.61%203L6.5%202L6.39%201Z%22%20transform%3D%22matrix(0%201%201%200%200%200)%22%20fill%3D%22%23d8c9b3%22%2F%3E%3C%2Fsvg%3E");
 }
 /* Do not match scrollbar pseudo-elements in the admin document: resetting their
    paint alone can leave an invisible custom scrollbar instead of the native one. */
@@ -1102,13 +1230,18 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar { width: 12px; height: 12px; background: transparent; }
   :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-track, :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-corner { background: transparent; }
   :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  /* The pen's tapered ends keep their size and the wobble between them repeats, so short thumbs are not squashed. */
   :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb {
-    min-width: 36px; min-height: 36px; border: 0; border-radius: 0;
-    background: var(--scrollbar-vertical) center / 100% 100% no-repeat;
+    min-width: 36px; min-height: 36px; border-radius: 0; background: none;
+    border-style: solid; border-color: transparent; border-width: 14px 0;
+    border-image: var(--scrollbar-vertical) 14 0 fill / 14px 0 round;
   }
-  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:horizontal { background-image: var(--scrollbar-horizontal); }
-  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:is(:hover, :active) { background-image: var(--scrollbar-vertical-active); }
-  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:horizontal:is(:hover, :active) { background-image: var(--scrollbar-horizontal-active); }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:horizontal { border-width: 0 14px; border-image: var(--scrollbar-horizontal) 0 14 fill / 0 14px round; }
+  /* Scrollbar pseudo-elements only take plain pseudo-classes, so each state is its own rule. */
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:hover { border-image-source: var(--scrollbar-vertical-hover); }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:horizontal:hover { border-image-source: var(--scrollbar-horizontal-hover); }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:active { border-image-source: var(--scrollbar-vertical-active); }
+  :where(:root:not(:has(.admin-console, .admin-code-dialog)), :root:not(:has(.admin-console, .admin-code-dialog)) *)::-webkit-scrollbar-thumb:horizontal:active { border-image-source: var(--scrollbar-horizontal-active); }
 }
 
 @keyframes settings-scrim-in { from { opacity: 0; } to { opacity: 1; } }
@@ -1146,8 +1279,14 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   position: relative; display: flex; flex-direction: column; background: var(--chat-bg);
 }
 .chat-toolbar {
-  position: absolute; z-index: 8; top: 12px; left: 14px; right: 14px;
+  position: relative; z-index: 8; flex: 0 0 auto; min-height: 56px; padding: 12px 14px 0;
   display: flex; align-items: center; justify-content: flex-end; gap: 12px; pointer-events: none;
+}
+/* Messages fade out under the toolbar row instead of sliding beneath the project card. */
+.chat-toolbar + .message-rail + .chat-area, .chat-toolbar + .chat-area {
+  padding-top: 12px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
 }
 .chat-toolbar > * { pointer-events: auto; }
 .project-github-link {
@@ -1191,6 +1330,9 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .repository-thumbnail rect { fill: var(--accent); stroke: var(--panel); stroke-width: 5; }
 .repository-thumbnail-empty { width: 100%; height: 100%; background: var(--canvas); }
 .chat-empty > .field-illustration { width: 150px; margin: 6px 0 12px; }
+/* During analysis the illustration rests at the bottom, so expanding the steps above never pushes it. */
+.chat-messages:has(> .chat-empty-waiting) { min-height: 100%; }
+.chat-empty-waiting { margin-top: auto; }
 .chat-empty {
   color: var(--fg-muted); font-size: 13px; text-align: center; padding: 28px 12px;
   display: flex; flex-direction: column; align-items: center; gap: 7px;
@@ -1289,9 +1431,8 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .workspace-details section h4 { font-size: 11px; font-weight: 600; color: var(--fg-muted); }
 .workspace-details section p { font-size: 12.5px; line-height: 1.65; overflow-wrap: anywhere; }
 .workspace-secondary { color: var(--fg-muted); }
-.workspace-topic-button { width: 100%; margin-top: auto; }
+.workspace-topic-button { width: 100%; }
 .workspace-muted { color: var(--fg-muted); font-size: 12px; }
-.deployment-managed-key { color: var(--fg-muted); font-size: 11px; }
 .workspace-evidence-list { display: flex; flex-direction: column; gap: 5px; }
 .workspace-evidence {
   width: 100%; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 1px 8px; align-items: center;
@@ -1327,23 +1468,12 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   color: var(--fg-muted); font-size: 10px; line-height: 1.4; pointer-events: none;
   -webkit-backdrop-filter: blur(14px) saturate(150%); backdrop-filter: blur(14px) saturate(150%);
 }
-.architecture-candidate-status {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 9px; padding: 8px 12px;
-  border-bottom: 1px solid var(--border); background: var(--warn-soft); color: var(--warn);
-}
-.architecture-candidate-status > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.architecture-candidate-status strong { font-size: 11px; }
-.architecture-candidate-status span { color: var(--fg-muted); font-size: 10px; overflow-wrap: anywhere; }
 .component-flow { width: 100%; flex: 1 1 auto; min-height: 360px; }
 .component-flow .react-flow__edge-path { stroke: var(--graph-edge); stroke-width: 2.4; stroke-opacity: .65; stroke-linecap: round; }
 .component-flow .react-flow__edge.selected .react-flow__edge-path,
 .component-flow .react-flow__edge:hover .react-flow__edge-path { stroke: var(--accent); stroke-opacity: 1; }
 .component-flow .react-flow__edge-text { fill: var(--fg-muted); }
 .component-flow .react-flow__edge-textbg { fill: var(--panel); }
-.graph-edge-legend { position: absolute; z-index: 5; right: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 9px; border: 1.2px dashed var(--border-strong); border-radius: var(--radius-sketch-sm); background: var(--panel-translucent); color: var(--fg-muted); font-size: 10px; -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
-.graph-edge-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.graph-edge-legend i { width: 24px; border-top: 1.5px solid var(--graph-edge); }
-.graph-edge-legend i.dashed { border-top-style: solid; border-top-color: var(--graph-edge); }
 .relation-edge-label {
   position: absolute; pointer-events: none; padding: 2px 8px;
   border: 1.2px dashed var(--border-strong); border-radius: 999px; background: var(--panel-strong);
@@ -1355,8 +1485,15 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   border: 1.5px solid var(--border-strong); border-radius: var(--radius-sketch-sm); background: var(--panel-translucent); box-shadow: var(--shadow-sm);
   -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%);
 }
-.component-flow .react-flow__controls { overflow: hidden; border: 1.5px solid var(--border-strong); border-radius: var(--radius-sketch-sm); box-shadow: var(--shadow-sm); }
-.component-flow .react-flow__controls-button { background: var(--panel-strong); color: var(--fg); border-bottom-color: var(--border); }
+/* A single paper strip keeps the controls short enough to stay clear of phone-sized graphs. */
+.component-flow .react-flow__controls {
+  flex-direction: row; overflow: hidden; padding: 2px; background: var(--panel-strong);
+  border: 1.5px solid var(--border-strong); border-radius: 12px 10px 13px 9px / 10px 13px 9px 12px; box-shadow: var(--shadow-sm);
+}
+.component-flow .react-flow__controls-button {
+  background: transparent; color: var(--fg); border: 0; border-radius: 8px;
+}
+.component-flow .react-flow__controls-button + .react-flow__controls-button { box-shadow: -1px 0 0 0 transparent; border-left: 1.2px dashed var(--border); border-radius: 0 8px 8px 0; }
 .component-flow .react-flow__controls-button:is(:hover,:focus-visible):not(:disabled) { background: var(--control-hover); color: var(--accent); }
 .component-flow .react-flow__controls-button svg { fill: currentColor; }
 .component-flow .react-flow__minimap-mask { fill: color-mix(in srgb, var(--canvas) 72%, transparent); }
@@ -1506,6 +1643,11 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .markdown-file-reference .language-glyph *,
 .markdown-file-reference-label .language-glyph,
 .markdown-file-reference-label .language-glyph * { text-decoration: none !important; }
+.workspace-inline-code {
+  font-family: var(--mono); font-size: .88em; color: var(--fg);
+  background: var(--inline-code-bg); padding: 0 4px; border-radius: 3px; box-shadow: var(--inline-code-shadow);
+  overflow-wrap: anywhere;
+}
 
 @media (max-width: 1180px) {
   .repository-peek { width: 176px; flex-basis: 176px; grid-template-columns: 52px minmax(0, 1fr); }
@@ -1547,6 +1689,8 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
     box-shadow: 4px 0 18px #0002;
   }
   .mobile-sidebar-open .sidebar { transform: translateX(0); visibility: visible; transition-delay: 0s; }
+  /* Notices sit just under the phone top bar instead of covering its buttons. */
+  .global-notice { top: calc(env(safe-area-inset-top) + 60px); }
   .mobile-topbar { flex: none; min-height: 56px; padding: env(safe-area-inset-top) 12px 0; display: flex; align-items: center; justify-content: space-between; background: var(--chat-bg); }
   .mobile-topbar-start { display: flex; align-items: center; gap: 8px; }
   .mobile-topbar-start > .project-github-link { margin-right: 12px; }
@@ -1572,7 +1716,6 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   .chat-messages { padding: 0 16px; }
   .msg.user .msg-content { max-width: 90%; }
   .composer-wrap { padding: 8px 12px 14px; }
-  .model-select { max-width: 100%; }
   .settings-dialog { padding: 18px; }
   .source-dialog {
     width: calc(100vw - 20px); height: calc(100vh - 20px);
@@ -1582,9 +1725,6 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   .settings-two-columns { grid-template-columns: 1fr; }
   .provider-variant-row { grid-template-columns: 1fr; }
   .provider-variant-note { padding-bottom: 0; }
-  .key-row { align-items: stretch; flex-direction: column; }
-  .source-tabs { flex-wrap: wrap; }
-  .source-tab { flex-basis: calc(50% - 4px); }
   .value-point-grid { grid-template-columns: 1fr; padding: 12px; }
   .learning-plan { padding: 12px; }
 }
@@ -1602,21 +1742,9 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   .workspace-tabs { max-width: 100%; overflow-x: auto; }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .teaching-pane, .composer-wrap,
-  .workspace-toolbar, .workspace-details, .workspace-canvas {
-    transition: background-color .24s ease, border-color .24s ease, color .24s ease;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    scroll-behavior: auto !important;
-    animation-duration: .01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: .01ms !important;
-  }
-  .component-node:hover, .value-point-card:hover, .learning-step:hover { transform: none; }
+.teaching-pane, .composer-wrap,
+.workspace-toolbar, .workspace-details, .workspace-canvas {
+  transition: background-color .24s ease, border-color .24s ease, color .24s ease;
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -1631,7 +1759,7 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 
 @media (prefers-contrast: more) {
   :root { --border: var(--border-strong); }
-  .btn, .form-input, .form-select, .component-node, .value-point-card,
+  .btn, .form-input, .component-node, .value-point-card,
   .learning-step, .workspace-evidence, .repository-peek { border-color: var(--border-strong); }
 }
 
@@ -1642,17 +1770,249 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .settings-dialog h2, .new-project-heading h2 { font-size: 23px; font-family: var(--font-display); font-weight: 400; }
 .field-illustration { animation: field-arrive .5s var(--ease-out) both; }
 @keyframes field-arrive { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: no-preference) {
-  .field-canopy { transform-origin: 150px 282px; animation: field-leaves 8s ease-in-out infinite; }
-  .field-branches { transform-origin: 150px 274px; animation: field-branches 8s ease-in-out infinite; }
-  .field-breeze { animation: field-wind 7s ease-in-out infinite; }
-  .field-breeze-second { animation-delay: -2.2s; }
-  .field-name-line path { stroke-dasharray: 100; animation: field-name-write .7s 2.8s ease-out both; }
-}
-@keyframes field-leaves { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(4deg); } }
-@keyframes field-branches { 0%, 100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.6deg); } }
+/* Leaves and branches sway together around the same point on the trunk. */
+.field-canopy, .field-branches { transform-origin: 146px 252px; animation: field-sway 8s ease-in-out infinite; }
+.field-breeze { animation: field-wind 7s ease-in-out infinite; }
+.field-breeze-second { animation-delay: -2.2s; }
+@keyframes field-sway { 0%, 100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.6deg); } }
 @keyframes field-wind { 0%, 100% { transform: translateX(-3px); opacity: .45; } 50% { transform: translateX(6px); opacity: 1; } }
-@keyframes field-name-write { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+
+/* Night replaces the breeze in dark mode; now and then one star brightens a little. */
+.field-night { display: none; }
+:root[data-theme="dark"] .field-day { display: none; }
+:root[data-theme="dark"] .field-night { display: inline; }
+.field-star { transform-box: fill-box; transform-origin: center; opacity: .75; }
+.field-star-twinkle { animation: field-twinkle 9s ease-in-out infinite; }
+.field-star-late { animation: field-twinkle 13s 5s ease-in-out infinite; }
+@keyframes field-twinkle { 0%, 84%, 100% { opacity: .75; transform: none; } 90% { opacity: 1; transform: scale(1.45) rotate(12deg); } }
+
+/* Falling leaves, in three layers: the outer one only falls (never stopping, a little faster or slower in
+   turns), the middle one sways sideways and drifts with the wind (to the right), easing at each turn like a
+   pendulum, and the inner one rocks the leaf with that sway. Long, unrelated periods keep them rare. */
+.field-leaf-fall { opacity: 0; animation: field-leaf-fall 23s 4s linear infinite; }
+.field-leaf-drift { animation: field-leaf-drift 23s 4s linear infinite; }
+.field-leaf-swing { animation: field-leaf-swing 23s 4s linear infinite; }
+.field-leaf-fall-second { animation: field-leaf-fall-second 37s 15s linear infinite; }
+.field-leaf-drift-second { animation: field-leaf-drift-second 37s 15s linear infinite; }
+.field-leaf-swing-second { animation: field-leaf-swing-second 37s 15s linear infinite; }
+@keyframes field-leaf-fall {
+  0% { opacity: 0; transform: none; }
+  2% { opacity: 1; transform: translateY(5px); }
+  9% { transform: translateY(27px); }
+  15% { transform: translateY(43px); }
+  22% { transform: translateY(70px); }
+  27% { transform: translateY(88px); }
+  32% { opacity: 1; transform: translateY(119px); }
+  40%, 100% { opacity: 0; transform: translateY(119px); }
+}
+@keyframes field-leaf-drift {
+  0% { transform: none; animation-timing-function: ease-in-out; }
+  6% { transform: translateX(14px); animation-timing-function: ease-in-out; }
+  11% { transform: translateX(4px); animation-timing-function: ease-in-out; }
+  17% { transform: translateX(23px); animation-timing-function: ease-in-out; }
+  22% { transform: translateX(14px); animation-timing-function: ease-in-out; }
+  28% { transform: translateX(36px); animation-timing-function: ease-out; }
+  32%, 100% { transform: translateX(44px); }
+}
+@keyframes field-leaf-swing {
+  0% { transform: none; animation-timing-function: ease-in-out; }
+  6% { transform: rotate(36deg); animation-timing-function: ease-in-out; }
+  11% { transform: rotate(-22deg); animation-timing-function: ease-in-out; }
+  17% { transform: rotate(44deg); animation-timing-function: ease-in-out; }
+  22% { transform: rotate(-10deg); animation-timing-function: ease-in-out; }
+  28% { transform: rotate(40deg); animation-timing-function: ease-out; }
+  32%, 100% { transform: rotate(-6deg); }
+}
+@keyframes field-leaf-fall-second {
+  0% { opacity: 0; transform: none; }
+  1.5% { opacity: 1; transform: translateY(5px); }
+  6% { transform: translateY(26px); }
+  10% { transform: translateY(40px); }
+  15% { transform: translateY(71px); }
+  19% { transform: translateY(93px); }
+  23% { opacity: 1; transform: translateY(126px); }
+  28%, 100% { opacity: 0; transform: translateY(126px); }
+}
+@keyframes field-leaf-drift-second {
+  0% { transform: none; animation-timing-function: ease-in-out; }
+  4% { transform: translateX(-7px); animation-timing-function: ease-in-out; }
+  8.5% { transform: translateX(11px); animation-timing-function: ease-in-out; }
+  12.5% { transform: translateX(2px); animation-timing-function: ease-in-out; }
+  17% { transform: translateX(25px); animation-timing-function: ease-in-out; }
+  20.5% { transform: translateX(17px); animation-timing-function: ease-out; }
+  23%, 100% { transform: translateX(38px); }
+}
+@keyframes field-leaf-swing-second {
+  0% { transform: none; animation-timing-function: ease-in-out; }
+  4% { transform: rotate(-30deg); animation-timing-function: ease-in-out; }
+  8.5% { transform: rotate(34deg); animation-timing-function: ease-in-out; }
+  12.5% { transform: rotate(-16deg); animation-timing-function: ease-in-out; }
+  17% { transform: rotate(42deg); animation-timing-function: ease-in-out; }
+  20.5% { transform: rotate(-12deg); animation-timing-function: ease-out; }
+  23%, 100% { transform: rotate(8deg); }
+}
+
+/* The small figure's poses. Rest: arms hang behind the lid. The script eases between poses from wherever the
+   figure is; each pose's idle loop waits 1.2 s for that move, holding its first frame meanwhile. */
+.field-illustration-small :is(.field-lean, .field-rock) { transform-origin: 115px 118px; }
+.field-illustration-small .field-head { transform-origin: 113px 58px; }
+.field-illustration-small .field-stretch-body { transform-origin: 115px 115px; }
+.field-illustration-small .field-upper-l { transform-origin: 97px 72px; transform: rotate(-123deg); }
+.field-illustration-small .field-fore-l { transform-origin: 70px 42px; transform: rotate(50deg); }
+.field-illustration-small .field-upper-r { transform-origin: 129px 72px; transform: rotate(123deg); }
+.field-illustration-small .field-fore-r { transform-origin: 156px 42px; transform: rotate(-50deg); }
+/* Waiting for the analysis: now and then the learner leans back in the chair, then returns. */
+.field-waiting .field-lean { animation: field-lean 17s 1.2s ease-in-out infinite both; }
+.field-waiting .field-rock { animation: field-rock 11s 1.2s ease-in-out infinite both; }
+.field-waiting .field-head { animation: field-head 7.3s 1.2s ease-in-out infinite both; }
+.field-waiting :is(.field-upper-l, .field-upper-r, .field-fore-l, .field-fore-r, .field-stretch-body) { animation: 53s 1.2s ease-in-out infinite both; }
+.field-waiting .field-upper-l { animation-name: field-upper-l; }
+.field-waiting .field-fore-l { animation-name: field-fore-l; }
+.field-waiting .field-upper-r { animation-name: field-upper-r; }
+.field-waiting .field-fore-r { animation-name: field-fore-r; }
+.field-waiting .field-stretch-body { animation-name: field-stretch-body; }
+/* Puzzled (something failed): head tilted, one hand scratching it in short bursts, a small question mark. */
+.field-puzzled .field-head { transform: rotate(5deg); }
+.field-puzzled .field-upper-l { transform: none; }
+.field-puzzled .field-fore-l { animation: field-scratch 4.6s 1.2s ease-in-out infinite both; }
+.field-puzzle-mark { opacity: 0; transition: opacity .4s ease; }
+.field-puzzled .field-puzzle-mark { opacity: 1; transition-delay: 1s; }
+.field-puzzled .field-puzzle-mark path { stroke-dasharray: 40; animation: field-puzzle-write .6s 1s ease-out both; }
+@keyframes field-scratch {
+  0%, 36%, 100% { transform: none; }
+  6%, 18%, 30% { transform: rotate(-9deg); }
+  12%, 24% { transform: rotate(3deg); }
+}
+@keyframes field-puzzle-write { from { stroke-dashoffset: 40; } to { stroke-dashoffset: 0; } }
+/* Independent idle loops; their periods (17 / 11 / 7.3 / 53 s) never line up the same way twice. */
+@keyframes field-lean {
+  0%, 14%, 44%, 70%, 94%, 100% { transform: none; }
+  22%, 36% { transform: translateY(2.5px) scale(.965); }
+  76%, 88% { transform: translateY(1.5px) scale(.98); }
+}
+@keyframes field-rock {
+  0%, 20%, 50%, 64%, 80%, 100% { transform: none; }
+  30% { transform: rotate(-1.6deg); }
+  40% { transform: rotate(-1.1deg); }
+  72% { transform: rotate(1.3deg); }
+}
+@keyframes field-head {
+  0%, 30%, 56%, 76%, 94%, 100% { transform: none; }
+  36%, 50% { transform: rotate(-4deg); }
+  82%, 88% { transform: rotate(3deg); }
+}
+/* A rare, slow stretch: one arm reaches up, the other out to the side, the body leans; then all fold back.
+   About 3 s up, 3 s held (reaching a touch further), 4 s back down, once every 53 s. */
+@keyframes field-upper-l { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(19deg); } 90% { transform: rotate(22deg); } }
+@keyframes field-fore-l { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(-114deg); } 90% { transform: rotate(-118deg); } }
+@keyframes field-upper-r { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(-1deg); } 90% { transform: rotate(-3deg); } }
+@keyframes field-fore-r { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(140deg); } 90% { transform: rotate(146deg); } }
+/* The body leans toward the lower arm while the other reaches up. */
+@keyframes field-stretch-body { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(3.5deg); } 90% { transform: rotate(4.5deg); } }
+
+/* The mark: resting the pointer on it lifts the page for a closer look. */
+.field-mark-page { transform-origin: 30px 17px; transition: transform .35s var(--ease-out, ease-out); }
+.field-mark-arm { transform-origin: 7.5px 21px; transition: transform .35s var(--ease-out, ease-out); }
+/* Only the mark itself reacts, not the product name beside it. */
+.field-mark:hover .field-mark-page { transform: translate(-1px, -2.2px) rotate(-4deg); }
+.field-mark:hover .field-mark-arm { transform: rotate(-7deg) scale(.987); }
+/* While the agent answers or analyses: take a page out, read it, put it back, take the next. The page sinks fully
+   behind the folder front, and while it is out of sight the writing on it changes (over two rounds), so each
+   page that comes up is a new one and the loop has no seam. */
+.field-mark-lines-next { opacity: 0; }
+.field-mark-insight { opacity: 0; transform-origin: 15px 9px; }
+.field-mark-busy .field-mark-page { animation: field-mark-leaf 3.2s linear infinite; }
+.field-mark-busy .field-mark-arm { animation: field-mark-reach 3.2s linear infinite; }
+.field-mark-busy .field-mark-lines { animation: field-mark-lines 6.4s step-end infinite; }
+.field-mark-busy .field-mark-lines-next { animation: field-mark-lines-next 6.4s step-end infinite; }
+/* Take a page out and read it (the hand's samples follow the page's edge), then toss it back: a small wind-up,
+   the hand lets go and follows through, and the page drops into the folder with gravity on its own. The empty
+   hand rests, reaches down into the folder, and pulls the next page up with it. */
+@keyframes field-mark-leaf {
+  0% { transform: translate(0.00px, 0.00px) rotate(0.00deg); }
+  4.5% { transform: translate(-0.16px, -0.56px) rotate(-1.09deg); }
+  9% { transform: translate(-0.50px, -1.80px) rotate(-3.50deg); }
+  13.5% { transform: translate(-0.84px, -3.04px) rotate(-5.91deg); }
+  18% { transform: translate(-1.00px, -3.60px) rotate(-7.00deg); }
+  26% { transform: translate(-1.00px, -3.50px) rotate(-6.60deg); }
+  35% { transform: translate(-1.00px, -3.30px) rotate(-5.80deg); }
+  43% { transform: translate(-1.00px, -3.15px) rotate(-5.20deg); }
+  46% { transform: translate(-1.20px, -4.20px) rotate(-7.80deg); }
+  49% { transform: translate(-1.30px, -4.60px) rotate(-9.00deg); }
+  51% { transform: translate(-0.75px, -3.40px) rotate(-5.25deg); }
+  53% { transform: translate(-0.20px, 0.20px) rotate(-1.50deg); }
+  55% { transform: translate(0.35px, 6.20px) rotate(2.25deg); }
+  57% { transform: translate(0.90px, 14.60px) rotate(6.00deg); }
+  59% { transform: translate(0.85px, 14.20px) rotate(4.20deg); }
+  61% { transform: translate(0.80px, 14.00px) rotate(3.00deg); }
+  86% { transform: translate(0.80px, 14.00px) rotate(3.00deg); }
+  89.5% { transform: translate(0.68px, 11.81px) rotate(2.53deg); }
+  93% { transform: translate(0.40px, 7.00px) rotate(1.50deg); }
+  96.5% { transform: translate(0.12px, 2.19px) rotate(0.47deg); }
+  100% { transform: none; }
+}
+@keyframes field-mark-reach {
+  0% { transform: rotate(0.00deg) scale(1.000); }
+  4.5% { transform: rotate(-1.61deg) scale(1.000); }
+  9% { transform: rotate(-5.11deg) scale(1.002); }
+  13.5% { transform: rotate(-8.54deg) scale(1.009); }
+  18% { transform: rotate(-10.07deg) scale(1.013); }
+  26% { transform: rotate(-9.90deg) scale(1.012); }
+  35% { transform: rotate(-9.60deg) scale(1.011); }
+  43% { transform: rotate(-9.35deg) scale(1.010); }
+  46% { transform: rotate(-11.20deg) scale(1.016); }
+  49% { transform: rotate(-12.40deg) scale(1.020); }
+  52% { transform: rotate(6.00deg) scale(0.970); }
+  55% { transform: rotate(3.00deg) scale(0.985); }
+  59% { transform: rotate(0.00deg) scale(1.000); }
+  70% { transform: rotate(0.00deg) scale(1.000); }
+  74% { transform: rotate(9.00deg) scale(0.975); }
+  78% { transform: rotate(24.00deg) scale(0.945); }
+  82% { transform: rotate(39.00deg) scale(0.975); }
+  86% { transform: rotate(46.47deg) scale(1.017); }
+  89.5% { transform: rotate(39.78deg) scale(0.973); }
+  93% { transform: rotate(23.44deg) scale(0.927); }
+  96.5% { transform: rotate(6.89deg) scale(0.960); }
+  100% { transform: none; }
+}
+@keyframes field-mark-lines { 0% { opacity: 1; } 35.5% { opacity: 0; } 85.5% { opacity: 1; } }
+@keyframes field-mark-lines-next { 0% { opacity: 0; } 35.5% { opacity: 1; } 85.5% { opacity: 0; } }
+
+/* Checks draw themselves in writing order: the short stroke, then the long one. */
+.activity-ink-icon[data-activity-icon="done"] path:last-child { animation: ink-check-draw .45s .08s ease-out both; }
+.learning-step.completed .learning-step-index svg path:last-child { stroke-dasharray: 12; animation: ink-check-stroke .45s .08s ease-out both; }
+@keyframes ink-check-stroke { from { stroke-dashoffset: 12; } to { stroke-dashoffset: 0; } }
+.msg-bubble .task-list-item input[type="checkbox"]:checked::after { animation: ink-check-draw-box .45s .08s ease-out both; }
+@keyframes ink-check-draw { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes ink-check-draw-box {
+  0% { clip-path: inset(80% 100% 0 0); }
+  35% { clip-path: inset(80% 0 0 0); }
+  100% { clip-path: inset(0 0 0 0); }
+}
+
+/* The resting can is lifted, so its drop is hidden. While the model answers, the can tips once and keeps
+   pouring slow drops onto the sprout, in colour; when the answer ends it lifts back up. */
+.activity-ink-icon[data-activity-icon="model"] path:nth-child(5) { opacity: 0; }
+.narrow-model-icon path:nth-child(-n+4) { transform-origin: 9px 12px; transition: transform .7s ease-in-out; }
+.composer-watering .narrow-model-icon path:nth-child(-n+4) { transform: rotate(12deg); }
+.composer-watering .narrow-model-icon path:nth-child(5) { animation: model-can-drop 1.3s .6s ease-in infinite; }
+.composer-watering .narrow-model-icon path:nth-child(n+6) { transform-origin: 25px 30px; animation: model-sprout-nod 1.3s .6s ease-in-out infinite; }
+.composer-watering .narrow-model-icon [data-ink-tone='model'] { fill: #467bba; }
+.composer-watering .narrow-model-icon [data-ink-tone='user'] { fill: var(--accent); }
+:root[data-theme='dark'] .composer-watering .narrow-model-icon [data-ink-tone='model'] { fill: #8db9ef; }
+/* The drop leaves the tipped spout (about 1 px left, 3 px down of where the lifted spout was) and falls. */
+/* The sprout gives under the drop as it lands (at about 75%), then springs back. */
+@keyframes model-sprout-nod {
+  0%, 70%, 100% { transform: none; }
+  80% { transform: scale(1.05, .92) rotate(3deg); }
+  90% { transform: scale(.98, 1.03) rotate(-1deg); }
+}
+@keyframes model-can-drop {
+  0% { opacity: 0; transform: translate(-1.2px, 2.6px); }
+  15% { opacity: 1; transform: translate(-1.1px, 3.4px); }
+  75% { opacity: 1; transform: translate(-.8px, 7px); }
+  100% { opacity: 0; transform: translate(-.7px, 8px); }
+}
 @media (max-width: 1080px) { .auth-layout { gap: 24px; } .auth-copy h1 { font-size: 44px; } }
 @media (max-width: 680px) {
   .auth-shell { padding: 18px 24px 48px; }
@@ -1674,7 +2034,6 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   .btn, .send-button { min-height: 44px; }
   .btn-icon { min-width: 40px; min-height: 40px; }
 }
-@media (prefers-reduced-motion: reduce) { .field-illustration { animation: none; } }
 
 /* Handwriting roles: captions 13, compact labels 14, controls 16, prompts 17.
    Reading surfaces and large display headings keep their own hierarchy. */
@@ -1757,8 +2116,20 @@ button:has(.hand-close-icon):focus-visible { outline-color: color-mix(in srgb, v
 .conversation-activity[data-status="failed"] .activity-toggle { color: var(--err); }
 .conversation-activity[data-status="failed"] .activity-toggle > .activity-step-icon { color: currentColor; }
 /* Conversation recovery controls — also used by the standalone review. */
-.last-message-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.last-message-actions .message-action { width: 44px; }
+/* Each action keeps a full 44px touch target, but only a small block around the icon lights up, and the row is
+   nudged so that block lines up with the bubble's edge; the invisible rest of the target may reach past it. */
+.last-message-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 0; margin: 4px -7px 0 0; }
+.last-message-actions .message-action { position: relative; width: 44px; background: transparent; }
+.last-message-actions .message-action::before {
+  content: ''; position: absolute; inset: 7px; border-radius: 8px 9px 7px 9px; background: transparent;
+  transition: background-color .15s ease;
+}
+.last-message-actions .message-action:hover { background: transparent; }
+.last-message-actions .message-action:hover::before { background: var(--control-bg); }
+.last-message-actions .message-action svg { position: relative; }
+.last-message-actions .message-action:focus-visible { outline-offset: -6px; }
+/* A very short message still gets a bubble as wide as the two actions under it, with its text centred. */
+.msg.user .msg-bubble:has(+ .last-message-actions) { min-width: 74px; display: flex; flex-direction: column; align-items: center; }
 .message-action {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 44px; padding: 6px 9px; border: 0; border-radius: 8px;
@@ -1768,7 +2139,6 @@ button:has(.hand-close-icon):focus-visible { outline-color: color-mix(in srgb, v
 .message-action svg { flex: 0 0 auto; }
 .message-action:hover { color: var(--accent); background: var(--control-bg); }
 .message-action:focus-visible { color: var(--accent); outline: 2px solid currentColor; outline-offset: 2px; }
-.message-action.cancel-edit:is(:hover,:focus-visible) { color: var(--err); }
 .conversation-error {
   display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px;
   margin: 12px 0; border: 0; border-radius: 9px 12px 10px 8px;
@@ -1776,24 +2146,20 @@ button:has(.hand-close-icon):focus-visible { outline-color: color-mix(in srgb, v
   overflow-wrap: anywhere;
 }
 .conversation-error > svg { flex: 0 0 auto; color: var(--err); margin-top: 1px; }
-.message-edit-notice {
-  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
-  gap: 4px 12px; padding: 4px 12px; margin-bottom: 6px;
-  border-left: 2px solid var(--accent); background: var(--control-bg);
-  color: var(--accent); font: 14px/1.5 var(--font-reading);
-}
-.message-edit-notice > span { display: inline-flex; align-items: center; gap: 8px; }
-.message-edit-notice > span > svg { flex: 0 0 auto; }
+.msg-bubble .message-failure-text:not(:first-child) { margin-top: .75em; }
 
 /* Touch devices retain native scrolling; these inert SVG marks replace OS chrome. */
 .hand-scroll-native { scrollbar-width: none !important; }
 .hand-scroll-native::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
 .mobile-scroll-layer { position: fixed; inset: 0; z-index: 45; pointer-events: none; overflow: hidden; }
-.mobile-scroll-layer svg { position: absolute; pointer-events: none; }
+.mobile-scroll-layer svg { position: absolute; pointer-events: none; transition: color .12s ease-out; }
 .mobile-scroll-layer-local { position: absolute; inset: auto; z-index: 1; }
 
 /* The same compact controls follow the composer width on desktop and touch devices. */
 .narrow-model-icon { display: none; }
+/* While it waters, the narrow can stays clear even though the picker is locked. */
+.composer-watering .model-picker .sketch-select-trigger:disabled { opacity: 1; }
+.composer-watering .model-picker .sketch-select-trigger:disabled .wide-model-label { opacity: .45; }
 .wide-model-label { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .wide-model-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @container composer (max-width: 520px) {
@@ -1835,7 +2201,7 @@ button:has(.hand-close-icon):focus-visible { outline-color: color-mix(in srgb, v
 @media (pointer: coarse) {
   .component-flow .paper-shadow { filter: none; }
   .component-flow .paper-folds { display: none; }
-  .component-flow :is(.react-flow__controls, .react-flow__minimap, .architecture-breadcrumb, .graph-edge-legend, .group-node) {
+  .component-flow :is(.react-flow__controls, .react-flow__minimap, .architecture-breadcrumb, .group-node) {
     -webkit-backdrop-filter: none; backdrop-filter: none;
   }
 }
@@ -1855,3 +2221,166 @@ button:has(.hand-close-icon):focus-visible { outline-color: color-mix(in srgb, v
 .inline-message-editor .paper-folds { opacity: .82; }
 .paper-wear { opacity: .78; }
 :root[data-theme="dark"] .paper-wear { opacity: .65; }
+
+/* Live summary icons: while a step is running (its label shimmering), its little drawing does the job it
+   names, gently and on a loop. The expanded step list stays still. Children are counted in drawing order. */
+.activity-ink-live path { transform-box: view-box; }
+/* search: the magnifier drifts over the page, looking. */
+.activity-ink-live[data-activity-icon="search"] path:nth-child(n+3) { animation: live-search 3.2s ease-in-out infinite; }
+@keyframes live-search { 0%, 100% { transform: none; } 25% { transform: translate(-2.2px, -1.4px); } 50% { transform: translate(-.6px, -3px); } 75% { transform: translate(1px, -.8px); } }
+/* compose: the pencil writes a small scribble on the page, lifts, and goes back to write it again. */
+.activity-ink-live[data-activity-icon="compose"] [data-live-extra] { display: inline; animation: live-compose-ink 2.8s linear infinite; }
+.activity-ink-live[data-activity-icon="compose"] path:is(:nth-child(2), :nth-child(3)) { animation: live-compose-pen 2.8s linear infinite; }
+@keyframes live-compose-pen {
+  0% { transform: translate(-4.4px, 0); animation-timing-function: ease-out; }
+  14% { transform: translate(-3px, -1.2px); animation-timing-function: ease-in-out; }
+  28% { transform: translate(-1.6px, .3px); animation-timing-function: ease-in-out; }
+  42% { transform: translate(-.3px, -1px); animation-timing-function: ease-in; }
+  52%, 64% { transform: none; animation-timing-function: ease-in-out; }
+  84%, 100% { transform: translate(-4.4px, -1.4px); }
+}
+@keyframes live-compose-ink {
+  0% { clip-path: inset(0 100% 0 0); opacity: 1; }
+  52%, 72% { clip-path: inset(0 0 0 0); opacity: 1; }
+  88%, 100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+/* files: the top sheet slides a little out of the folder. */
+.activity-ink-live[data-activity-icon="files"] path:nth-child(1) { animation: live-lift 2.6s ease-in-out infinite; }
+@keyframes live-lift { 0%, 100% { transform: none; } 50% { transform: translateY(-1.6px); } }
+/* listen: the sound comes in waves. */
+.activity-ink-live[data-activity-icon="listen"] path:is(:nth-child(4), :nth-child(5)) { transform-box: fill-box; transform-origin: 0 100%; animation: live-pulse 1.8s ease-in-out infinite; }
+@keyframes live-pulse { 0%, 100% { opacity: .45; transform: scale(.88); } 50% { opacity: 1; transform: none; } }
+/* speak: the speech bubble swells and settles as the words come. */
+.activity-ink-live[data-activity-icon="speak"] path:is(:nth-child(3), :nth-child(4)) { transform-origin: 19px 21px; animation: live-speak 1.9s ease-in-out infinite; }
+@keyframes live-speak { 0%, 100% { transform: none; } 45% { transform: scale(1.08) rotate(-3deg); } }
+/* explain: the hand points at the board, again and again. */
+.activity-ink-live[data-activity-icon="explain"] path:nth-child(3) { transform-origin: 18px 16px; animation: live-point 2.2s ease-in-out infinite; }
+@keyframes live-point { 0%, 100% { transform: none; } 50% { transform: rotate(-14deg); } }
+/* recall: the two thoughts float up and down out of step. */
+.activity-ink-live[data-activity-icon="recall"] path:is(:nth-child(1), :nth-child(3), :nth-child(4)) { animation: live-bob 2.6s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="recall"] path:nth-child(2) { animation: live-bob 2.6s -1.3s ease-in-out infinite; }
+@keyframes live-bob { 0%, 100% { transform: none; } 50% { transform: translateY(-1.3px); } }
+/* learn: the sprout on the book sways. */
+.activity-ink-live[data-activity-icon="learn"] path:is(:nth-child(4), :nth-child(5)) { transform-origin: 21px 10px; animation: live-sway 2.8s ease-in-out infinite; }
+@keyframes live-sway { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(8deg); } }
+/* wait: the upper sand runs down into the growing pile; then the glass is turned over. Upside down, the full pile
+   is now the full upper sand and the empty top the empty bottom, so the next round carries straight on. */
+.activity-ink-live[data-activity-icon="wait"] { transform-origin: 50% 50%; animation: live-flip 3.8s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="wait"] path:nth-child(6) { display: none; }
+.activity-ink-live[data-activity-icon="wait"] path:nth-child(5) { transform-box: fill-box; transform-origin: 50% 100%; animation: live-sand 3.8s linear infinite; }
+.activity-ink-live[data-activity-icon="wait"] [data-live-extra] { transform-box: fill-box; transform-origin: 50% 0; animation: live-sand-top 3.8s linear infinite; }
+@keyframes live-flip { 0%, 70% { transform: none; } 88%, 100% { transform: rotate(180deg); } }
+@keyframes live-sand { 0% { transform: scale(.35); } 66%, 100% { transform: none; } }
+@keyframes live-sand-top { 0% { transform: none; } 66%, 100% { transform: scale(.35); } }
+/* inspect and version: the paired marks breathe apart and back. */
+.activity-ink-live[data-activity-icon="inspect"] path:nth-child(3),
+.activity-ink-live[data-activity-icon="version"] path:is(:nth-child(5), :nth-child(6)) { animation: live-apart-left 2.2s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="inspect"] path:nth-child(4),
+.activity-ink-live[data-activity-icon="version"] path:is(:nth-child(3), :nth-child(4)) { animation: live-apart-right 2.2s ease-in-out infinite; }
+@keyframes live-apart-left { 0%, 100% { transform: none; } 50% { transform: translateX(-1.2px); } }
+@keyframes live-apart-right { 0%, 100% { transform: none; } 50% { transform: translateX(1.2px); } }
+/* research: the globe turns a little back and forth. */
+.activity-ink-live[data-activity-icon="research"] path:nth-child(-n+3) { transform-origin: 10px 14px; animation: live-turn 3s ease-in-out infinite; }
+@keyframes live-turn { 0%, 100% { transform: rotate(-9deg); } 50% { transform: rotate(9deg); } }
+/* connections, download: arrows nudge the way they point. */
+.activity-ink-live[data-activity-icon="connections"] path:nth-child(4) { animation: live-nudge-right 1.8s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="connections"] path:nth-child(6),
+.activity-ink-live[data-activity-icon="download"] path:is(:nth-child(2), :nth-child(3)) { animation: live-nudge-down 1.8s ease-in-out infinite; }
+@keyframes live-nudge-right { 0%, 100% { transform: none; } 50% { transform: translateX(1.4px); } }
+@keyframes live-nudge-down { 0%, 100% { transform: none; } 50% { transform: translateY(1.6px); } }
+/* components and relations: the parts light up one after another. */
+.activity-ink-live[data-activity-icon="components"] path:nth-child(-n+4),
+.activity-ink-live[data-activity-icon="relations"] path:nth-child(n+3) { transform-box: fill-box; transform-origin: center; animation: live-node 2.4s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="components"] path:nth-child(2), .activity-ink-live[data-activity-icon="relations"] path:nth-child(4) { animation-delay: .6s; }
+.activity-ink-live[data-activity-icon="components"] path:nth-child(3), .activity-ink-live[data-activity-icon="relations"] path:nth-child(5) { animation-delay: 1.2s; }
+.activity-ink-live[data-activity-icon="components"] path:nth-child(4) { animation-delay: 1.8s; }
+@keyframes live-node { 0%, 40%, 100% { transform: none; } 20% { transform: scale(1.14); } }
+/* mend: the missing piece turns slightly, slides into the gap to complete the card, rests there, then comes out. */
+.activity-ink-live[data-activity-icon="mend"] path:nth-child(4) { transform-box: fill-box; transform-origin: center; animation: live-mend 2.8s ease-in-out infinite; }
+@keyframes live-mend {
+  0%, 12%, 100% { transform: none; }
+  30% { transform: translate(-2.2px, -2px) rotate(-6deg); }
+  42%, 74% { transform: translate(-3px, -3px); }
+  90% { transform: translate(-.6px, -.6px); }
+}
+/* merge: the two branches are drawn down to where they meet, then the single line carries on and ends in its arrow. */
+.activity-ink-live[data-activity-icon="merge"] path:is(:nth-child(1), :nth-child(2)) { animation: live-merge-branch 2.8s linear infinite; }
+.activity-ink-live[data-activity-icon="merge"] path:nth-child(3) { animation: live-merge-stem 2.8s linear infinite; }
+.activity-ink-live[data-activity-icon="merge"] path:nth-child(4) { animation: live-merge-head 2.8s linear infinite; }
+@keyframes live-merge-branch {
+  0% { clip-path: inset(0 0 100% 0); opacity: 1; animation-timing-function: ease-in-out; }
+  34%, 80% { clip-path: inset(0 0 0 0); opacity: 1; }
+  94%, 100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+@keyframes live-merge-stem {
+  0%, 34% { clip-path: inset(0 0 100% 0); opacity: 1; animation-timing-function: ease-out; }
+  56%, 80% { clip-path: inset(0 0 0 0); opacity: 1; }
+  94%, 100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+@keyframes live-merge-head {
+  0%, 50% { clip-path: inset(0 0 100% 0); opacity: 1; animation-timing-function: ease-out; }
+  60%, 80% { clip-path: inset(0 0 0 0); opacity: 1; }
+  94%, 100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+/* layers: the stack breathes, the top sheet rising most. */
+.activity-ink-live[data-activity-icon="layers"] path:nth-child(1) { animation: live-layer 2.6s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="layers"] path:nth-child(2) { animation: live-layer-mid 2.6s ease-in-out infinite; }
+@keyframes live-layer { 0%, 100% { transform: none; } 50% { transform: translateY(-1.6px); } }
+@keyframes live-layer-mid { 0%, 100% { transform: none; } 50% { transform: translateY(-.7px); } }
+/* discovery: the gem's two glints twinkle in turn. */
+.activity-ink-live[data-activity-icon="discovery"] path:is(:nth-child(5), :nth-child(6)) { transform-box: fill-box; transform-origin: center; animation: live-glint 2s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="discovery"] path:nth-child(6) { animation-delay: -1s; }
+@keyframes live-glint { 0%, 100% { opacity: .3; transform: scale(.7); } 50% { opacity: 1; transform: scale(1.2); } }
+/* map, verify, save: the route or the tick is drawn again and again. */
+.activity-ink-live[data-activity-icon="map"] path:nth-child(4),
+.activity-ink-live[data-activity-icon="verify"] path:nth-child(3),
+.activity-ink-live[data-activity-icon="save"] path:nth-child(3) { animation: live-draw 2.6s ease-in-out infinite; }
+@keyframes live-draw {
+  0% { clip-path: inset(0 100% 0 0); opacity: 1; }
+  45%, 80% { clip-path: inset(0 0 0 0); opacity: 1; }
+  95%, 100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+/* lookup: the magnifier moves over the stacked results, reading them. */
+.activity-ink-live[data-activity-icon="lookup"] path:is(:nth-child(6), :nth-child(7)) { animation: live-lookup 3s ease-in-out infinite; }
+@keyframes live-lookup { 0%, 100% { transform: none; } 30% { transform: translate(-8px, -1.5px); } 62% { transform: translate(-6px, -6px); } 82% { transform: translate(-1px, -4px); } }
+/* reconnect: the two plug halves reach for each other, touch with a small spark, and part again. */
+.activity-ink-live[data-activity-icon="reconnect"] path:is(:nth-child(1), :nth-child(3), :nth-child(5), :nth-child(6)) { animation: live-plug-a 2s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="reconnect"] path:is(:nth-child(2), :nth-child(4)) { animation: live-plug-b 2s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="reconnect"] path:is(:nth-child(7), :nth-child(8)) { animation: live-plug-spark 2s ease-in-out infinite; }
+@keyframes live-plug-a { 0%, 100% { transform: translate(-1.6px, 1.6px); } 45%, 60% { transform: translate(.6px, -.6px); } }
+@keyframes live-plug-b { 0%, 100% { transform: translate(1.6px, -1.6px); } 45%, 60% { transform: translate(-.4px, .4px); } }
+@keyframes live-plug-spark { 0%, 40%, 70%, 100% { opacity: .15; } 52% { opacity: 1; } }
+/* retry: the circular arrow comes round once more, pauses, and goes again. */
+.activity-ink-live[data-activity-icon="retry"] path:is(:nth-child(1), :nth-child(2)) { transform-origin: 16px 16px; animation: live-retry 2.4s cubic-bezier(.5, 0, .3, 1) infinite; }
+@keyframes live-retry { 0% { transform: none; } 70%, 100% { transform: rotate(-360deg); } }
+/* stop (while cancelling): the cross fades in and out as the run winds down. */
+.activity-ink-live[data-activity-icon="stop"] path:nth-child(n+3) { animation: live-rewrite 1.6s ease-in-out infinite; }
+/* reuse: the arrow swings round onto the folder, taking the old result back. */
+.activity-ink-live[data-activity-icon="reuse"] path:nth-child(n+2) { transform-origin: 15px 18px; animation: live-reuse 2.4s ease-in-out infinite; }
+@keyframes live-reuse { 0%, 100% { transform: rotate(-14deg); } 50% { transform: rotate(10deg); } }
+/* archive: the lid lifts to put something in. */
+.activity-ink-live[data-activity-icon="archive"] path:nth-child(1) { transform-origin: 3px 12px; animation: live-lid 2.6s ease-in-out infinite; }
+@keyframes live-lid { 0%, 60%, 100% { transform: none; } 30% { transform: translateY(-1.2px) rotate(-6deg); } }
+/* scan: the scan line sweeps up and down the page. */
+.activity-ink-live[data-activity-icon="scan"] path:nth-child(7) { animation: live-scan 2.4s ease-in-out infinite; }
+@keyframes live-scan { 0%, 100% { transform: translateY(-7px); } 50% { transform: translateY(7px); } }
+/* edit: the lines on the page are rewritten one by one. */
+.activity-ink-live[data-activity-icon="edit"] path:nth-child(n+3) { animation: live-rewrite 2.4s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="edit"] path:nth-child(4) { animation-delay: .5s; }
+.activity-ink-live[data-activity-icon="edit"] path:nth-child(5) { animation-delay: 1s; }
+/* translate: 文 and A trade places on crossing arcs, rest, and trade back. */
+.activity-ink-live[data-activity-icon="translate"] path:is(:nth-child(3), :nth-child(4), :nth-child(5)) { animation: live-swap-out 3.6s ease-in-out infinite; }
+.activity-ink-live[data-activity-icon="translate"] path:is(:nth-child(6), :nth-child(7)) { animation: live-swap-back 3.6s ease-in-out infinite; }
+@keyframes live-swap-out {
+  0%, 14%, 92%, 100% { transform: none; }
+  27% { transform: translate(9.5px, .7px); }
+  40%, 64% { transform: translate(13px, 9.5px); }
+  78% { transform: translate(3.5px, 8.8px); }
+}
+@keyframes live-swap-back {
+  0%, 14%, 92%, 100% { transform: none; }
+  27% { transform: translate(-9.5px, -.7px); }
+  40%, 64% { transform: translate(-13px, -9.5px); }
+  78% { transform: translate(-3.5px, -8.8px); }
+}
+@keyframes live-rewrite { 0%, 100% { opacity: 1; } 25% { opacity: .35; } }

@@ -1,5 +1,4 @@
 import { ActivityIcon } from './ActivityIcon';
-import { X } from './HandIcons';
 import { t } from './ui-language';
 
 /** Shared by the chat and visual review; App owns the actions. */
@@ -17,14 +16,5 @@ export function LastMessageActions({ onEdit, onResend }: { onEdit?: () => void; 
 export function ConversationErrorNotice({ text }: { text: string }) {
   return <div className="conversation-error" role="alert">
     <ActivityIcon name="failure" size={23} /><span>{text}</span>
-  </div>;
-}
-
-export function MessageEditNotice({ onCancel }: { onCancel: () => void }) {
-  return <div className="message-edit-notice">
-    <span><ActivityIcon name="revise" size={22} />{t('编辑最后一条消息')}</span>
-    <button type="button" className="message-action cancel-edit" onClick={onCancel}>
-      <X size={17} aria-hidden="true" /><span>{t('取消编辑')}</span>
-    </button>
   </div>;
 }

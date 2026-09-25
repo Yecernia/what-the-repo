@@ -134,6 +134,17 @@ export interface Message {
   /** Bounded, user-visible run summaries. Raw provider thinking is never stored here. */
   thinking_summary?: MessageThinkingSummaryEvent[] | null;
   learning_action?: LearningActionCard | null;
+  /** Graph objects the learner attached to this (user) message, shown as cards above it. */
+  attachments?: MessageAttachment[];
+}
+
+export interface MessageAttachment {
+  snapshot_id: string;
+  kind: "component" | "relation" | "value_point" | "learning_step";
+  stable_id: string;
+  label: string;
+  entity_id?: string | null;
+  evidence_id?: string | null;
 }
 
 export interface RepoSource {

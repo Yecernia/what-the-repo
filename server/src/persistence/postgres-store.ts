@@ -294,6 +294,7 @@ function repositoryHeadFromRow(row: Record<string, unknown>): RepositoryHead {
     ...(row.generation === undefined ? {} : { generation: Number(row.generation) }),
     ...(row.published_at === undefined ? {} : { published_at: iso(row.published_at) }),
     ...(row.upstream_commit_sha === undefined ? {} : { upstream_commit_sha: row.upstream_commit_sha === null ? null : String(row.upstream_commit_sha) }),
+    ...(row.upstream_committed_at === undefined ? {} : { upstream_committed_at: iso(row.upstream_committed_at) }),
     ...(row.behind_commits === undefined ? {} : { behind_commits: row.behind_commits === null ? null : Number(row.behind_commits) }),
     ...(row.head_relation === undefined ? {} : { relation: String(row.head_relation) as RepositoryHead['relation'] }),
     ...(row.head_error_code === undefined ? {} : { check_error_code: row.head_error_code === null ? null : String(row.head_error_code) }),
@@ -1711,7 +1712,7 @@ export class PostgresStore extends FileStore {
               snapshot.commit_sha AS current_commit_sha,
               snapshot.analyzer_bundle_version, snapshot.analysis_config_digest,
               current.generation, current.published_at, current.last_checked_at,
-              current.upstream_commit_sha, current.behind_commits,
+              current.upstream_commit_sha, current.upstream_committed_at, current.behind_commits,
               current.head_relation, current.head_error_code, current.next_check_at,
               current.updated_at
        FROM canonical_public_repositories AS current
@@ -2014,18 +2015,23 @@ export class PostgresStore extends FileStore {
     repository: string; baseSnapshotKey: string; upstreamCommitSha: string | null;
     behindCommits: number | null; relation: BackgroundRepositoryCandidate['relation'];
     checkedAt: string; nextCheckAt: string; errorCode: string | null;
+    /** Upstream head commit time; omitted keeps the stored time while the head is unchanged. */
+    upstreamCommittedAt?: string | null;
   }): Promise<boolean> {
     const result = await this.pool.query(
       `UPDATE canonical_public_repositories SET
          upstream_commit_sha=$3, behind_commits=$4, head_relation=$5,
          last_checked_at=$6, next_check_at=$7,
-         head_check_status=$8, head_error_code=$9, updated_at=$6
+         head_check_status=$8, head_error_code=$9, updated_at=$6,
+         -- A check without a commit time keeps the known time of an unchanged head.
+         upstream_committed_at=CASE WHEN $10::timestamptz IS NOT NULL THEN $10::timestamptz
+           WHEN upstream_commit_sha IS NOT DISTINCT FROM $3 THEN upstream_committed_at END
        WHERE repository_identity=$1 AND current_public_snapshot_key=$2
          AND (last_checked_at IS NULL OR last_checked_at <= $6::timestamptz)`,
       [input.repository.toLowerCase(), input.baseSnapshotKey,
         input.upstreamCommitSha, input.behindCommits, input.relation,
         input.checkedAt, input.nextCheckAt,
-        input.errorCode ? 'failed' : 'ok', input.errorCode],
+        input.errorCode ? 'failed' : 'ok', input.errorCode, input.upstreamCommittedAt ?? null],
     );
     return Boolean(result.rowCount);
   }
@@ -2222,6 +2228,7 @@ export class PostgresStore extends FileStore {
         `UPDATE canonical_public_repositories
          SET current_public_snapshot_key=$2, generation=generation+1,
              published_at=$3, last_checked_at=$3, upstream_commit_sha=$4,
+             upstream_committed_at=CASE WHEN upstream_commit_sha=$4 THEN upstream_committed_at END,
              behind_commits=0, head_relation='same', head_check_status='ok',
              head_error_code=NULL, next_check_at=NULL, updated_at=$3
          WHERE repository_identity=$1`,

@@ -279,6 +279,8 @@ export interface ProductStore {
     repository: string; baseSnapshotKey: string; upstreamCommitSha: string | null;
     behindCommits: number | null; relation: BackgroundRepositoryCandidate['relation'];
     checkedAt: string; nextCheckAt: string; errorCode: string | null;
+    /** Upstream head commit time; omitted keeps the stored time while the head is unchanged. */
+    upstreamCommittedAt?: string | null;
   }): Promise<boolean>;
   createBackgroundRepositoryUpdate(input: {
     project: Project; job: AnalysisJob; identity: RepositoryIdentityInput;

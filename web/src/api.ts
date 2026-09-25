@@ -91,7 +91,7 @@ function publicErrorMessage(status: number, code: string | undefined, detail: un
   if (status === 401) return t("登录状态已失效，请重新登录。");
   if (status === 403) return t("你暂时无法使用这个功能。");
   if (status === 404) return t("请求的内容不存在或已被移除。");
-  if (status === 410) return t("当前页面版本已过期，请刷新到新版本。");
+  if (status === 410) return t("当前页面版本已过期，请切换到新版本。");
   if (status === 409) return t("内容已更新，请刷新后重试。");
   if (status === 429) return t("请求过于频繁，请稍后再试。");
   if (status >= 500) return t("服务端错误，请稍后重试。");
@@ -378,7 +378,7 @@ export const apiClient = {
   sendMessage: (
     id: string,
     content: string,
-    uiContext: import('./types').ConversationSelection | null = null,
+    uiContexts: import('./types').ConversationSelection[] = [],
     reviewEvidence = false,
     replaceMessageId?: string,
     retryRunId?: string,
@@ -390,7 +390,7 @@ export const apiClient = {
         body: JSON.stringify({
           content,
           display_language: getUiLanguage(),
-          ui_context: uiContext,
+          ui_contexts: uiContexts,
           review_evidence: reviewEvidence,
           ...(replaceMessageId ? { replace_message_id: replaceMessageId } : {}),
           ...(retryRunId ? { retry_run_id: retryRunId } : {}),
@@ -401,7 +401,7 @@ export const apiClient = {
   sendMessageStream: async (
     id: string,
     content: string,
-    uiContext: import('./types').ConversationSelection | null,
+    uiContexts: import('./types').ConversationSelection[],
     onProgress: (event: import('./types').RuntimeProgressEvent) => void,
     reviewEvidence = false,
     replaceMessageId?: string,
@@ -431,7 +431,7 @@ export const apiClient = {
                   ...(viewSnapshotId ? { view_snapshot_id: viewSnapshotId } : {}),
                   content,
                   display_language: getUiLanguage(),
-                  ui_context: uiContext,
+                  ui_contexts: uiContexts,
                   review_evidence: reviewEvidence,
                 }),
               }

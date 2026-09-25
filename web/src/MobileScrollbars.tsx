@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { penPath } from './pen-path';
+import { scrollInkPath } from './scroll-ink';
 
 // Keep the native scroll hosts (including textarea) so touch momentum, selection and
 // chat's scroll ownership stay intact. PaperScroll already supplies its own ink rail.
@@ -10,7 +10,6 @@ const hosts = [
   '.value-point-grid', '.learning-plan', '.workspace-tabs', '.product-workspace',
 ].join(',');
 const ns = 'http://www.w3.org/2000/svg';
-const ink = penPath([[4, 1, .6], [3.4, 24, 1.15], [4.5, 51, .8], [3.7, 77, 1.1], [4, 99, .55]], 2.6);
 
 /** iOS overlay scrollbars cannot reproduce our desktop scrollbar artwork. */
 export function MobileScrollbars() {
@@ -44,7 +43,17 @@ export function MobileScrollbars() {
         if (touching || now - lastMotion < 350) trackingFrame = requestAnimationFrame(trackEditor);
         else tracked = null;
       };
+      // The bar answers the finger: while a touch is scrolling a host, its thumb turns green and a little heavier,
+      // and goes back shortly after the finger lifts.
+      let fingerHost: Element | null = null;
+      let pressedHost: Element | null = null;
+      let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+      const hostScrolled = (event: Event) => {
+        if (fingerHost && event.currentTarget === fingerHost && pressedHost !== fingerHost) { pressedHost = fingerHost; clearTimeout(releaseTimer); }
+        schedule();
+      };
       const touchStart = (event: TouchEvent) => {
+        fingerHost = event.target instanceof Element ? event.target.closest(hosts) : null;
         const target = event.target instanceof Element ? event.target.closest('textarea') : null;
         if (!(target instanceof HTMLTextAreaElement)) return;
         tracked = target; touching = true; lastMotion = performance.now();
@@ -52,7 +61,11 @@ export function MobileScrollbars() {
         if (trackingFrame === null) trackingFrame = requestAnimationFrame(trackEditor);
         schedule();
       };
-      const touchEnd = () => { touching = false; lastMotion = performance.now(); };
+      const touchEnd = () => {
+        touching = false; lastMotion = performance.now(); fingerHost = null;
+        clearTimeout(releaseTimer);
+        releaseTimer = setTimeout(() => { pressedHost = null; schedule(); }, 350);
+      };
       const resize = new ResizeObserver(schedule);
       const layerFor = (element: HTMLElement) => {
         const local = element.matches('.composer-textarea, .inline-message-editor textarea');
@@ -78,11 +91,10 @@ export function MobileScrollbars() {
             const layer = layerFor(element);
             const bars = [false, true].map(horizontal => {
               const svg = document.createElementNS(ns, 'svg');
-              svg.setAttribute('viewBox', horizontal ? '0 0 100 8' : '0 0 8 100');
+              // Lengthwise the drawing is 1:1 with the thumb; only its 8-unit width is fitted into the 6px bar.
               svg.setAttribute('preserveAspectRatio', 'none');
               svg.dataset.axis = horizontal ? 'x' : 'y';
               const path = document.createElementNS(ns, 'path');
-              path.setAttribute('d', ink);
               path.setAttribute('fill', 'currentColor');
               if (horizontal) path.setAttribute('transform', 'matrix(0 1 1 0 0 0)');
               svg.append(path); layer.append(svg);
@@ -90,7 +102,7 @@ export function MobileScrollbars() {
             });
             entries.set(element, bars);
             element.classList.add('hand-scroll-native');
-            element.addEventListener('scroll', schedule, { passive: true });
+            element.addEventListener('scroll', hostScrolled, { passive: true });
             resize.observe(element);
           });
         }
@@ -101,7 +113,7 @@ export function MobileScrollbars() {
         for (const [element, bars] of entries) {
           if (!element.isConnected || element.closest('.admin-console, .admin-code-dialog')) {
             element.classList.remove('hand-scroll-native');
-            bars.forEach(bar => bar.remove()); resize.unobserve(element); element.removeEventListener('scroll', schedule); entries.delete(element); continue;
+            bars.forEach(bar => bar.remove()); resize.unobserve(element); element.removeEventListener('scroll', hostScrolled); entries.delete(element); continue;
           }
           const layer = bars[0].parentElement!;
           const local = layer.classList.contains('mobile-scroll-layer-local');
@@ -144,11 +156,23 @@ export function MobileScrollbars() {
             const clippedStart = Math.max(start, horizontal ? left : top);
             const clippedEnd = Math.min(end, horizontal ? right : bottom);
             bar.style.display = clippedEnd <= clippedStart ? 'none' : 'block';
-            bar.style.color = style.getPropertyValue('--fg-muted');
+            const pressed = pressedHost === element;
+            bar.style.color = style.getPropertyValue(pressed ? '--scrollbar-ink-active' : '--scrollbar-ink');
             bar.style.left = `${(horizontal ? clippedStart : right - 8) - origin.left}px`;
             bar.style.top = `${(horizontal ? bottom - 8 : clippedStart) - origin.top}px`;
-            bar.style.width = `${horizontal ? clippedEnd - clippedStart : 6}px`;
-            bar.style.height = `${horizontal ? 6 : clippedEnd - clippedStart}px`;
+            const thickness = pressed ? 8 : 6;
+            bar.style.width = `${horizontal ? clippedEnd - clippedStart : thickness}px`;
+            bar.style.height = `${horizontal ? thickness : clippedEnd - clippedStart}px`;
+            // Redraw the stroke for the thumb's real length (not stretched), anchored to the thumb's own start so a
+            // clipped thumb keeps its shape.
+            const length = Math.round(size);
+            if (bar.dataset.length !== String(length)) {
+              bar.dataset.length = String(length);
+              bar.firstElementChild!.setAttribute('d', scrollInkPath(length));
+            }
+            const offset = clippedStart - start;
+            bar.setAttribute('viewBox', horizontal
+              ? `${offset} 0 ${clippedEnd - clippedStart} 8` : `0 ${offset} 8 ${clippedEnd - clippedStart}`);
           });
         }
         for (const [parent, layer] of layers) if (!parent.isConnected || !layer.childElementCount) { layer.remove(); layers.delete(parent); }
@@ -190,7 +214,8 @@ export function MobileScrollbars() {
         window.removeEventListener('resize', schedule); viewportEvents(false);
         if (frame !== null) cancelAnimationFrame(frame);
         if (trackingFrame !== null) cancelAnimationFrame(trackingFrame);
-        entries.forEach((_, element) => { element.classList.remove('hand-scroll-native'); element.removeEventListener('scroll', schedule); });
+        entries.forEach((_, element) => { element.classList.remove('hand-scroll-native'); element.removeEventListener('scroll', hostScrolled); });
+        clearTimeout(releaseTimer);
         layers.forEach(layer => layer.remove());
       };
     };

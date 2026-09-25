@@ -104,11 +104,6 @@ it('pulls back immediately from full height and cannot enlarge details beyond th
   move(bar, 200); advance(); expect(percent(bar)).toBe(60);
   up(bar, 200); expect(percent(bar)).toBe(60);
 });
-it('honors reduced motion without retaining animation work', () => {
-  vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query === '(prefers-reduced-motion: reduce)' } as MediaQueryList));
-  render(<Harness />); const bar = separator(); down(bar); move(bar, 960);
-  expect(percent(bar)).toBe(100); expect(frames.size).toBe(0); up(bar, 960);
-});
 it.each(['pointerCancel', 'lostPointerCapture', 'escape', 'blur', 'resize'])('cancels %s, restores the starting size, and cancels scheduled frames', reason => {
   render(<Harness />); const bar = separator(); down(bar); move(bar, 960); advance(40);
   expect(percent(bar)).toBeGreaterThan(60);

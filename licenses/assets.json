@@ -3,8 +3,18 @@
   "auditedAt": "2026-09-18",
   "assets": [
     {
+      "path": "web/public/public-security-filing.png",
+      "sha256": "6189a29f86e1756d1970f4446b9f836642c283c373d312dbddeb42411f1608e6",
+      "source": "https://beian.mps.gov.cn/web/assets/logo01.6189a29f.png",
+      "license": "Official filing identification only; no open-source license asserted",
+      "evidence": "Original badge supplied by the National Internet Security Management Service Platform for placement before an approved filing number.",
+      "notices": [
+        "licenses/upstream/public-security-filing.txt"
+      ]
+    },
+    {
       "path": "web/public/app-icon-1024.png",
-      "sha256": "f044fe6a9ed55821c142366983de98596d34d6caadb5b658da4104e0c579e250",
+      "sha256": "976a30144d5d36911e4b9fb6330279302da7e23618b2d92d81ec6a6263c67bf2",
       "source": "what-the-repo project assets",
       "license": "Project license to the extent rights apply",
       "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
@@ -14,7 +24,7 @@
     },
     {
       "path": "web/public/app-icon.svg",
-      "sha256": "bbcd5071fe6cac12488cd9d7b23f1614da9389f774fbf045d836cdc78f25d902",
+      "sha256": "905dd320a87f1079952c33996f66ed67cb2e0ea8e7e5db000fbae1a31ae2a87a",
       "source": "what-the-repo project assets",
       "license": "Project license to the extent rights apply",
       "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
@@ -24,7 +34,7 @@
     },
     {
       "path": "web/public/favicon-ink.svg",
-      "sha256": "231ea807d55148c1abf2e2ccde7fd3a46cd878d3174ea0203ee32fdb907a6556",
+      "sha256": "79fad68a0a45cba302a708f25166a0833c494174ba62e80e29c6890a0fd285af",
       "source": "what-the-repo project assets",
       "license": "Project license to the extent rights apply",
       "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
@@ -34,7 +44,7 @@
     },
     {
       "path": "web/public/favicon.ico",
-      "sha256": "d9ccb9ee9d90180253cc35e0cc10d487dd51962d7454967d29fe01a93ed11753",
+      "sha256": "2f22f8a554a3805f6789a5442df77fed08e1c21b9512d0bf3363787628755094",
       "source": "what-the-repo project assets",
       "license": "Project license to the extent rights apply",
       "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
@@ -44,7 +54,7 @@
     },
     {
       "path": "web/public/favicon.png",
-      "sha256": "f7a70f097fb3c5d7b8db282b50bedaaec0bd1bb86f51eb0029886528dfe4b081",
+      "sha256": "f47b58f87456e93ad1318c9355d6131af89848a16114fa2d6b52cfe1fb59935d",
       "source": "what-the-repo project assets",
       "license": "Project license to the extent rights apply",
       "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
@@ -54,7 +64,27 @@
     },
     {
       "path": "web/public/favicon.svg",
-      "sha256": "bbcd5071fe6cac12488cd9d7b23f1614da9389f774fbf045d836cdc78f25d902",
+      "sha256": "905dd320a87f1079952c33996f66ed67cb2e0ea8e7e5db000fbae1a31ae2a87a",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "web/public/favicon-done.png",
+      "sha256": "85fbb5e98ccf0ae3a86d4f6635f9350283d5ee987d2e0234495a481d150ca5aa",
+      "source": "what-the-repo project assets",
+      "license": "Project license to the extent rights apply",
+      "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
+      "notices": [
+        "LICENSE"
+      ]
+    },
+    {
+      "path": "web/public/favicon-done.svg",
+      "sha256": "5e3416525700009d862b72dd48f5d4dd5499c2c12fa1d646194e36bddf2810ca",
       "source": "what-the-repo project assets",
       "license": "Project license to the extent rights apply",
       "evidence": "Project branding/illustration assets; not a third-party npm dependency.",
@@ -393,28 +423,8 @@
       ]
     },
     {
-      "path": "web/public/file-icons/iconpark/file-pdf.svg",
-      "sha256": "fa4ce1bfc3816b8e967e717bb8136565ee704373fc858324e0ee917fb0a1110d",
-      "source": "https://github.com/bytedance/IconPark",
-      "license": "Apache-2.0",
-      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
-      "notices": [
-        "licenses/upstream/iconpark.txt"
-      ]
-    },
-    {
       "path": "web/public/file-icons/iconpark/file-text-one.svg",
       "sha256": "e415383207c9fe3b35aed075944cb7a22d4ab6489c29626df26394244229c4b3",
-      "source": "https://github.com/bytedance/IconPark",
-      "license": "Apache-2.0",
-      "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
-      "notices": [
-        "licenses/upstream/iconpark.txt"
-      ]
-    },
-    {
-      "path": "web/public/file-icons/iconpark/file-text.svg",
-      "sha256": "e7195c4aa19291b53e445a59520921aadf2a4042aabc3b521faa96b905fc6f00",
       "source": "https://github.com/bytedance/IconPark",
       "license": "Apache-2.0",
       "evidence": "Existing IconPark asset directory and import history; styling adapts theme colors.",
@@ -494,26 +504,6 @@
       ]
     },
     {
-      "path": "web/public/providers/anthropic.svg",
-      "sha256": "51635844d2ae983077bb8c81f46b10d142542da4c23a06e9c2faf9154cc20af4",
-      "source": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/anthropic.svg",
-      "license": "MIT; trademark rights reserved",
-      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
-      "notices": [
-        "licenses/upstream/lobehub-icons.txt"
-      ]
-    },
-    {
-      "path": "web/public/providers/chatglm-color.png",
-      "sha256": "4d3db10e2191d9df313e0ff72e94eed5b7f33fbde798c41d52fe8ce5f16e61a1",
-      "source": "https://lobehub.com/icons",
-      "license": "MIT; trademark rights reserved",
-      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
-      "notices": [
-        "licenses/upstream/lobehub-icons.txt"
-      ]
-    },
-    {
       "path": "web/public/providers/claude.svg",
       "sha256": "0df6dad23995f5a76c6db8cc2a4e646ff45bd7a0626ef98662a7025646e5eea1",
       "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/claude-ai-icon.svg",
@@ -531,16 +521,6 @@
       "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
       "notices": [
         "licenses/upstream/lobehub-icons.txt"
-      ]
-    },
-    {
-      "path": "web/public/providers/deepseek.svg",
-      "sha256": "360336e87a3336f60b7d2432ecdea2982537806886e20b170163fd5d3dda825b",
-      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/deepseek.svg",
-      "license": "MIT; trademark rights reserved",
-      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
-      "notices": [
-        "licenses/upstream/svgl.txt"
       ]
     },
     {
@@ -584,16 +564,6 @@
       ]
     },
     {
-      "path": "web/public/providers/kimi-color.png",
-      "sha256": "fb460178c19cd28fc953fb446eb200b4050f4046eae3d84d1a15189eb50f717c",
-      "source": "https://lobehub.com/icons",
-      "license": "MIT; trademark rights reserved",
-      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
-      "notices": [
-        "licenses/upstream/lobehub-icons.txt"
-      ]
-    },
-    {
       "path": "web/public/providers/kimi-user.webp",
       "sha256": "c2bd76c0f0f3e775c19eb123402046b011c1f88d17c76ba8cb2fef5d442f45c4",
       "source": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-avatar/avatars/kimi.webp",
@@ -611,16 +581,6 @@
       "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
       "notices": [
         "licenses/upstream/lobehub-icons.txt"
-      ]
-    },
-    {
-      "path": "web/public/providers/moonshotai.svg",
-      "sha256": "0ba35ce31b57bb6db39d4e454925e39f88f46a3b52a07898bd8262c3902df7fc",
-      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/kimi-icon.svg",
-      "license": "MIT; trademark rights reserved",
-      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
-      "notices": [
-        "licenses/upstream/svgl.txt"
       ]
     },
     {
@@ -644,26 +604,6 @@
       ]
     },
     {
-      "path": "web/public/providers/qwen.svg",
-      "sha256": "dcb3ba2f2b55ccbacbade0ca0bf98921fbaf8a07848972974b4a9bf8077376cf",
-      "source": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/qwen-color.svg",
-      "license": "MIT; trademark rights reserved",
-      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
-      "notices": [
-        "licenses/upstream/lobehub-icons.txt"
-      ]
-    },
-    {
-      "path": "web/public/providers/xai.svg",
-      "sha256": "a805762f862713b85a68f05b6a7cb15d4bc42fd3a5f17cda706b77bccca6d7b2",
-      "source": "https://github.com/pheralb/svgl/blob/b49649915224db817b89ff400b940a2a93bdb3d3/static/library/xai_dark.svg",
-      "license": "MIT; trademark rights reserved",
-      "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
-      "notices": [
-        "licenses/upstream/svgl.txt"
-      ]
-    },
-    {
       "path": "web/public/providers/xiaomimimo.png",
       "sha256": "04f78ad5b2ebd628ddaa59261c3696971dc54799c1ae3401454977810ca1f63b",
       "source": "https://lobehub.com/icons",
@@ -679,16 +619,6 @@
       "source": "https://github.com/lobehub/lobe-icons/blob/a94750e3f5f8fc33757b839d85030e742284e43a/packages/static-svg/icons/zai.svg",
       "license": "MIT; trademark rights reserved",
       "evidence": "SVG path data matched; wrapper, fill or sizing can differ.",
-      "notices": [
-        "licenses/upstream/lobehub-icons.txt"
-      ]
-    },
-    {
-      "path": "web/public/providers/zhipu-color.png",
-      "sha256": "612dca42bba94fd6e760eea79bb34ee8f40f23e24944e58075d6a9ff43b6801a",
-      "source": "https://lobehub.com/icons",
-      "license": "MIT; trademark rights reserved",
-      "evidence": "Recorded export from LobeHub in the original asset-import history; raster/color variants.",
       "notices": [
         "licenses/upstream/lobehub-icons.txt"
       ]

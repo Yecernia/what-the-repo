@@ -78,7 +78,7 @@ function context(overrides: Partial<ConversationToolContext> = {}): Conversation
     profile: emptyProfile(),
     agentMemories: [],
     store: { readSourceLines: async () => ({ lines: ["export function entry() {}"], truncated: false }) } as unknown as ProductStore,
-    selected: null,
+    selected: [],
     exposedEvidence: new Map(),
     exposedPaths: new Set(),
     toolsUsed: [],
@@ -105,6 +105,8 @@ test('learning context retrieves fact-only references without a full graph and e
   const tools = createConversationTools(ctx);
   const result = await tools.find(tool => tool.name === 'get_learning_context')!.execute('learn', {});
   const body = JSON.parse((result.content[0] as { text: string }).text);
+  // A plain status accompanies the internal fields so the tutor can describe progress without phase values.
+  assert.equal(body.plain_status, 'No learning target has been chosen and there is no route yet.');
   assert.deepEqual(requests, [{ publicKey: 'canonical', snapshotId: 'snapshot:tools', evidenceIds: [fact.stable_id, 'missing'] }]);
   assert.deepEqual(body.current_step_evidence.map((row: typeof fact) => row.stable_id), [fact.stable_id, evidence.stable_id]);
   assert.equal(ctx.exposedEvidence.get(fact.stable_id), fact);
@@ -139,7 +141,7 @@ test("static file facts require exposed paths and page unresolved sites from the
   } } as unknown as ProductStore });
   const tools = createConversationTools(ctx);
   const facts = tools.find(tool => tool.name === "get_static_file_facts")!;
-  await assert.rejects(facts.execute("unknown", { path: evidence.path, kind: "calls" }), /请先通过证据/);
+  await assert.rejects(facts.execute("unknown", { path: evidence.path, kind: "calls" }), /Expose this file path with an evidence or component tool first/);
   assert.equal(reads.length, 0);
   await tools.find(tool => tool.name === "get_component_context")!.execute("component", { component_id: "component:entry" });
   const result = await facts.execute("page", { path: evidence.path, kind: "calls", limit: 20 });
@@ -162,11 +164,11 @@ test("conversation source reads require exposed evidence and stay bound to the s
   });
   const tools = createConversationTools(ctx);
   const source = tools.find((tool) => tool.name === "read_source_excerpt")!;
-  await assert.rejects(source.execute("unexposed", { path: evidence.path }), /请先通过证据/);
+  await assert.rejects(source.execute("unexposed", { path: evidence.path }), /Expose this file path with an evidence or component tool first/);
   assert.equal(reads.length, 0);
   await tools.find((tool) => tool.name === "get_component_context")!.execute("component", { component_id: "component:entry" });
   for (const path of ["../entry.ts", "/src/entry.ts", "src/missing.ts"]) {
-    await assert.rejects(source.execute("unsafe", { path }), /请先通过证据/);
+    await assert.rejects(source.execute("unsafe", { path }), /Expose this file path with an evidence or component tool first/);
   }
   assert.equal(reads.length, 0);
   const result = await source.execute("source", { path: evidence.path, offset: 1, limit: 2 });
@@ -201,8 +203,8 @@ test('canonical evidence, source and static facts use captured identity without 
   });
   const tools = createConversationTools(ctx);
   const run = (name: string, params: Record<string, unknown>) => tools.find(tool => tool.name === name)!.execute(name, params);
-  await assert.rejects(run('read_source_excerpt', { path: evidence.path }), /请先通过证据/);
-  await assert.rejects(run('get_static_file_facts', { path: evidence.path, kind: 'calls' }), /请先通过证据/);
+  await assert.rejects(run('read_source_excerpt', { path: evidence.path }), /Expose this file path with an evidence or component tool first/);
+  await assert.rejects(run('get_static_file_facts', { path: evidence.path, kind: 'calls' }), /Expose this file path with an evidence or component tool first/);
   assert.equal(requests.length, 0);
   const query = await run('query_code_evidence', { text: 'entry' });
   assert.equal(JSON.parse((query.content[0] as { text: string }).text).nodes.length, 1);
@@ -319,7 +321,7 @@ test('missing or failed summaries never silently widen overview to the full view
     getSummary: async () => null,
   });
   const overview = createConversationTools(ctx).find(tool => tool.name === 'get_project_overview')!;
-  await assert.rejects(overview.execute('missing', {}), /项目分析尚未完成/);
+  await assert.rejects(overview.execute('missing', {}), /project analysis has not finished/);
   assert.equal(fullReads, 0);
   const failed = new Error('summary unavailable');
   ctx.getSummary = async () => { throw failed; };
@@ -337,10 +339,14 @@ test("propose_learning_action creates a pending card without changing study stat
     target_kind: "value_point",
     target_id: "value:entry",
   });
-  const payload = JSON.parse(String((result.content[0] as { text: string }).text)) as { confirmation_required: boolean };
+  const text = String((result.content[0] as { text: string }).text);
+  const payload = JSON.parse(text) as { confirmation_required: boolean; for_reply: string };
   assert.equal(payload.confirmation_required, true);
   assert.equal(ctx.pendingLearningAction.value?.status, "pending");
   assert.deepEqual(ctx.project.study, before);
+  // The interface renders the card; the tutor only learns what to say about it, never the card ID.
+  assert.match(payload.for_reply, /confirmation card under your reply/);
+  assert.doesNotMatch(text, /action_id|learning-action:/);
 });
 
 test("learning action proposal rejects fabricated targets", async () => {
@@ -353,7 +359,7 @@ test("learning action proposal rejects fabricated targets", async () => {
       target_kind: "component",
       target_id: "component:missing",
     }),
-    /学习动作或目标与当前快照、路线不匹配/,
+    /does not match the current snapshot or route/,
   );
 });
 
@@ -387,12 +393,18 @@ test("explicit advance can create a skip card without an assessment", async () =
     target_kind: "learning_step",
     target_id: "learning:first",
   });
-  const payload = JSON.parse(String((result.content[0] as { text: string }).text)) as {
+  const text = String((result.content[0] as { text: string }).text);
+  const payload = JSON.parse(text) as {
     confirmation_required: boolean;
+    for_reply: string;
     proposal: { skipped_understanding_check: boolean };
   };
-  assert.equal(payload.confirmation_required, true);
+  // The explicit request in this message is applied after the turn, so no card confirmation is needed.
+  assert.equal(payload.confirmation_required, false);
+  assert.match(payload.for_reply, /recorded as skipped \(not mastered\)/);
   assert.equal(payload.proposal.skipped_understanding_check, true);
+  // The tutor never receives the card ID, so it cannot repeat it to the learner.
+  assert.doesNotMatch(text, /action_id|learning-action:/);
   assert.match(ctx.pendingLearningAction.value?.description ?? "", /主动跳过/);
   assert.equal(ctx.pendingLearningAction.value?.skip_understanding_check, true);
   assert.deepEqual(ctx.project.study.mastered, []);

@@ -1210,6 +1210,8 @@ export class FileStore implements ProductStore {
     repository: string; baseSnapshotKey: string; upstreamCommitSha: string | null;
     behindCommits: number | null; relation: import('./store.js').BackgroundRepositoryCandidate['relation'];
     checkedAt: string; nextCheckAt: string; errorCode: string | null;
+    /** Upstream head commit time; omitted keeps the stored time while the head is unchanged. */
+    upstreamCommittedAt?: string | null;
   }): Promise<boolean> {
     const key = createHash("sha256").update(`current\n${input.repository.toLowerCase()}`).digest("hex");
     return this.mutex.runExclusive(`repository-current:${key}`, async () => {
@@ -1217,6 +1219,8 @@ export class FileStore implements ProductStore {
       const current = await readJson<RepositoryHead>(path);
       if (!current || current.current_public_snapshot_key !== input.baseSnapshotKey) return false;
       await writeJson(path, { ...current, upstream_commit_sha: input.upstreamCommitSha,
+        upstream_committed_at: input.upstreamCommittedAt
+          ?? (current.upstream_commit_sha === input.upstreamCommitSha ? current.upstream_committed_at ?? null : null),
         behind_commits: input.behindCommits, relation: input.relation,
         last_checked_at: input.checkedAt, next_check_at: input.nextCheckAt,
         check_error_code: input.errorCode });

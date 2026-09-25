@@ -241,7 +241,8 @@ export class RepositoryService {
           const checkedAt = nowIso();
           await this.store.saveRepositoryHead({ ...head, last_checked_at: checkedAt, updated_at: checkedAt });
           await this.store.saveRepositoryFreshness({ repository, baseSnapshotKey: head.current_public_snapshot_key,
-            upstreamCommitSha: upstream.commitSha, behindCommits: 0, relation: 'same', checkedAt,
+            upstreamCommitSha: upstream.commitSha, upstreamCommittedAt: upstream.committedAt,
+            behindCommits: 0, relation: 'same', checkedAt,
             nextCheckAt: new Date(Date.parse(checkedAt) + this.headFreshnessMs).toISOString(), errorCode: null });
           if (!hasReadableSnapshot) {
             recordAnalysisProgress(project.analysis, "comparing_versions", "completed");
@@ -258,7 +259,8 @@ export class RepositoryService {
             head.current_commit_sha ?? '', upstream.commitSha, this.options.githubClientId,
             this.options.githubClientSecret, this.options.githubGateway);
           await this.store.saveRepositoryFreshness({ repository, baseSnapshotKey: head.current_public_snapshot_key,
-            upstreamCommitSha: upstream.commitSha, behindCommits: comparison.behindCommits,
+            upstreamCommitSha: upstream.commitSha, upstreamCommittedAt: upstream.committedAt,
+            behindCommits: comparison.behindCommits,
             relation: comparison.relation, checkedAt,
             nextCheckAt: new Date(Date.parse(checkedAt) + this.headFreshnessMs).toISOString(), errorCode: null });
         } catch {
@@ -524,6 +526,7 @@ export class RepositoryService {
       freshness: {
         base_snapshot_id: currentId,
         upstream_commit_sha: head?.upstream_commit_sha ?? null,
+        upstream_committed_at: head?.upstream_commit_sha ? head.upstream_committed_at ?? null : null,
         behind_commits: head?.behind_commits ?? null,
         relation: head?.relation ?? "unknown",
         check_status: checking ? "checking" : head?.check_error_code ? "failed" : checkedAt ? "ok" : "idle",
@@ -610,11 +613,13 @@ export class RepositoryService {
     const fresh = Boolean(head.upstream_commit_sha && head.last_checked_at && !head.check_error_code
       && Date.now() - Date.parse(head.last_checked_at) <= this.headFreshnessMs);
     let upstreamSha = fresh ? head.upstream_commit_sha ?? null : null;
+    let upstreamCommittedAt: string | null | undefined;
     if (!upstreamSha) {
       const upstream = await this.resolveGithubHead(project.source.value, this.options.githubClientId,
         this.options.githubClientSecret, this.options.githubGateway).catch(() => null);
       if (!upstream) throw serviceError("github_check_failed", "暂时无法检查上游代码，当前仓库内容仍可继续使用。", 503);
       upstreamSha = upstream.commitSha;
+      upstreamCommittedAt = upstream.committedAt;
       const checkedAt = nowIso();
       const comparison = upstreamSha === head.current_commit_sha
         ? { relation: "same" as const, behindCommits: 0 }
@@ -622,7 +627,7 @@ export class RepositoryService {
           this.options.githubClientId, this.options.githubClientSecret, this.options.githubGateway)
           .catch(() => ({ relation: "unknown" as const, behindCommits: null }));
       await this.store.saveRepositoryFreshness({ repository, baseSnapshotKey: key, upstreamCommitSha: upstreamSha,
-        behindCommits: comparison.behindCommits, relation: comparison.relation, checkedAt,
+        upstreamCommittedAt, behindCommits: comparison.behindCommits, relation: comparison.relation, checkedAt,
         nextCheckAt: new Date(Date.parse(checkedAt) + this.headFreshnessMs).toISOString(), errorCode: null });
     }
     const sameIdentity = head.analyzer_bundle_version === ANALYZER_BUNDLE_VERSION && head.analysis_config_digest === digest;
@@ -666,7 +671,7 @@ export class RepositoryService {
         upstream.commitSha, this.options.githubClientId, this.options.githubClientSecret,
         this.options.githubGateway, signal);
       await this.store.saveRepositoryFreshness({ repository: identity.repository,
-        baseSnapshotKey: key, upstreamCommitSha: upstream.commitSha,
+        baseSnapshotKey: key, upstreamCommitSha: upstream.commitSha, upstreamCommittedAt: upstream.committedAt,
         behindCommits: comparison.behindCommits, relation: comparison.relation,
         checkedAt,
         nextCheckAt: new Date(Date.parse(checkedAt) + (this.options.config?.repositoryBackgroundCheckIntervalHours ?? 24) * 3_600_000).toISOString(),

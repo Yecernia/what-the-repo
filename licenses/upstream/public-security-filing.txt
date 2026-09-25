@@ -1,0 +1,14 @@
+Official public security website filing badge
+
+Source: https://beian.mps.gov.cn/web/assets/logo01.6189a29f.png
+Retrieved: 2026-09-24
+
+The National Internet Security Management Service Platform provides this badge
+for display immediately before an approved website filing number in the footer.
+The original PNG is bundled unmodified for that identification purpose only.
+No open-source license is asserted for this official emblem. It is not covered
+by the project's MIT license and must not be used as project branding or to
+imply endorsement. Display is conditional on a configured filing record.
+
+Official instructions:
+https://ga.sz.gov.cn/ZT/HLWSYSQ/WSBLLC/content/post_10206896.html

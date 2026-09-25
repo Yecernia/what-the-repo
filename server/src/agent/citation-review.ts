@@ -88,8 +88,8 @@ export async function reviewAnswerEvidence(input: {
     signal: input.signal,
     schema: REVIEW_RESULT,
     systemPrompt: [
-      "程序已经确定性核对路径、行号、快照和 Evidence ID，并提供有界安全片段；当前 Skill 负责语义支持判断。",
-      "accepted_evidence_ids 只能来自输入；不得检索或修改状态，必须调用 submit_result。",
+      "The program has already checked paths, line numbers, the snapshot and evidence IDs deterministically and supplies bounded, safe excerpts; this Skill judges semantic support.",
+      "accepted_evidence_ids must come from the input. Do not retrieve anything or change state. Finish by calling submit_result.",
     ].join("\n"),
     userPrompt: JSON.stringify({
       final_answer: input.text,
