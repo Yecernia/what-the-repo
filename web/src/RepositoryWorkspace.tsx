@@ -43,6 +43,7 @@ import { apiClient } from './api';
 import { SplitGripIcon } from './WorkspaceSplitIcons';
 import { InkOutline } from './InkOutline';
 import { FieldIllustration } from './FieldIllustration';
+import { Ink } from './field-ink';
 import type {
   ConversationSelection,
   GraphEdge,
@@ -472,8 +473,10 @@ function DetailsPanel({
   onOpenEvidence,
   topic,
   tab,
+  noValuePoints = false,
 }: {
   tab: WorkspaceTab;
+  noValuePoints?: boolean;
   selected: SelectedItem | null;
   detailStatus?: 'loading' | 'error';
   onRetryDetail?: () => void;
@@ -488,6 +491,9 @@ function DetailsPanel({
         {tab === 'architecture' ? <>
           <strong>{t("选择一个组件或关系")}</strong>
           <span>{t("查看它的作用、相关代码和组件关系。")}</span>
+        </> : tab === 'value-points' && noValuePoints ? <>
+          <strong>{t("这里暂时没有详情")}</strong>
+          <span>{t("切到架构图，选一个组件看看它的作用和相关代码。")}</span>
         </> : tab === 'value-points' ? <>
           <strong>{t("选择一个价值点")}</strong>
           <span>{t("查看它解决的问题、实现方式和相关代码。")}</span>
@@ -996,6 +1002,7 @@ function ValuePointsView({
   selected: SelectedItem | null;
   onSelect: (item: SelectedItem) => void;
 }) {
+  if (!snapshot.value_points.length) return <ValuePointsEmpty />;
   return (
     <div className="value-point-grid" data-testid="value-point-list">
       {snapshot.value_points.map((point, index) => (
@@ -1014,6 +1021,38 @@ function ValuePointsView({
           </div>
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * No value points: not an empty repository, just a page still to be written. An open notebook with a pencil; now
+ * and then the pencil is picked up, hovers over the page as if deciding what to write, gets a twirl and is laid
+ * gently back down.
+ */
+function ValuePointsEmpty() {
+  return (
+    <div className="value-points-empty">
+      <svg viewBox="0 0 200 130" aria-hidden="true" focusable="false">
+        <Ink points={[[37,40],[66,33],[99,39],[99,111],[66,105],[37,111],[35,76]]} width={3.4} closed fill="var(--panel)" />
+        <Ink points={[[99,39],[132,33],[163,40],[165,76],[163,111],[132,105],[99,111]]} width={3.4} closed fill="var(--panel)" />
+        <g stroke="var(--border-strong)" strokeWidth={1.8} strokeLinecap="round" fill="none">
+          <path d="M46 56 Q66 51 90 56 M46 70 Q66 65 90 70 M46 84 Q62 80 80 84" />
+          <path d="M108 56 Q132 51 154 56 M108 70 Q132 65 154 70" />
+        </g>
+        <g transform="translate(132 86) rotate(-28)">
+          {/* Its shadow stays on the page (only turning with it), so a lifted pencil shows the gap. */}
+          <g className="value-points-pencil-shadow"><path d="M-29 -1.6 H18 L27 2 L18 5.6 H-29 Z" fill="color-mix(in srgb, currentColor 16%, transparent)" /></g>
+          <g className="value-points-pencil">
+          <Ink points={[[-22,-3.6],[18,-3.6],[18,3.6],[-22,3.6]]} width={2.4} closed fill="#f2c55c" />
+          <Ink points={[[18,-3.6],[27,0],[18,3.6]]} width={2.4} closed fill="#f3e3c3" />
+          <path d="M24.2 -1.3 L27.4 0 L24.2 1.3 Z" fill="currentColor" />
+          <Ink points={[[-22,-3.6],[-29,-3.6],[-29,3.6],[-22,3.6]]} width={2.4} closed fill="#eba7b5" />
+          <path d="M-20.5 -2.2 H14" stroke="color-mix(in srgb, currentColor 30%, #f2c55c)" strokeWidth={1.2} strokeLinecap="round" />
+        </g></g>
+      </svg>
+      <strong>{t("这次没有找到价值点")}</strong>
+      <p>{t("分析没有提炼出值得单独拿出来学的设计。可以直接提问，或者从架构图里挑一个组件看看。")}</p>
     </div>
   );
 }
@@ -1247,6 +1286,7 @@ export function RepositoryWorkspace({
             onOpenEvidence={onOpenEvidence}
             topic={topic}
             tab={tab}
+            noValuePoints={!snapshot.value_points.length}
           />
         </aside>
       </div>
