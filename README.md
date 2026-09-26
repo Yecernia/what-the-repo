@@ -14,7 +14,7 @@
   <a href="CONTRIBUTING.zh-CN.md"><img src="https://img.shields.io/badge/%E5%8F%82%E4%B8%8E%E8%B4%A1%E7%8C%AE-536878?style=flat-square" alt="参与贡献"></a>
 </p>
 
-<p><img src=".github/assets/product-hero.svg" width="600" alt="what-the-repo：从好奇开始。树下长椅上的人用电脑探索仓库。"></p>
+<p><img src=".github/assets/readme-hero.zh.svg" width="720" alt="what-the-repo：从好奇开始，沿着代码弄懂它。线条插画：文件夹里冒出的线缠成一团，一个小人把它拉直、绕成整齐的线团。"></p>
 
 <p><a href="https://what-the-repo.com"><strong>打开 what-the-repo ↗</strong></a> · <a href="https://github.com/Yecernia/what-the-repo/issues">反馈与建议</a></p>
 
@@ -26,13 +26,15 @@
 
 **what-the-repo 帮你把这份好奇变成有方向的学习。** 提供一个公开 GitHub 仓库，先看清主要结构，再找到感兴趣的设计与实现，结合源码追问、理解，并尝试用自己的话解释。
 
+![DSH 的价值点：一切皆插件、能力 seam、模型可见即已记录等值得学习的设计，选中后显示它解决的问题和实现方式。](.github/assets/dsh-values.jpg)
+
 ## 从“想学”到“弄懂”
 
 ### 定一个目标，沿着路线一步步学
 
 把感兴趣的主题拆成可以逐步掌握的小目标。确认路线后，结合代码听讲解、追问，再通过理解检验检查自己是否掌握；学习进度也会保留下来。
 
-![what-the-repo 中真实的 DSH 学习路线、分步讲解和学习进度。](.github/assets/dsh-learning.jpg)
+![DSH 的十步学习路线：左边是第一步讲解和理解检验，右边是路线和当前步骤的目标。](.github/assets/dsh-learning.jpg)
 
 *实际页面示例：学习 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 的 Agent 运行时。*
 
@@ -40,7 +42,7 @@
 
 点击引用文件查看解释背后的代码；需要整体脉络时，再通过架构图探索组件职责和它们之间的关系。
 
-![点选 DSH 会话任务清单组件，突出相关连线并淡化其他节点。](.github/assets/dsh-component.jpg)
+![在 DSH 架构图中选中“循环卫生防护”组件，显示与它相关的组件和它的作用。](.github/assets/dsh-component.jpg)
 
 ## 可以用它做什么
 

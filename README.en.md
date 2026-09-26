@@ -14,7 +14,7 @@
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contribute-536878?style=flat-square" alt="Contribute"></a>
 </p>
 
-<p><img src=".github/assets/product-hero.svg" width="600" alt="what-the-repo — Start with curiosity. A line drawing of a person exploring code on a park bench."></p>
+<p><img src=".github/assets/readme-hero.en.svg" width="720" alt="what-the-repo — Start with curiosity, understand it through the code. A line drawing: a thread spills out of a folder into a tangle, and a small figure pulls it straight and winds it into a neat ball."></p>
 
 <p><a href="https://what-the-repo.com"><strong>Open what-the-repo ↗</strong></a> · <a href="https://github.com/Yecernia/what-the-repo/issues">Feedback & ideas</a></p>
 
@@ -26,13 +26,15 @@ You know a repository has something to teach you. The harder part is deciding wh
 
 **what-the-repo turns that curiosity into a focused learning process.** Start with a public GitHub repository, explore its structure, choose a design or implementation to study, and follow the code until you can explain it yourself.
 
+![DSH’s value points, such as “everything is a plugin”, each showing the problem it solves and how it is built.](.github/assets/dsh-values.jpg)
+
 ## From curiosity to understanding
 
 ### Choose a goal. Follow a learning route.
 
 Turn a topic you care about into manageable steps. Confirm the route, work through focused explanations, and check your understanding before moving on. Questions and code references stay alongside your progress.
 
-![A real DSH learning route in what-the-repo, with guided explanations and learning progress.](.github/assets/dsh-learning.jpg)
+![A ten-step DSH learning route: the first explanation and its understanding check on the left, the route and the current step’s goal on the right.](.github/assets/dsh-learning.jpg)
 
 *Real product capture: studying the Agent runtime in [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness). This example uses Chinese learning content.*
 
@@ -40,7 +42,7 @@ Turn a topic you care about into manageable steps. Confirm the route, work throu
 
 Open cited files to see the implementation behind an explanation. Use the architecture view to explore components and their connections when you need the wider context.
 
-![Selecting DSH’s session task list highlights related components and fades the rest.](.github/assets/dsh-component.jpg)
+![Selecting DSH’s loop-safety component in the architecture view shows its related components and what it does.](.github/assets/dsh-component.jpg)
 
 ## What you can do
 
