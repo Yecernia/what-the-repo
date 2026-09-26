@@ -509,7 +509,8 @@ export class RepositoryService {
       && !(failed.trigger === "background" && failed.leader_project_id === projectId));
     const shown = active ?? (ownFailure ? failed : null);
     const participating = Boolean(shown && participant?.update_id === shown.update_id);
-    const cooldown = active ? null : this.manualCooldown(latest);
+    // Starting or joining an update counts against the user's hourly limit, shared with new analyses.
+    const limitedUntil = await this.store.ownerCreationRetryAfter(ownerId);
     return {
       snapshot_available: Boolean(project.analysis.snapshot_id && !project.analysis.removed_by_admin),
       current: currentMeta ? {
@@ -550,11 +551,10 @@ export class RepositoryService {
           : shown.status === "failed" ? "completed" : "queued") : "none",
         // Participants and costs stay private; the public reason is enough.
         error_code: shown.status === "failed" ? "repository_update_failed" : null,
-        retryable: shown.status === "failed" && !cooldown,
+        retryable: shown.status === "failed" && !limitedUntil,
       } : null,
-      update_eligibility: active
-        ? { allowed: true, reason: "join_running", retry_after: null }
-        : cooldown ? { allowed: false, reason: "cooldown", retry_after: cooldown }
+      update_eligibility: limitedUntil ? { allowed: false, reason: "rate_limited", retry_after: limitedUntil }
+        : active ? { allowed: true, reason: "join_running", retry_after: null }
         : { allowed: Boolean(currentMeta), reason: currentMeta ? null : "snapshot_unavailable", retry_after: null },
       migration: learningMigrationStatus(project),
     };
@@ -570,14 +570,6 @@ export class RepositoryService {
       .then(() => undefined, () => undefined)
       .finally(() => { this.freshnessChecks.delete(repository); });
     this.freshnessChecks.set(repository, task);
-  }
-
-  /** ISO time when another paid update may start, or null. Failures count too. */
-  private manualCooldown(latest: RepositoryUpdate | null): string | null {
-    if (!latest || latest.status === "cancelled") return null;
-    const minutes = this.options.config?.repositoryManualMinUpdateIntervalMinutes ?? 60;
-    const until = Date.parse(latest.created_at) + minutes * 60_000;
-    return until > Date.now() ? new Date(until).toISOString() : null;
   }
 
   /**
@@ -639,8 +631,8 @@ export class RepositoryService {
     if (upstreamSha === head.current_commit_sha && sameIdentity) {
       return { outcome: "up_to_date", update_id: null, job_id: null, retry_after: null, status: await status() };
     }
-    const cooldown = this.manualCooldown(await this.store.loadLatestRepositoryUpdate(repository));
-    if (cooldown) return { outcome: "deferred", update_id: null, job_id: null, retry_after: cooldown, status: await status() };
+    const limitedUntil = await this.store.ownerCreationRetryAfter(owner.owner_id);
+    if (limitedUntil) return { outcome: "deferred", update_id: null, job_id: null, retry_after: limitedUntil, status: await status() };
     const result = await this.startAnalysis({ owner, projectId });
     return {
       outcome: result.job.status === "succeeded" ? "up_to_date" : "queued",

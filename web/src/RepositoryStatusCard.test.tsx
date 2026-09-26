@@ -102,8 +102,8 @@ describe('RepositoryStatusCard', () => {
     expect(screen.getByText('仓库有 12 个新提交')).toBeVisible();
   });
 
-  it('explains a cooldown with the time another update may start', () => {
-    render(<RepositoryStatusCard status={{ ...base, update_eligibility: { allowed: false, reason: 'cooldown',
+  it('tells a user over their hourly limit when another update may start', () => {
+    render(<RepositoryStatusCard status={{ ...base, update_eligibility: { allowed: false, reason: 'rate_limited',
       retry_after: new Date(now + 30 * 60_000).toISOString() } }} refreshPending={false}
       updatePending={false} notice={null} onRefresh={noop} onUpdate={noop} />);
     expect(screen.getByRole('button', { name: '更新代码' })).toBeDisabled();

@@ -25,7 +25,7 @@ function metadata(overrides: Partial<PublicSnapshotMetadata> = {}): PublicSnapsh
     retired_at: null, purge_after: null, payload_purged_at: null, ...overrides };
 }
 
-function updateStore(project: ReturnType<typeof readableProject>, latest: RepositoryUpdate | null) {
+function updateStore(project: ReturnType<typeof readableProject>, latest: RepositoryUpdate | null, limitedUntil: string | null = null) {
   const calls = { freshness: 0, created: 0, committedAt: undefined as string | null | undefined };
   const store = {
     loadProject: async () => project,
@@ -34,6 +34,7 @@ function updateStore(project: ReturnType<typeof readableProject>, latest: Reposi
     latestJob: async () => null,
     loadActiveRepositoryUpdate: async () => null,
     loadLatestRepositoryUpdate: async () => latest,
+    ownerCreationRetryAfter: async () => limitedUntil,
     loadRepositoryUpdateForProject: async () => null,
     loadCurrentRepositoryHead: async () => ({ repository_identity: "example/repo", current_public_snapshot_key: "current-key",
       current_commit_sha: current, analyzer_bundle_version: ANALYZER_BUNDLE_VERSION,
@@ -62,22 +63,29 @@ test("an explicit update at the current commit is up to date and creates no anal
   assert.equal(calls.created, 0);
 });
 
-test("a new paid update waits for the per-repository cooldown, including after a failure", async () => {
+test("a user over their hourly limit waits, while a recent update of the repository does not block them", async () => {
   const project = readableProject();
   const createdAt = new Date(Date.now() - 10 * 60_000).toISOString();
   const latest = { update_id: "u1", repository_identity: "example/repo", analyzer_bundle_version: ANALYZER_BUNDLE_VERSION,
     analysis_config_digest: ANALYSIS_CONFIG_DIGEST, target_commit_sha: newer, status: "failed", leader_project_id: project.project_id,
     lease_owner: null, lease_expires_at: null, heartbeat_at: null, result_public_snapshot_key: null, error: "x",
-    created_at: createdAt, updated_at: createdAt, completed_at: createdAt } satisfies RepositoryUpdate;
-  const { store, calls } = updateStore(project, latest);
-  const service = new RepositoryService(store, {
-    resolveGithubHead: async () => ({ owner: "example", repo: "repo", repository: "example/repo", commitSha: newer }),
-  });
-  const result = await service.requestRepositoryUpdate({ owner_id: project.owner_id, kind: "guest" }, project.project_id);
+    created_at: createdAt, updated_at: createdAt, completed_at: createdAt, trigger: "background" } satisfies RepositoryUpdate;
+  const head = async () => ({ owner: "example", repo: "repo", repository: "example/repo", commitSha: newer });
+
+  // A background update ten minutes ago leaves the user free to update.
+  const free = updateStore(project, latest);
+  const status = await new RepositoryService(free.store, { resolveGithubHead: head }).getRepositoryStatus(project.owner_id, project.project_id);
+  assert.deepEqual(status.update_eligibility, { allowed: true, reason: null, retry_after: null });
+
+  // The user's own hourly limit, shared with new analyses, defers the update.
+  const until = new Date(Date.now() + 20 * 60_000).toISOString();
+  const limited = updateStore(project, latest, until);
+  const result = await new RepositoryService(limited.store, { resolveGithubHead: head })
+    .requestRepositoryUpdate({ owner_id: project.owner_id, kind: "guest" }, project.project_id);
   assert.equal(result.outcome, "deferred");
-  assert.equal(Date.parse(result.retry_after!), Date.parse(createdAt) + 60 * 60_000);
-  assert.equal(result.status.update_eligibility.reason, "cooldown");
-  assert.equal(calls.created, 0);
+  assert.equal(result.retry_after, until);
+  assert.equal(result.status.update_eligibility.reason, "rate_limited");
+  assert.equal(limited.calls.created, 0);
 });
 
 test("a failed update is shown only to the user who asked for it", async () => {

@@ -65,7 +65,6 @@ export interface ServerConfig extends ConcurrencyConfig {
   repositoryBackgroundCommitThreshold?: number;
   repositoryBackgroundMaxSnapshotAgeDays?: number;
   repositoryBackgroundMinUpdateIntervalHours?: number;
-  repositoryManualMinUpdateIntervalMinutes?: number;
   /** Hours before a repository whose background update failed may try again. */
   repositoryBackgroundFailureRetryHours?: number;
   repositoryBackgroundMaxActive?: number;
@@ -278,7 +277,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     repositoryBackgroundCommitThreshold: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_COMMIT_THRESHOLD', 20, 1, 100000),
     repositoryBackgroundMaxSnapshotAgeDays: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_SNAPSHOT_AGE_DAYS', 7, 1, 365),
     repositoryBackgroundMinUpdateIntervalHours: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MIN_UPDATE_INTERVAL_HOURS', 24, 1, 720),
-    repositoryManualMinUpdateIntervalMinutes: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_MANUAL_MIN_UPDATE_INTERVAL_MINUTES', 60, 1, 10080),
     repositoryBackgroundFailureRetryHours: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_FAILURE_RETRY_HOURS', 6, 1, 720),
     repositoryBackgroundMaxActive: integerSetting(env, 'WHAT_THE_REPO_REPOSITORY_BACKGROUND_MAX_ACTIVE', 1, 1, 32),
     repositoryBackgroundUserMemoryReserveRatio: boundedDecimal(env.WHAT_THE_REPO_REPOSITORY_BACKGROUND_USER_MEMORY_RESERVE_RATIO, 0.25, 0.9),

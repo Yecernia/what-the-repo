@@ -2641,6 +2641,15 @@ export class FileStore implements ProductStore {
     }
   }
 
+  async ownerCreationRetryAfter(ownerId: string): Promise<string | null> {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    const recent = (await this.readQuotaEvents(ownerId)).map((event) => Date.parse(event.created_at))
+      .filter((at) => at >= cutoff).sort((a, b) => b - a);
+    const limit = this.quotaLimits.maxCreationsPerHour;
+    // Another start is possible once the limit-th newest event leaves the hour.
+    return recent.length >= limit ? new Date(recent[limit - 1] + 60 * 60 * 1000).toISOString() : null;
+  }
+
   private async readQuotaEvents(ownerId: string): Promise<Array<{ owner_id: string; created_at: string }>> {
     const directory = join(this.root, "quota-events");
     const { readdir } = await import("node:fs/promises");

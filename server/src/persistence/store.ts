@@ -276,7 +276,7 @@ export interface ProductStore {
   }): Promise<{ update: RepositoryUpdate; job: AnalysisJob; leader: boolean }>;
   loadRepositoryUpdateForProject(projectId: string): Promise<RepositoryUpdate | null>;
   loadActiveRepositoryUpdate(repository: string): Promise<RepositoryUpdate | null>;
-  /** Most recently created update of any status; used for cooldown and failure display. */
+  /** Most recently created update of any status; used for failure display. */
   loadLatestRepositoryUpdate(repository: string): Promise<RepositoryUpdate | null>;
   /** Public key of a readable older version of the project's repository; null for the current binding. */
   historicalPublicKey(projectId: string, snapshotId: string): Promise<string | null>;
@@ -287,6 +287,11 @@ export interface ProductStore {
    * when the version is already outside its grace period or purged.
    */
   acquireSnapshotReadLease(publicKey: string, maxMinutes: number): Promise<string | null>;
+  /**
+   * When the owner may start another analysis or update under the hourly creation limit, or null while under
+   * it. Starting either counts against the same limit.
+   */
+  ownerCreationRetryAfter(ownerId: string): Promise<string | null>;
   releaseSnapshotReadLease(leaseId: string): Promise<void>;
   touchRepositoryRealUse(repository: string, at: string, minIntervalMinutes: number): Promise<void>;
   listBackgroundRepositoryCandidates(now: string, activeSince: string, limit: number): Promise<BackgroundRepositoryCandidate[]>;

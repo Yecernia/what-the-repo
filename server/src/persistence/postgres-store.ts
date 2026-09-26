@@ -4768,6 +4768,18 @@ export class PostgresStore extends FileStore {
     }
   }
 
+  override async ownerCreationRetryAfter(ownerId: string): Promise<string | null> {
+    // Another start is possible once the limit-th newest event leaves the hour.
+    const row = await this.pool.query<{ until: string }>(
+      `SELECT to_char((created_at + interval '1 hour') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS until
+         FROM owner_quota_events
+        WHERE owner_id = $1 AND created_at >= now() - interval '1 hour'
+        ORDER BY created_at DESC OFFSET $2 LIMIT 1`,
+      [ownerId, this.limits.maxCreationsPerHour - 1],
+    );
+    return row.rows[0]?.until ?? null;
+  }
+
   private async recordQuotaEvent(client: PoolClient, ownerId: string, projectId: string): Promise<void> {
     await client.query(
       `INSERT INTO owner_quota_events(event_id, owner_id, project_id, event_kind, created_at)
