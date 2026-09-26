@@ -63,7 +63,9 @@
   --file-reference-ink: var(--accent);
   --file-reference-hover: var(--primary-hover);
   --sun-hover: #c66b28;
-  --moon-hover: #c4b91b;
+  /* Pale moonlight: a soft butter yellow, neither orange nor white; darker on paper so it still reads. */
+  --moon: #b5a152;
+  --moon-hover: var(--moon);
   --selection-blue: #4d78c9;
   --selection-blue-soft: rgba(77, 120, 201, .14);
   --primary: #386e4c;
@@ -136,7 +138,8 @@
   --file-reference-ink: var(--accent);
   --file-reference-hover: var(--primary-hover);
   --sun-hover: #f2ac64;
-  --moon-hover: #f2e477;
+  --moon: #e6d596;
+  --moon-hover: var(--moon);
   --selection-blue: #78a7ff;
   --selection-blue-soft: rgba(120, 167, 255, .18);
   --primary: #91c99b;
@@ -1799,6 +1802,58 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .field-night { display: none; }
 :root[data-theme="dark"] .field-day { display: none; }
 :root[data-theme="dark"] .field-night { display: inline; }
+/* Seasons and festivals in the home illustration (see FieldOccasions.tsx); the date decides, nothing is fetched. */
+.field-illustration {
+  --leaf-ink: var(--accent); --leaf-fill: color-mix(in srgb, var(--accent-soft) 45%, var(--bg));
+  --snow: #fbfaf6; --snow-ink: #9ba4a6; --blossom: #eba7b5; --blossom-heart: #f0cb68; --catkin: #f4f0e4;
+  --pumpkin-face: #4a3322;
+}
+:root[data-theme="dark"] .field-illustration { --snow: #d6dad7; --snow-ink: #a7b0b0; --catkin: #d9d4c5; --pumpkin-face: #f2c14e; }
+.field-illustration[data-season="autumn"] { --leaf-ink: #c07a35; --leaf-fill: color-mix(in srgb, #e0a94a 45%, var(--bg)); }
+/* Autumn turns only the little leaves drawn in the crown (and the falling ones) yellow; winter leaves bare branches. */
+.field-illustration[data-season="autumn"] .field-canopy > path:not(:first-child) { stroke: #c98a32; }
+.field-illustration[data-season="autumn"] .field-canopy > g:not(.field-blossoms) { fill: #c98a32; }
+.field-illustration[data-season="winter"] .field-canopy { display: none; }
+/* April Fools' Day turns things round: the leaves drift up into the tree, the crown's leaves turn pink and its
+   blossoms green, the moon comes out by day and the breeze by night, and the tea stands upside down in daylight. */
+.field-illustration[data-occasion="april-fools"] :is(.field-leaf-fall, .field-leaf-drift, .field-leaf-swing) { animation-direction: reverse; }
+.field-illustration[data-occasion="april-fools"] {
+  --leaf-ink: #d98397; --leaf-fill: color-mix(in srgb, #eba7b5 50%, var(--bg)); --blossom: #8fb86a;
+}
+.field-illustration[data-occasion="april-fools"] .field-canopy > path:not(:first-child) { stroke: #d98397; }
+.field-illustration[data-occasion="april-fools"] .field-canopy > g:not(.field-blossoms) { fill: #d98397; }
+.field-illustration[data-occasion="april-fools"] .field-day { display: none; }
+.field-illustration[data-occasion="april-fools"] .field-night { display: inline; }
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"] .field-day { display: inline; }
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"] .field-night { display: none; }
+/* The party popper on finishing a learning route: over everything, never in the way of a click. */
+.confetti-burst { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 10000; }
+/* The festival animals wander at random (see FieldOccasions.tsx): each move or fidget is one short transform
+   animation. Here is only the magpie's wing, which beats only while it flies or flutters. */
+.field-magpie-head, .field-magpie-tail, .field-magpie-wing, .field-magpie-face,
+.field-rabbit-ear, .field-rabbit-hop, .field-rabbit-face { transform-box: fill-box; }
+.field-magpie-face, .field-rabbit-face { transform-origin: 50% 50%; }
+.field-magpie-head { transform-origin: 75% 85%; }
+.field-magpie-tail { transform-origin: 0% 30%; }
+.field-magpie-wing { transform-origin: 40% 100%; opacity: 0; }
+:is(.field-magpie-flying, .field-magpie-flutter) .field-magpie-wing { opacity: 1; animation: field-magpie-flap .22s ease-in-out infinite alternate; }
+.field-magpie-flutter .field-magpie-wing { animation-duration: .13s; }
+@keyframes field-magpie-flap { from { transform: scaleY(1); } to { transform: scaleY(-.35); } }
+.field-rabbit-hop, .field-rabbit-ear { transform-origin: 50% 100%; }
+.field-night-only { display: none; }
+:root[data-theme="dark"] .field-night-only { display: inline; }
+:root[data-theme="dark"] .field-day-only { display: none; }
+.field-lantern { transform-origin: 227px 250px; animation: field-lantern 5.5s ease-in-out infinite; }
+@keyframes field-lantern { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3.5deg); } }
+.field-firework { transform-box: fill-box; transform-origin: center; animation: field-firework 3.4s ease-out infinite; }
+@keyframes field-firework {
+  0% { opacity: 0; transform: scale(.5); } 18% { opacity: 1; transform: scale(1); } 65% { opacity: .9; } 100% { opacity: 0; transform: scale(1.12); }
+}
+.field-steam path { animation: field-steam 4.2s ease-in-out infinite; }
+.field-steam .field-steam-second { animation-delay: -2.1s; }
+@keyframes field-steam { 0% { opacity: 0; transform: translateY(4px); } 35% { opacity: .75; } 100% { opacity: 0; transform: translateY(-6px); } }
+.field-moon-disc { opacity: .3; stroke-dasharray: 3 4; }
+.field-moon-craters { opacity: .35; }
 .field-star { transform-box: fill-box; transform-origin: center; opacity: .75; }
 .field-star-twinkle { animation: field-twinkle 9s ease-in-out infinite; }
 .field-star-late { animation: field-twinkle 13s 5s ease-in-out infinite; }
@@ -1871,7 +1926,7 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 }
 
 /* The small figure's poses. Rest: arms hang behind the lid. The script eases between poses from wherever the
-   figure is; each pose's idle loop waits 1.2 s for that move, holding its first frame meanwhile. */
+   figure is and marks the figure .field-moving meanwhile; a pose's idle loops only start once that move is over. */
 .field-illustration-small :is(.field-lean, .field-rock) { transform-origin: 115px 118px; }
 .field-illustration-small .field-head { transform-origin: 113px 58px; }
 .field-illustration-small .field-stretch-body { transform-origin: 115px 115px; }
@@ -1880,19 +1935,19 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .field-illustration-small .field-upper-r { transform-origin: 129px 72px; transform: rotate(123deg); }
 .field-illustration-small .field-fore-r { transform-origin: 156px 42px; transform: rotate(-50deg); }
 /* Waiting for the analysis: now and then the learner leans back in the chair, then returns. */
-.field-waiting .field-lean { animation: field-lean 17s 1.2s ease-in-out infinite both; }
-.field-waiting .field-rock { animation: field-rock 11s 1.2s ease-in-out infinite both; }
-.field-waiting .field-head { animation: field-head 7.3s 1.2s ease-in-out infinite both; }
-.field-waiting :is(.field-upper-l, .field-upper-r, .field-fore-l, .field-fore-r, .field-stretch-body) { animation: 53s 1.2s ease-in-out infinite both; }
-.field-waiting .field-upper-l { animation-name: field-upper-l; }
-.field-waiting .field-fore-l { animation-name: field-fore-l; }
-.field-waiting .field-upper-r { animation-name: field-upper-r; }
-.field-waiting .field-fore-r { animation-name: field-fore-r; }
-.field-waiting .field-stretch-body { animation-name: field-stretch-body; }
+.field-waiting:not(.field-moving) .field-lean { animation: field-lean 17s ease-in-out infinite; }
+.field-waiting:not(.field-moving) .field-rock { animation: field-rock 11s ease-in-out infinite; }
+.field-waiting:not(.field-moving) .field-head { animation: field-head 7.3s ease-in-out infinite; }
+.field-waiting:not(.field-moving) :is(.field-upper-l, .field-upper-r, .field-fore-l, .field-fore-r, .field-stretch-body) { animation: 53s ease-in-out infinite; }
+.field-waiting:not(.field-moving) .field-upper-l { animation-name: field-upper-l; }
+.field-waiting:not(.field-moving) .field-fore-l { animation-name: field-fore-l; }
+.field-waiting:not(.field-moving) .field-upper-r { animation-name: field-upper-r; }
+.field-waiting:not(.field-moving) .field-fore-r { animation-name: field-fore-r; }
+.field-waiting:not(.field-moving) .field-stretch-body { animation-name: field-stretch-body; }
 /* Puzzled (something failed): head tilted, one hand scratching it in short bursts, a small question mark. */
 .field-puzzled .field-head { transform: rotate(5deg); }
 .field-puzzled .field-upper-l { transform: none; }
-.field-puzzled .field-fore-l { animation: field-scratch 4.6s 1.2s ease-in-out infinite both; }
+.field-puzzled:not(.field-moving) .field-fore-l { animation: field-scratch 4.6s ease-in-out infinite; }
 .field-puzzle-mark { opacity: 0; transition: opacity .4s ease; }
 .field-puzzled .field-puzzle-mark { opacity: 1; transition-delay: 1s; }
 .field-puzzled .field-puzzle-mark path { stroke-dasharray: 40; animation: field-puzzle-write .6s 1s ease-out both; }
@@ -1939,6 +1994,9 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
    page that comes up is a new one and the loop has no seam. */
 .field-mark-lines-next { opacity: 0; }
 .field-mark-insight { opacity: 0; transform-origin: 15px 9px; }
+.field-mark { overflow: visible; }
+.field-heart { opacity: 0; transform-box: fill-box; transform-origin: center; }
+.field-heart-arms { opacity: 0; }
 .field-mark-busy .field-mark-page { animation: field-mark-leaf 3.2s linear infinite; }
 .field-mark-busy .field-mark-arm { animation: field-mark-reach 3.2s linear infinite; }
 .field-mark-busy .field-mark-lines { animation: field-mark-lines 6.4s step-end infinite; }

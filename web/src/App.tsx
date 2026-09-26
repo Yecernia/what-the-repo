@@ -53,6 +53,7 @@ import { useThemePreference } from './theme';
 import { clearSnapshotCache, getMemorySnapshot, readCachedSnapshot, removeSnapshotCache, writeSnapshotCache } from './snapshot-cache';
 import { SketchDoodle } from './SketchDoodle';
 import { FieldIllustration, FieldMark, FieldScene } from './FieldIllustration';
+import { ConfettiBurst } from './ConfettiBurst';
 import { InkOutline } from './InkOutline';
 import { TabDoneBadge } from './TabDoneBadge';
 import { InkSpinner } from './InkSpinner';
@@ -2170,6 +2171,17 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [project, setProject] = useState<Project | null>(null);
+  // Finishing a learning route (seen happen, not merely loaded finished) earns one small celebration from the mark.
+  const [routeCelebrations, setRouteCelebrations] = useState(0);
+  const studyPhaseSeen = useRef<{ projectId: string; phase: string } | null>(null);
+  useEffect(() => {
+    if (!project) return;
+    const previous = studyPhaseSeen.current;
+    studyPhaseSeen.current = { projectId: project.project_id, phase: project.study.phase };
+    if (previous?.projectId === project.project_id && previous.phase !== 'completed' && project.study.phase === 'completed') {
+      setRouteCelebrations(count => count + 1);
+    }
+  }, [project]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [snapshotTarget, setSnapshotTarget] = useState<{ projectId: string; snapshotId: string | null } | null>(null);
   const [repositoryStatus, setRepositoryStatus] = useState<{ projectId: string; viewSnapshotId: string | null; value: RepositoryViewStatus } | null>(null);
@@ -3519,6 +3531,7 @@ export default function App() {
           <span>{repositoryOpen ? t('返回聊天') : t('项目视图')}</span><ActivityIcon name={repositoryOpen ? "chat" : "relations"} size={23} />
         </button>}
       </header>}
+      <ConfettiBurst burst={routeCelebrations} />
       {isMobile && <button type="button" className="mobile-sidebar-backdrop" tabIndex={-1}
         aria-label={t('收起项目栏')} aria-hidden={!mobileSidebarOpen} disabled={!mobileSidebarOpen}
         onClick={() => setMobileSidebarOpen(false)} />}
@@ -3538,7 +3551,7 @@ export default function App() {
         style={{ width: sidebarCollapsed ? 48 : Math.max(sidebarMinWidth, sidebarWidth), minWidth: sidebarCollapsed ? 48 : Math.max(sidebarMinWidth, sidebarWidth) }}
       >
         <div ref={sidebarHeaderRef} className="sidebar-header">
-          {!sidebarCollapsed && <span className="sidebar-title"><FieldMark busy={sending || isAnalyzing} /><span className="sidebar-product-name">what-the-repo</span><SketchDoodle variant="underline" className="sidebar-title-doodle" /></span>}
+          {!sidebarCollapsed && <span className="sidebar-title"><FieldMark busy={sending || isAnalyzing} celebrate={routeCelebrations} /><span className="sidebar-product-name">what-the-repo</span><SketchDoodle variant="underline" className="sidebar-title-doodle" /></span>}
           <div className="sidebar-actions">
             <button className="btn btn-icon" data-tooltip={sidebarCollapsed ? t("展开项目栏") : t("收起项目栏")}
               aria-label={sidebarCollapsed ? t("展开项目栏") : t("收起项目栏")}
@@ -3784,7 +3797,8 @@ export default function App() {
                 )}
                 {project.messages.length === 0 && (
                   <div className={`chat-empty${isAnalyzing ? ' chat-empty-waiting' : ''}`}>
-                    <FieldIllustration compact pose={isAnalyzing ? 'waiting' : analysisCanRetry ? 'puzzled' : 'rest'} />
+                    <FieldIllustration compact pose={isAnalyzing ? 'waiting' : analysisCanRetry ? 'puzzled' : 'rest'}
+                      ownRepository={/^https:\/\/github\.com\/yecernia\/what-the-repo(?:\.git)?\/?$/i.test(project?.source.value ?? '')} />
                     {/* When the analysis failed there is no project view to open; the notice above says what happened. */}
                     {isAnalyzing ? t("仓库准备好后就可以尽情提问。") : analysisCanRetry ? null : (
                       <span>{t("尽情提问，或从右上角打开")}<span className="chat-empty-project-view">{t("项目视图")}<SketchDoodle variant="circle" className="chat-empty-project-circle" />

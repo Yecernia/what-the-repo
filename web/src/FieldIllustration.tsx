@@ -2,15 +2,12 @@ import { useId, useLayoutEffect, useRef, type RefObject } from 'react';
 import { BRAND_MARK } from './brand-mark';
 import { BrandWordmark } from './BrandWordmark';
 import { smoothPath, type PenPoint } from './pen-path';
+import { litMoonPath, moonPhase } from './moon-phase';
+import { Ink } from './field-ink';
+import { BenchSnow, BranchSnow, CrownSeason, Dumplings, FallingThing, GroundSnow, Magpie, MilkyWay, MoonRabbit, OccasionScenery,
+  SantaHat, Tangyuan, Tea } from './FieldOccasions';
+import { occasionOf, seasonOf } from './occasions';
 
-/** One even pen line with round ends; a fill only where a shape must hide what is behind it.
- * The line is deliberately heavy, like a felt-tip drawing: weight, more than wobble, is what makes it read as hand-drawn. */
-function Ink({ points, width = 4.2, closed = false, fill, color = 'currentColor', className }: {
-  points: PenPoint[]; width?: number; closed?: boolean; fill?: string; color?: string; className?: string;
-}) {
-  return <path className={className} d={smoothPath(points, closed)} fill={fill ?? 'none'} stroke={color}
-    strokeWidth={width * .95} strokeLinecap="round" strokeLinejoin="round" />;
-}
 
 /** A rounded limb from a to b, closed so it can hide what is behind it. */
 function limb(a: PenPoint, b: PenPoint, r: number): PenPoint[] {
@@ -64,45 +61,133 @@ const FINISH: Partial<Record<Part, number[]>> = {
 const POSE_CHANGE_MS = 1200;
 const FINISH_MS = 5600;
 
+/** The heart the arms make over the head: up and out from each shoulder, round over the two lobes and down to the
+ * hands meeting on top of the head. */
+const HEART_ARMS = 'M97 72 C86 58 72 44 74 28 C76 14 92 9 103 15 C108 18 111 22 113 27 '
+  + 'M129 72 C140 58 154 44 152 28 C150 14 134 9 123 15 C118 18 115 22 113 27';
+/** The same two arms straight up, exactly where the jointed arms are in ARMS_UP, with the same commands as the heart
+ * so one can bend into the other. */
+const HEART_ARMS_UP = 'M97 72 C92 60 86 47 81.2 34.8 C79.5 27 77.5 19 76.8 14.4 C76 10.5 75.2 7 74.5 4.2 '
+  + 'M129 72 C134 60 140 47 144.8 34.8 C146.5 27 148.5 19 149.2 14.4 C150 10.5 150.8 7 151.5 4.2';
+
+function turnMatrix(deg: number): string {
+  const r = deg * Math.PI / 180;
+  return `matrix(${Math.cos(r)}, ${Math.sin(r)}, ${-Math.sin(r)}, ${Math.cos(r)}, 0, 0)`;
+}
+
 function currentTurn(transform: string): number {
   const m = /^matrix\(([^,]+),\s*([^,]+)/.exec(transform);
   return m ? Math.atan2(Number(m[2]), Number(m[1])) * 180 / Math.PI : 0;
 }
 
+/** Arms straight up beside the head, the pose the heart is raised through (same as the idle stretch). */
+const ARMS_UP: Partial<Record<Part, number>> = { 'upper-l': 19, 'fore-l': -114, 'upper-r': -19, 'fore-r': 114 };
+/** Unhurried: about a second to raise the arms, another to bend them into the heart, a pause, and back down. */
+const HEART_MS = 4800;
+
 /** Moves between poses from wherever the figure is, so nothing ever snaps. The pose class is set here, not by
  * React, so the old pose can still be read when it changes. Idle loops wait POSE_CHANGE_MS before starting. */
-function useFieldPose(ref: RefObject<SVGSVGElement | null>, pose: FieldPose) {
+function useFieldPose(ref: RefObject<SVGSVGElement | null>, pose: FieldPose, greet = false) {
   const shown = useRef<FieldPose | null>(null);
+  const greeted = useRef(false);
+  const change = useRef(0);
+  if (!greet) greeted.current = false;
   useLayoutEffect(() => {
     const svg = ref.current;
     if (!svg) return;
-    const previous = shown.current;
+    // Appearing already at work (the chat opens as an analysis starts), the figure still begins at rest and settles
+    // into the wait, instead of showing the finished hands-behind-head pose at once.
+    const arriving = shown.current === null && pose !== 'rest';
+    const previous = arriving ? 'rest' : shown.current;
+    // Nothing changed (React may run this twice for one pose): leave running motions alone.
+    if (previous === pose) return;
     shown.current = pose;
+    const token = ++change.current;
     // Each part exists twice (outline pass and fill pass); both copies move together.
     const parts = PARTS.flatMap(part => [...svg.querySelectorAll<SVGGElement>(`.field-${part}`)].map(el => ({ part, el })));
-    const from = parts.map(({ el }) => getComputedStyle(el).transform);
-    for (const { el } of parts) for (const a of el.getAnimations?.() ?? []) if (!('animationName' in a)) a.cancel();
+    const from = parts.map(({ part, el }) => arriving ? turnMatrix(POSE_START.rest[part] ?? 0) : getComputedStyle(el).transform);
+    // Drop any move still under way, including a heart gesture cut short.
+    const moving = [...parts.map(({ el }) => el), ...svg.querySelectorAll('.field-heart-arms, .field-heart-arms path, .field-heart')];
+    for (const el of moving) for (const a of el.getAnimations?.() ?? []) if (!('animationName' in a)) a.cancel();
     svg.classList.remove(...POSES.map(name => `field-${name}`));
     svg.classList.add(`field-${pose}`);
-    if (previous === null || previous === pose) return;
-    const finishing = previous === 'waiting' && pose === 'rest';
-    parts.forEach(({ part, el }, i) => {
-      if (typeof el.animate !== 'function') return;
-      if (part === 'lean') {
-        el.animate([{ transform: from[i] }, { transform: 'none' }], { duration: POSE_CHANGE_MS, easing: 'ease-in-out' });
-        return;
-      }
-      const start = `rotate(${currentTurn(from[i])}deg)`;
-      const path = finishing ? FINISH[part] : undefined;
-      if (path) {
-        el.animate([{ transform: start }, ...path.map(turn => ({ transform: `rotate(${turn}deg)` }))]
-          .map((frame, k) => ({ ...frame, offset: FINISH_OFFSETS[k], easing: FINISH_EASING[k] })), FINISH_MS);
-      } else {
-        el.animate([{ transform: start }, { transform: `rotate(${POSE_START[pose][part] ?? 0}deg)` }],
-          { duration: finishing ? FINISH_MS * .4 : POSE_CHANGE_MS, easing: 'ease-in-out' });
-      }
-    });
-  }, [ref, pose]);
+    if (previous === null) {
+      svg.classList.remove('field-moving');
+      return;
+    }
+    // While the figure moves into the new pose, that pose's idle loops stay off (.field-moving), so nothing else can
+    // take over the arms. Each move holds its last frame; when all have ended, the loops start from that same frame
+    // and the moves are dropped, in one step, so no other drawing shows in between.
+    svg.classList.add('field-moving');
+    const moves: Animation[] = [];
+    const animate = (el: Element, frames: Keyframe[], options: KeyframeAnimationOptions | number) => {
+      const move = el.animate?.(frames, { ...(typeof options === 'number' ? { duration: options } : options), fill: 'forwards' });
+      if (move) moves.push(move);
+    };
+    // Reading our own repository: once, as the analysis starts, a big heart over the head, then the usual wait.
+    // The arms rise from the sides (never through the hands-behind-head drawing). A jointed arm cannot curve, so at
+    // the top it gives way to a drawn arm of exactly the same shape, which then bends into the heart and back.
+    if (greet && pose === 'waiting' && !greeted.current) {
+      greeted.current = true;
+      const timing = { duration: HEART_MS, easing: 'linear' };
+      parts.forEach(({ part, el }, i) => {
+        // Only the arms take part; the head and body carry on with the wait underneath.
+        if (!(part in ARMS_UP)) return;
+        const start = currentTurn(from[i]), up = ARMS_UP[part] ?? 0;
+        // Halfway up the elbows are out to the sides and the forearms point up, clear of the head.
+        const side = part === 'fore-l' ? -40 : part === 'fore-r' ? 40 : part === 'upper-l' ? -50 : part === 'upper-r' ? 50 : 0;
+        const arm = part.startsWith('upper');
+        // The two kinds of arm overlap while they change places (same shape, so it cannot be seen) instead of
+        // swapping at one instant, where a single frame could land with neither on screen.
+        animate(el, [
+          { transform: `rotate(${start}deg)`, opacity: 1, easing: 'ease-in' },
+          { transform: `rotate(${side}deg)`, opacity: 1, offset: .08, easing: 'ease-out' },
+          { transform: `rotate(${up}deg)`, opacity: 1, offset: .16 },
+          { transform: `rotate(${up}deg)`, opacity: 1, offset: .175 },
+          { transform: `rotate(${up}deg)`, opacity: arm ? 0 : 1, offset: .18 },
+          { transform: `rotate(${up}deg)`, opacity: arm ? 0 : 1, offset: .8 },
+          { transform: `rotate(${up}deg)`, opacity: 1, offset: .805 },
+          { transform: `rotate(${up}deg)`, opacity: 1, offset: .83, easing: 'ease-in-out' },
+          { transform: 'rotate(0deg)', opacity: 1 }], timing);
+      });
+      svg.querySelectorAll('.field-heart-arms').forEach(arms => animate(arms, [{ opacity: 0 }, { opacity: 0, offset: .16 },
+        { opacity: 1, offset: .165 }, { opacity: 1, offset: .82 }, { opacity: 0, offset: .825 }, { opacity: 0 }], timing));
+      const straight = `path("${HEART_ARMS_UP}")`, heart = `path("${HEART_ARMS}")`;
+      svg.querySelectorAll('.field-heart-arms path').forEach(path => animate(path, [{ d: straight },
+        { d: straight, offset: .18, easing: 'ease-in-out' }, { d: heart, offset: .36 }, { d: heart, offset: .62, easing: 'ease-in-out' },
+        { d: straight, offset: .79 }, { d: straight }], timing));
+      const pop = svg.querySelector('.field-heart');
+      if (pop) animate(pop, [{ opacity: 0, transform: 'translateY(4px) scale(.6)' },
+        { opacity: 0, transform: 'translateY(4px) scale(.6)', offset: .3 }, { opacity: 1, transform: 'scale(1.1)', offset: .38 },
+        { opacity: 1, transform: 'translateY(-3px)', offset: .64 }, { opacity: 0, transform: 'translateY(-8px) scale(.9)', offset: .76 },
+        { opacity: 0 }], { duration: HEART_MS, easing: 'ease-out' });
+    } else {
+      const finishing = previous === 'waiting' && pose === 'rest';
+      parts.forEach(({ part, el }, i) => {
+        if (part === 'lean') {
+          animate(el, [{ transform: from[i] }, { transform: 'none' }], { duration: POSE_CHANGE_MS, easing: 'ease-in-out' });
+          return;
+        }
+        const start = `rotate(${currentTurn(from[i])}deg)`;
+        const path = finishing ? FINISH[part] : undefined;
+        if (path) {
+          animate(el, [{ transform: start }, ...path.map(turn => ({ transform: `rotate(${turn}deg)` }))]
+            .map((frame, k) => ({ ...frame, offset: FINISH_OFFSETS[k], easing: FINISH_EASING[k] })), FINISH_MS);
+        } else {
+          animate(el, [{ transform: start }, { transform: `rotate(${POSE_START[pose][part] ?? 0}deg)` }],
+            { duration: finishing ? FINISH_MS * .4 : POSE_CHANGE_MS, easing: 'ease-in-out' });
+        }
+      });
+    }
+    const handOver = () => {
+      if (token !== change.current) return;
+      svg.classList.remove('field-moving');
+      for (const { el } of parts) void getComputedStyle(el).transform;
+      for (const move of moves) move.cancel();
+    };
+    if (!moves.length) handOver();
+    else void Promise.all(moves.map(move => move.finished)).then(handOver, () => undefined);
+  }, [ref, pose, greet]);
 }
 
 /** The product mark: a learner reaching into a computer folder for a page of code. Resting the pointer on it lifts
@@ -112,10 +197,35 @@ function useFieldPose(ref: RefObject<SVGSVGElement | null>, pose: FieldPose) {
  * The page is drawn twice, once as ink and once inside the mask that hides the folder behind it, so both copies
  * share the class that moves them. The busy class is set here rather than by React, so the current pose can be
  * read when the work ends and the closing moment can start from it. */
-export function FieldMark({ busy = false }: { busy?: boolean }) {
+export function FieldMark({ busy = false, celebrate = 0 }: { busy?: boolean; celebrate?: number }) {
   const id = `${useId().replace(/:/g, '')}-mark`;
   const ref = useRef<SVGSVGElement>(null);
   const shown = useRef<boolean | null>(null);
+  // Each time `celebrate` goes up (a learning route was just finished) he cheers: tosses the page he was reading up
+  // into the air, throws his arm up and hops twice, says "got it", and a moment later the page is back in the folder.
+  // Nothing happens on the first render.
+  const celebrated = useRef(celebrate);
+  useLayoutEffect(() => {
+    if (celebrate === celebrated.current) return;
+    celebrated.current = celebrate;
+    const svg = ref.current;
+    if (!svg) return;
+    const run = (selector: string, frames: Keyframe[], duration = 3000) =>
+      svg.querySelectorAll<SVGElement>(selector).forEach(el => el.animate?.(frames, { duration, easing: 'ease-in-out' }));
+    run('.field-mark-page', [{ transform: 'none', opacity: 1 },
+      { transform: 'translate(3px, -6px) rotate(-12deg)', opacity: 1, offset: .12, easing: 'cubic-bezier(.2, .7, .4, 1)' },
+      { transform: 'translate(12px, -24px) rotate(-150deg)', opacity: .9, offset: .38 },
+      { transform: 'translate(17px, -30px) rotate(-240deg)', opacity: 0, offset: .5 },
+      { transform: 'translate(.6px, 11px)', opacity: 0, offset: .51 }, { transform: 'translate(.6px, 11px)', opacity: 1, offset: .82 },
+      { transform: 'none', opacity: 1 }]);
+    run('.field-mark-arm', [{ transform: 'none' }, { transform: 'rotate(-8deg)', offset: .12 }, { transform: 'rotate(-30deg)', offset: .26 },
+      { transform: 'rotate(-20deg)', offset: .4 }, { transform: 'rotate(-30deg)', offset: .54 }, { transform: 'rotate(-26deg)', offset: .7 },
+      { transform: 'none' }]);
+    run('.field-mark-hop', [{ transform: 'none' }, { transform: 'none', offset: .2 }, { transform: 'translateY(-2.2px)', offset: .3 },
+      { transform: 'none', offset: .4 }, { transform: 'translateY(-2.2px)', offset: .5 }, { transform: 'none', offset: .6 }, { transform: 'none' }]);
+    run('.field-mark-insight', [{ opacity: 0, transform: 'scale(.6)' }, { opacity: 0, transform: 'scale(.6)', offset: .24 },
+      { opacity: 1, transform: 'scale(1.12)', offset: .34 }, { opacity: 1, transform: 'none', offset: .75 }, { opacity: 0, transform: 'none' }]);
+  }, [celebrate]);
   useLayoutEffect(() => {
     const svg = ref.current;
     if (!svg) return;
@@ -154,7 +264,7 @@ export function FieldMark({ busy = false }: { busy?: boolean }) {
         <g className="field-mark-lines-next">{m.nextPageLines.map(d => <path key={d} d={d} />)}</g>
       </g></g>
       <path d={m.front} />
-      <path d={m.head} /><path d={m.body} />
+      <g className="field-mark-hop"><path d={m.head} /><path d={m.body} /></g>
       {/* The arm shares the page's mask, so a hand reaching into the folder goes behind its front. */}
       <g mask={`url(#${id}-page)`}><g className="field-mark-arm"><path d={m.arm} /></g></g>
       <g className="field-mark-insight">{m.insight.map(d => <path key={d} d={d} />)}</g>
@@ -162,17 +272,17 @@ export function FieldMark({ busy = false }: { busy?: boolean }) {
   </svg>;
 }
 
-export function FieldScene({ className = '' }: { className?: string }) {
-  return <figure className={`field-scene ${className}`}><FieldIllustration />
+export function FieldScene({ className = '', at }: { className?: string; at?: Date }) {
+  return <figure className={`field-scene ${className}`}><FieldIllustration at={at} />
     <figcaption aria-label="what-the-repo"><BrandWordmark /></figcaption>
   </figure>;
 }
 
 /** Front view at a laptop, with a chair back behind. While the agent works, the learner folds their arms
  * behind their head and now and then leans back or stretches; when something fails they scratch their head. */
-function FieldDesk({ pose, className }: { pose: FieldPose; className: string }) {
+function FieldDesk({ pose, className, ownRepository }: { pose: FieldPose; className: string; ownRepository: boolean }) {
   const ref = useRef<SVGSVGElement>(null);
-  useFieldPose(ref, pose);
+  useFieldPose(ref, pose, ownRepository);
   return <svg ref={ref} className={`field-illustration field-illustration-small ${className}`} viewBox="0 0 240 150" aria-hidden="true" focusable="false">
     {/* Nested groups carry independent loops (sink back, rock, tilt head, stretch) with
         unrelated periods, so their combination keeps changing instead of repeating.
@@ -180,7 +290,15 @@ function FieldDesk({ pose, className }: { pose: FieldPose; className: string }) 
     <g className="field-lean"><g className="field-rock">
       <Ink points={[[86,22],[114,19],[142,22],[150,50],[151,104],[79,104],[80,50]]} width={3.2} closed fill="var(--chat-bg, var(--bg))" />
       <g className="field-stretch-body">
+      {/* Arms bent into a heart over the head, shown only at the top of the heart gesture. Like the jointed arms they
+          are drawn outline first and filling second, so the body's outline never shows across the shoulders. */}
+      <g className="field-heart-arms" fill="none" strokeLinecap="round">
+        <path d={HEART_ARMS_UP} stroke="currentColor" strokeWidth={16.6} />
+      </g>
       <Silhouette pass="stroke" />
+      <g className="field-heart-arms" fill="none" strokeLinecap="round">
+        <path d={HEART_ARMS_UP} stroke="var(--chat-bg, var(--bg))" strokeWidth={10} />
+      </g>
       <Silhouette pass="fill" />
       <g className="field-head">
         <Ink points={[[111,29,.85],[101,33,1.2],[97,42,1.1],[100,52,.9],[111,56,1.15],[123,53,.85],[127,43,1.2],[123,33,.9]]} width={3.6} closed fill="var(--chat-bg, var(--bg))" />
@@ -195,14 +313,42 @@ function FieldDesk({ pose, className }: { pose: FieldPose; className: string }) 
     {/* We see the plain back of the lid and its thin bottom edge, not the screen or keyboard. */}
     <Ink points={[[69,79,.85],[86,80,1.2],[149,79,.9],[171,81,1.1],[169,98,.85],[166,120,1.2],[148,121,.9],[91,120,1.15],[74,119,.85],[71,98,1.1]]} width={3.3} closed fill="var(--chat-bg, var(--bg))" />
     <Ink points={[[70,122,.85],[89,125,1.1],[149,126,.9],[171,123,1.1]]} width={2.6} />
+    {/* Shown only during the heart gesture for our own repository. */}
+    <path className="field-heart" d="M184 40 C175 33 174 25 179 23 C182 22 184 24 184 27 C184 24 186 22 189 23 C194 25 193 33 184 40 Z"
+      fill="#e58a9c" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" />
   </svg>;
 }
 
-export function FieldIllustration({ compact = false, pose = 'rest', className = '' }: {
-  compact?: boolean; pose?: FieldPose; className?: string;
+/**
+ * Tonight's moon for the dark-mode sky, drawn in SVG user units. The whole disc stays faintly drawn, so a new
+ * moon still leaves a trace; the lit part follows the date, with a few faint craters only where the light falls.
+ */
+export function NightMoon({ cx = 452, cy = 130, r = 24, phase }: { cx?: number; cy?: number; r?: number; phase?: number }) {
+  const clip = `field-moon-${useId().replace(/:/g, '')}`;
+  const lit = litMoonPath(cx, cy, r, phase ?? moonPhase());
+  const at = (dx: number, dy: number) => ({ cx: cx + dx * r / 24, cy: cy + dy * r / 24 });
+  return <g color="var(--moon)">
+    <circle className="field-moon-disc" cx={cx} cy={cy} r={r} fill="none" stroke="currentColor" strokeWidth={1.6} />
+    {lit && <>
+      <clipPath id={clip}><path d={lit} /></clipPath>
+      <path d={lit} fill="color-mix(in srgb, var(--moon) 42%, var(--bg))" />
+      <g clipPath={`url(#${clip})`} className="field-moon-craters" fill="none" stroke="currentColor" strokeWidth={1.5}>
+        <circle {...at(-8, -8)} r={4.2 * r / 24} /><circle {...at(8, 9)} r={3 * r / 24} /><circle {...at(-5, 13)} r={1.8 * r / 24} />
+      </g>
+      <path d={lit} fill="none" stroke="currentColor" strokeWidth={2.9} strokeLinejoin="round" />
+    </>}
+  </g>;
+}
+
+/** `at` shows the scene as on another date (the gallery uses it); the page itself always shows today. */
+export function FieldIllustration({ compact = false, pose = 'rest', className = '', at, ownRepository = false }: {
+  compact?: boolean; pose?: FieldPose; className?: string; at?: Date; ownRepository?: boolean;
 }) {
-  if (compact) return <FieldDesk pose={pose} className={className} />;
-  return <svg className={`field-illustration ${className}`} viewBox="0 0 600 440" aria-hidden="true" focusable="false">
+  if (compact) return <FieldDesk pose={pose} className={className} ownRepository={ownRepository} />;
+  const now = at ?? new Date();
+  const season = seasonOf(now), occasion = occasionOf(now);
+  return <svg className={`field-illustration ${className}`} viewBox="0 0 600 440" aria-hidden="true" focusable="false"
+    data-season={season} data-occasion={occasion ?? undefined}>
     {/* An open-air study spot: a big, loosely drawn tree, a long park bench and a little breeze.
         The canopy is uneven on purpose, and its line overshoots where it starts and ends. */}
     <g className="field-canopy">
@@ -219,6 +365,7 @@ export function FieldIllustration({ compact = false, pose = 'rest', className = 
       <Ink points={[[210,94],[218,88],[226,88],[222,95],[211,96]]} width={2.8} color="var(--accent)" closed />
       <g fill="var(--accent)"><circle cx="232" cy="182" r="3.2" /><circle cx="241" cy="186" r="3" /><circle cx="234" cy="192" r="2.8" /></g>
       <Ink points={[[56,216],[64,206],[70,214]]} width={2.8} color="var(--accent)" />
+      <CrownSeason season={season} />
     </g>
     {/* A wobbly, slightly leaning trunk that forks into the crown, outlined in brown ink. */}
     <g fill="var(--bg)" stroke="color-mix(in srgb, var(--fg) 80%, var(--warn) 20%)" strokeWidth={4} strokeLinejoin="round" strokeLinecap="round">
@@ -227,10 +374,13 @@ export function FieldIllustration({ compact = false, pose = 'rest', className = 
         Q140 196 141 162 Q142 132 146 118 Q150 112 152 120 Q154 150 154 196 Q168 178 186 160 Q198 150 204 154 Q206 160 196 168
         Q174 190 162 218 Q160 238 161 256" />
     </g>
+    {season === 'winter' && <BranchSnow />}
+    <OccasionScenery occasion={occasion} />
     {/* Bench and learner sit a little smaller than the tree. */}
     <g transform="translate(345 373) scale(.86) translate(-345 -373)">
     {/* The bench remains one simple background shape, with clear space below the seat. */}
     <Ink points={[[246,207,.85],[308,209,1.1],[371,206,.9],[443,208,1.15],[444,231,.85],[367,230,1.15],[305,233,.9],[245,230,1.1]]} width={3.8} closed fill="var(--bg)" />
+    {season === 'winter' && <BenchSnow />}
     <Ink points={[[256,233,.8],[257,288,1.1]]} width={3.3} />
     <Ink points={[[430,231,.8],[427,290,1.1]]} width={3.3} />
     <Ink points={[[232,291,.85],[295,290,1.1],[365,293,.9],[457,291,1.15],[459,304,.85],[379,307,1.1],[296,304,.9],[232,305,1.1]]} width={3.8} closed fill="var(--bg)" />
@@ -241,21 +391,25 @@ export function FieldIllustration({ compact = false, pose = 'rest', className = 
     <Ink points={[[297,291,.85],[323,298,1.15],[336,313,.9],[334,338,1.1],[331,369,.85],[312,372,1.15],[289,369,.9],[285,345,1.1],[280,322,.85],[279,308,1.15]]} width={5.4} closed fill="var(--bg)" />
     <Ink points={[[305,196,.85],[283,212,1.15],[268,240,.9],[272,272,1.2],[298,293,.85],[352,300,1.1],[381,289,.9],[395,263,1.2],[389,233,.85],[369,211,1.1],[344,198,.9]]} width={5.5} closed fill="var(--bg)" />
     <Ink points={[[313,147,.85],[297,150,1.2],[289,162,1.1],[291,178,.9],[304,188,1.2],[323,187,.85],[338,178,1.1],[339,165,1.2],[328,150,.85]]} width={4.8} closed fill="var(--bg)" />
+    {occasion === 'christmas' && <SantaHat />}
     <Ink points={[[291,221,.85],[280,244,1.15],[285,260,.9]]} width={4.6} />
     {/* The left hand (on our right) keeps only its inner edge; the torso already draws its outside. */}
     <Ink points={[[350,232,.9],[358,250,1.1],[352,261,.85],[332,260,1.15],[327,276,.9],[337,286,1.1],[366,290,.85],[380,287,.9]]} width={5.1} />
     {/* The plain rear of the lid faces us; the screen and hands are on the person's side. */}
     <Ink points={[[247,239,.85],[273,241,1.1],[309,243,.9],[343,245,1.2],[343,263,.85],[339,287,1.1],[309,288,.9],[264,284,1.2],[258,266,.85],[252,252,1.1]]} width={4.2} closed fill="var(--panel)" />
     <Ink points={[[258,289,.85],[298,293,1.1],[341,292,.85]]} width={3.1} />
+    {/* One thing at a time beside the learner: the solstice dumplings, the Lantern Festival tangyuan, or tea in dark mode. */}
+    {occasion === 'winter-solstice' ? <Dumplings /> : occasion === 'lantern-festival' ? <Tangyuan />
+      : <Tea upsideDown={occasion === 'april-fools'} />}
     </g>
-    {/* Daytime has a breeze; in dark mode the same corner holds a thin moon and a few stars instead. */}
+    {/* Daytime has a breeze; in dark mode the same corner holds tonight's moon and a few stars instead. */}
     <g className="field-day">
       <Ink className="field-breeze" points={[[396,139,.7],[417,135,1.1],[437,138,.8]]} width={2.4} color="var(--accent)" />
       <Ink className="field-breeze field-breeze-second" points={[[413,151,.7],[443,148,1.1],[462,151,.75]]} width={2.4} color="var(--accent)" />
     </g>
-    <g className="field-night" color="var(--warn)">
-      <path d="M452 104 C434 108 427 128 437 143 C446 156 465 157 476 147 C462 149 450 140 448 127 C446 116 449 109 452 104 Z"
-        fill="color-mix(in srgb, var(--warn) 22%, var(--bg))" stroke="currentColor" strokeWidth={2.9} strokeLinejoin="round" />
+    <g className="field-night" color="var(--moon)">
+      {occasion === 'qixi' && <MilkyWay />}
+      <NightMoon phase={moonPhase(now)} />
       <g stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
         <path className="field-star field-star-twinkle" d="M401 118 L401.5 128 M396 123.3 L406.5 122.8" />
         <path className="field-star" d="M497 118 L497.3 124 M494 121.2 L500.4 121" />
@@ -265,16 +419,18 @@ export function FieldIllustration({ compact = false, pose = 'rest', className = 
     {/* Now and then a leaf lets go of the crown and drifts down with the breeze. Falling, swaying sideways and
         rocking are separate layers, so the leaf never stops in mid-air while it changes direction. */}
     <g transform="translate(186 258)"><g className="field-leaf-fall"><g className="field-leaf-drift"><g className="field-leaf-swing">
-      <path d="M-6 1 C-3 -5 4 -6 7 -3 C4 3 -2 5 -6 1 Z M-6 1 L3 -2" fill="color-mix(in srgb, var(--accent-soft) 45%, var(--bg))"
-        stroke="var(--accent)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
+      <FallingThing season={season} occasion={occasion} />
     </g></g></g></g>
     <g transform="translate(74 250)"><g className="field-leaf-fall field-leaf-fall-second"><g className="field-leaf-drift field-leaf-drift-second"><g className="field-leaf-swing field-leaf-swing-second">
-      <path d="M-5 2 C-4 -4 3 -6 6 -4 C5 2 0 5 -5 2 Z M-5 2 L2 -2" fill="color-mix(in srgb, var(--accent-soft) 45%, var(--bg))"
-        stroke="var(--accent)" strokeWidth={2.3} strokeLinecap="round" strokeLinejoin="round" />
+      <FallingThing season={season} occasion={occasion} second />
     </g></g></g></g>
     <Ink points={[[484,346,.75],[493,363,1.1],[501,345,.8]]} width={3} color="var(--accent)" />
     <Ink points={[[88,355,.7],[98,371,1.1],[105,355,.75]]} width={3} color="var(--accent)" />
     <Ink points={[[101,379,.7],[170,377,1.15],[222,379,.85],[269,378,.7]]} width={2.6} />
     <Ink points={[[290,381,.75],[365,379,1.1],[433,381,.85],[508,377,.7]]} width={2.6} />
+    {season === 'winter' && <GroundSnow />}
+    {/* The animals come last, in front of the bench, the grass and the snow they hop past. */}
+    {occasion === 'mid-autumn' && <MoonRabbit />}
+    {occasion === 'qixi' && <Magpie />}
   </svg>;
 }
