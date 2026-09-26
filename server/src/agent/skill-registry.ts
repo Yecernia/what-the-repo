@@ -140,11 +140,11 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "understanding-assessment": {
     id: "understanding-assessment",
-    version: "5.0.0",
+    version: "5.1.0",
     allowedTools: ["submit_result"],
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v2",
+    contextBuilderId: "understanding-assessment-context-v3",
     evalSuite: "understanding-assessment-v4",
   },
   "citation-review": {

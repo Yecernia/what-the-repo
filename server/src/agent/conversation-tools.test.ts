@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProject, emptyProfile } from "../domain/conversation.js";
+import { createMessage, createProject, emptyProfile } from "../domain/conversation.js";
 import { conversationSummaryFromSource } from '../domain/conversation-summary.js';
 import type { EvidenceSnapshot } from "../domain/snapshot.js";
 import type { ProductStore } from "../persistence/store.js";
@@ -450,4 +450,71 @@ test("mastered advance keeps the existing mastered progress behavior", async () 
   assert.deepEqual(ctx.project.study.mastered, ["入口职责"]);
   assert.deepEqual(ctx.project.study.skipped_steps, []);
   assert.equal(ctx.project.study.phase, "completed");
+});
+
+test("a pass from an earlier turn still offers the advance as mastered, and the tutor cannot skip for the learner", async () => {
+  const ctx = context();
+  ctx.currentUserMessage = "我没有看到确认卡片";
+  ctx.project.study.phase = "explaining";
+  ctx.project.study.total_steps = 1;
+  ctx.project.study.dynamic_learning_plan = [{
+    step_id: "learning:passed",
+    order: 1,
+    title: "理解入口",
+    objective: "说清入口职责。",
+    component_ids: ["component:entry"],
+    evidence_refs: [evidence.stable_id],
+    completion_check: "能说明入口职责。",
+  }];
+  const tool = createConversationTools(ctx).find((item) => item.name === "propose_learning_action");
+  assert.ok(tool);
+  const advance = { action: "advance_learning_step", target_kind: "learning_step", target_id: "learning:passed" };
+  // Without a pass and without the learner asking to skip, the tutor may not offer a skip on their behalf.
+  await assert.rejects(tool.execute("proposal", advance), /has not been passed and the learner did not ask to skip/);
+  assert.ok(!ctx.pendingLearningAction.value, "no card is created");
+
+  // The pass recorded in an earlier turn is remembered for this step.
+  ctx.project.study.step_passed = { step_id: "learning:passed", mastered_items: ["入口职责"], evidence_ids: [evidence.stable_id] };
+  await tool.execute("proposal", advance);
+  // Read through a fresh reference: the assertion above narrowed the earlier one to empty.
+  const pending: ConversationToolContext["pendingLearningAction"] = ctx.pendingLearningAction;
+  const action = pending.value;
+  assert.ok(action);
+  assert.equal(action.skip_understanding_check, false);
+  applyConfirmedLearningAction(ctx.project, action);
+  assert.deepEqual(ctx.project.study.mastered, ["入口职责"]);
+  assert.equal(ctx.project.study.phase, "completed");
+  assert.equal(ctx.project.study.step_passed, null, "the next step is assessed afresh");
+});
+
+test("assessment sees the learner's earlier replies in this step and remembers a pass", async () => {
+  let seen: { answer: string; earlierAnswers?: string[] } | null = null;
+  const ctx = context({
+    workerServices: {
+      assess: (async (input: { answer: string; earlierAnswers?: string[] }) => {
+        seen = input;
+        return { completed: true, feedback: "对", verdict: "mastered", masteredItems: ["入口职责"], misconceptions: [],
+          acceptedEvidenceIds: [evidence.stable_id], trace: { usage: null, evidence_ids: [] } };
+      }) as never,
+    },
+  });
+  ctx.project.study.phase = "explaining";
+  ctx.project.study.total_steps = 1;
+  ctx.project.study.dynamic_learning_plan = [{
+    step_id: "learning:cumulative", order: 1, title: "理解入口", objective: "说清入口职责。",
+    component_ids: ["component:entry"], evidence_refs: [evidence.stable_id], completion_check: "能说明入口职责。",
+  }];
+  const route = createMessage("assistant", "路线已开始");
+  route.learning_action = { status: "executed" } as never;
+  ctx.project.messages.push(createMessage("user", "上一步之前的话"), route,
+    createMessage("user", "只有一个 README"), createMessage("user", "缺入口和配置"), createMessage("user", "上面就是我的回答"));
+  ctx.currentUserMessage = "上面就是我的回答";
+  ctx.exposedEvidence.set(evidence.stable_id, evidence as never);
+  const tool = createConversationTools(ctx).find((item) => item.name === "assess_understanding");
+  assert.ok(tool);
+  await tool.execute("assess", { evidence_ids: [evidence.stable_id] });
+  // Only replies since the step began are passed, without repeating the current message.
+  assert.deepEqual(seen!.earlierAnswers, ["只有一个 README", "缺入口和配置"]);
+  assert.deepEqual(ctx.project.study.step_passed,
+    { step_id: "learning:cumulative", mastered_items: ["入口职责"], evidence_ids: [evidence.stable_id] });
 });

@@ -26,7 +26,7 @@ import {
   runUnderstandingAssessment,
   type TeachingWorkerTrace,
 } from "./teaching-workers.js";
-import { createLearningActionProposal } from "./learning-actions.js";
+import { createLearningActionProposal, currentLearningStep } from "./learning-actions.js";
 import { isExplicitAdvanceRequest, learningStatusText } from "./prompts.js";
 import { readSourcePage } from "./source-read.js";
 import { STATIC_FILE_INPUT, staticFilePage } from "./static-file-facts.js";
@@ -174,6 +174,19 @@ function errorResult(_toolName: string, message: string): never {
   // Pi Core turns thrown tool failures into an isError tool result and lets the
   // model decide whether to correct the arguments or choose another tool.
   throw new ToolExecutionError(message);
+}
+
+/** The learner's replies since the current step began (after the last confirmed action), oldest first. */
+function earlierAnswersInStep(project: Project, currentMessage: string): string[] {
+  const messages = project.messages;
+  let start = 0;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]!.learning_action?.status === "executed") { start = index + 1; break; }
+  }
+  const answers = messages.slice(start).filter((message) => message.role === "user").map((message) => message.content);
+  // The current message is bound separately; it may already be the last stored user message.
+  if (answers.at(-1) === currentMessage) answers.pop();
+  return answers.slice(-6).map((answer) => answer.slice(0, 1500));
 }
 
 function bounded<T>(rows: T[], limit: number): T[] {
@@ -739,6 +752,7 @@ export function createConversationTools(
       }
       const result = await (context.workerServices?.assess ?? runUnderstandingAssessment)({
         answer: context.currentUserMessage,
+        earlierAnswers: earlierAnswersInStep(context.project, context.currentUserMessage),
         evidence: rows,
         project: context.project,
         snapshot,
@@ -758,6 +772,15 @@ export function createConversationTools(
         masteredItems: result.masteredItems,
         evidenceIds: result.acceptedEvidenceIds,
       };
+      const step = currentLearningStep(context.project);
+      // A pass is kept for this step, so the advance card can still be offered as mastered in a later turn.
+      if (result.verdict === "mastered" && step) {
+        context.project.study.step_passed = {
+          step_id: step.step_id,
+          mastered_items: result.masteredItems,
+          evidence_ids: result.acceptedEvidenceIds,
+        };
+      }
       return textResult(
         "assess_understanding",
         {
@@ -799,8 +822,18 @@ export function createConversationTools(
         target_kind?: "repository" | "value_point" | "component" | "layer" | "learning_step";
         target_id?: string;
       };
-      const skipUnderstandingCheck = input.action === "advance_learning_step"
-        && context.assessment.value?.verdict !== "mastered";
+      const step = currentLearningStep(context.project);
+      const stored = context.project.study.step_passed;
+      const passed = context.assessment.value?.verdict === "mastered"
+        ? { mastered_items: context.assessment.value.masteredItems, evidence_ids: context.assessment.value.evidenceIds }
+        : step && stored?.step_id === step.step_id ? stored : null;
+      if (input.action === "advance_learning_step" && !passed && !isExplicitAdvanceRequest(context.currentUserMessage)) {
+        return errorResult(
+          "propose_learning_action",
+          "This step's check has not been passed and the learner did not ask to skip it. Assess their answer first, or ask what they want to do.",
+        );
+      }
+      const skipUnderstandingCheck = input.action === "advance_learning_step" && !passed;
       try {
         context.pendingLearningAction.value = createLearningActionProposal(
           context.project,
@@ -811,11 +844,8 @@ export function createConversationTools(
             targetId: input.target_id,
             request: context.currentUserMessage,
             skipUnderstandingCheck,
-            progress: input.action === "advance_learning_step" && context.assessment.value?.verdict === "mastered"
-              ? {
-                  mastered_items: context.assessment.value.masteredItems,
-                  evidence_ids: context.assessment.value.evidenceIds,
-                }
+            progress: input.action === "advance_learning_step" && passed
+              ? { mastered_items: passed.mastered_items, evidence_ids: passed.evidence_ids }
               : null,
           },
         );

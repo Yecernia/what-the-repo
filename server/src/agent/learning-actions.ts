@@ -93,12 +93,15 @@ export function applyCompletedLearningRoute(
   project.study.total_steps = steps.length;
   project.study.mastered = [];
   project.study.skipped_steps = [];
+  project.study.step_passed = null;
   project.study.misconceptions = [];
   project.study.open_questions = [];
   project.study.used_evidence = [];
 }
 
 export function applyConfirmedLearningAction(project: Project, action: LearningActionCard): void {
+  // Any confirmed action ends the current step's check; the next step is assessed afresh.
+  project.study.step_passed = null;
   if (action.action === "stop_guided_learning") {
     project.study.phase = "orienting";
     project.study.selected_value_point = null;

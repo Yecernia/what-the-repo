@@ -195,6 +195,8 @@ export interface StudyState {
   mastered: string[];
   /** Stable step ids the user explicitly chose to skip rather than mark as mastered. */
   skipped_steps?: string[];
+  /** The current step's passing assessment, so an advance offered in a later turn still counts as mastered. */
+  step_passed?: { step_id: string; mastered_items: string[]; evidence_ids: string[] } | null;
   misconceptions: string[];
   open_questions: string[];
   used_evidence: string[];

@@ -561,7 +561,8 @@ export class ConversationService {
         }
       }
       const refusal = /不能跳过|按研学协议|只有本轮理解|需要先回答|只有掌握才/u.test(result.text);
-      const skipNotice = action
+      // Only a learner who asked to skip is told they chose to; the tool refuses model-initiated skips.
+      const skipNotice = action && explicitAdvance
         ? directSkipApplied
           ? `你明确选择跳过“${action.target?.label ?? "当前步骤"}”的理解检查。已记录为主动跳过（不计入已掌握），现在进入下一步；之后仍可回看本步。`
           : `你明确选择跳过“${action.target?.label ?? "当前步骤"}”的理解检查。${action.description} 请确认卡片后继续。`
@@ -642,7 +643,8 @@ export class ConversationService {
       assistantMessage.evidence = acceptedEvidence;
       assistantMessage.unresolved_references = validation.unresolved;
       assistantMessage.context_eligible = result.stopReason === "completed" && validationErrors.length === 0;
-      if ((assistantMessage.context_eligible || directSkipApplied) && pendingLearningAction.value) {
+      // The card is built and validated by the program, so a citation notice on the text does not drop it.
+      if ((result.stopReason === "completed" || directSkipApplied) && pendingLearningAction.value) {
         assistantMessage.learning_action = pendingLearningAction.value;
       }
       const evidenceQuality = measureEvidenceQuality({

@@ -7,6 +7,8 @@ description: Judge whether the learner's own explanation shows a correct mental 
 
 Assess the program-bound `original_user_answer` against the current step's goal. Do not rewrite the learner's answer, and do not treat your verdict as committed progress.
 
+`earlier_answers_in_this_step` holds the learner's previous replies during this step, oldest first. Judge the understanding they show together with the current answer: a learner who answered some parts earlier and the rest now has answered the whole question, and must not be asked to restate it in one message. A short reference such as "the points above are my answer" adopts what they already wrote. When the current answer corrects or contradicts an earlier one, the current answer decides.
+
 ## Verdicts
 
 - `mastered`: the core of the goal, the direction of cause and effect and the key boundaries are right, and the judgment rests on the supplied evidence. A few imprecise terms do not prevent mastery.

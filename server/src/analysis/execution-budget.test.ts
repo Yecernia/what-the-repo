@@ -38,7 +38,7 @@ function worker(provider: string) {
   return { faux, options: {
     skillId: "understanding-assessment" as const,
     inputSchemaId: "understanding-assessment-input-v1", outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v2", schema: Type.Object({ answer: Type.String() }),
+    contextBuilderId: "understanding-assessment-context-v3", schema: Type.Object({ answer: Type.String() }),
     systemPrompt: "Submit the result", userPrompt: "Explain",
     modelRuntime: { models, model: faux.getModel() as Model<Api> },
   } };

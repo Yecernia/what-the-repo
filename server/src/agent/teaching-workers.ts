@@ -88,6 +88,8 @@ interface EvidencePacket {
 
 export async function runUnderstandingAssessment(input: {
   answer: string;
+  /** The learner's earlier replies during this step, oldest first. */
+  earlierAnswers?: string[];
   evidence: SnapshotEvidence[];
   project: Project;
   snapshot: EvidenceSnapshot;
@@ -116,19 +118,20 @@ export async function runUnderstandingAssessment(input: {
     skillId: "understanding-assessment",
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v2",
+    contextBuilderId: "understanding-assessment-context-v3",
     modelRuntime: input.modelRuntime,
     thinkingLevel: "medium",
     signal: input.signal,
     schema: ASSESSMENT_RESULT,
     systemPrompt: [
-      "The program has bound the current step, the learner's original message and bounded evidence to this run.",
+      "The program has bound the current step, the learner's original message, their earlier replies during this step and bounded evidence to this run.",
       "Do not read other repository content or replace the original answer. Evidence IDs must come from the input. Finish by calling submit_result.",
     ].join("\n"),
     userPrompt: JSON.stringify({
       current_step: step,
       current_study: studySummary(input.project.study),
       original_user_answer: input.answer,
+      earlier_answers_in_this_step: input.earlierAnswers ?? [],
       evidence: packets,
     }),
   });
