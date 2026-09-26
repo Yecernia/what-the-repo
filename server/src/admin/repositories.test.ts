@@ -73,6 +73,11 @@ test('repository directory, shared participants, accounting and destructive clea
       } finally {await a!();await b!();}
     });
     await t.test('partial delete stays withdrawn, retries cleanly, preserves history and other repositories',async()=>{
+      // A repository with a current version, as every analysed repository has, can still be deleted.
+      await store.pool.query(`INSERT INTO canonical_public_repositories(repository_identity,current_public_snapshot_key,generation,published_at)
+        VALUES('repo-case/r0',$1,1,clock_timestamp())`,[keys[0]]);
+      await store.pool.query(`INSERT INTO repository_revision_redirects(repository_identity,from_public_snapshot_key,to_public_snapshot_key,old_path,redirect_kind)
+        VALUES('repo-case/r0',$1,$2,'src/old.ts','moved')`,[keys[1],keys[0]]);
       const original=store.snapshotObjects.delete.bind(store.snapshotObjects);let failed=false;
       store.snapshotObjects.delete=async key=>{if(!failed){failed=true;throw Error('isolated failure');}await original(key);};
       const plan=await admin.deletionPlan('repo-case/r0');
@@ -83,6 +88,8 @@ test('repository directory, shared participants, accounting and destructive clea
       store.snapshotObjects.delete=original;
       await store.adminDeleteRepository('repo-case/r0',(await admin.deletionPlan('repo-case/r0')).token,'test');
       assert.equal((await docs.read<{status:string}>('repository-cleanup:repo-case/r0',{status:''})).status,'completed');
+      assert.equal((await store.pool.query("SELECT 1 FROM canonical_public_repositories WHERE repository_identity='repo-case/r0'")).rowCount,0);
+      assert.equal((await store.pool.query("SELECT 1 FROM repository_revision_redirects WHERE repository_identity='repo-case/r0'")).rowCount,0);
       assert.equal((await store.pool.query('SELECT count(*)::int AS n FROM project_messages WHERE project_id=ANY($1::text[])',[ids])).rows[0].n,4);
       assert.equal((await store.pool.query('SELECT payload_purged_at FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[keys[1]])).rows[0].payload_purged_at,null);
     });

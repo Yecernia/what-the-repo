@@ -3108,6 +3108,9 @@ export class PostgresStore extends FileStore {
       await client.query('DELETE FROM semantic_batches WHERE job_id IN (SELECT job_id FROM analysis_jobs WHERE project_id=ANY($1::text[]))',[currentProjects]);
       await client.query('DELETE FROM project_public_snapshot_bindings WHERE public_snapshot_key=ANY($1::text[])',[keys]);
       await client.query('DELETE FROM canonical_public_repository_heads WHERE repository_identity=$1',[repository]);
+      // The current-version pointer and path redirects describe the versions being deleted; a later analysis starts afresh.
+      await client.query('DELETE FROM repository_revision_redirects WHERE repository_identity=$1',[repository]);
+      await client.query('DELETE FROM canonical_public_repositories WHERE repository_identity=$1',[repository]);
       await client.query(`UPDATE canonical_public_repository_snapshots SET retired_at=clock_timestamp(),purge_after=clock_timestamp(),
         payload_purged_at=COALESCE(payload_purged_at,clock_timestamp()) WHERE public_snapshot_key=ANY($1::text[])`,[keys]);
       await client.query(`INSERT INTO admin_documents(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=clock_timestamp()`,
