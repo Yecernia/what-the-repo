@@ -77,6 +77,14 @@ test('admin repository activity follows the current executor, not queued batch m
       await store.saveJob({ ...newAnalysisJob(p.project_id, 'activity:legacy'), status: 'running' });
       const row = await find('legacy'); assert.equal(row.status, 'running'); assert.equal(row.stage, 'running');
     });
+    await t.test('a background update shows its running job and names no requester for its anchor project', async () => {
+      const background = await makeCase('background', 'queued', 'running');
+      await store.pool.query("UPDATE repository_analysis_updates SET update_trigger='background' WHERE update_id=$1", [background.batch]);
+      await store.pool.query("UPDATE analysis_jobs SET execution_role='background' WHERE job_id=$1", [background.job.job_id]);
+      const row = await find('background');
+      assert.equal(row.status, 'running'); assert.equal(row.trigger, 'background');
+      assert.equal(row.user_count, 0, 'the leader project is only the anchor of a background update');
+    });
     await t.test('effective running state is used before ordering and pagination', async () => {
       for (let i = 0; i < 26; i++) await makeCase('finished-' + i, 'succeeded', 'succeeded');
       const first = await admin.activity(1), second = await admin.activity(2);

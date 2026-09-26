@@ -5,7 +5,7 @@ import { BackgroundScheduling, RepositoryUpdateUsage, UsageAttribution } from '.
 afterEach(cleanup);
 
 const rules = { intervalMinutes: 5, commitThreshold: 20, maxSnapshotAgeDays: 7,
-  minUpdateIntervalHours: 24, activeWindowDays: 7, maxStartsPerDay: 2 };
+  minUpdateIntervalHours: 24, activeWindowDays: 7, failureRetryHours: 6 };
 const bodyRows = () => screen.getAllByRole('row').slice(1);
 
 it('usage attribution groups calls by business and filters or pages the task list', () => {

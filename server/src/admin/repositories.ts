@@ -18,16 +18,18 @@ const batches = `WITH batches AS (
    u.created_at,
    CASE WHEN u.status IN ('queued','running') THEN GREATEST(u.updated_at,execution.updated_at) ELSE u.updated_at END AS updated_at,
    CASE WHEN u.status IN ('queued','running') THEN COALESCE(execution.completed_at,u.completed_at) ELSE u.completed_at END AS completed_at,
-   p.payload->'analysis' AS analysis,true AS participants_known
+   p.payload->'analysis' AS analysis,true AS participants_known,u.update_trigger AS trigger
  FROM repository_analysis_updates u LEFT JOIN projects p ON p.project_id=u.leader_project_id
  LEFT JOIN LATERAL (
    SELECT j.status,j.updated_at,j.completed_at FROM analysis_jobs j
-   WHERE j.repository_update_id=u.update_id AND j.project_id=u.leader_project_id AND j.execution_role='leader'
+   WHERE j.repository_update_id=u.update_id AND j.project_id=u.leader_project_id
+     -- A background update runs its leader project's job in the background role.
+     AND j.execution_role IN ('leader','background')
    ORDER BY CASE WHEN j.status IN ('running','queued') THEN 0 ELSE 1 END,j.created_at DESC,j.job_id DESC LIMIT 1
  ) execution ON true
  UNION ALL
  SELECT ${repoOfProject},'job:'||j.job_id,j.status,j.created_at,j.updated_at,j.completed_at,
-   p.payload->'analysis',false FROM analysis_jobs j JOIN projects p USING(project_id)
+   p.payload->'analysis',false,'manual' FROM analysis_jobs j JOIN projects p USING(project_id)
  WHERE j.repository_update_id IS NULL AND j.execution_role IN ('standalone','leader')
    AND COALESCE(p.payload->'analysis'->>'strategy','') <> 'reuse'
    AND p.payload->'source'->>'kind'='github'
@@ -44,6 +46,8 @@ function pageInfo(total: number, input: unknown) {
   const n = Number(input), pageSize = 25, pages = Math.max(1, Math.ceil(total / pageSize));
   return { total, pageSize, pages, page: Math.min(pages, Math.max(1, Number.isSafeInteger(n) ? n : 1)) };
 }
+// A background update's leader project is only its anchor; the people are those who joined it.
+const requesterBinding = "NOT (r.update_trigger='background' AND a.project_id=r.leader_project_id)";
 const userColumns = `u.owner_id,u.login,u.display_name,
  COALESCE(u.deleted_at IS NULL AND o.seen_at>clock_timestamp()-interval '90 seconds',false) AS online`;
 const userJoins = 'JOIN app_users u ON u.owner_id=p.owner_id LEFT JOIN online_presence o ON o.owner_id=u.owner_id';
@@ -93,7 +97,8 @@ export class AdminRepositories {
       } else {
         source = `FROM repository_analysis_update_projects a JOIN repository_analysis_updates r USING(update_id)
           JOIN projects p ON p.project_id=a.project_id ${userJoins}
-          WHERE r.repository_identity=$1 AND r.update_id=$2 AND a.created_at<=COALESCE(r.completed_at,'infinity'::timestamptz)`;
+          WHERE r.repository_identity=$1 AND r.update_id=$2 AND a.created_at<=COALESCE(r.completed_at,'infinity'::timestamptz)
+            AND ${requesterBinding}`;
         params = [repository, batch];
       }
     } else if (kind === 'storage') {
@@ -123,7 +128,7 @@ export class AdminRepositories {
         AND r.repository_identity=selected.repository_identity
       JOIN repository_analysis_update_projects a ON a.update_id=r.update_id
       JOIN projects p ON p.project_id=a.project_id
-      WHERE a.created_at<=COALESCE(r.completed_at,'infinity'::timestamptz)
+      WHERE a.created_at<=COALESCE(r.completed_at,'infinity'::timestamptz) AND ${requesterBinding}
       UNION
       SELECT selected.repository_identity,selected.batch_id,p.owner_id
       FROM selected JOIN analysis_jobs j ON selected.batch_id='job:'||j.job_id

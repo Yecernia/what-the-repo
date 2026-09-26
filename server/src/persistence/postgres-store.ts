@@ -117,6 +117,7 @@ import {
   type RepositoryIdentityInput,
   type BackgroundAdmission,
   type BackgroundRepositoryCandidate,
+  backgroundUpdateAllowedAt,
   type RepositoryUpdatePublication,
   type SnapshotLanguageOverlayPublication,
   type SnapshotPublicationTimings,
@@ -1964,6 +1965,7 @@ export class PostgresStore extends FileStore {
               current.last_checked_at, current.next_check_at,
               current.upstream_commit_sha, current.behind_commits,
               current.head_relation, current.last_background_started_at,
+              CASE WHEN last_background.status='failed' THEN last_background.completed_at END AS last_background_failed_at,
               anchor.project_id
        FROM canonical_public_repositories AS current
        JOIN canonical_public_repository_snapshots AS snapshot
@@ -1978,6 +1980,11 @@ export class PostgresStore extends FileStore {
            AND project.payload->'source'->>'kind'='github'
          ORDER BY project.updated_at DESC LIMIT 1
        ) AS anchor ON true
+       LEFT JOIN LATERAL (
+         SELECT latest.status, latest.completed_at FROM repository_analysis_updates AS latest
+         WHERE latest.repository_identity=current.repository_identity AND latest.update_trigger='background'
+         ORDER BY latest.created_at DESC LIMIT 1
+       ) AS last_background ON true
        WHERE current.last_real_use_at >= $2::timestamptz
          AND snapshot.payload_purged_at IS NULL
          AND NOT EXISTS (
@@ -2008,7 +2015,16 @@ export class PostgresStore extends FileStore {
       behindCommits: row.behind_commits === null ? null : Number(row.behind_commits),
       relation: String(row.head_relation) as BackgroundRepositoryCandidate['relation'],
       lastBackgroundStartedAt: iso(row.last_background_started_at),
+      lastBackgroundFailedAt: iso(row.last_background_failed_at),
     }));
+  }
+
+  override async scheduleRepositoryCheck(repository: string, at: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE canonical_public_repositories SET next_check_at=$2
+       WHERE repository_identity=$1 AND next_check_at > $2::timestamptz`,
+      [repository.toLowerCase(), at],
+    );
   }
 
   override async saveRepositoryFreshness(input: {
@@ -2039,8 +2055,8 @@ export class PostgresStore extends FileStore {
   override async createBackgroundRepositoryUpdate(input: {
     project: Project; job: AnalysisJob; identity: RepositoryIdentityInput;
     targetCommitSha: string;
-    maxStartsPerDay: number; maxActive: number; maxQueued: number;
-    minUpdateIntervalHours: number; activeWindowDays: number; now: string;
+    maxActive: number; minUpdateIntervalHours: number; failureRetryHours: number;
+    activeWindowDays: number; now: string;
   }): Promise<BackgroundAdmission> {
     if (!/^[0-9a-f]{40}$/i.test(input.targetCommitSha)) return 'deferred:unavailable';
     const repository = input.identity.repository.toLowerCase();
@@ -2079,12 +2095,20 @@ export class PostgresStore extends FileStore {
         [input.project.project_id, repository],
       );
       const at = Date.parse(input.now);
+      const latest = await client.query<{ status: string; completed_at: Date | null }>(
+        `SELECT status, completed_at FROM repository_analysis_updates
+         WHERE repository_identity=$1 AND update_trigger='background' ORDER BY created_at DESC LIMIT 1`,
+        [repository],
+      );
+      const allowedAt = backgroundUpdateAllowedAt({
+        lastStartedAt: iso(state.last_background_started_at),
+        lastFailedAt: latest.rows[0]?.status === 'failed' ? iso(latest.rows[0].completed_at) : null,
+        minUpdateIntervalHours: input.minUpdateIntervalHours, failureRetryHours: input.failureRetryHours,
+      });
       const refused = !anchor.rowCount ? 'unavailable' as const
         : !state.last_real_use_at
           || at - new Date(state.last_real_use_at).getTime() > input.activeWindowDays * 86400_000 ? 'inactive' as const
-        : state.last_background_started_at
-          && at - new Date(state.last_background_started_at).getTime() < input.minUpdateIntervalHours * 3600_000
-          ? 'interval' as const
+        : allowedAt !== null && at < allowedAt ? 'interval' as const
         : state.suppressed_target_sha?.toLowerCase() === input.targetCommitSha.toLowerCase()
           && state.suppressed_analyzer_bundle_version === input.identity.analyzerBundleVersion
           && state.suppressed_analysis_config_digest === input.identity.analysisConfigDigest ? 'suppressed' as const
@@ -2096,13 +2120,12 @@ export class PostgresStore extends FileStore {
         [repository],
       );
       if (active.rowCount) { await client.query('COMMIT'); return 'deferred:active_update'; }
-      const load = await client.query<{ status: string; count: string }>(
-        `SELECT status, count(*)::text AS count FROM repository_analysis_updates
-         WHERE status IN ('queued','running') AND update_trigger='background' GROUP BY status`,
+      // Background updates run one after another; a queued one already holds its turn.
+      const load = await client.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM repository_analysis_updates
+         WHERE status IN ('queued','running') AND update_trigger='background'`,
       );
-      const running = Number(load.rows.find(row => row.status === 'running')?.count ?? 0);
-      const queued = Number(load.rows.find(row => row.status === 'queued')?.count ?? 0);
-      if (running >= input.maxActive || queued >= input.maxQueued) {
+      if (Number(load.rows[0]?.count ?? 0) >= input.maxActive) {
         await client.query('COMMIT'); return 'deferred:capacity';
       }
       // Admin budgets: 0 turns background work off. A capped update reserves its
@@ -2127,9 +2150,6 @@ export class PostgresStore extends FileStore {
       );
       const used = daily.rows[0];
       const committed = Number(used?.reserved_usd ?? 0) + Number(used?.spent_usd ?? 0);
-      if (!used || used.starts >= input.maxStartsPerDay) {
-        await client.query('COMMIT'); return 'deferred:daily_starts';
-      }
       if (dailyUsd !== null && (committed >= dailyUsd || committed + reservation > dailyUsd + 1e-9)) {
         await client.query('COMMIT'); return 'deferred:daily_budget';
       }

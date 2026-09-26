@@ -131,6 +131,7 @@ try {
           checkFreshness: identity => repository.checkRepositoryFreshness(identity),
           latestReleasePublishedAt: identity => repository.latestReleasePublishedAt(identity),
           requestUpdate: input => repository.requestBackgroundRepositoryUpdate(input),
+          scheduleCheck: (name, at) => store.scheduleRepositoryCheck(name, at),
         });
         backgroundRefreshScheduler = new RetentionScheduler(async () => {
           // Every pass is recorded so the admin console can say why nothing started.

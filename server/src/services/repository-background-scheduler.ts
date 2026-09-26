@@ -1,6 +1,7 @@
 import type { ServerConfig } from '../config.js';
-import type {
-  BackgroundAdmission, BackgroundRepositoryCandidate, RepositoryIdentityInput,
+import {
+  backgroundUpdateAllowedAt,
+  type BackgroundAdmission, type BackgroundRepositoryCandidate, type RepositoryIdentityInput,
 } from '../persistence/store.js';
 
 export interface CheckedRepositoryFreshness {
@@ -21,8 +22,15 @@ export interface BackgroundRefreshDependencies {
     projectId: string;
     targetCommitSha: string;
   }): Promise<BackgroundAdmission>;
+  /** Brings the repository's next upstream check forward, so a waiting update is not left for the daily check. */
+  scheduleCheck?(repository: string, at: string): Promise<void>;
   now?: () => number;
 }
+
+/** Waits that end on their own; the repository is checked again when the wait can be over. */
+const RECHECK_DEFERRALS: ReadonlySet<BackgroundDecision> = new Set([
+  'deferred:interval', 'deferred:capacity', 'deferred:active_update', 'deferred:daily_budget',
+]);
 
 /** What one pass decided for one repository, shown in the admin console. */
 export type BackgroundDecision =
@@ -71,6 +79,11 @@ export function createRepositoryBackgroundRefreshTask(
           outcome.decisions.push({ repository: candidate.repository, decision,
             relation: seen.relation, behindCommits: seen.behindCommits });
         };
+        // A decision needs a check from the last hour, while unforced checks are daily: a repository that
+        // only has to wait is checked again when the wait can be over instead of on its next daily check.
+        const recheckAt = async (time: number) => {
+          await dependencies.scheduleCheck?.(candidate.repository, new Date(time).toISOString()).catch(() => undefined);
+        };
         if (Date.parse(candidate.lastRealUseAt) < Date.parse(activeSince)) return decide('inactive');
         const identity: RepositoryIdentityInput = {
           repository: candidate.repository,
@@ -113,15 +126,22 @@ export function createRepositoryBackgroundRefreshTask(
           return Boolean(releasedAt && Date.parse(releasedAt) > Date.parse(candidate.publishedAt));
         };
         if (!enoughCommits && !oldSnapshot && !(await releasedSince())) return decide('below_threshold', freshness);
-        if (candidate.lastBackgroundStartedAt
-          && at - Date.parse(candidate.lastBackgroundStartedAt)
-            < (config.repositoryBackgroundMinUpdateIntervalHours ?? 24) * 3600_000) return decide('interval', freshness);
+        const allowedAt = backgroundUpdateAllowedAt({
+          lastStartedAt: candidate.lastBackgroundStartedAt, lastFailedAt: candidate.lastBackgroundFailedAt,
+          minUpdateIntervalHours: config.repositoryBackgroundMinUpdateIntervalHours ?? 24,
+          failureRetryHours: config.repositoryBackgroundFailureRetryHours ?? 6,
+        });
+        if (allowedAt !== null && at < allowedAt) {
+          await recheckAt(allowedAt);
+          return decide('interval', freshness);
+        }
         const admission = await dependencies.requestUpdate({
           identity, projectId: candidate.projectId,
           targetCommitSha: freshness.upstreamCommitSha,
         });
         if (admission === 'queued') outcome.queued++;
         else if (admission.startsWith('deferred')) outcome.deferred++;
+        if (RECHECK_DEFERRALS.has(admission)) await recheckAt(at + (config.repositoryHeadCheckTtlMinutes ?? 60) * 60_000);
         decide(admission, freshness);
       }));
     }

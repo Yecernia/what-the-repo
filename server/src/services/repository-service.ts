@@ -718,10 +718,9 @@ export class RepositoryService {
     job.config_version = (await this.options.analysisExecution?.())?.configVersion;
     const result = await this.store.createBackgroundRepositoryUpdate({
       project, job, identity: input.identity, targetCommitSha: input.targetCommitSha,
-      maxStartsPerDay: config.repositoryBackgroundMaxStartsPerDay ?? 2,
       maxActive: config.repositoryBackgroundMaxActive ?? 1,
-      maxQueued: config.repositoryBackgroundMaxQueued ?? 4,
       minUpdateIntervalHours: config.repositoryBackgroundMinUpdateIntervalHours ?? 24,
+      failureRetryHours: config.repositoryBackgroundFailureRetryHours ?? 6,
       activeWindowDays: config.repositoryActiveWindowDays ?? 7,
       now: nowIso(),
     });

@@ -112,7 +112,7 @@ export interface RepositoryIdentityInput {
 /** Why a background update did not start; recorded for the admin console. */
 export type BackgroundDeferReason =
   | 'disabled' | 'unavailable' | 'inactive' | 'interval' | 'suppressed'
-  | 'active_update' | 'capacity' | 'budget_off' | 'daily_starts' | 'daily_budget';
+  | 'active_update' | 'capacity' | 'budget_off' | 'daily_budget';
 export type BackgroundAdmission = 'queued' | 'up_to_date' | `deferred:${BackgroundDeferReason}`;
 
 export interface BackgroundRepositoryCandidate {
@@ -131,6 +131,21 @@ export interface BackgroundRepositoryCandidate {
   behindCommits: number | null;
   relation: 'same' | 'ahead' | 'diverged' | 'rewound' | 'unknown';
   lastBackgroundStartedAt: string | null;
+  /** When the latest background update failed, or null when it did not. */
+  lastBackgroundFailedAt: string | null;
+}
+
+/**
+ * When a repository may start its next background update: a failed attempt is retried after the shorter
+ * failure wait, any other start after the normal interval. Null means it may start now.
+ */
+export function backgroundUpdateAllowedAt(input: {
+  lastStartedAt: string | null; lastFailedAt: string | null;
+  minUpdateIntervalHours: number; failureRetryHours: number;
+}): number | null {
+  if (input.lastFailedAt) return Date.parse(input.lastFailedAt) + input.failureRetryHours * 3600_000;
+  if (input.lastStartedAt) return Date.parse(input.lastStartedAt) + input.minUpdateIntervalHours * 3600_000;
+  return null;
 }
 
 export interface RepositoryUpdatePublication {
@@ -285,11 +300,13 @@ export interface ProductStore {
   createBackgroundRepositoryUpdate(input: {
     project: Project; job: AnalysisJob; identity: RepositoryIdentityInput;
     targetCommitSha: string;
-    maxStartsPerDay: number; maxActive: number; maxQueued: number;
-    minUpdateIntervalHours: number; activeWindowDays: number; now: string;
+    maxActive: number; minUpdateIntervalHours: number; failureRetryHours: number;
+    activeWindowDays: number; now: string;
   }): Promise<BackgroundAdmission>;
   /** Records one background scheduler pass; stores without a database keep none. */
   recordBackgroundRun(run: { startedAt: string; finishedAt: string; outcome: unknown; error: string | null }): Promise<void>;
+  /** Brings a repository's next upstream check forward to `at`; a later time never delays it. */
+  scheduleRepositoryCheck(repository: string, at: string): Promise<void>;
   listRepositoryUpdateProjects(updateId: string): Promise<Project[]>;
   publishRepositoryUpdate(input: RepositoryUpdatePublication & { fence?: AnalysisLeaseFence }): Promise<string[]>;
   failRepositoryUpdate(updateId: string, error: string, fence?: AnalysisLeaseFence): Promise<string[]>;

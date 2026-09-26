@@ -510,7 +510,7 @@ export function registerAdminRoutes(
             maxSnapshotAgeDays: deps.config.repositoryBackgroundMaxSnapshotAgeDays ?? 7,
             minUpdateIntervalHours: deps.config.repositoryBackgroundMinUpdateIntervalHours ?? 24,
             activeWindowDays: deps.config.repositoryActiveWindowDays ?? 7,
-            maxStartsPerDay: deps.config.repositoryBackgroundMaxStartsPerDay ?? 2,
+            failureRetryHours: deps.config.repositoryBackgroundFailureRetryHours ?? 6,
             runs: backgroundRuns,
           },
           repositoryUpdates: repositoryUpdates.map((row) => ({

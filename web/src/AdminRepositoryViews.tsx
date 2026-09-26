@@ -65,7 +65,9 @@ export function RepositoryUsers({ row, kind }: { row: AdminRow; kind: 'analysis'
     return () => { current = false; };
   }, [open, repository, kind, row.batch_id]);
   return <div className="admin-repository-users">{users.slice(0, 2).map(user => <UserIdentity key={String(user.owner_id)} row={user} />)}
-    {!total && <span className="admin-muted">{row.participants_known === false ? '历史参与者未记录' : '暂无使用者'}</span>}
+    {kind === 'analysis' && row.trigger === 'background' && <div className="admin-user-identity">
+      <span className="admin-identity-name">后台更新</span><small>系统自动发起</small></div>}
+    {!total && row.trigger !== 'background' && <span className="admin-muted">{row.participants_known === false ? '历史参与者未记录' : '暂无使用者'}</span>}
     {total > 0 && kind === 'analysis' && row.participants_known === false && <small className="admin-muted">历史记录仅能确认发起者</small>}
     {total > 2 && <button className="admin-users-expand" onClick={() => setOpen(true)}>展开全部 {total} 位用户</button>}
     {open && <AdminModal title={repository + (kind === 'analysis' ? ' · 本次分析请求用户' : ' · 使用者')} close={() => setOpen(false)}>

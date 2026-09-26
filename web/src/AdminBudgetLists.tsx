@@ -205,7 +205,7 @@ export function UsageAttribution({ data }: { data: AdminRow[] }) {
 }
 
 type Rules = { commitThreshold: number; maxSnapshotAgeDays: number; minUpdateIntervalHours: number;
-  activeWindowDays: number; maxStartsPerDay: number; intervalMinutes: number };
+  activeWindowDays: number; failureRetryHours: number; intervalMinutes: number };
 function decisionText(decision: string, rules: Rules) {
   return ({
     queued: '已启动后台更新',
@@ -216,17 +216,18 @@ function decisionText(decision: string, rules: Rules) {
     check_stale: '上游信息不完整或已过期，下轮再查',
     unknown_relation: '无法判断与上游的关系',
     below_threshold: `新提交不足 ${rules.commitThreshold} 个，当前版本不满 ${rules.maxSnapshotAgeDays} 天，也没有新 release`,
-    interval: `距上次后台更新不足 ${rules.minUpdateIntervalHours} 小时`,
+    interval: `距上次后台更新不足 ${rules.minUpdateIntervalHours} 小时（失败后 ${rules.failureRetryHours} 小时），到时自动再查`,
     'deferred:disabled': '后台更新未开启',
     'deferred:unavailable': '仓库记录不可用',
     'deferred:inactive': `最近 ${rules.activeWindowDays} 天没人使用`,
-    'deferred:interval': `距上次后台更新不足 ${rules.minUpdateIntervalHours} 小时`,
+    'deferred:interval': `距上次后台更新不足 ${rules.minUpdateIntervalHours} 小时（失败后 ${rules.failureRetryHours} 小时），到时自动再查`,
     'deferred:suppressed': '这个上游版本上次更新失败，等有新提交再试',
-    'deferred:active_update': '已有更新在进行',
-    'deferred:capacity': '后台更新队列已满',
+    'deferred:active_update': '已有更新在进行，稍后再查',
+    'deferred:capacity': '另一个后台更新在进行，稍后再查',
     'deferred:budget_off': '预算设为 0，后台更新已关闭',
-    'deferred:daily_starts': `今日已启动 ${rules.maxStartsPerDay} 次，达到上限`,
-    'deferred:daily_budget': '今日后台更新预算不足',
+    // Kept for runs recorded before the daily start limit was removed.
+    'deferred:daily_starts': '今日启动次数达到上限（旧规则）',
+    'deferred:daily_budget': '今日后台更新预算不足，稍后再查',
   } as Record<string, string>)[decision] ?? decision;
 }
 function decisionTone(decision: string) {
@@ -271,7 +272,8 @@ export function BackgroundScheduling({ data }: { data: AdminRow }) {
       <p className="admin-muted">
         每 {rules.intervalMinutes} 分钟检查一次最近 {rules.activeWindowDays} 天有人打开过的仓库。
         上游新增至少 {rules.commitThreshold} 个提交、发布了新 release，或当前版本已超过 {rules.maxSnapshotAgeDays} 天且上游有变化时才会启动；
-        同一仓库 {rules.minUpdateIntervalHours} 小时内最多一次，每天最多启动 {rules.maxStartsPerDay} 次。
+        同一仓库 {rules.minUpdateIntervalHours} 小时内最多一次，失败后 {rules.failureRetryHours} 小时可再试；
+        一次只跑一个，花费受上面的预算限制。
       </p>
       {!enabled ? (
         <p className="admin-empty">后台更新未开启（部署配置 WHAT_THE_REPO_REPOSITORY_BACKGROUND_REFRESH_ENABLED）。</p>

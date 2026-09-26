@@ -93,7 +93,7 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
 
       // Background admission needs recent real use and reserves one start.
       const background = { project: reader, identity, targetCommitSha: 'c'.repeat(40),
-        maxStartsPerDay: 2, maxActive: 1, maxQueued: 4, minUpdateIntervalHours: 24, activeWindowDays: 7 };
+        maxActive: 1, minUpdateIntervalHours: 24, failureRetryHours: 6, activeWindowDays: 7 };
       const now = new Date().toISOString();
       assert.equal(await store.createBackgroundRepositoryUpdate({ ...background,
         job: newAnalysisJob(reader.project_id, 'background:idle'), now }), 'deferred:inactive', 'an unused repository is not refreshed');
@@ -140,7 +140,11 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
         [JSON.stringify({ analysis_daily: 5, chat_daily: 5, evolution_task: 1, evolution_daily: 5,
           repository_update: null, repository_background_daily: 10 })]);
       assert.equal(await store.createBackgroundRepositoryUpdate({ ...background, minUpdateIntervalHours: 0, targetCommitSha: 'e'.repeat(40),
-        job: newAnalysisJob(reader.project_id, 'background:uncapped'), now }), 'queued');
+        job: newAnalysisJob(reader.project_id, 'background:early-retry'), now }), 'deferred:interval',
+        'a failed update waits the failure retry hours even when the normal interval is over');
+      assert.equal(await store.createBackgroundRepositoryUpdate({ ...background, minUpdateIntervalHours: 0, failureRetryHours: 0,
+        targetCommitSha: 'e'.repeat(40), job: newAnalysisJob(reader.project_id, 'background:uncapped'),
+        now: new Date().toISOString() }), 'queued', 'with no failure wait it starts once the failure is recorded');
       const uncapped = await store.loadActiveRepositoryUpdate(repository);
       assert.deepEqual((await store.pool.query(`SELECT starts, reserved_usd::float AS reserved
         FROM repository_background_daily_usage`)).rows, [{ starts: 2, reserved: 0 }]);
@@ -154,8 +158,20 @@ test('isolated PostgreSQL: one current version, bounded old reads, leased cleanu
       await store.failRepositoryUpdate(uncapped!.update_id, 'repeat');
       assert.deepEqual((await store.pool.query(`SELECT reserved_usd::float AS reserved, spent_usd::float AS spent
         FROM repository_background_daily_usage`)).rows, [{ reserved: 0, spent: 1.25 }]);
-      assert.equal(await store.createBackgroundRepositoryUpdate({ ...background, minUpdateIntervalHours: 0, targetCommitSha: 'f'.repeat(40),
-        job: newAnalysisJob(reader.project_id, 'background:third'), now }), 'deferred:daily_starts');
+      const [waiting] = await store.listBackgroundRepositoryCandidates(now, new Date(Date.parse(now) - 86400_000).toISOString(), 8);
+      assert.ok(waiting?.lastBackgroundFailedAt, 'the scheduler sees that the latest background update failed');
+      // There is no daily start count: only money, memory and one update at a time limit background work.
+      assert.equal(await store.createBackgroundRepositoryUpdate({ ...background, minUpdateIntervalHours: 0, failureRetryHours: 0,
+        targetCommitSha: 'f'.repeat(40), job: newAnalysisJob(reader.project_id, 'background:third'),
+        now: new Date().toISOString() }), 'queued');
+      // A waiting repository's next check moves earlier, never later.
+      const nextCheck = async () => (await store.pool.query<{ at: Date }>(
+        'SELECT next_check_at AS at FROM canonical_public_repositories WHERE repository_identity=$1', [repository])).rows[0]!.at;
+      await store.pool.query(`UPDATE canonical_public_repositories SET next_check_at='2030-01-02T00:00:00Z' WHERE repository_identity=$1`,
+        [repository]);
+      await store.scheduleRepositoryCheck(repository, '2030-01-01T00:00:00.000Z');
+      await store.scheduleRepositoryCheck(repository, '2030-01-03T00:00:00.000Z');
+      assert.equal((await nextCheck()).toISOString(), '2030-01-01T00:00:00.000Z');
       // Scheduler passes are kept for the admin console.
       await store.recordBackgroundRun({ startedAt: now, finishedAt: now, outcome: { examined: 1 }, error: null });
       assert.deepEqual((await store.pool.query('SELECT outcome, error FROM repository_background_runs')).rows,

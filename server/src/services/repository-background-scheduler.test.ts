@@ -13,7 +13,7 @@ const candidate = (overrides: Partial<BackgroundRepositoryCandidate> = {}): Back
   publishedAt: new Date(now - 8 * 86400_000).toISOString(),
   lastRealUseAt: new Date(now - 6 * 86400_000).toISOString(),
   lastCheckedAt: null, nextCheckAt: null, upstreamCommitSha: null,
-  behindCommits: null, relation: 'unknown', lastBackgroundStartedAt: null,
+  behindCommits: null, relation: 'unknown', lastBackgroundStartedAt: null, lastBackgroundFailedAt: null,
   ...overrides,
 });
 const config = (overrides: Partial<ServerConfig> = {}) => ({
@@ -23,6 +23,7 @@ const config = (overrides: Partial<ServerConfig> = {}) => ({
   repositoryBackgroundCommitThreshold: 20,
   repositoryBackgroundMaxSnapshotAgeDays: 7,
   repositoryBackgroundMinUpdateIntervalHours: 24,
+  repositoryBackgroundFailureRetryHours: 6,
   ...overrides,
 } as ServerConfig);
 
@@ -131,4 +132,38 @@ test('a release published after the current version starts an update even with f
   ]);
   assert.deepEqual(requested.sort(), ['many/commits', 'new/release']);
   assert.ok(!asked.includes('many/commits'), 'releases are only looked up when the other rules would wait');
+});
+
+test('a repository that only has to wait is checked again when the wait can be over', async () => {
+  const hour = 3600_000;
+  const scheduled: Array<[string, string]> = [];
+  const task = createRepositoryBackgroundRefreshTask(config(), {
+    now: () => now,
+    listCandidates: async () => [
+      candidate({ repository: 'recent/start', lastBackgroundStartedAt: new Date(now - 20 * hour).toISOString() }),
+      candidate({ repository: 'failed/retry', lastBackgroundStartedAt: new Date(now - 5 * hour).toISOString(),
+        lastBackgroundFailedAt: new Date(now - 2 * hour).toISOString() }),
+      candidate({ repository: 'failed/ready', lastBackgroundStartedAt: new Date(now - 9 * hour).toISOString(),
+        lastBackgroundFailedAt: new Date(now - 7 * hour).toISOString() }),
+      candidate({ repository: 'busy/pool' }),
+      candidate({ repository: 'no/budget' }),
+    ],
+    checkFreshness: async () => ({ baseSnapshotId: 'snapshot-id', upstreamCommitSha: sha('b'),
+      behindCommits: 40, relation: 'ahead', checkedAt: new Date(now).toISOString() }),
+    requestUpdate: async input => input.identity.repository === 'busy/pool' ? 'deferred:capacity'
+      : input.identity.repository === 'no/budget' ? 'deferred:budget_off' : 'queued',
+    scheduleCheck: async (repository, at) => { scheduled.push([repository, at]); },
+  });
+  const outcome = await task();
+  assert.deepEqual(outcome.decisions.map(row => [row.repository, row.decision]).sort(), [
+    ['busy/pool', 'deferred:capacity'], ['failed/ready', 'queued'], ['failed/retry', 'interval'],
+    ['no/budget', 'deferred:budget_off'], ['recent/start', 'interval'],
+  ]);
+  // The normal interval runs from the last start, the shorter failure wait from the failure; a full pool is
+  // looked at again once the current check expires. A budget of 0 is a setting, so it waits for the daily check.
+  assert.deepEqual(scheduled.sort(), [
+    ['busy/pool', new Date(now + hour).toISOString()],
+    ['failed/retry', new Date(now + 4 * hour).toISOString()],
+    ['recent/start', new Date(now + 4 * hour).toISOString()],
+  ]);
 });
