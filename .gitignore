@@ -110,12 +110,13 @@ id_ed25519
 .DS_Store
 Thumbs.db
 
-# Chinese translations are limited to root product and community documents.
+# Chinese translations are limited to the product, community, contribution and deployment documents.
 *.zh-CN.md
 !/README.zh-CN.md
 !/CODE_OF_CONDUCT.zh-CN.md
 !/CONTRIBUTING.zh-CN.md
 !/SECURITY.zh-CN.md
+!/licenses/README.zh-CN.md
 
 # Private collaboration materials and local development artifacts
 /ADMIN_CONSOLE*.md
@@ -145,6 +146,10 @@ Thumbs.db
 !/docs/runtime-capacity.md
 !/docs/static-analysis.md
 !/docs/source-snapshots.md
+!/docs/deployment.md
+!/docs/deployment.zh-CN.md
+!/docs/provider-keys.md
+!/docs/provider-keys.zh-CN.md
 .agents/
 .claude/
 .codex/

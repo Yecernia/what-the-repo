@@ -2,8 +2,6 @@
 
 [简体中文](CODE_OF_CONDUCT.zh-CN.md) · **English**
 
-[Product overview](README.en.md) · [Contributing](CONTRIBUTING.md)
-
 I'm [Yecernia](https://github.com/Yecernia), the author of what-the-repo. I want this to be a place where you can ask questions, share your work and learn comfortably, whether this is your first open-source project or you have years of development experience.
 
 ## Working together

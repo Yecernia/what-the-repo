@@ -2,8 +2,6 @@
 
 **简体中文** · [English](CODE_OF_CONDUCT.md)
 
-[产品介绍](README.md) · [贡献指南](CONTRIBUTING.zh-CN.md)
-
 我是 what-the-repo 的作者 [Yecernia](https://github.com/Yecernia)。我希望这里是一个可以放心提问、分享和学习的地方，无论你是第一次接触开源，还是已经有丰富的开发经验。
 
 ## 一起交流时

@@ -1,7 +1,5 @@
 # Third-party notices
 
-[Back to product overview](README.en.md)
-
 Original what-the-repo code is licensed under [MIT](LICENSE). Third-party code, fonts, icons and packages retain their respective licenses, linked below.
 
 ## Code and material sources
