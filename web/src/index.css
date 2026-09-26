@@ -329,6 +329,9 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 }
 .project-item:hover { background: var(--control-bg); }
 .project-item:active { transform: scale(.985); background: var(--control-active); }
+/* The pressed-item transform would trap the open menu under the next item, so its clicks would land there. */
+.project-item.menu-open { z-index: 40; }
+.project-item.menu-open:active { transform: none; }
 .project-item.active {
   background: var(--panel); border-color: var(--border-strong);
   box-shadow: var(--shadow-sm);

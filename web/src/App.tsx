@@ -3569,7 +3569,7 @@ export default function App() {
         {!sidebarCollapsed && <div className="sidebar-body">
           {projects.map(p => (
             <div key={p.project_id}
-              className={`project-item${activeId === p.project_id ? ' active' : ''}`}
+              className={`project-item${activeId === p.project_id ? ' active' : ''}${projectMenuId === p.project_id ? ' menu-open' : ''}`}
               onClick={() => {
                 if (renamingProjectId === p.project_id) return;
                 const cachedProject = projectCacheRef.current.get(p.project_id) ?? null;
