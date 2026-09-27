@@ -103,19 +103,19 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
     assert.equal(permits.rows[0].count, 0, 'all stage/object resources are released');
     assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rowCount,1,
       'the completed child leaves durable cleanup for the independent maintenance process');
-    // Large directory tables are dropped as child tables; delay a row-deleted table instead.
+    // Layers now live in objects. Delay the cleanup DELETE statement even when its SQL table is empty.
     while ((await store.pool.query('SELECT table_index FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0].table_index<RECLAMATION_TABLES.indexOf('layers')) {
       await reclaimSnapshotDirectoryBatch(store.pool);
     }
     const cleanupPool = new Pool({connectionString:url,max:1,application_name:'wtr-cleanup-release-proof'});
     const cleanupPid = (await cleanupPool.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
     const trigger = 'wtr_cleanup_delay_' + project.project_id.replaceAll('-','');
-    let cleanup: Promise<unknown> | undefined;
+    let cleanup: ReturnType<typeof reclaimSnapshotDirectoryBatch> | undefined;
     try {
     await store.pool.query(`CREATE FUNCTION ${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN PERFORM pg_sleep(0.8); RETURN OLD; END $$;
-      CREATE TRIGGER ${trigger} BEFORE DELETE ON snapshot_directory_layers FOR EACH ROW
-      WHEN(OLD.directory_id=${oldId}) EXECUTE FUNCTION ${trigger}()`);
+      BEGIN PERFORM pg_sleep(0.8); RETURN NULL; END $$;
+      CREATE TRIGGER ${trigger} BEFORE DELETE ON snapshot_directory_layers FOR EACH STATEMENT
+      EXECUTE FUNCTION ${trigger}()`);
       cleanup = reclaimSnapshotDirectoryBatch(cleanupPool);
       let observed = false; const deadline = performance.now()+3_000;
       while (!observed && performance.now()<deadline) {
@@ -126,7 +126,7 @@ test('isolated PostgreSQL: real subprocess stages retain personal quota, release
       assert.equal((await store.loadJob(job.job_id))?.status,'succeeded');
       const active = (await store.pool.query('SELECT count(*)::int AS n FROM runtime_permits')).rows[0].n;
       assert.equal(active,0,'analysis and publication permits are free while cleanup is still executing');
-      await cleanup;
+      assert.deepEqual(await cleanup, { status: 'progress', deletedRows: 0, directoryId: String(oldId) });
       console.log(JSON.stringify({analysisPermitsDuringCleanup:active,jobStatus:'succeeded',cleanupSqlDelayObserved:observed}));
     } finally {
       await cleanup?.catch(() => undefined);

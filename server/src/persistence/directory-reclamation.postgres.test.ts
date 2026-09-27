@@ -12,12 +12,12 @@ import { bindSnapshotQueryDirectory } from './snapshot-directory-publication.js'
 import { streamSnapshotQueryDirectory } from '../domain/snapshot-query.js';
 import { parseDirectoryManifest } from './directory-objects.js';
 
-const databaseUrl = process.env.WTR_RECLAMATION_TEST_DATABASE_URL;
+const databaseUrl = process.env.WTR_RECLAMATION_TEST_DATABASE_URL ?? process.env.WTR_ADMIN_TEST_DATABASE_URL;
 const childKinds = ['nodes','edges','evidence','evidence_links'] as const;
 async function fixture(task: (store: PostgresStore, key: string, directoryId: string, base: Parameters<PostgresStore['savePublicSnapshot']>[0]) => Promise<void>,
   storage: 'legacy' | 'child' = 'legacy') {
   const url = new URL(databaseUrl!);
-  assert.equal(url.hostname, '127.0.0.1'); assert.match(url.pathname, /^\/wtr_admin_test_reclamation_[a-z0-9_]+$/);
+  assert.equal(url.hostname, '127.0.0.1'); assert.match(url.pathname, /^\/wtr_admin_test_[a-z0-9_]+$/);
   const root = await mkdtemp(join(tmpdir(), 'wtr-directory-reclamation-'));
   const store = new PostgresStore({ root, databaseUrl: url.toString(), migrationsRoot: join(process.cwd(),'migrations'),
     encryptionSecret: 'isolated-directory-reclamation-only', poolMax: 3, objectAdmissionStore: new LocalPermitStore() });

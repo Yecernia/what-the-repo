@@ -52,7 +52,7 @@
     {
       "case_id": "unverified_reply_retains_notice",
       "requirement": "未验证的回答连同引用提示保留在后续会话中，但不提升为可信长期记忆。",
-      "node_test": "conversation service keeps the displayed unverified reply in the next Pi requests"
+      "node_test": "conversation service preserves model replies and appends visible citation corrections for subsequent turns"
     },
     {
       "case_id": "cancelled_run_skips_provider",

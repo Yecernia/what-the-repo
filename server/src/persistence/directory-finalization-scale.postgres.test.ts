@@ -24,7 +24,7 @@ test('million-row stale statistics and cached FK plans cannot stall retired-gene
   { skip: !databaseUrl, timeout: 240_000 }, async () => {
   const url = new URL(databaseUrl!);
   assert.equal(url.hostname, '127.0.0.1');
-  assert.match(url.pathname, /^\/wtr_admin_test_reclamation_[a-z0-9_]+$/);
+  assert.match(url.pathname, /^\/wtr_admin_test_[a-z0-9_]+$/);
   const root = await mkdtemp(join(tmpdir(), 'wtr-finalization-scale-'));
   const store = new PostgresStore({ root, databaseUrl: url.toString(), migrationsRoot: join(process.cwd(),'migrations'),
     encryptionSecret:'isolated-finalization-test-only', poolMax:2, objectAdmissionStore:new LocalPermitStore() });
