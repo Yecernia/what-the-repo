@@ -1,4 +1,5 @@
 import { runAbortCode } from '../services/execution-error.js';
+import { historicalSummary } from "./session-replay.js";
 import { serviceError } from '../services/errors.js';
 import {
   Agent,
@@ -207,6 +208,7 @@ export class PiConversationRuntime {
       const originalLeaf = await stored.session.getLeafId();
       try {
         if (options.turn) await this.sessions.prepareTurn(stored, options.turn);
+        await this.sessions.ensureReplayScope(stored, options.modelRuntime, options);
         await options.beforePrompt?.(runSignal,stored.writeFence);
       } catch (error) {
         await stored.session.moveLane("main", originalLeaf);
@@ -227,6 +229,10 @@ export class PiConversationRuntime {
       let compactedContext: AgentMessage[] | null = null;
       let compactedSourceCount = 0;
       const pendingCompactions: Parameters<PiSessionStore["appendCompaction"]>[1][] = [];
+      // UTF-8 bytes conservatively cover multilingual system text and schemas.
+      const fixedTokens = Math.ceil(Buffer.byteLength(options.systemPrompt + JSON.stringify(options.tools.map(
+        ({ name, description, parameters }) => ({ name, description, parameters }),
+      )), "utf8") / 3);
       const transformContext = async (
         messages: AgentMessage[],
         signal?: AbortSignal,
@@ -234,7 +240,7 @@ export class PiConversationRuntime {
         const candidate = compactedContext
           ? [...compactedContext, ...messages.slice(compactedSourceCount)]
           : messages;
-        const estimate = estimateContextTokens(candidate).tokens;
+        const estimate = estimateContextTokens(candidate).tokens + fixedTokens;
         if (!shouldCompact(
           estimate,
           options.modelRuntime.model.contextWindow,
@@ -247,6 +253,13 @@ export class PiConversationRuntime {
           DEFAULT_COMPACTION_SETTINGS,
         );
         if (!preparation.ok || !preparation.value) return candidate;
+        // The SDK summary serializer includes thinking as plain text. Supply
+        // only explicit historical data to the summarization request instead.
+        const summaryInput = (messages: AgentMessage[]): AgentMessage[] => messages.length ? [{
+          role: "user", content: historicalSummary(messages), timestamp: Date.now(),
+        }] : [];
+        preparation.value.messagesToSummarize = summaryInput(preparation.value.messagesToSummarize);
+        preparation.value.turnPrefixMessages = summaryInput(preparation.value.turnPrefixMessages);
         emit("model_started", "正在整理较早对话");
         const result = await compact(
           preparation.value,
@@ -258,6 +271,15 @@ export class PiConversationRuntime {
           { enabled: false, maxRetries: 0, baseDelayMs: 0 },
         );
         if (!result.ok) throw new Error("context_compaction_failed");
+        // Prefix replacement is a protocol boundary. Keep the current user
+        // request active, and carry older visible facts without signed state.
+        const tail = result.value.retainedTail;
+        const latestUser = [...candidate].reverse().find((message) => message.role === "user");
+        const activeTail = latestUser ? [latestUser] : [];
+        const historyTail = tail.filter((message) => message !== latestUser);
+        if (historyTail.length) result.value.summary += "\n\n" + historicalSummary(historyTail);
+        result.value.retainedTail = activeTail;
+        result.value.tokensBefore = estimate;
         pendingCompactions.push(result.value);
         if (result.value.usage) {
           usage = addUsage(usage, usageSummary(result.value.usage));
@@ -376,7 +398,10 @@ export class PiConversationRuntime {
       });
       const userMessage: AgentMessage = {
         role: "user",
-        content: [{ type: "text", text: options.userMessage }],
+        content: [
+          ...(options.turnContext ? [{ type: "text" as const, text: options.turnContext }] : []),
+          { type: "text", text: options.userMessage },
+        ],
         timestamp: Date.now(),
       };
       const settle = async (
@@ -509,17 +534,14 @@ export class PiConversationRuntime {
     visibleText?: string,
   ): Promise<void> {
     if (mode === "discard") return;
-    if (visibleText !== undefined) {
+    if (visibleText) {
       const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
-      if (lastAssistant?.role === "assistant") {
-        const final = { ...lastAssistant, content: [{ type: "text" as const, text: visibleText }] };
-        const last = messages.at(-1);
-        // Pausing after tools must preserve the call/result pair, then add the visible reply.
-        messages = last === lastAssistant && !lastAssistant.content.some((block) => block.type === "toolCall")
-          ? [...messages.slice(0, -1), final]
-          : [...messages, { ...final, stopReason: "stop" as const,
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } }];
+      if (visibleText !== assistantText(lastAssistant)) {
+        messages = [...messages, {
+          role: "user",
+          content: [{ type: "text", text: "Application display record (context only, not a new user request): the preceding assistant output was displayed with the following corrections or presentation changes. Treat this as the actual visible answer, including its uncertainty notices.\n" + visibleText }],
+          timestamp: Date.now(),
+        }];
       }
     }
     for (const compaction of compactions) {

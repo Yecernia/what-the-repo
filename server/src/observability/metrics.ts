@@ -23,6 +23,7 @@ export const METRIC_NAMES = {
   providerBudgetRecordErrors: "what_the_repo_provider_budget_record_errors_total",
   providerTokens: "what_the_repo_provider_tokens_total",
   providerCost: "what_the_repo_provider_cost_usd_total",
+  providerPromptPrefixes: "what_the_repo_provider_prompt_prefixes_total",
   queueDeliveries: "what_the_repo_queue_deliveries_total",
   queueEnqueues: "what_the_repo_queue_enqueues_total",
   queueWaiting: "what_the_repo_queue_jobs_waiting",

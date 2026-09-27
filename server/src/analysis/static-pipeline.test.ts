@@ -20,7 +20,8 @@ async function interpretFixture(snapshot: import('./graph.js').BuiltSnapshot) {
   const components = snapshot.graph.nodes.filter(node => (node.entity_kind ?? 'component') === 'component');
   const response: FauxResponseFactory = context => {
     const first = context.messages.find(message => message.role === 'user')!.content;
-    const input = JSON.parse(typeof first === 'string' ? first : first.filter(item => item.type === 'text').map(item => item.text).join(''));
+    // The worker appends budget annotations after the business JSON block.
+    const input = JSON.parse(typeof first === 'string' ? first : first.find(item => item.type === 'text')!.text);
     const value = input.mode === 'components' ? { mode: 'components', components: input.required_component_ids.map((id: string) => ({
       component_id: id, name: '调用模块', responsibility: '通过调用目标函数完成入口工作', grouping_rationale: '成员共同提供调用能力',
     })) } : input.mode === 'layers' ? { mode: 'layers', layers: [{ name: '调用层', responsibility: '组织入口与目标调用',

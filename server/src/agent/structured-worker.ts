@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
   Agent,
-  formatSkillInvocation,
   type AgentMessage,
   type AgentTool,
   type ThinkingLevel,
@@ -15,8 +14,10 @@ import { DEFAULT_WORKER_MAX_REQUESTS, WorkerExecutionError, workerFailureCode, p
 import { providerErrorCode } from "./provider-error.js";
 import { createWorkerDiagnostics, type WorkerDiagnosticIdentity, type WorkerDiagnostics } from "./worker-diagnostics.js";
 import { TEXT_REPAIR_DEFINITION, TEXT_REPAIR_SCHEMA, TEXT_REPAIR_TOOL, TextSubmissionRepair } from "./text-submission-repair.js";
+import { workerRequestContext } from "./worker-request-context.js";
 import {
   assertProductSkillRun,
+  formatProductSkillInvocation,
   loadProductSkill,
   type ProductSkillId,
   type ProductSkill,
@@ -181,6 +182,7 @@ export async function runStructuredWorker<T extends TSchema>(options: {
     },
   }] : [];
   const model = options.modelRuntime.model;
+  const appendRequestContext = workerRequestContext();
   const agent = new Agent({
     sessionId: "worker-" + randomUUID(),
     toolExecution: "parallel",
@@ -195,14 +197,10 @@ export async function runStructuredWorker<T extends TSchema>(options: {
           && diagnostics.data.requestCount >= DEFAULT_WORKER_MAX_REQUESTS) throw new WorkerExecutionError("analysis_batch_call_limit_exceeded");
         if (options.explorationEndgame) {
           const remaining = allowance
-            ? Math.min(allowance.batchRemaining, allowance.jobRemaining)
+            ? Math.min(allowance.batchRemaining, allowance.jobRemaining, DEFAULT_WORKER_MAX_REQUESTS - diagnostics.data.requestCount)
             : DEFAULT_WORKER_MAX_REQUESTS - diagnostics.data.requestCount;
           phase = explorationPhase(remaining);
-          const requestContext = {
-            ...context,
-            systemPrompt: `${context.systemPrompt}\n${phaseInstruction(phase, remaining)}`,
-            tools: context.tools?.filter(tool => tool.name === "submit_result" || tool.name === TEXT_REPAIR_TOOL || toolAllowed(tool.name)),
-          };
+          const requestContext = appendRequestContext(context, phaseInstruction(phase, remaining));
           const request = diagnostics.request(requestContext);
           request.phase = phase;
           request.remaining = remaining;
@@ -227,7 +225,7 @@ export async function runStructuredWorker<T extends TSchema>(options: {
       return localFailure !== null || submitted !== null || textRepair?.stats.exhausted === true;
     },
     initialState: {
-      systemPrompt: formatSkillInvocation(productSkill.skill, options.systemPrompt),
+      systemPrompt: formatProductSkillInvocation(productSkill, options.systemPrompt),
       model,
       thinkingLevel: options.thinkingLevel ?? "medium",
       messages: [],

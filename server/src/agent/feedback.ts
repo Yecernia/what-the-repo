@@ -174,7 +174,7 @@ export class FeedbackAnalysisWorker {
         skillId: "feedback-analysis",
         inputSchemaId: "feedback-analysis-input-v2",
         outputSchemaId: "feedback-analysis-output-v2",
-        contextBuilderId: "feedback-analysis-context-v2",
+        contextBuilderId: "feedback-analysis-context-v3",
         modelRuntime: input.modelRuntime,
         thinkingLevel: "low",
         schema: FEEDBACK_RESULT,
@@ -183,13 +183,13 @@ export class FeedbackAnalysisWorker {
           "Output must match the feedback-analysis schema and must not repeat source code, API keys or the whole conversation. The result is a diagnostic candidate, not permission to change a Skill. Finish by calling submit_result.",
         ].join("\n"),
         userPrompt: JSON.stringify({
-          vote: input.vote ?? null,
-          feedback_hint: input.hint ?? null,
-          user_reaction: userMessage?.content ?? null,
+          allowed_skill_ids: FEEDBACK_TARGET_SKILL_IDS,
           target_answer: assistant.content.slice(0, 8_000),
           recent_messages: boundedMessages(project).slice(-6),
           recent_traces: traces.slice(-3),
-          allowed_skill_ids: FEEDBACK_TARGET_SKILL_IDS,
+          vote: input.vote ?? null,
+          feedback_hint: input.hint ?? null,
+          user_reaction: userMessage?.content ?? null,
         }),
       });
       const signal = result.value

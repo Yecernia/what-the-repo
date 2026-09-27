@@ -538,7 +538,7 @@ test('lazy citation validation skips ordinary text and preserves custom paths an
   }
 });
 
-test("conversation service keeps the displayed unverified reply in the next Pi requests", async (t) => {
+test("conversation service preserves model replies and appends visible citation corrections for subsequent turns", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-visible-history-"));
   try {
     const { context, store } = await fixture(root);
@@ -548,10 +548,15 @@ test("conversation service keeps the displayed unverified reply in the next Pi r
     models.setProvider(faux.provider);
     const modelRuntime = { models, model: faux.getModel() } as PiModelRuntime;
     const originalRun = PiConversationRuntime.prototype.run;
+    let stableSystem: string | undefined;
     t.mock.method(PiConversationRuntime.prototype, "run", function(this: PiConversationRuntime, options: PiAgentRunOptions,
       finalize: (result: PiRunResult) => Promise<PiRunFinalization<unknown>>) {
-      assert.match(options.systemPrompt, /the interface shortens the displayed name/); // Actual loaded Skill + dynamic prompt.
-      assert.match(options.systemPrompt, /use the interface language: English/);
+      assert.match(options.systemPrompt, /the interface shortens the displayed name/); // Loaded Skill + stable program rules.
+      assert.match(options.systemPrompt, /use the interface language supplied in this turn's context/);
+      assert.match(options.turnContext ?? "", /Interface language fallback: English/);
+      assert.doesNotMatch(options.systemPrompt, /Interface language fallback: English/);
+      stableSystem ??= options.systemPrompt;
+      assert.equal(options.systemPrompt, stableSystem);
       assert.match(options.systemPrompt, /main language of the current message/);
       assert.match(options.systemPrompt, /hello/);
       assert.equal(options.modelRuntime.model.id, "deepseek-chat", "role overrides must preserve the selected chat model");
@@ -575,13 +580,27 @@ test("conversation service keeps the displayed unverified reply in the next Pi r
       return originalLoadSnapshot<T>(projectId, language);
     };
     let visible = "";
+    const originalAnswer = "这个文件可能是 `missing.ts`，尚未核实。";
     faux.setResponses([
-      fauxAssistantMessage("这个文件可能是 `missing.ts`，尚未核实。"),
+      fauxAssistantMessage(originalAnswer),
       (input) => {
-        const last = input.messages.at(-2);
-        assert.equal(last?.role, "assistant");
-        assert.equal(last?.role === "assistant" ? last.content.filter(b => b.type === "text").map(b => b.text).join("") : "", visible);
+        const original = input.messages.at(-3);
+        assert.equal(original?.role, "assistant");
+        assert.equal(original?.role === "assistant" ? original.content.filter(b => b.type === "text").map(b => b.text).join("") : "", originalAnswer);
+        assert.notEqual(originalAnswer, visible);
         assert.match(visible, /引用未核实/);
+        const correction = input.messages.at(-2);
+        assert.equal(correction?.role, "user");
+        assert.ok(correction && Array.isArray(correction.content));
+        const correctionText = correction.content.filter(b => b.type === "text").map(b => b.text).join("");
+        assert.match(correctionText, /Application display record \(context only, not a new user request\)/);
+        assert.ok(correctionText.endsWith(visible));
+        const current = input.messages.at(-1);
+        assert.equal(current?.role, "user");
+        assert.ok(current && Array.isArray(current.content));
+        assert.equal(current.content.length, 2);
+        assert.match(current.content[0]?.type === "text" ? current.content[0].text : "", /Interface language fallback: English/);
+        assert.equal(current.content[1]?.type === "text" ? current.content[1].text : "", "午饭吃什么");
         return fauxAssistantMessage("午饭可以吃面。");
       },
       (input) => {
@@ -608,7 +627,13 @@ test("conversation service keeps the displayed unverified reply in the next Pi r
       ownerId: owner.owner_id, projectId: context.project.project_id, snapshotId: context.project.analysis.snapshot_id,
       skillId: "primary-conversational-supervisor", skillVersion: "test" };
     const history = await sessions.snapshot(identity);
-    assert.deepEqual(history.messages.map(message => message.role), ["user", "assistant", "user", "assistant", "user", "assistant"]);
+    assert.deepEqual(history.messages.map(message => message.role), ["user", "assistant", "user", "user", "assistant", "user", "assistant"]);
+    const original = history.messages[1];
+    assert.equal(original?.role === "assistant" ? original.content.filter(b => b.type === "text").map(b => b.text).join("") : "", originalAnswer);
+    const correction = history.messages[2];
+    assert.ok(correction?.role === "user");
+    assert.ok(Array.isArray(correction.content));
+    assert.ok(correction.content.filter(b => b.type === "text").map(b => b.text).join("").endsWith(visible));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

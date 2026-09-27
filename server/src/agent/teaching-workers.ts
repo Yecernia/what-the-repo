@@ -118,7 +118,7 @@ export async function runUnderstandingAssessment(input: {
     skillId: "understanding-assessment",
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v3",
+    contextBuilderId: "understanding-assessment-context-v4",
     modelRuntime: input.modelRuntime,
     thinkingLevel: "medium",
     signal: input.signal,
@@ -129,10 +129,10 @@ export async function runUnderstandingAssessment(input: {
     ].join("\n"),
     userPrompt: JSON.stringify({
       current_step: step,
+      evidence: packets,
       current_study: studySummary(input.project.study),
       original_user_answer: input.answer,
       earlier_answers_in_this_step: input.earlierAnswers ?? [],
-      evidence: packets,
     }),
   });
   const acceptedEvidenceIds = result.value
@@ -216,7 +216,7 @@ export async function generateLearningRoute(input: {
     skillId: "learning-route",
     inputSchemaId: "learning-route-input-v3",
     outputSchemaId: "learning-route-output-v3",
-    contextBuilderId: "learning-route-context-v3",
+    contextBuilderId: "learning-route-context-v4",
     modelRuntime: input.modelRuntime,
     thinkingLevel: "medium",
     signal: input.signal,
@@ -229,12 +229,6 @@ export async function generateLearningRoute(input: {
     ].join("\n"),
     userPrompt: JSON.stringify({
       repository: input.project.source.display_name,
-      display_language: displayLanguage,
-      display_language_label: displayLanguageLabel(displayLanguage),
-      original_learning_request: input.request,
-      confirmed_target: input.target,
-      target_value_point: valuePoint,
-      learner: input.profile.enabled ? input.profile : null,
       repository_summary: input.snapshot.summary,
       architecture_layers: input.snapshot.graph.layers.map((layer) => ({
         layer_id: layer.id,
@@ -242,6 +236,12 @@ export async function generateLearningRoute(input: {
         responsibility: layer.responsibility,
         component_count: layer.component_ids.length,
       })),
+      display_language: displayLanguage,
+      display_language_label: displayLanguageLabel(displayLanguage),
+      original_learning_request: input.request,
+      confirmed_target: input.target,
+      target_value_point: valuePoint,
+      learner: input.profile.enabled ? input.profile : null,
     }),
     validateSubmitted: (value) => [...new Set(value.steps
       .map((step) => learningRouteLanguageError(step, displayLanguage))

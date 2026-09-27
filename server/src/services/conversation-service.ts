@@ -6,7 +6,6 @@ import { isDeepStrictEqual } from 'node:util';
 import { CapacityScheduler, permitStoreFor, type CapacityPermit } from '../scheduling/permits.js';
 import type { UsageAttribution } from '../agent/provider-budget.js';
 import { randomUUID } from "node:crypto";
-import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
 import type { ServerConfig } from "../config.js";
 import {
   createMessage,
@@ -52,6 +51,7 @@ import {
 } from "../agent/learning-actions.js";
 import {
   primarySystemPrompt,
+  primaryTurnContext,
   PRIMARY_SKILL_ID,
   isExplicitAdvanceRequest,
   type UiSelection,
@@ -67,7 +67,7 @@ import {
   resolveDeploymentProvider,
   resolveChatProvider,
 } from "../agent/provider-resolver.js";
-import { assertProductSkillRun, loadProductSkill } from "../agent/skill-registry.js";
+import { assertProductSkillRun, formatProductSkillInvocation, loadProductSkill } from "../agent/skill-registry.js";
 import type { ProductStore } from "../persistence/store.js";
 import type { TaskQueue } from "../queue/task-queue.js";
 import { serviceError } from "./errors.js";
@@ -514,7 +514,7 @@ export class ConversationService {
       toolNames: tools.map((tool) => tool.name),
       inputSchemaId: "conversation-turn-v1",
       outputSchemaId: "natural-answer-v1",
-      contextBuilderId: "primary-conversation-context-v3",
+      contextBuilderId: "primary-conversation-context-v4",
     });
 
     const finalize = async (result: PiRunResult, runSignal?: AbortSignal, writeFence?: {permitId:string}) => {
@@ -779,13 +779,14 @@ export class ConversationService {
         skillId: PRIMARY_SKILL_ID,
         skillVersion: primarySkill.version,
       },
-      systemPrompt: formatSkillInvocation(primarySkill.skill, primarySystemPrompt({
+      systemPrompt: formatProductSkillInvocation(primarySkill, primarySystemPrompt()),
+      turnContext: primaryTurnContext({
         project,
         profile,
         selections,
         currentUserMessage: content,
         displayLanguage: input.displayLanguage,
-      })),
+      }),
       userMessage: content,
       turn: {
         messageId: userMessage.message_id,
@@ -853,13 +854,13 @@ function visibleContextMessages(messages: Message[]): AgentMessage[] {
   });
 }
 
-function answerMessage(
+export function answerMessage(
   project: Project,
   text: string,
   model: string,
   stopReason: string,
   latencyMs: number,
-  usage: { inputTokens: number; outputTokens: number; cachedTokens: number },
+  usage: { inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number },
   traceId: string,
   thinkingSummary: MessageThinkingSummaryEvent[],
 ): Message {
@@ -870,10 +871,10 @@ function answerMessage(
     error: stopReason === "completed" ? null : stopReason,
     latency_ms: latencyMs,
     usage: {
-      prompt_tokens: usage.inputTokens,
+      prompt_tokens: usage.inputTokens + usage.cachedTokens + usage.cacheWriteTokens,
       completion_tokens: usage.outputTokens,
       cached_tokens: usage.cachedTokens,
-      total_tokens: usage.inputTokens + usage.outputTokens,
+      total_tokens: usage.inputTokens + usage.cachedTokens + usage.cacheWriteTokens + usage.outputTokens,
     },
     trace_id: traceId,
     thinking_summary: thinkingSummary,

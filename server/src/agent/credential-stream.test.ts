@@ -10,6 +10,24 @@ const message = (): AssistantMessage => ({ role: 'assistant', content: [], api: 
   usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } });
 
+test('reasoning signatures survive untouched output but are not replayed after credential redaction', async () => {
+  for (const echo of [false, true]) {
+    const result = { ...message(), content: [
+      { type: 'thinking' as const, thinking: echo ? key : 'private reasoning', thinkingSignature: 'signed-state' },
+      { type: 'text' as const, text: 'visible answer', textSignature: 'message-id' },
+    ] };
+    async function* source(): AsyncGenerator<AssistantMessageEvent> { yield { type: 'done', reason: 'stop', message: result }; }
+    for await (const event of credentialSafeEvents(source(), [key])) {
+      assert.equal(event.type, echo ? 'error' : 'done');
+      if (event.type !== 'done' && event.type !== 'error') continue;
+      const received = event.type === 'done' ? event.message : event.error;
+      assert.equal(received.content.some(block => block.type === 'thinking'), !echo);
+      assert.equal(JSON.stringify(event).includes(key), false);
+      if (!echo) assert.deepEqual(received.content, result.content);
+    }
+  }
+});
+
 test('streamed upstream credential echoes never reach Agent deltas, results or errors', async () => {
   const partial = message();
   async function* source(): AsyncGenerator<AssistantMessageEvent> {

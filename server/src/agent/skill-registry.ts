@@ -97,7 +97,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
     ],
     inputSchemaId: "conversation-turn-v1",
     outputSchemaId: "natural-answer-v1",
-    contextBuilderId: "primary-conversation-context-v3",
+    contextBuilderId: "primary-conversation-context-v4",
     evalSuite: "conversation-contract-v7",
   },
   "component-explanation": {
@@ -116,7 +116,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
     optionalTools: ["repair_result_text", "get_repository_file_outline"],
     inputSchemaId: "component-explanation-input-v6",
     outputSchemaId: "component-explanation-output-v6",
-    contextBuilderId: "component-explanation-context-v18",
+    contextBuilderId: "component-explanation-context-v19",
     evalSuite: "component-explanation-v20",
   },
   "architecture-planning": {
@@ -135,7 +135,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
     optionalTools: ["repair_result_text", "get_repository_file_outline"],
     inputSchemaId: "architecture-planning-input-v6",
     outputSchemaId: "architecture-planning-output-v6",
-    contextBuilderId: "architecture-planning-context-v18",
+    contextBuilderId: "architecture-planning-context-v19",
     evalSuite: "architecture-planning-v20",
   },
   "understanding-assessment": {
@@ -144,7 +144,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
     allowedTools: ["submit_result"],
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v3",
+    contextBuilderId: "understanding-assessment-context-v4",
     evalSuite: "understanding-assessment-v4",
   },
   "citation-review": {
@@ -153,7 +153,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
     allowedTools: ["submit_result"],
     inputSchemaId: "citation-review-input-v1",
     outputSchemaId: "citation-review-output-v1",
-    contextBuilderId: "citation-review-context-v2",
+    contextBuilderId: "citation-review-context-v3",
     evalSuite: "citation-review-v5",
   },
   "memory-maintenance": {
@@ -183,7 +183,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
     optionalTools: ["repair_result_text"],
     inputSchemaId: "repository-research-input-v6",
     outputSchemaId: "repository-value-output-v6",
-    contextBuilderId: "repository-value-context-v14",
+    contextBuilderId: "repository-value-context-v15",
     evalSuite: "repository-value-discovery-v21",
   },
   "snapshot-language-overlay": {
@@ -209,7 +209,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
     ],
     inputSchemaId: "learning-route-input-v3",
     outputSchemaId: "learning-route-output-v3",
-    contextBuilderId: "learning-route-context-v3",
+    contextBuilderId: "learning-route-context-v4",
     evalSuite: "learning-route-v5",
   },
   "feedback-analysis": {
@@ -218,7 +218,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
     allowedTools: ["submit_result"],
     inputSchemaId: "feedback-analysis-input-v2",
     outputSchemaId: "feedback-analysis-output-v2",
-    contextBuilderId: "feedback-analysis-context-v2",
+    contextBuilderId: "feedback-analysis-context-v3",
     evalSuite: "feedback-analysis-v5",
   },
   "skill-evolution": {
@@ -296,6 +296,11 @@ export async function loadProductSkill(id: ProductSkillId): Promise<ProductSkill
   }
 }
 
+/** Only model-visible locations are logical; keep the physical source for loading and validation. */
+export function formatProductSkillInvocation(productSkill: ProductSkill, additionalInstructions?: string): string {
+  return formatSkillInvocation({ ...productSkill.skill, filePath: `/skills/${productSkill.id}/SKILL.md` }, additionalInstructions);
+}
+
 export async function skillPrompt(
   id: ProductSkillId,
   additionalInstructions?: string,
@@ -305,7 +310,7 @@ export async function skillPrompt(
   if (productSkill.id !== id) throw new Error("skill_identity_mismatch");
   return {
     productSkill,
-    prompt: formatSkillInvocation(productSkill.skill, additionalInstructions),
+    prompt: formatProductSkillInvocation(productSkill, additionalInstructions),
   };
 }
 

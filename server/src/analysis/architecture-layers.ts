@@ -178,17 +178,17 @@ export function layerBatchInput(
       throw new Error("global_layer_assignment_scope_invalid");
     }
     return {
-      mode: "layers", assignment_mode: "components", batch_id: batchId,
+      mode: "layers", assignment_mode: "components",
       display_language: displayLanguage, display_language_label: displayLanguageLabel(displayLanguage),
       repository: snapshot.repository, required_component_ids: allComponentIds,
       scope_component_limit: MAX_COMPONENTS_PER_SCOPE, max_second_level_items_per_layer: MAX_SECOND_LEVEL_ITEMS,
       ...compactLayerRelations(layerRelationSummary(snapshot, candidates)),
       components: componentRows.map(({ layer_candidate_id: _candidate, layer_rationale: _rationale, ...row }) => row),
+      batch_id: batchId,
     };
   }
   return {
     mode: "layers",
-    batch_id: batchId,
     display_language: displayLanguage,
     display_language_label: displayLanguageLabel(displayLanguage),
     repository: snapshot.repository,
@@ -210,6 +210,7 @@ export function layerBatchInput(
       component_count: candidate.componentIds.length,
       sample_component_ids: candidate.componentIds.slice(0, 8),
     })),
+    batch_id: batchId,
   };
 }
 

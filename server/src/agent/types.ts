@@ -138,6 +138,8 @@ export interface PiAgentRunOptions {
   identity: PiSessionIdentity;
   systemPrompt: string;
   userMessage: string;
+  /** Immutable application context attached to this user turn. */
+  turnContext?: string;
   modelRuntime: PiModelRuntime;
   thinkingLevel: ThinkingLevel;
   tools: AgentTool[];

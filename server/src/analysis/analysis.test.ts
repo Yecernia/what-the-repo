@@ -448,7 +448,7 @@ test("value entry retains multilingual sources while selecting the project outpu
     const models = createModels(); models.setProvider(faux.provider);
     faux.setResponses([(context) => {
       const message = context.messages.find(row => row.role === "user")!;
-      const content = typeof message.content === "string" ? message.content : message.content.filter(row => row.type === "text").map(row => row.text).join("");
+      const content = typeof message.content === "string" ? message.content : message.content.find(row => row.type === "text")!.text;
       const input = JSON.parse(content);
       assert.equal(input.display_language, language);
       assert.deepEqual(input.initial_web_search.results.map((row: { title: string }) => row.title), pages.map(row => row.title));
@@ -493,7 +493,7 @@ test("value batch replay retains evidence first exposed through a tool", async (
     (context) => {
       assert.equal(searches, 1, "initial search must execute before the first model request");
       const message = context.messages.find((row) => row.role === "user")!;
-      const text = typeof message.content === "string" ? message.content : message.content.filter((row) => row.type === "text").map((row) => row.text).join("");
+      const text = typeof message.content === "string" ? message.content : message.content.find((row) => row.type === "text")!.text;
       const input = JSON.parse(text);
       assert.equal(input.initial_web_search.status, "results");
       assert.equal(input.initial_web_search.remaining_searches, 3);
@@ -541,7 +541,7 @@ test("mandatory value search distinguishes unavailable from empty and cancellati
     let searches = 0;
     faux.setResponses([(context) => {
       const message = context.messages.find((row) => row.role === "user")!;
-      const text = typeof message.content === "string" ? message.content : message.content.filter((row) => row.type === "text").map((row) => row.text).join("");
+      const text = typeof message.content === "string" ? message.content : message.content.find((row) => row.type === "text")!.text;
       assert.equal(JSON.parse(text).initial_web_search.status, status);
       return fauxAssistantMessage(fauxToolCall("submit_result", { official_design_review: emptyOfficialReview, value_points: [] }));
     }]);
@@ -583,7 +583,8 @@ function semanticConcurrencyFixture() {
   const request = (context: Parameters<FauxResponseFactory>[0]) => {
     const message = context.messages.find((row) => row.role === "user")!;
     const content = message.content;
-    return JSON.parse(typeof content === "string" ? content : content.filter((row) => row.type === "text").map((row) => row.text).join(""));
+    // Business input is the first block; subsequent blocks carry request budget annotations.
+    return JSON.parse(typeof content === "string" ? content : content.find((row) => row.type === "text")!.text);
   };
   return { snapshot, components, layers, values, faux, runtime, request };
 }
@@ -995,6 +996,20 @@ test("component requests only explain components and layer input uses the shared
   assert.equal(layerInput.scope_component_limit, (LAYER_WORKER_RESULT.properties.scopes.items.properties.component_ids as unknown as { maxItems: number }).maxItems);
   assert.equal(layerInput.scope_component_limit, MAX_COMPONENTS_PER_SCOPE);
   assert.equal(layerInput.max_second_level_items_per_layer, MAX_SECOND_LEVEL_ITEMS);
+});
+
+test("batch identity changes preserve the serialized repository and evidence prefix", () => {
+  const { snapshot, candidates } = optimizationInput();
+  const component = JSON.stringify(componentBatchInput(snapshot, ["component:0"], "first", false, "zh-CN"));
+  const repair = JSON.stringify(componentBatchInput(snapshot, ["component:0"], "repair", true, "zh-CN"));
+  assert.equal(component.split(',"batch_id":')[0], repair.split(',"batch_id":')[0]);
+  assert.match(component, /,"batch_id":"first","repair_batch":false}$/);
+  for (const includeScopes of [false, true]) {
+    const first = JSON.stringify(layerBatchInput(snapshot, candidates, "first", "zh-CN", includeScopes));
+    const second = JSON.stringify(layerBatchInput(snapshot, candidates, "second", "zh-CN", includeScopes));
+    assert.equal(first.split(',"batch_id":')[0], second.split(',"batch_id":')[0]);
+    assert.match(first, /,"batch_id":"first"}$/);
+  }
 });
 
 test("layer input and exploration share component semantics without cloning facts", async () => {

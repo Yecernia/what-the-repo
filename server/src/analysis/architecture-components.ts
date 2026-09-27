@@ -134,8 +134,6 @@ export function componentBatchInput(
   const target = new Set(componentIds);
   return {
     mode: "components",
-    batch_id: batchId,
-    repair_batch: repair,
     display_language: displayLanguage,
     display_language_label: displayLanguageLabel(displayLanguage),
     repository: snapshot.repository,
@@ -168,6 +166,8 @@ export function componentBatchInput(
         fan_out: component.fan_out,
       }];
     }),
+    batch_id: batchId,
+    repair_batch: repair,
   };
 }
 

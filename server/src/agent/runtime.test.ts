@@ -105,11 +105,13 @@ test("Pi runtime turns provider thinking into safe display summaries without exp
       model: faux.getModel() as Model<Api>,
     };
     faux.setResponses([fauxAssistantMessage([
-      fauxThinking("DO NOT SHOW THIS INTERNAL REASONING"),
-      fauxText("可展示的回答"),
+      { ...fauxThinking("DO NOT SHOW THIS INTERNAL REASONING"), thinkingSignature: "signed-reasoning" },
+      { ...fauxText("可展示的回答"), textSignature: "signed-text" },
     ])]);
 
-    const result = await runtime.run(options(modelRuntime, "展示事件测试"));
+    const result = await runtime.run(options(modelRuntime, "展示事件测试"), async (value) => ({
+      value, sessionCommit: "accepted", assistantText: value.text,
+    }));
     const serialized = JSON.stringify(result.events);
     assert.equal(serialized.includes("DO NOT SHOW THIS INTERNAL REASONING"), false);
     assert.ok(result.events.some((event) => event.type === "thinking_started"));
@@ -123,13 +125,16 @@ test("Pi runtime turns provider thinking into safe display summaries without exp
       assert.ok(event.display!.label.length > 0);
       assert.ok(["running", "completed", "failed", "cancelled", "paused"].includes(event.display!.status));
     }
-    const persisted = await sessions.snapshot(identity);
+    const persisted = await new PiSessionStore(root).snapshot(identity);
     const persistedText = JSON.stringify(persisted.messages);
-    assert.equal(persistedText.includes("DO NOT SHOW THIS INTERNAL REASONING"), false);
+    assert.equal(persistedText.includes("DO NOT SHOW THIS INTERNAL REASONING"), true);
+    assert.equal(persistedText.includes("signed-reasoning"), true);
+    assert.equal(persistedText.includes("signed-text"), true);
+    assert.equal(persisted.messages.length, 2);
     assert.equal(persisted.messages.some((message) => (
       message.role === "assistant"
       && message.content.some((block) => block.type === "thinking")
-    )), false);
+    )), true);
     const summary = messageThinkingSummary(result.events);
     assert.ok(summary.length > 0);
     assert.ok(summary.every((event) => event.kind === "summary"));
@@ -216,18 +221,21 @@ test("Pi runtime preserves the visible answer and citation notice when the user 
       assistantText: visibleAnswer,
     }));
     const afterRejected = await sessions.snapshot(identity);
-    assert.deepEqual(afterRejected.messages.map(messageText), ["第一轮问题", visibleAnswer]);
+    assert.equal(messageText(afterRejected.messages[1]!), "这是一条没有通过引用校验的仓库回答。");
+    assert.ok(messageText(afterRejected.messages[2]!).endsWith(visibleAnswer));
+    const displayRecord = messageText(afterRejected.messages[2]!);
 
     await runtime.run(options(modelRuntime, "你好"), async (result) => ({
       value: result,
       sessionCommit: "accepted",
     }));
-    assert.deepEqual(visibleToSecondRun, ["第一轮问题", visibleAnswer, "你好"]);
+    assert.deepEqual(visibleToSecondRun, ["第一轮问题", "这是一条没有通过引用校验的仓库回答。", displayRecord, "你好"]);
 
     const committed = await sessions.snapshot(identity);
     assert.deepEqual(committed.messages.map(messageText), [
       "第一轮问题",
-      visibleAnswer,
+      "这是一条没有通过引用校验的仓库回答。",
+      displayRecord,
       "你好",
       "第二轮正常回答。",
     ]);
@@ -407,10 +415,17 @@ test("Pi runtime pauses after the current tool turn without starting another mod
       if (event.type === "tool_call_requested") assert.equal(runtime.pause(runId), true);
     };
 
-    const result = await runtime.run(runOptions);
+    const result = await runtime.run(runOptions, async (value) => ({
+      value, sessionCommit: "accepted", assistantText: "Paused after collecting evidence.",
+    }));
     assert.equal(result.stopReason, "paused");
     assert.equal(faux.state.callCount, 1);
     assert.ok(result.events.some((event) => event.type === "run_paused"));
+    const saved = (await new PiSessionStore(root).snapshot(identity)).messages;
+    assert.equal(saved[1]?.role, "assistant");
+    assert.ok(saved[1]?.role === "assistant" && saved[1].content.some((block) => block.type === "toolCall" && block.id === "pause-call"));
+    assert.equal(saved[2]?.role, "toolResult");
+    assert.equal(saved[3]?.role, "user");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -571,4 +586,106 @@ test('runtime forwards the session fence to both business write boundaries',asyn
     });
     assert.equal(checked,2);
   } finally {await rm(root,{recursive:true,force:true});}
+});
+
+test("turn context is appended once and connection changes rebuild only protocol history", async () => {
+  const root = await mkdtemp(join(tmpdir(), "what-the-repo-replay-"));
+  try {
+    const sessions = new PiSessionStore(root);
+    const runtime = new PiConversationRuntime(sessions);
+    const faux = fauxProvider({ provider: "scope-test" });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const modelRuntime: PiModelRuntime = { models, model: faux.getModel() as Model<Api>, providerConnectionId: "connection-a" };
+    faux.setResponses([
+      fauxAssistantMessage([fauxThinking("PRIVATE REASONING"), fauxText("first answer")]),
+      fauxAssistantMessage("second answer"),
+      fauxAssistantMessage("third answer"),
+    ]);
+    await runtime.run({ ...options(modelRuntime, "first question"), turnContext: "context one" });
+    const first = (await sessions.snapshot(identity)).messages;
+    await runtime.run({ ...options(modelRuntime, "second question"), turnContext: "context two" });
+    const second = await sessions.snapshot(identity);
+    assert.deepEqual(second.messages.slice(0, first.length), first);
+    assert.deepEqual(second.messages[2]?.role === "user" && second.messages[2].content, [
+      { type: "text", text: "context two" }, { type: "text", text: "second question" },
+    ]);
+    assert.equal(second.entries.filter((entry) => entry.type === "compaction").length, 0);
+    await runtime.run(options({ ...modelRuntime, providerConnectionId: "connection-b" }, "third question"));
+    const third = await sessions.snapshot(identity);
+    assert.equal(third.messages[0]?.role, "compactionSummary");
+    assert.equal(JSON.stringify(third.messages).includes("PRIVATE REASONING"), false);
+    assert.ok(JSON.stringify(third.entries).includes("PRIVATE REASONING"));
+    assert.ok(JSON.stringify(third.messages).includes("first answer"));
+    assert.ok(JSON.stringify(third.messages).includes("context one"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy history and edited turns establish stable replay boundaries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "what-the-repo-edit-replay-"));
+  try {
+    const sessions = new PiSessionStore(root);
+    const runtime = new PiConversationRuntime(sessions);
+    const faux = fauxProvider({ provider: "edit-replay-test" });
+    const models = createModels(); models.setProvider(faux.provider);
+    const modelRuntime: PiModelRuntime = { models, model: faux.getModel() as Model<Api> };
+    await sessions.withSession(identity, async ({ session }) => sessions.appendMessages(session, [
+      { role: "user", content: "legacy question", timestamp: 1 },
+      { role: "assistant", content: [{ type: "thinking", thinking: "LEGACY SECRET", thinkingSignature: "legacy-signature" }, { type: "text", text: "legacy answer" }], timestamp: 2 } as AgentMessage,
+    ]));
+    faux.setResponses([fauxAssistantMessage("old answer"), fauxAssistantMessage("edited answer"), fauxAssistantMessage("next answer")]);
+    await runtime.run({ ...options(modelRuntime, "old question"), turn: { messageId: "edit-me", replace: false, previousMessages: [] } });
+    const first = await sessions.snapshot(identity);
+    assert.equal(JSON.stringify(first.messages).includes("LEGACY SECRET"), false);
+    assert.equal(first.messages[0]?.role, "compactionSummary");
+    await runtime.run({ ...options(modelRuntime, "edited question"), turn: { messageId: "edit-me", replace: true, previousMessages: [] } });
+    const edited = await sessions.snapshot(identity);
+    assert.equal(JSON.stringify(edited.messages).includes("old question"), false);
+    assert.equal(JSON.stringify(edited.messages).includes("old answer"), false);
+    await runtime.run(options(modelRuntime, "next question"));
+    const next = await sessions.snapshot(identity);
+    assert.deepEqual(next.messages.slice(0, edited.messages.length), edited.messages);
+    assert.equal(next.entries.filter((entry) => entry.type === "compaction").length, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("compaction counts system overhead and never serializes reasoning as summary input", async () => {
+  const root = await mkdtemp(join(tmpdir(), "what-the-repo-compact-replay-"));
+  try {
+    const sessions = new PiSessionStore(root);
+    const runtime = new PiConversationRuntime(sessions);
+    const faux = fauxProvider({ provider: "compact-replay-test" });
+    const models = createModels(); models.setProvider(faux.provider);
+    const modelRuntime: PiModelRuntime = { models, model: { ...faux.getModel(), contextWindow: 20_000 } as Model<Api> };
+    await sessions.withSession(identity, async (context) => {
+      await sessions.ensureReplayScope(context, modelRuntime, {
+        systemPrompt: "s".repeat(15_000), tools: [], thinkingLevel: "off",
+      });
+      await sessions.appendMessages(context.session, [
+        { role: "user", content: "earlier question", timestamp: 1 },
+        { role: "assistant", content: [{ type: "thinking", thinking: "COMPACTION SECRET", thinkingSignature: "signed" }, { type: "text", text: "earlier answer" }], timestamp: 2 } as AgentMessage,
+      ]);
+    });
+    faux.setResponses([
+      (context) => {
+        assert.equal(JSON.stringify(context).includes("COMPACTION SECRET"), false);
+        return fauxAssistantMessage("Earlier conversation summarized.");
+      },
+      (context) => {
+        assert.equal(JSON.stringify(context).includes("COMPACTION SECRET"), false);
+        assert.ok(JSON.stringify(context).includes("pending question"));
+        return fauxAssistantMessage("current answer");
+      },
+    ]);
+    const result = await runtime.run({ ...options(modelRuntime, "pending question"), systemPrompt: "s".repeat(15_000) });
+    assert.equal(result.text, "current answer");
+    assert.equal(faux.state.callCount, 2);
+    const saved = await sessions.snapshot(identity);
+    assert.equal(saved.messages[0]?.role, "compactionSummary");
+    assert.equal(saved.messages[1]?.role, "user");
+    assert.equal(messageText(saved.messages[1]!), "pending question");
+    assert.equal(JSON.stringify(saved.messages).includes("COMPACTION SECRET"), false);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

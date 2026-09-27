@@ -7,13 +7,22 @@ type Delta = Extract<AssistantMessageEvent, { type: 'text_delta' | 'thinking_del
 export async function* credentialSafeEvents(source: AsyncIterable<AssistantMessageEvent>, secrets: string[]): AsyncGenerator<AssistantMessageEvent> {
   const redactor = credentialRedactor(secrets);
   const channels = new Map<string, { stream: ReturnType<typeof redactor.stream>; template: Delta }>();
+  let replayChanged = false;
   for await (const raw of source) {
     const event = redactor.data(raw);
+    const originalMessage = 'partial' in raw ? raw.partial : raw.type === 'done' ? raw.message : raw.error;
+    const safeMessage = 'partial' in event ? event.partial : event.type === 'done' ? event.message : event.error;
+    if (event.type === 'done' || event.type === 'error') {
+      replayChanged ||= JSON.stringify(originalMessage.content) !== JSON.stringify(safeMessage.content);
+    }
     const scrubJoined = (message: AssistantMessage) => {
       const blocks = message.content.filter(block => block.type === 'text');
       const joined = blocks.map(block => block.text).join('');
       const clean = redactor.text(joined);
-      if (clean !== joined) blocks.forEach((block, index) => { block.text = index ? '' : clean; });
+      if (clean !== joined) {
+        replayChanged = true;
+        blocks.forEach((block, index) => { block.text = index ? '' : clean; });
+      }
     };
     if ('partial' in event) scrubJoined(event.partial);
     else if (event.type === 'done') scrubJoined(event.message);
@@ -44,6 +53,20 @@ export async function* credentialSafeEvents(source: AsyncIterable<AssistantMessa
         if (delta) yield { ...channel.template, delta };
       }
       channels.clear();
+    }
+    if ((event.type === 'done' || event.type === 'error') && replayChanged) {
+      // Sanitized content must never be replayed as though its signature were still valid.
+      const message = event.type === 'done' ? event.message : event.error;
+      message.content = message.content.filter(block => block.type !== 'thinking').map(block => {
+        if (block.type === 'text') return { type: 'text', text: block.text };
+        const { thoughtSignature: _signature, ...tool } = block;
+        return tool;
+      });
+      if (event.type === 'done' && originalMessage.content.some(block => block.type === 'thinking' && block.thinkingSignature)) {
+        // Stop this turn rather than execute tools with altered signed reasoning.
+        yield { type: 'error', reason: 'error', error: { ...message, stopReason: 'error', errorMessage: 'provider_invalid_response' } };
+        continue;
+      }
     }
     if (event.type === 'error') {
       channels.clear();

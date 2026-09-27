@@ -8,8 +8,10 @@ import { skillExecutionIdentity } from "../analysis/execution-identity.js";
 import {
   assertProductSkillRun,
   configureProductSkillRegistry,
+  formatProductSkillInvocation,
   loadProductSkill,
   PRODUCT_SKILL_IDS,
+  skillPrompt,
 } from "./skill-registry.js";
 
 test("product skills load from reviewed files and enforce their runtime contract", async () => {
@@ -53,6 +55,18 @@ test("every registered product Skill has matching metadata and a usable descript
       contextBuilderId: productSkill.contextBuilderId,
     }));
   }
+});
+
+test("Skill prompts use a stable logical location without changing the physical source", async () => {
+  const bundled = await loadProductSkill("primary-conversational-supervisor");
+  const relocated = { ...bundled, skill: { ...bundled.skill, filePath: "D:/published/version-123/SKILL.md" } };
+  const prompt = formatProductSkillInvocation(bundled, "Additional rule");
+  assert.equal(formatProductSkillInvocation(relocated, "Additional rule"), prompt);
+  assert.equal((await skillPrompt(bundled.id, "Additional rule", relocated)).prompt, prompt);
+  assert.match(prompt, /\/skills\/primary-conversational-supervisor\/SKILL\.md/);
+  assert.ok(!prompt.includes(bundled.skill.filePath));
+  assert.equal(relocated.skill.filePath, "D:/published/version-123/SKILL.md");
+  assert.deepEqual(skillExecutionIdentity(bundled), skillExecutionIdentity(relocated));
 });
 
 test("architecture text repair is optional while repository tools remain required", async () => {
@@ -99,6 +113,10 @@ test("new runs hot-load an approved published Skill version", async () => {
     assert.equal(base.version, baseVersion);
     assert.match(base.skill.content, /base published marker/u);
     assert.ok(base.skill.content.includes(baseExample.content));
+    assert.equal(base.skill.filePath, join(skillRoot, baseVersion, "SKILL.md"));
+    const relocatedBase = { ...base, skill: { ...base.skill, filePath: "/different/deployment/SKILL.md" } };
+    assert.equal(formatProductSkillInvocation(base), formatProductSkillInvocation(relocatedBase));
+    assert.ok(formatProductSkillInvocation(base).includes(baseExample.content));
 
     const nextVersion = "candidate.r2.123456789abc";
     // Updating only a reviewed reference must also update the effective instructions.

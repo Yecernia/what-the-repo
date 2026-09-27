@@ -82,7 +82,7 @@ export async function reviewAnswerEvidence(input: {
     skillId: "citation-review",
     inputSchemaId: "citation-review-input-v1",
     outputSchemaId: "citation-review-output-v1",
-    contextBuilderId: "citation-review-context-v2",
+    contextBuilderId: "citation-review-context-v3",
     modelRuntime: input.modelRuntime,
     thinkingLevel: "medium",
     signal: input.signal,
@@ -92,8 +92,8 @@ export async function reviewAnswerEvidence(input: {
       "accepted_evidence_ids must come from the input. Do not retrieve anything or change state. Finish by calling submit_result.",
     ].join("\n"),
     userPrompt: JSON.stringify({
-      final_answer: input.text,
       evidence: packets,
+      final_answer: input.text,
     }),
   });
   if (!result.value) {

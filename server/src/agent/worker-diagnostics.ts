@@ -28,6 +28,7 @@ export interface ProviderRequestDiagnostic {
   durationMs: number;
   status: string;
   completionReason?: string;
+  promptCache?: import('./prompt-cache.js').PromptCacheDiagnostic;
   requestLimits?: {
     modelMaxTokens: number;
     wireMaxTokens: number | null;

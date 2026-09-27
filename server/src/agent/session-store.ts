@@ -15,24 +15,9 @@ import {
   type Entry,
   type SessionMetadata,
 } from "@earendil-works/pi-agent-core";
-import type { PiSessionIdentity } from "./types.js";
+import type { PiModelRuntime, PiSessionIdentity } from "./types.js";
+import { historicalSummary, replayScope, type ReplayConfiguration } from "./session-replay.js";
 import { KeyedMutex } from "./mutex.js";
-
-/**
- * Provider thinking is an internal reasoning channel, not part of the
- * durable conversation transcript. Drop it before a message crosses the
- * session persistence boundary. This also keeps legacy session entries from
- * being fed back into a later model request as hidden chain-of-thought.
- */
-function withoutThinking(message: AgentMessage): AgentMessage {
-  if (message.role !== "assistant") return message;
-  const assistant = message as Extract<AgentMessage, { role: "assistant" }>;
-  if (!Array.isArray(assistant.content)) return assistant;
-  const content = assistant.content.filter((block) => block.type !== "thinking");
-  return content.length === assistant.content.length
-    ? assistant
-    : { ...assistant, content };
-}
 
 export interface PiSessionContext {
   writeFence?: {permitId:string};
@@ -110,14 +95,14 @@ function entryMessages(entries: Entry[]): AgentMessage[] {
       compaction.tokensBefore,
       compaction.timestamp,
     ));
-    result.push(...compaction.retainedTail.map(withoutThinking));
+    result.push(...compaction.retainedTail);
     for (const entry of entries.slice(latestCompaction + 1)) {
-      if (entry.type === "message") result.push(withoutThinking(entry.message));
+      if (entry.type === "message") result.push(entry.message);
     }
     return result;
   }
   for (const entry of entries) {
-    if (entry.type === "message") result.push(withoutThinking(entry.message));
+    if (entry.type === "message") result.push(entry.message);
   }
   return result;
 }
@@ -263,7 +248,7 @@ export class PiSessionStore {
   }
 
   async appendMessages(session: Session<SessionMetadata>, messages: AgentMessage[]): Promise<void> {
-    for (const message of messages) await session.appendMessage(durableJson(withoutThinking(message)));
+    for (const message of messages) await session.appendMessage(durableJson(message));
   }
 
   async appendCompaction(
@@ -281,7 +266,7 @@ export class PiSessionStore {
       id: uuidv7(),
       summary: result.summary,
       tokensBefore: result.tokensBefore,
-      retainedTail: result.retainedTail.map(withoutThinking),
+      retainedTail: result.retainedTail,
       ...(result.details === undefined ? {} : { details: result.details }),
       ...(result.usage === undefined ? {} : { usage: result.usage as CompactionEntry["usage"] }),
     };
@@ -294,17 +279,18 @@ export class PiSessionStore {
 
   /** Repair a legacy context from the visible transcript without deleting its original log. */
   async recoverVisibleConversation(identity: PiSessionIdentity, messages: AgentMessage[]): Promise<boolean> {
-    const restored = messages.map(withoutThinking);
+    const restored = messages;
     const digest = createHash("sha256").update(JSON.stringify(restored)).digest("hex");
     return this.withSession(identity, async ({ session, entries, messages: previous }) => {
       if (entries.some((entry) => entry.type === "compaction"
         && (entry.details as { visibleHistoryDigest?: string } | undefined)?.visibleHistoryDigest === digest)) return false;
       await this.appendCompaction(session, {
-        summary: "Conversation restored from the answers already shown to the user. These questions have been answered; retain any uncertainty notices and respond to the latest request.",
+        summary: historicalSummary(restored),
         tokensBefore: estimateContextTokens(previous).tokens,
-        retainedTail: restored,
+        retainedTail: [],
         details: { reason: "visible_history_recovery", visibleHistoryDigest: digest },
       });
+      await session.appendCustomEntry("model_replay_scope", { version: 1, scope: null });
       return true;
     });
   }
@@ -322,15 +308,39 @@ export class PiSessionStore {
     identity: PiSessionIdentity,
     messages: Array<{ role: "user" | "assistant" | "system"; content: string; createdAt?: string }>,
   ): Promise<void> {
-    await this.delete(identity.sessionId);
-    if (!messages.length) return;
-    await this.withSession(identity, async ({ session }) => {
-      await this.appendMessages(session, messages.map((message) => ({
+    await this.withSession(identity, async ({ session, messages: previous }) => {
+      await this.appendCompaction(session, {
+        summary: historicalSummary(messages.map((message) => ({
         role: message.role,
         content: message.content,
         timestamp: message.createdAt ? Date.parse(message.createdAt) : Date.now(),
-      } as AgentMessage)));
+        } as AgentMessage))),
+        tokensBefore: estimateContextTokens(previous).tokens,
+        retainedTail: [],
+        details: { reason: "authoritative_history_rebuild" },
+      });
+      await session.appendCustomEntry("model_replay_scope", { version: 1, scope: null });
     });
+  }
+
+  async ensureReplayScope(context: PiSessionContext, runtime: PiModelRuntime, configuration?: ReplayConfiguration): Promise<void> {
+    const scope = replayScope(runtime, configuration);
+    const marker = [...context.entries].reverse().find((entry) =>
+      entry.type === "custom" && entry.customType === "model_replay_scope");
+    const previous = marker?.type === "custom" ? marker.data as { version?: number; scope?: string | null } : undefined;
+    if (previous?.version === 1 && previous.scope === scope) return;
+    // Recovery and merge already produce a protocol-independent history summary.
+    if (context.messages.length && !(context.messages.length === 1 && context.messages[0]?.role === "compactionSummary")) {
+      await this.appendCompaction(context.session, {
+        summary: historicalSummary(context.messages),
+        tokensBefore: estimateContextTokens(context.messages).tokens,
+        retainedTail: [],
+        details: { reason: previous?.scope ? "model_replay_scope_changed" : "legacy_replay_boundary" },
+      });
+    }
+    await context.session.appendCustomEntry("model_replay_scope", { version: 1, scope });
+    context.entries = await context.session.findEntriesOnBranch({ order: "oldestFirst" });
+    context.messages = entryMessages(context.entries);
   }
 
   async deleteOwner(ownerId: string): Promise<number> {

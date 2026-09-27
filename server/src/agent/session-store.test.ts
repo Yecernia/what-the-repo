@@ -73,8 +73,9 @@ test("visible conversation recovery preserves the original log and is idempotent
     assert.equal(await store.recoverVisibleConversation(identity, restored), true);
     assert.equal(await store.recoverVisibleConversation(identity, restored), false);
     const reopened = await new PiSessionStore(root).snapshot(identity);
-    assert.equal(reopened.entries.length, 3);
-    assert.deepEqual(reopened.messages.slice(1).map(textOf), restored.map(textOf));
+    assert.equal(reopened.entries.length, 4);
+    assert.equal(reopened.messages.length, 1);
+    for (const text of restored.map(textOf)) assert.ok(textOf(reopened.messages[0]!).includes(text));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -150,7 +151,10 @@ test("Pi sessions rebuild under a new owner-derived id and deleteOwner removes t
       { role: "assistant", content: "权威回答", createdAt: "2026-08-21T00:00:01.000Z" },
     ]);
     assert.equal((await store.listOwnerSessions("github:42")).length, 1);
-    assert.deepEqual((await store.snapshot(rebuiltIdentity)).messages.map(textOf), ["权威项目消息", "权威回答"]);
+    const rebuilt = (await store.snapshot(rebuiltIdentity)).messages;
+    assert.equal(rebuilt.length, 1);
+    assert.ok(textOf(rebuilt[0]!).includes("权威项目消息"));
+    assert.ok(textOf(rebuilt[0]!).includes("权威回答"));
     assert.equal((await store.listOwnerSessions("guest:merge")).length, 1);
     assert.equal(await store.deleteOwner("guest:merge"), 1);
     assert.equal((await store.listOwnerSessions("guest:merge")).length, 0);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createModels, type Api, type Model } from "@earendil-works/pi-ai";
+import { createModels, type Api, type Model, type Context } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { Type } from "typebox";
 import { runStructuredWorker } from "./structured-worker.js";
@@ -9,6 +9,24 @@ import { semanticRunContract } from "../analysis/semantic-batch-runner.js";
 import { skillMetadata } from "./skill-registry.js";
 import { TextSubmissionRepair } from "./text-submission-repair.js";
 import { providerFailureReason } from "./worker-failure.js";
+import { workerRequestContext } from "./worker-request-context.js";
+
+test("worker request annotations survive copied SDK contexts and reject rewritten history", () => {
+  const append = workerRequestContext();
+  const original: Context = { systemPrompt: "fixed", messages: [{ role: "user", content: "task", timestamp: 1 }] };
+  const first = append(original, "first allowance");
+  assert.equal(original.messages[0].content, "task");
+  const next: Context = { ...original, messages: [...structuredClone(original.messages),
+    { role: "user", content: "repair followup", timestamp: 2 }] };
+  const second = append(next, "second allowance");
+  assert.deepEqual(second.messages[0], first.messages[0]);
+  assert.match(JSON.stringify(second.messages[1]), /second allowance/);
+  assert.equal(next.messages[1].content, "repair followup");
+  const changed = structuredClone(next);
+  changed.messages[0].content = "changed history";
+  assert.throws(() => append(changed, "third allowance"), /worker_request_history_changed/);
+  assert.throws(() => append(next, "third allowance"), /requires_new_tail/);
+});
 
 test("provider retries distinguish transient transport from credentials and unknown failures", async () => {
   for (const status of [429, 500, 502, 503, 504]) assert.equal(providerFailureReason([{ status }]), "provider_transient_error");
@@ -42,6 +60,21 @@ function textRepairRuntime(provider: string) {
     modelRuntime: { models, model: faux.getModel() as Model<Api> },
   } };
 }
+
+test("endgame annotates an appended repair user message after a response without tools", async () => {
+  const { faux, options } = textRepairRuntime("endgame-user-followup-fixture");
+  const requests: Context[] = [];
+  faux.setResponses([
+    context => { requests.push(JSON.parse(JSON.stringify(context)) as Context); return fauxAssistantMessage("I will submit."); },
+    context => { requests.push(JSON.parse(JSON.stringify(context)) as Context); return fauxAssistantMessage(fauxToolCall("submit_result", { components: [] })); },
+  ]);
+  const result = await runStructuredWorker({ ...options, explorationEndgame: { evidenceToolName: "get_repository_evidence" } });
+  assert.equal(result.stopReason, "completed");
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1].messages.slice(0, requests[0].messages.length), requests[0].messages);
+  assert.equal(requests[1].messages.at(-1)?.role, "user");
+  assert.match(JSON.stringify(requests[1].messages.at(-1)?.content), /还可进行 39 次/);
+});
 
 test("text repair preserves other components and evidence and accepts only the corrected fields", async () => {
   const { faux, options } = textRepairRuntime("structured-text-repair-test");
@@ -164,7 +197,7 @@ test("structured worker failure returns a stable reason without provider details
     skillId: "understanding-assessment",
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v3",
+    contextBuilderId: "understanding-assessment-context-v4",
     systemPrompt: "提交结果。",
     userPrompt: "生成结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -190,7 +223,7 @@ test("structured worker exposes provider request failures separately from missin
     skillId: "understanding-assessment",
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v3",
+    contextBuilderId: "understanding-assessment-context-v4",
     systemPrompt: "提交结果。",
     userPrompt: "生成结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -216,7 +249,7 @@ test("structured worker returns validation errors to the same agent and accepts 
     skillId: "understanding-assessment",
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v3",
+    contextBuilderId: "understanding-assessment-context-v4",
     systemPrompt: "提交结果。",
     userPrompt: "生成中文结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -237,11 +270,17 @@ test("structured worker returns validation errors to the same agent and accepts 
   assert.ok((result.diagnostics?.durationMs ?? 0) > 0);
 });
 
-test("value endgame narrows schemas, blocks old exploration calls, and permits a corrected submission", async () => {
+test("value endgame preserves request prefixes and schemas while blocking exploration execution", async () => {
   const faux = fauxProvider({ provider: "value-endgame-fixture" });
   const models = createModels(); models.setProvider(faux.provider);
   let reads = 0, confirmations = 0, allowanceIndex = 0;
   const prompts: string[] = [];
+  const requests: Context[] = [];
+  const capture = (context: Context) => {
+    requests.push(JSON.parse(JSON.stringify(context)) as Context);
+    schemas.push(context.tools?.map(tool => tool.name) ?? []);
+    prompts.push(context.systemPrompt ?? "");
+  };
   const tools = skillMetadata("repository-value-discovery").allowedTools
     .filter(name => !["submit_result", "repair_result_text"].includes(name))
     .map(name => ({ name, label: name, description: name, parameters: Type.Object({}), execute: async () => {
@@ -251,11 +290,11 @@ test("value endgame narrows schemas, blocks old exploration calls, and permits a
     } }));
   const schemas: string[][] = [];
   faux.setResponses([
-    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("get_repository_evidence", {})); },
-    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("get_repository_evidence", {})); },
-    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("read_repository_source", {})); },
-    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("submit_result", { answer: "English" })); },
-    context => { schemas.push(context.tools?.map(tool => tool.name) ?? []); prompts.push(context.systemPrompt ?? ""); return fauxAssistantMessage(fauxToolCall("submit_result", { answer: "已核实" })); },
+    context => { capture(context); return fauxAssistantMessage([fauxToolCall("get_repository_evidence", {}), fauxToolCall("get_repository_evidence", {})]); },
+    context => { capture(context); return fauxAssistantMessage(fauxToolCall("get_repository_evidence", {})); },
+    context => { capture(context); return fauxAssistantMessage(fauxToolCall("read_repository_source", {})); },
+    context => { capture(context); return fauxAssistantMessage(fauxToolCall("submit_result", { answer: "English" })); },
+    context => { capture(context); return fauxAssistantMessage(fauxToolCall("submit_result", { answer: "已核实" })); },
   ]);
   const result = await runStructuredWorker({
     skillId: "repository-value-discovery", ...semanticRunContract("repository-value-discovery"),
@@ -273,10 +312,21 @@ test("value endgame narrows schemas, blocks old exploration calls, and permits a
   assert.deepEqual(result.diagnostics?.requests.map(row => [row.phase, row.remaining]),
     [["converge", 5], ["submit", 4], ["submit", 3], ["submit", 2], ["submit", 1]]);
   assert.ok(schemas[0]?.includes("search_web"), "convergence keeps evidence tools available");
-  for (const names of schemas.slice(1)) assert.deepEqual(names?.sort(), ["get_repository_evidence", "repair_result_text", "submit_result"].sort());
-  assert.ok(prompts.every(prompt => prompt.split("本批次或整个任务最多还可进行").length === 2), "phase hints must not accumulate");
-  assert.equal(reads, 0, "hidden tools must not execute even if the model calls them from history");
-  assert.equal(confirmations, 2);
+  for (let index = 0; index < requests.length; index++) {
+    assert.deepEqual(schemas[index], schemas[0]);
+    assert.deepEqual(requests[index].tools, requests[0].tools);
+    assert.equal(prompts[index], prompts[0]);
+    assert.doesNotMatch(prompts[index], /本批次或整个任务最多还可进行/);
+    assert.match(JSON.stringify(requests[index].messages.at(-1)?.content), new RegExp(`还可进行 ${5 - index} 次`));
+    if (index) assert.deepEqual(requests[index].messages.slice(0, requests[index - 1].messages.length), requests[index - 1].messages);
+  }
+  const parallelResults = requests[1].messages.filter(message => message.role === "toolResult");
+  assert.equal(parallelResults.length, 2);
+  assert.doesNotMatch(JSON.stringify(parallelResults[0].content), /程序请求上下文/);
+  assert.match(JSON.stringify(parallelResults[1].content), /程序请求上下文/);
+  assert.match(JSON.stringify(requests[3].messages.at(-1)?.content), /当前探索工具不可用/);
+  assert.equal(reads, 0, "listed exploration tools must still be rejected during submission");
+  assert.equal(confirmations, 3);
 });
 
 test("value endgame uses its local 40-call limit when a legacy reservation hook returns void", async () => {
@@ -331,7 +381,7 @@ test("structured worker records SDK argument rejection and unknown tools without
     skillId: "understanding-assessment",
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v3",
+    contextBuilderId: "understanding-assessment-context-v4",
     systemPrompt: "提交结果。", userPrompt: "生成结果。",
     schema: Type.Object({ answer: Type.String() }),
     modelRuntime: { models, model: faux.getModel() as Model<Api> },
@@ -366,7 +416,7 @@ test("structured worker retains the final evidence-backed submission after valid
     skillId: "understanding-assessment",
     inputSchemaId: "understanding-assessment-input-v1",
     outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v3",
+    contextBuilderId: "understanding-assessment-context-v4",
     systemPrompt: "提交结果。",
     userPrompt: "生成中文结果。",
     schema: Type.Object({ answer: Type.String() }),

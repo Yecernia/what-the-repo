@@ -2,6 +2,7 @@ import { executionErrorCode } from '../services/execution-error.js';
 import { serviceError } from '../services/errors.js';
 import { performance } from "node:perf_hooks";
 import { credentialSafeEvents } from "./credential-stream.js";
+import { compatibleReplayContext, PromptCacheObserver, promptCacheScope, workerPromptCacheKey } from './prompt-cache.js';
 import { providerDiagnosticMessage } from "./provider-error.js";
 import {
   createModels,
@@ -48,6 +49,7 @@ export interface ModelRuntimeOptions {
 }
 
 const rawModels = new WeakMap<PiModelRuntime['models'], PiModelRuntime['models']>();
+const promptCacheObserver = new PromptCacheObserver();
 
 /** Also covers Pi's direct completeSimple calls during context compaction. */
 export function modelsWithProviderControl(runtime: PiModelRuntime): PiModelRuntime['models'] {
@@ -515,6 +517,10 @@ export function streamWithProviderPermit(
   mode: 'simple' | 'api' = 'simple',
 ): ReturnType<ReturnType<typeof createModels>["streamSimple"]> {
   runtime = { ...runtime, model: candidate };
+  context = compatibleReplayContext(context, candidate);
+  const diagnosticScope = streamOptions?.sessionId ? promptCacheScope(runtime, streamOptions.sessionId) : undefined;
+  if (streamOptions?.sessionId) streamOptions = { ...streamOptions,
+    sessionId: workerPromptCacheKey(runtime, context, streamOptions.sessionId) };
   const wrapped = new DeferredAssistantStream();
   void (async () => {
     const acquireStarted = performance.now();
@@ -570,6 +576,14 @@ export function streamWithProviderPermit(
           const started = performance.now();
           const body = args[1]?.body;
           const requestBytes = typeof body === "string" ? Buffer.byteLength(body, "utf8") : null;
+          if (transportAttempts === 1 && diagnosticScope && typeof body === 'string') {
+            try {
+              const shape = promptCacheObserver.observe(diagnosticScope, JSON.parse(body));
+              if (diagnostic) diagnostic.promptCache = shape;
+              runtime.metrics?.increment(METRIC_NAMES.providerPromptPrefixes, 1,
+                { ...providerLabels(runtime), reason: shape.reason });
+            } catch { /* Diagnostics cannot prevent a provider request. */ }
+          }
           let status: number | null = null;
           let errorCode: string | undefined;
           try {
