@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { SnapshotLearningStep } from "./snapshot.js";
+import type { TeachingQuestion, TeachingAssessment } from "../agent/teaching-question.js";
+import type { CitationReviewResult } from "../agent/citation-review.js";
 import type { RepositoryMigrationAction } from "./lifecycle.js";
 import { isProviderPreset, type ProviderPreset } from "../agent/provider-catalog.js";
 import { sanitizeMemorySummary } from "../agent/memory-summary.js";
@@ -50,6 +52,11 @@ export interface LearningActionProgress {
 }
 
 export interface LearningActionCard {
+  route_revision?: number;
+  expected_step_id?: string | null;
+  source_message_id?: string;
+  run_id?: string;
+  run_expires_at?: string | null;
   action_id: string;
   action: LearningActionKind;
   target: LearningActionTarget | null;
@@ -114,6 +121,10 @@ export interface MessageThinkingSummaryEvent {
 }
 
 export interface Message {
+  evidence_review?: Pick<CitationReviewResult, "status" | "supported" | "summary" | "issues">;
+  original_run_id?: string;
+  /** Retained on retry/edit so regenerating prose cannot authorize another state change. */
+  learning_action_result?: { action_id: string; route_revision: number; step_id: string | null };
   message_id: string;
   role: MessageRole;
   content: string;
@@ -188,6 +199,11 @@ export interface AnalysisProgressEvent {
 export const MAX_ANALYSIS_PROGRESS_EVENTS = 32;
 
 export interface StudyState {
+  route_revision?: number;
+  teaching_question?: TeachingQuestion | null;
+  latest_assessment?: TeachingAssessment | null;
+  mastered_target_items?: string[];
+  mastered_target_evidence?: Record<string, string[]>;
   phase: TeachingPhase;
   selected_value_point: string | null;
   current_step: number;
@@ -196,7 +212,7 @@ export interface StudyState {
   /** Stable step ids the user explicitly chose to skip rather than mark as mastered. */
   skipped_steps?: string[];
   /** The current step's passing assessment, so an advance offered in a later turn still counts as mastered. */
-  step_passed?: { step_id: string; mastered_items: string[]; evidence_ids: string[] } | null;
+  step_passed?: { step_id: string; mastered_items: string[]; evidence_ids: string[]; snapshot_id?: string; route_revision?: number; assessment_sequence?: number } | null;
   misconceptions: string[];
   open_questions: string[];
   used_evidence: string[];

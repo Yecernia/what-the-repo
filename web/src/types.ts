@@ -31,6 +31,9 @@ export type LearningTargetKind = 'repository' | 'value_point' | 'component' | 'l
 export type LearningActionStatus = 'pending' | 'confirmed' | 'declined' | 'executed' | 'expired' | 'failed';
 
 export interface LearningActionCard {
+  route_revision?: number;
+  expected_step_id?: string | null;
+  run_expires_at?: string | null;
   action_id: string;
   action: LearningActionKind;
   target: {
@@ -52,6 +55,13 @@ export interface LearningActionCard {
   resolved_at: string | null;
   executed_at: string | null;
   error: string | null;
+}
+
+export interface LearningIntent {
+  kind: 'skip_current_step';
+  route_revision: number;
+  step_id: string;
+  snapshot_id: string;
 }
 
 export interface ConversationSelection {
@@ -111,6 +121,12 @@ export interface MessageThinkingSummaryEvent {
 }
 
 export interface Message {
+  evidence_review?: {
+    status: 'reviewed' | 'not_applicable' | 'unverified';
+    supported: boolean;
+    summary: string;
+    issues: Array<{ claim: string; reason: string; kind: 'insufficient_evidence' | 'contradicted' }>;
+  };
   unresolved_references?: string[];
   message_id: string;
   role: MessageRole;
@@ -167,6 +183,7 @@ export interface AnalysisProgressEvent {
 }
 
 export interface StudyState {
+  route_revision?: number;
   phase: TeachingPhase;
   selected_value_point: string | null;
   current_step: number;

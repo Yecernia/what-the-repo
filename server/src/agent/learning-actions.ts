@@ -43,6 +43,8 @@ export function createLearningActionProposal(
     description: copy.description,
     request: input.request.trim().slice(0, 2_000),
     snapshot_id: snapshot.snapshot_id,
+    route_revision: project.study.route_revision ?? 0,
+    expected_step_id: currentLearningStep(project)?.step_id ?? null,
     status: "pending",
     skip_understanding_check: Boolean(input.skipUnderstandingCheck),
     progress: input.progress ? {
@@ -68,6 +70,7 @@ export function assertLearningActionStillCurrent(
   if (action.snapshot_id !== snapshot.snapshot_id || project.analysis.snapshot_id !== action.snapshot_id) {
     throw new Error("learning_action_snapshot_mismatch");
   }
+  assertActionState(project, action);
   resolveTarget(
     project,
     snapshot,
@@ -82,6 +85,7 @@ export function applyCompletedLearningRoute(
   action: LearningActionCard,
   steps: SnapshotLearningStep[],
 ): void {
+  assertActionState(project, action);
   project.study.selected_value_point = action.target?.kind === "value_point"
     ? action.target.stable_id
     : null;
@@ -97,11 +101,11 @@ export function applyCompletedLearningRoute(
   project.study.misconceptions = [];
   project.study.open_questions = [];
   project.study.used_evidence = [];
+  resetCurrentCheck(project);
 }
 
 export function applyConfirmedLearningAction(project: Project, action: LearningActionCard): void {
-  // Any confirmed action ends the current step's check; the next step is assessed afresh.
-  project.study.step_passed = null;
+  assertActionState(project, action);
   if (action.action === "stop_guided_learning") {
     project.study.phase = "orienting";
     project.study.selected_value_point = null;
@@ -114,6 +118,7 @@ export function applyConfirmedLearningAction(project: Project, action: LearningA
     project.study.used_evidence = [];
     project.study.dynamic_learning_plan = [];
     project.study.migration = null;
+    resetCurrentCheck(project);
     return;
   }
   if (action.action !== "advance_learning_step") {
@@ -129,19 +134,46 @@ export function applyConfirmedLearningAction(project: Project, action: LearningA
       step.step_id,
     ], 100);
   } else {
+    const passed = project.study.step_passed;
+    const latest = project.study.latest_assessment;
+    if (!passed || passed.step_id !== step.step_id
+      || passed.snapshot_id !== project.analysis.snapshot_id
+      || passed.route_revision !== (project.study.route_revision ?? 0)
+      || (latest?.step_id === step.step_id && (!latest.step_completed
+        || latest.verdict !== "mastered" || latest.sequence !== passed.assessment_sequence))) {
+      throw new Error("learning_step_not_passed");
+    }
     project.study.mastered = unique([
       ...project.study.mastered,
-      ...(action.progress?.mastered_items.length ? action.progress.mastered_items : [step.title]),
+      ...(passed.mastered_items.length ? passed.mastered_items : [step.title]),
     ], 100);
   }
   project.study.used_evidence = unique([
     ...project.study.used_evidence,
-    ...(action.progress?.evidence_ids ?? []),
+    ...(action.skip_understanding_check ? [] : project.study.step_passed?.evidence_ids ?? []),
   ], 100);
   project.study.current_step = Math.min(project.study.current_step + 1, project.study.total_steps);
   project.study.phase = project.study.total_steps > 0 && project.study.current_step >= project.study.total_steps
     ? "completed"
     : "explaining";
+  resetCurrentCheck(project);
+}
+
+function assertActionState(project: Project, action: LearningActionCard): void {
+  if (action.snapshot_id !== project.analysis.snapshot_id
+    || action.route_revision !== (project.study.route_revision ?? 0)
+    || action.expected_step_id !== (currentLearningStep(project)?.step_id ?? null)) {
+    throw new Error("learning_action_no_longer_current");
+  }
+}
+
+function resetCurrentCheck(project: Project): void {
+  project.study.route_revision = (project.study.route_revision ?? 0) + 1;
+  project.study.step_passed = null;
+  project.study.teaching_question = null;
+  project.study.latest_assessment = null;
+  project.study.mastered_target_items = [];
+  project.study.mastered_target_evidence = {};
 }
 
 export function isRouteAction(action: LearningActionCard): boolean {

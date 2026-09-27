@@ -1073,16 +1073,16 @@ function LearningPlanView({
     : snapshot.learning_plan.steps;
   return (
     <div className="learning-plan" data-testid="learning-plan">
-      {steps.length ? steps.map(step => {
-        const completed = step.order <= project.study.current_step;
-        const current = step.order === project.study.current_step + 1;
+      {steps.length ? steps.map((step, index) => {
+        const completed = index < project.study.current_step;
+        const current = index === project.study.current_step;
         return (
           <button
             key={step.step_id}
             className={`learning-step${completed ? ' completed' : ''}${current ? ' current' : ''}${selected?.kind === 'learning-step' && selected.value.step_id === step.step_id ? ' selected' : ''}`}
             onClick={() => onSelect({ kind: 'learning-step', value: step })}
           >
-            <div className="learning-step-index">{completed ? <CheckCircle2 size={15} /> : step.order}</div>
+            <div className="learning-step-index">{completed ? <CheckCircle2 size={15} /> : index + 1}</div>
             <div>
               <div className="learning-step-title">{step.title}</div>
               <p><InlineWorkspaceText text={step.objective} /></p>

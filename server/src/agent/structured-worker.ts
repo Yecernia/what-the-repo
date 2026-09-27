@@ -84,6 +84,8 @@ export async function runStructuredWorker<T extends TSchema>(options: {
   signal?: AbortSignal;
   validateSubmitted?: (value: Static<T>) => string | readonly string[] | null | undefined;
   maxSubmitAttempts?: number;
+  /** Teaching/review tasks only; overrides may lower but never raise the default bounds. */
+  taskLimits?: { maxRequests?: number; timeoutMs?: number };
   repairTextFields?: readonly string[];
   diagnosticIdentity?: WorkerDiagnosticIdentity;
   /** Explicit opt-in for bounded exploration; only value discovery enables it. */
@@ -182,6 +184,17 @@ export async function runStructuredWorker<T extends TSchema>(options: {
     },
   }] : [];
   const model = options.modelRuntime.model;
+  const boundedTask = ["learning-route", "understanding-assessment", "citation-review"].includes(options.skillId);
+  const maxRequests = Math.max(1, Math.min(6, options.taskLimits?.maxRequests ?? 6));
+  const timeoutMs = Math.max(1, Math.min(120_000, options.taskLimits?.timeoutMs ?? 120_000));
+  const externalSignal = options.signal;
+  const taskController = boundedTask ? new AbortController() : null;
+  const forwardAbort = () => taskController?.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) forwardAbort();
+  else if (taskController) externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+  if (taskController) options = { ...options, signal: taskController.signal };
+  const timer = taskController ? setTimeout(() => taskController.abort(new WorkerExecutionError("worker_time_limit_exceeded")), timeoutMs) : null;
+  timer?.unref();
   const appendRequestContext = workerRequestContext();
   const agent = new Agent({
     sessionId: "worker-" + randomUUID(),
@@ -189,6 +202,7 @@ export async function runStructuredWorker<T extends TSchema>(options: {
     streamFn: async (candidate, context, streamOptions) => {
       try {
         options.signal?.throwIfAborted();
+        if (boundedTask && diagnostics.data.requestCount >= maxRequests) throw new WorkerExecutionError("worker_call_limit_exceeded");
         if (options.explorationEndgame && diagnostics.data.requestCount >= DEFAULT_WORKER_MAX_REQUESTS)
           throw new WorkerExecutionError("analysis_batch_call_limit_exceeded");
         const allowance: void | WorkerRequestAllowance = await options.modelRuntime.beforeWorkerRequest?.(options.diagnosticIdentity);
@@ -318,6 +332,8 @@ export async function runStructuredWorker<T extends TSchema>(options: {
       diagnostics: diagnostics.data,
     };
   } finally {
+    if (timer) clearTimeout(timer);
+    if (taskController) externalSignal?.removeEventListener("abort", forwardAbort);
     unsubscribe();
     diagnostics.finish();
     options.signal?.removeEventListener("abort", abort);

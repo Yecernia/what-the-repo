@@ -1787,6 +1787,8 @@ function MsgBubble({
   onResend,
   edit,
   skipStep,
+  startStep,
+  onCancelLearningAction,
 }: {
   msg: Message;
   activity?: RuntimeProgressEvent[];
@@ -1803,10 +1805,9 @@ function MsgBubble({
   edit?: { content?: string; onCancel: () => void; onSubmit: (content: string) => void };
   /** The current learning step, offered as a one-tap skip under the latest tutor reply. */
   skipStep?: { title: string; onSkip: () => void };
+  startStep?: { title: string; onStart: () => void };
+  onCancelLearningAction?: (actionId: string) => void;
 }) {
-  if (edit) return <div className="msg user editing" ref={messageRef}><div className="msg-content">
-    <InlineMessageEditor content={edit.content ?? msg.content} onCancel={edit.onCancel} onSubmit={edit.onSubmit} />
-  </div></div>;
   const action = msg.learning_action;
   const evidenceFiles = msg.evidence.filter((item, index, all) => all.findIndex(candidate => (
     candidate.path === item.path && candidate.snapshot_id === item.snapshot_id
@@ -1819,12 +1820,27 @@ function MsgBubble({
   const failureReason = msg.error && msg.error !== 'cancelled'
     ? conversationErrorMessage(msg.error) ?? (lastActivity?.status === 'failed' && lastActivity.kind === 'summary' && lastActivity.stage === 'failed' ? lastActivity.label : null)
     : null;
-  const actionPending = action?.status === 'pending';
-  const actionResolving = Boolean(actionPending && learningActionPending);
-  const routeResolving = Boolean(actionResolving && (
+  const isRoute = Boolean(
     action?.action === 'start_learning_route'
     || action?.action === 'switch_learning_target'
-  ));
+  );
+  const [actionClock, setActionClock] = useState(Date.now);
+  useEffect(() => {
+    if (action?.status !== 'confirmed' || !action.run_expires_at) return;
+    const expires = Date.parse(action.run_expires_at);
+    if (!Number.isFinite(expires)) return;
+    const timer = window.setTimeout(() => setActionClock(Date.now()), Math.max(0, expires - Date.now()) + 10);
+    return () => window.clearTimeout(timer);
+  }, [action?.status, action?.run_expires_at]);
+  const expiredRun = action?.status === 'confirmed' && (!action.run_expires_at
+    || !Number.isFinite(Date.parse(action.run_expires_at)) || Date.parse(action.run_expires_at) <= actionClock);
+  const actionPending = action?.status === 'pending';
+  const actionRetryable = isRoute && (action?.status === 'failed' || expiredRun);
+  const actionResolving = Boolean(learningActionPending || (action?.status === 'confirmed' && !expiredRun));
+  const routeResolving = actionResolving && isRoute;
+  if (edit) return <div className="msg user editing" ref={messageRef}><div className="msg-content">
+    <InlineMessageEditor content={edit.content ?? msg.content} onCancel={edit.onCancel} onSubmit={edit.onSubmit} />
+  </div></div>;
   return (
     <div className={`msg ${msg.role}`} ref={messageRef}>
       <div className="msg-content">
@@ -1856,6 +1872,11 @@ function MsgBubble({
            : <p style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</p>}
           {/* Why the answer stopped reads like the tutor saying it, under the one-line "回答失败" summary. */}
           {failureReason && <p className="message-failure-text">{failureReason}</p>}
+          {msg.role === 'assistant' && msg.evidence_review && <p className="message-evidence-review" data-testid="evidence-review-status">
+            {msg.evidence_review.status === 'reviewed' && msg.evidence_review.supported
+              ? t('已核对引用源码')
+              : msg.evidence_review.status === 'not_applicable' ? t('本轮无需核对源码') : t('尚未通过源码核对')}
+          </p>}
           {msg.evidence.length > 0 && (
             <div className="evidence-chips">
               {evidenceFiles.map((ev, i) => {
@@ -1889,9 +1910,9 @@ function MsgBubble({
                     action.status === 'failed' ? t("暂未完成") :
                     action.status === 'expired' ? t("已失效") : t("已处理")}</>}</span>
               </div>
-              <p>{action.description}</p>
+              <p>{isRoute && actionPending ? t('确认学习目标后生成路线，具体步骤将在生成后展示。') : action.description}</p>
               {action.error && <p className="learning-action-error">{t("这项学习操作暂时未完成，请稍后重试。")}</p>}
-              {actionPending && !actionResolving && (
+              {(actionPending || actionRetryable) && !actionResolving && (
                 <div className="learning-action-controls">
                   <button
                     type="button"
@@ -1899,19 +1920,23 @@ function MsgBubble({
                     disabled={Boolean(learningActionPending)}
                     onClick={() => onLearningAction(action.action_id, 'confirm')}
                   >
-                    <Check size={14} /> {t(" 确认")}
+                    <Check size={14} /> {actionRetryable ? t('重试') : t(" 确认")}
                   </button>
-                  <button
+                  {actionPending && <button
                     type="button"
                     className="btn"
                     disabled={Boolean(learningActionPending)}
                     onClick={() => onLearningAction(action.action_id, 'decline')}
                   >
-                    <X size={14} /> {t(" 暂不")}</button>
+                    <X size={14} /> {t(" 暂不")}</button>}
                 </div>
               )}
+              {routeResolving && onCancelLearningAction && <button type="button" className="btn"
+                onClick={() => onCancelLearningAction(action.action_id)}>{t('取消生成')}</button>}
             </div>
           )}
+          {startStep && <div className="learning-action-controls"><button type="button" className="btn btn-primary"
+            onClick={startStep.onStart}>{t('开始当前步骤')} · {startStep.title}</button></div>}
           {skipStep && (
             <div className="learning-skip-option">
               <button type="button" className="learning-skip-button" onClick={skipStep.onSkip}
@@ -2839,7 +2864,7 @@ export default function App() {
 
   // `replacement` with a message id edits or resends that message; without one it sends the given text as a new
   // message and leaves the learner's draft alone (used by the one-tap learning options).
-  async function sendMessage(replacement?: { messageId?: string; content: string; contexts?: ConversationSelection[] }) {
+  async function sendMessage(replacement?: { messageId?: string; content: string; contexts?: ConversationSelection[]; learningIntent?: import('./types').LearningIntent }) {
     const text = (replacement?.content ?? input).trim();
     if (
       !text
@@ -2955,9 +2980,10 @@ export default function App() {
             replaceMessageId,
             retryRunId,
             snapshot?.snapshot_id ?? null,
+            ...(replacement?.learningIntent ? [replacement.learningIntent] : []),
           )
         : await apiClient.sendMessage(projectId, text, sentContexts, reviewEvidence, replaceMessageId, retryRunId,
-          snapshot?.snapshot_id ?? null);
+          snapshot?.snapshot_id ?? null, ...(replacement?.learningIntent ? [replacement.learningIntent] : []));
       const cachedAfterResponse = projectCacheRef.current.get(projectId);
       if (cachedAfterResponse) {
         projectCacheRef.current.set(
@@ -3848,11 +3874,23 @@ export default function App() {
                         onEvidenceClick={openMessageEvidence}
                         onFeedback={submitMessageFeedback}
                         onLearningAction={resolveLearningAction}
+                        onCancelLearningAction={actionId => {
+                          void apiClient.cancelRun(project.project_id, actionId).catch(error => {
+                            setLoadError(userFacingError(error, t('学习操作暂时未完成，请稍后重试。')));
+                          });
+                        }}
                         feedbackPending={Boolean(feedbackPending[msg.message_id])}
                         learningActionPending={Boolean(learningActionPending[msg.learning_action?.action_id ?? ''])}
+                        startStep={offerSkip && routeStep && msg.learning_action?.status === 'executed'
+                          && ['start_learning_route', 'switch_learning_target'].includes(msg.learning_action.action) ? {
+                            title: routeStep.title,
+                            onStart: () => { void sendMessage({ content: t('开始当前步骤') }); },
+                          } : undefined}
                         skipStep={offerSkip && routeStep ? {
                           title: routeStep.title,
-                          onSkip: () => { void sendMessage({ content: t('跳过这一步的理解检查，直接进入下一步。') }); },
+                          onSkip: () => { void sendMessage({ content: t('跳过这一步的理解检查，直接进入下一步。'),
+                            learningIntent: { kind: 'skip_current_step', route_revision: project.study.route_revision ?? 0,
+                              step_id: routeStep.step_id, snapshot_id: project.analysis.snapshot_id! } }); },
                         } : undefined}
                         messageRef={node => registerMessageRef(msg.message_id, node)} />
                     </Fragment>

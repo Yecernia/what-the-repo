@@ -81,6 +81,12 @@ export async function ensureLearningMigration(store: ProductStore, project: Proj
     if (planned && row.study.dynamic_learning_plan?.length
       && row.study.snapshot_id === project.study.snapshot_id) row.study.migration = planned;
     row.study.snapshot_id = to;
+    row.study.route_revision = (row.study.route_revision ?? 0) + 1;
+    row.study.step_passed = null;
+    row.study.teaching_question = null;
+    row.study.latest_assessment = null;
+    row.study.mastered_target_items = [];
+    row.study.mastered_target_evidence = {};
   });
   return updated ?? project;
 }
@@ -110,6 +116,12 @@ export async function resolveLearningReview(store: ProductStore, input: {
       row.study.skipped_steps = [...new Set([...(row.study.skipped_steps ?? []), input.stepId])];
     }
     item.resolution = input.action;
+    row.study.route_revision = (row.study.route_revision ?? 0) + 1;
+    row.study.step_passed = null;
+    row.study.teaching_question = null;
+    row.study.latest_assessment = null;
+    row.study.mastered_target_items = [];
+    row.study.mastered_target_evidence = {};
   });
   if (!updated) throw serviceError("not_found", "项目不存在", 404);
   return updated;

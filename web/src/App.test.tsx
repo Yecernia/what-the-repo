@@ -771,6 +771,25 @@ describe('public compliance', () => {
 });
 
 describe('App project state synchronization', () => {
+  it.each([
+    { status: 'reviewed' as const, supported: true, label: '已核对引用源码' },
+    { status: 'not_applicable' as const, supported: false, label: '本轮无需核对源码' },
+    { status: 'unverified' as const, supported: false, label: '尚未通过源码核对' },
+    { status: 'reviewed' as const, supported: false, label: '尚未通过源码核对' },
+  ])('distinguishes evidence review result: %j', async ({ status, supported, label }) => {
+    const assistant: Message = { message_id: 'review-status', role: 'assistant', content: '这是一条回答。',
+      created_at: '2026-08-19T00:00:00Z', evidence: [], model: 'test-model', usage: null,
+      latency_ms: 12, error: null, placeholder: false,
+      evidence_review: { status, supported, summary: 'Internal review summary', issues: [] } };
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [assistant] }), null, true));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByTestId('evidence-review-status')).toHaveTextContent(label);
+    for (const other of ['已核对引用源码', '本轮无需核对源码', '尚未通过源码核对'].filter(value => value !== label)) {
+      expect(screen.queryByText(other)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByText('Internal review summary')).not.toBeInTheDocument();
+  });
   it('shows a visible error when project deletion fails', async () => {
     vi.mocked(apiClient.getProject).mockResolvedValue(detail(project(), null, true));
     vi.mocked(apiClient.deleteProject).mockRejectedValue(new Error('删除暂时失败'));
@@ -850,6 +869,8 @@ describe('App project state synchronization', () => {
         phase: 'explaining',
         selected_value_point: 'value:entry',
         total_steps: 2,
+        dynamic_learning_plan: [{ step_id: 'first', order: 1, title: '第一课', objective: '入口',
+          evidence_refs: [], component_ids: [], completion_check: '说明入口' }],
       },
     });
     vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [assistant] }), null, true));
@@ -873,6 +894,43 @@ describe('App project state synchronization', () => {
     expect(actionCard).not.toBeNull();
     expect(within(actionCard as HTMLElement).getByText('已完成')).toBeVisible();
     expect(screen.queryByRole('button', { name: '确认' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /开始当前步骤/ }));
+    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[1]).toBe('开始当前步骤');
+    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[8]).toBeUndefined();
+  });
+
+  it.each([
+    { status: 'failed' as const },
+    { status: 'confirmed' as const, run_expires_at: '2020-01-01T00:00:00Z' },
+    { status: 'confirmed' as const },
+  ])('retries a route card after failure or expiry: %j', async fields => {
+    const action = learningAction(fields);
+    const assistant: Message = { message_id: 'retry-route', role: 'assistant', content: '学习目标',
+      created_at: '2026-08-19T00:00:00Z', evidence: [], model: 'test-model', usage: null,
+      latency_ms: 12, error: null, placeholder: false, learning_action: action };
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [assistant] }), null, true));
+    vi.mocked(apiClient.resolveLearningAction).mockReturnValue(new Promise(() => undefined));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await userEvent.click(await screen.findByRole('button', { name: '重试' }));
+    expect(apiClient.resolveLearningAction).toHaveBeenCalledWith('project-1', action.action_id, 'confirm');
+    expect(await screen.findByText('正在生成路线')).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '取消生成' }));
+    expect(apiClient.cancelRun).toHaveBeenCalledWith('project-1', action.action_id);
+  });
+
+  it('makes an active confirmed route retryable when its lease expires without a reload', async () => {
+    const action = learningAction({ status: 'confirmed', run_expires_at: new Date(Date.now() + 1_500).toISOString() });
+    const assistant: Message = { message_id: 'expiring-route', role: 'assistant', content: '学习目标',
+      created_at: '2026-08-19T00:00:00Z', evidence: [], model: 'test-model', usage: null,
+      latency_ms: 12, error: null, placeholder: false, learning_action: action };
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [assistant] }), null, true));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByText('正在生成路线')).toBeVisible();
+    expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '重试' }, { timeout: 3_000 })).toBeVisible();
+    expect(screen.queryByText('正在生成路线')).not.toBeInTheDocument();
   });
 
   it('shows route generation progress while a confirmed route action is still running', async () => {
@@ -1521,6 +1579,9 @@ describe('App project state synchronization', () => {
     await waitFor(() => expect(apiClient.sendMessage).toHaveBeenCalledWith(
       'project-1', '跳过这一步的理解检查，直接进入下一步。', [], false,
     ));
+    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[8]).toEqual({
+      kind: 'skip_current_step', route_revision: 0, step_id: 'step-1', snapshot_id: 'snapshot-1',
+    });
     expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('还没写完的问题');
     expect(document.querySelector('.learning-skip-button')).toBeNull();
   });

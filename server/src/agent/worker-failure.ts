@@ -3,6 +3,7 @@ export const DEFAULT_WORKER_MAX_REQUESTS = 40;
 export const WORKER_FAILURE_CODES = [
   "analysis_batch_call_limit_exceeded", "analysis_job_call_limit_exceeded", "analysis_time_limit_exceeded",
   "worker_internal_error", "provider_budget_exceeded",
+  "worker_call_limit_exceeded", "worker_time_limit_exceeded",
   "language_overlay_structure_failed",
 ] as const;
 export type WorkerFailureCode = typeof WORKER_FAILURE_CODES[number];

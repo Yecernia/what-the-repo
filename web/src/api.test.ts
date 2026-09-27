@@ -9,6 +9,14 @@ afterEach(() => {
 });
 
 describe('streamed messages', () => {
+  it('forwards structured skip intent only when supplied by the caller', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    const intent = { kind: 'skip_current_step' as const, route_revision: 3, step_id: 'step-2', snapshot_id: 'snapshot-1' };
+    await apiClient.sendMessage('project-1', 'Skip this step', [], false, undefined, undefined, 'snapshot-1', intent);
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string).learning_intent).toEqual(intent);
+    await apiClient.sendMessage('project-1', 'Skip this step', []);
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string).learning_intent).toBeUndefined();
+  });
   it('explains required repository reanalysis in both interface languages',async()=>{
     setUiLanguage('zh-CN');
     expect(conversationErrorMessage('snapshot_directory_reanalysis_required')).toBe('此仓库的分析资料需要重新生成，请重新分析后继续。');
@@ -103,10 +111,13 @@ describe('streamed messages', () => {
       false,
       'last-user',
       'previous-run',
+      'snapshot-1',
+      { kind: 'skip_current_step', route_revision: 3, step_id: 'step-2', snapshot_id: 'snapshot-1' },
     )).resolves.toMatchObject(payload);
     const request = vi.mocked(fetch).mock.calls[0]![1];
     expect(JSON.parse(request!.body as string)).toMatchObject({
       replace_message_id: 'last-user', retry_run_id: 'previous-run', content: '你好', display_language: 'en',
+      learning_intent: { kind: 'skip_current_step', route_revision: 3, step_id: 'step-2', snapshot_id: 'snapshot-1' },
     });
     expect(read).toHaveBeenCalledTimes(2);
     expect(cancel).not.toHaveBeenCalled();

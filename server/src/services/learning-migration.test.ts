@@ -63,6 +63,8 @@ test("migration runs once, keeps history and resolves relearn and skip idempoten
   const migrated = await ensureLearningMigration(state.store, state.project);
   assert.equal(migrated.study.snapshot_id, "snap:new");
   assert.equal(migrated.study.current_step, 4, "progress is not silently rewound");
+  assert.equal(migrated.study.route_revision, 1);
+  assert.equal(migrated.study.step_passed, null);
   const status = learningMigrationStatus(migrated);
   assert.deepEqual([status.status, status.changed_items, status.marked_steps], ["needs_review", 3, 1]);
   assert.deepEqual(status.items?.map((item) => item.step_id), ["edited", "moved", "gone"]);
@@ -72,10 +74,12 @@ test("migration runs once, keeps history and resolves relearn and skip idempoten
   const relearned = await resolveLearningReview(state.store, { ...input, stepId: "edited", action: "relearn" });
   assert.equal(relearned.study.current_step, 1);
   assert.equal(relearned.study.phase, "explaining");
+  assert.equal(relearned.study.route_revision, 2);
   const skipped = await resolveLearningReview(state.store, { ...input, stepId: "gone", action: "skip" });
   assert.ok(skipped.study.skipped_steps?.includes("gone"));
   assert.equal(skipped.study.mastered.includes("gone"), false, "a skip is never mastery");
   await resolveLearningReview(state.store, { ...input, stepId: "gone", action: "skip" });
+  assert.equal(state.project.study.route_revision, 3, "replayed migration action never changes the revision");
   await assert.rejects(resolveLearningReview(state.store, { ...input, stepId: "gone", action: "relearn" }), { code: "learning_review_resolved" });
   await assert.rejects(resolveLearningReview(state.store, { ...input, stepId: "later", action: "skip" }), { code: "learning_review_not_found" });
   await assert.rejects(resolveLearningReview(state.store, { ...input, migrationId: "stale", stepId: "moved", action: "skip" }),

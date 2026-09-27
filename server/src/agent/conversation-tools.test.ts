@@ -127,6 +127,7 @@ test("online conversation tools keep explanation in Primary and expose one actio
     "propose_learning_action",
     "query_code_evidence",
     "read_source_excerpt",
+    "register_teaching_question",
   ]);
 });
 
@@ -190,6 +191,8 @@ test("conversation source reads require exposed evidence and stay bound to the s
   assert.equal(payload.content, "first\nsecond");
   assert.equal(payload.truncated, true);
   assert.equal(payload.next_offset, 3);
+  assert.equal(payload.evidence[0].start_line, 1); assert.equal(payload.evidence[0].end_line, 2);
+  assert.ok(ctx.exposedEvidence.has(payload.evidence[0].stable_id));
 });
 
 test('canonical evidence, source and static facts use captured identity without opening the full view', async () => {
@@ -449,6 +452,7 @@ test("mastered advance keeps the existing mastered progress behavior", async () 
     evidence_refs: [evidence.stable_id],
     completion_check: "能说明入口职责。",
   }];
+  ctx.project.study.step_passed = { step_id: 'learning:mastered', snapshot_id: 'snapshot:tools', route_revision: 0, mastered_items: ['入口职责'], evidence_ids: [evidence.stable_id] };
   const tool = createConversationTools(ctx).find((item) => item.name === "propose_learning_action");
   assert.ok(tool);
   await tool.execute("proposal", {
@@ -487,7 +491,7 @@ test("a pass from an earlier turn still offers the advance as mastered, and the 
   assert.ok(!ctx.pendingLearningAction.value, "no card is created");
 
   // The pass recorded in an earlier turn is remembered for this step.
-  ctx.project.study.step_passed = { step_id: "learning:passed", mastered_items: ["入口职责"], evidence_ids: [evidence.stable_id] };
+  ctx.project.study.step_passed = { step_id: "learning:passed", snapshot_id: "snapshot:tools", route_revision: 0, mastered_items: ["入口职责"], evidence_ids: [evidence.stable_id] };
   await tool.execute("proposal", advance);
   // Read through a fresh reference: the assertion above narrowed the earlier one to empty.
   const pending: ConversationToolContext["pendingLearningAction"] = ctx.pendingLearningAction;
@@ -500,34 +504,53 @@ test("a pass from an earlier turn still offers the advance as mastered, and the 
   assert.equal(ctx.project.study.step_passed, null, "the next step is assessed afresh");
 });
 
-test("assessment sees the learner's earlier replies in this step and remembers a pass", async () => {
-  let seen: { answer: string; earlierAnswers?: string[] } | null = null;
-  const ctx = context({
-    workerServices: {
-      assess: (async (input: { answer: string; earlierAnswers?: string[] }) => {
-        seen = input;
-        return { completed: true, feedback: "对", verdict: "mastered", masteredItems: ["入口职责"], misconceptions: [],
-          acceptedEvidenceIds: [evidence.stable_id], trace: { usage: null, evidence_ids: [] } };
-      }) as never,
-    },
-  });
-  ctx.project.study.phase = "explaining";
-  ctx.project.study.total_steps = 1;
-  ctx.project.study.dynamic_learning_plan = [{
-    step_id: "learning:cumulative", order: 1, title: "理解入口", objective: "说清入口职责。",
-    component_ids: ["component:entry"], evidence_refs: [evidence.stable_id], completion_check: "能说明入口职责。",
-  }];
-  const route = createMessage("assistant", "路线已开始");
-  route.learning_action = { status: "executed" } as never;
-  ctx.project.messages.push(createMessage("user", "上一步之前的话"), route,
-    createMessage("user", "只有一个 README"), createMessage("user", "缺入口和配置"), createMessage("user", "上面就是我的回答"));
-  ctx.currentUserMessage = "上面就是我的回答";
-  ctx.exposedEvidence.set(evidence.stable_id, evidence as never);
-  const tool = createConversationTools(ctx).find((item) => item.name === "assess_understanding");
-  assert.ok(tool);
-  await tool.execute("assess", { evidence_ids: [evidence.stable_id] });
-  // Only replies since the step began are passed, without repeating the current message.
-  assert.deepEqual(seen!.earlierAnswers, ["只有一个 README", "缺入口和配置"]);
-  assert.deepEqual(ctx.project.study.step_passed,
-    { step_id: "learning:cumulative", mastered_items: ["入口职责"], evidence_ids: [evidence.stable_id] });
+test("registered questions accumulate only their own answers and distinguish question correctness from step completion", async () => {
+  const inputs: Array<{ earlierAnswers?: string[] }> = [];
+  let verdict = 'mastered';
+  const ctx = context({ source_message_id: 'ask', workerServices: { assess: (async (input: { earlierAnswers?: string[] }) => {
+    inputs.push(input); return { completed: true, feedback: 'feedback', verdict, masteredItems: ['target'], misconceptions: verdict === 'misconception' ? ['wrong direction'] : [], acceptedEvidenceIds: [evidence.stable_id], trace: { usage: null, evidence_ids: [] } };
+  }) as never } });
+  ctx.project.study.dynamic_learning_plan = [{ step_id: 'step', order: 1, title: 'Entry', objective: 'Entry', component_ids: ['component:entry'], evidence_refs: [evidence.stable_id], completion_check: 'Both', learning_targets: ['first', 'second'] }];
+  ctx.project.study.phase = 'explaining';
+  ctx.exposedEvidence.set(evidence.stable_id, evidence);
+  const tools = createConversationTools(ctx);
+  const register = tools.find(tool => tool.name === 'register_teaching_question')!;
+  const assess = tools.find(tool => tool.name === 'assess_understanding')!;
+  await assert.rejects(assess.execute('unregistered', { question_id: 'none' }), /registered current question/);
+  await register.execute('q1', { prompt: 'First?', target_items: ['first'], evidence_ids: [evidence.stable_id] });
+  const q1 = ctx.project.study.teaching_question!;
+  await assert.rejects(assess.execute('same-turn', { question_id: q1.question_id }), /wait for the learner answer/);
+  ctx.source_message_id = 'answer1'; ctx.currentUserMessage = 'first answer';
+  const result = await assess.execute('a1', { question_id: q1.question_id });
+  const body = JSON.parse((result.content[0] as { text: string }).text);
+  assert.equal(body.question_correct, true); assert.equal(body.step_completed, false);
+  assert.deepEqual(body.remaining_targets, ['second']); assert.equal(ctx.project.study.step_passed, null);
+  await assess.execute('retry', { question_id: q1.question_id });
+  assert.equal(q1.answers.length, 1); assert.deepEqual(inputs[1]!.earlierAnswers, []);
+  ctx.currentUserMessage = 'edited first answer';
+  await assess.execute('edited', { question_id: q1.question_id });
+  assert.deepEqual(q1.answers, ['edited first answer']);
+  verdict = 'unclear'; ctx.source_message_id = 'chat'; ctx.currentUserMessage = 'unrelated topic';
+  await assess.execute('chat', { question_id: q1.question_id }); assert.equal(q1.answers.length, 1);
+  await register.execute('q2', { prompt: 'Second?', target_items: ['second'], evidence_ids: [evidence.stable_id] });
+  const q2 = ctx.project.study.teaching_question!;
+  verdict = 'mastered'; ctx.source_message_id = 'answer2'; ctx.currentUserMessage = 'second answer';
+  await assess.execute('a2', { question_id: q2.question_id });
+  assert.deepEqual(inputs.at(-1)!.earlierAnswers, []); assert.ok(ctx.project.study.step_passed);
+  ctx.assessment.value = null; ctx.currentUserMessage = 'ordinary chat';
+  assert.ok(ctx.project.study.step_passed, 'unassessed chat retains eligibility');
+  verdict = 'misconception'; ctx.source_message_id = 'wrong'; ctx.currentUserMessage = 'wrong';
+  await assess.execute('wrong', { question_id: q2.question_id });
+  assert.equal(ctx.project.study.step_passed, null); assert.deepEqual(ctx.project.study.misconceptions, ['wrong direction']);
+  await assert.rejects(tools.find(tool => tool.name === 'propose_learning_action')!.execute('advance', { action: 'advance_learning_step' }), /has not been passed/);
+});
+
+test('legacy broad completion checks cannot be certified by registering a narrower question', async () => {
+  const ctx = context({ source_message_id: 'ask' });
+  ctx.project.study.dynamic_learning_plan = [{ step_id: 'legacy', order: 1, title: 'Entry', objective: 'Entry', component_ids: ['component:entry'], evidence_refs: [evidence.stable_id], completion_check: 'Explain both branches and their evidence.' }];
+  ctx.exposedEvidence.set(evidence.stable_id, evidence);
+  const register = createConversationTools(ctx).find(tool => tool.name === 'register_teaching_question')!;
+  await assert.rejects(register.execute('narrow', { prompt: 'Which branch?', target_items: ['Explain both branches and their evidence.'], evidence_ids: [evidence.stable_id] }), /legacy step/);
+  await register.execute('full', { prompt: 'Explain both branches and their evidence.', target_items: ['Explain both branches and their evidence.'], evidence_ids: [evidence.stable_id] });
+  assert.equal(ctx.project.study.teaching_question?.prompt, 'Explain both branches and their evidence.');
 });

@@ -15,6 +15,24 @@ test("explicit advance intent is recognized only from the current user message",
   assert.equal(isExplicitAdvanceRequest("Don't skip the check"), false);
 });
 
+test("only complete affirmative commands can authorize advancing", () => {
+  for (const message of [
+    "不要进入下一步，我还没懂。请留在当前这一步，先解释一下闭包为什么能记住池。",
+    "我不想跳过检查", "Do not skip the check", "Do not go to the next step",
+    "你刚才说‘直接进入下一步’是什么意思？", "如果我跳过理解检查会怎样？",
+    "请解释 README 中的 ‘go to the next step’", "继续", "下一步是什么意思？",
+    "进入下一步，但先别移动进度", "跳过检查，不要进入下一步", "不要做理解检查",
+    '"Go to the next step"', "If I skip the check, what happens?",
+    "Skip the check but stay here", "Can I skip the check?", "How do I go to the next step?",
+    "Please explain skip the check", "不要进入下一步", "我想进入下一步吗？",
+  ]) assert.equal(isExplicitAdvanceRequest(message), false, message);
+  for (const message of [
+    "请进入下一步。", "麻烦跳过当前步骤，谢谢", "我明确要直接进入下一步，跳过检查",
+    "我想跳过这一步的理解检查", "Please go to the next step!", "Skip this step, please.",
+    "I want to skip the understanding check", "Move on to the next step",
+  ]) assert.equal(isExplicitAdvanceRequest(message), true, message);
+});
+
 test("primary dynamic prompt binds the user's explicit skip choice", () => {
   const project = createProject("guest:prompt", "https://github.com/example/prompt", "prompt", "free:test");
   const prompt = primaryTurnContext({

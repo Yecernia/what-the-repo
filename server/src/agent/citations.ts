@@ -1,6 +1,7 @@
 import type { EvidenceRef } from "../domain/conversation.js";
 import type { EvidenceSnapshot, SnapshotEvidence } from "../domain/snapshot.js";
 import type { ProductStore } from "../persistence/store.js";
+import type { CitationReviewResult } from "./citation-review.js";
 
 export interface CitationValidation {
   text: string;
@@ -189,6 +190,14 @@ function toMessageEvidence(
   };
 }
 
+function exposedFallback(exposed: Map<string, SnapshotEvidence>): SnapshotEvidence[] {
+  const rows = [...exposed.values()];
+  const inspected = rows.filter(row => row.kind === "source_excerpt");
+  const inspectedPaths = new Set(inspected.map(row => normalizeReferencePath(row.path)));
+  // Prefer ranges the answering agent actually inspected over earlier graph anchors.
+  return [...inspected, ...rows.filter(row => row.kind !== "source_excerpt" && !inspectedPaths.has(normalizeReferencePath(row.path)))].slice(0, 6);
+}
+
 export async function validateAnswerCitations(input: {
   text: string;
   snapshot: EvidenceSnapshot | null;
@@ -199,7 +208,7 @@ export async function validateAnswerCitations(input: {
   store: ProductStore;
 }): Promise<CitationValidation> {
   if (input.getSnapshot && input.snapshotId && !hasPotentialCitation(input.text)) {
-    return { text: input.text, unresolved: [], errors: [], evidence: [...input.exposed.values()].slice(0, 6)
+    return { text: input.text, unresolved: [], errors: [], evidence: exposedFallback(input.exposed)
       .map((row) => toMessageEvidence(row, input.snapshotId!)) };
   }
   const snapshot = input.getSnapshot ? await input.getSnapshot() : input.snapshot;
@@ -214,7 +223,7 @@ export async function validateAnswerCitations(input: {
     byPath.set(path, existing);
   }
   if (!referencedPathTokens(input.text, new Set(byPath.keys())).length) {
-    return { text: input.text, unresolved: [], errors: [], evidence: [...input.exposed.values()].slice(0, 6)
+    return { text: input.text, unresolved: [], errors: [], evidence: exposedFallback(input.exposed)
       .map((row) => toMessageEvidence(row, snapshot.snapshot_id)) };
   }
   // The source manifest includes files that were not selected as graph evidence.
@@ -287,10 +296,14 @@ export async function validateAnswerCitations(input: {
       });
       acceptedPaths.set(selected.stable_id, canonicalPath);
     } else {
-      const selected = pathCandidates.find((row) => row.kind === "file") ?? pathCandidates[0];
-      if (!selected) continue;
-      accepted.set(selected.stable_id, selected);
-      acceptedPaths.set(selected.stable_id, canonicalPath);
+      const inspected = [...input.exposed.values()].filter(row => row.kind === "source_excerpt"
+        && normalizeReferencePath(row.path) === canonicalPath);
+      const selected = inspected.length ? inspected : [pathCandidates.find((row) => row.kind === "file") ?? pathCandidates[0]].filter((row): row is SnapshotEvidence => Boolean(row));
+      if (!selected.length) continue;
+      for (const row of selected) {
+        accepted.set(row.stable_id, row);
+        acceptedPaths.set(row.stable_id, canonicalPath);
+      }
     }
     if (token.offset !== undefined && token.length !== undefined && canonicalPath !== token.path) {
       const line = token.line === null ? "" : `:${token.line}${token.endLine !== token.line ? `-${token.endLine}` : ""}`;
@@ -320,4 +333,20 @@ export function withCitationNotice(text: string, errors: readonly string[]): str
       + (chinese ? "。当前源码中未确认对应文件或行号；相关说明请先视为未核实。" : ". These files or lines were not confirmed in the saved source; treat the related claims as unverified.")
     : chinese ? "部分说明尚未通过证据核对，请先视为未核实。" : "Some claims have not passed evidence review; treat them as unverified.";
   return `${text}\n\n> ${notice}`;
+}
+
+/** Bounded plain text: reviewer content must not introduce links, HTML, or Markdown instructions. */
+export function withEvidenceReviewNotice(text: string, review: CitationReviewResult): string {
+  if (review.status === "not_applicable" || (review.status === "reviewed" && review.supported)) return text;
+  const chinese = /[\u4e00-\u9fff]/u.test(text);
+  const safe = (value: string) => value.replace(/[\r\n\u0000-\u001f\u007f]/gu, " ").replace(/[<>&`\[\]()*_#!\\]/gu, "").slice(0, 350);
+  const rows = review.issues.slice(0, 4).map(issue => {
+    const label = issue.kind === "contradicted"
+      ? chinese ? "与已读取源码矛盾" : "Contradicted by inspected source"
+      : chinese ? "证据不足" : "Insufficient evidence";
+    return `> ${label}：${safe(issue.claim)} — ${safe(issue.reason)}`;
+  });
+  if (review.evidenceIncomplete) rows.push(chinese ? "> 引用源码未完整读取，相关主张尚未核实。" : "> Source coverage is incomplete; the related claims remain unverified.");
+  if (!rows.length) rows.push(`> ${chinese ? "未能完成证据核对" : "Evidence review could not verify this answer"}：${safe(review.summary)}`);
+  return `${text}\n\n${rows.join("\n>\n")}`;
 }

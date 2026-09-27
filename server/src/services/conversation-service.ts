@@ -17,7 +17,6 @@ import {
   type MessageThinkingSummaryEvent,
   type Project,
 } from "../domain/conversation.js";
-import { asEvidenceSnapshot } from "../domain/snapshot.js";
 import { createConversationSnapshotReader, createConversationSummaryReader } from "./conversation-snapshot.js";
 import { createModelRuntime } from "../agent/model-runtime.js";
 import { runtimeForSkill } from "../agent/role-models.js";
@@ -56,11 +55,11 @@ import {
   isExplicitAdvanceRequest,
   type UiSelection,
 } from "../agent/prompts.js";
-import { validateAnswerCitations, withCitationNotice } from "../agent/citations.js";
+import { validateAnswerCitations, withCitationNotice, withEvidenceReviewNotice } from "../agent/citations.js";
 import { MemoryMaintenance } from "../agent/memory-maintenance.js";
 import { readLearner } from './learner-context.js';
 import { FeedbackAnalysisWorker } from "../agent/feedback.js";
-import { reviewAnswerEvidence } from "../agent/citation-review.js";
+import { reviewAnswerEvidence, unavailableEvidenceReview } from "../agent/citation-review.js";
 import {
   effectiveModelSelector,
   FREE_SELECTOR,
@@ -93,6 +92,7 @@ export interface ConversationResult {
 }
 
 export interface ConversationRunInput {
+  learningIntent?: { kind: "skip_current_step"; route_revision: number; step_id: string; snapshot_id: string };
   owner: ConversationOwner;
   projectId: string;
   content: string;
@@ -113,6 +113,7 @@ export interface ConversationRunInput {
 
 export type ConversationRunControl = "pause" | "cancel";
 export type LearningActionDecision = "confirm" | "decline";
+const LEARNING_ACTION_TIMEOUT_MS = 180_000;
 
 export class ConversationService {
   private readonly runtime: PiConversationRuntime;
@@ -130,6 +131,10 @@ export class ConversationService {
     private readonly providerGateFactory?: ProviderGateFactory,
     private readonly metrics: RuntimeMetrics = defaultRuntimeMetrics,
     private readonly providerBudget?: ProviderUsageBudget,
+    private readonly learningWorkers: {
+      generateRoute?: typeof generateLearningRoute;
+      reviewEvidence?: typeof reviewAnswerEvidence;
+    } = {},
   ) {
     this.chatAdmission = new CapacityScheduler(permitStoreFor(store), 'chat', {
       running: config.chatConcurrency ?? 8, waiting: config.chatQueueLimit ?? 16,
@@ -234,12 +239,59 @@ export class ConversationService {
     decision: LearningActionDecision;
     signal?: AbortSignal;
   }): Promise<{ project: Project; action: LearningActionCard; state_changed: boolean }> {
-    const project = await this.store.loadProject(input.projectId, input.owner.owner_id);
-    if (!project) throw serviceError("not_found", "项目不存在", 404);
-    const snapshot = asEvidenceSnapshot(await this.store.loadSnapshot(input.projectId));
+    const runId = input.actionId;
+    if (this.runOwners.has(runId) || [...this.runOwners.values()].some(run => run.projectId === input.projectId && run.ownerId === input.owner.owner_id)) {
+      throw serviceError("session_busy", "上一轮仍在处理，请等待它结束或取消后再试", 409);
+    }
+    this.runOwners.set(runId, { ownerId: input.owner.owner_id, projectId: input.projectId });
+    const control = this.runtime.prepareRun(runId);
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new Error("learning_action_timeout")), LEARNING_ACTION_TIMEOUT_MS);
+    timer.unref();
+    input = { ...input, signal: AbortSignal.any([control, deadline.signal, ...(input.signal ? [input.signal] : [])]) };
+    let admission: CapacityPermit | undefined;
+    let repositoryLease: RepositoryReadLease | null = null;
+    let snapshotLease: string | null = null;
+    try {
+      const owned = await this.store.loadProject(input.projectId, input.owner.owner_id);
+      if (!owned) throw serviceError("not_found", "项目不存在", 404);
+      admission = await this.chatAdmission.acquire(input.owner.owner_id, input.projectId, input.signal);
+      input = { ...input, signal: admission.signal };
+      repositoryLease = await acquireRepositoryReadLease(this.store);
+      if (repositoryLease) input = { ...input, signal: AbortSignal.any([input.signal!, repositoryLease.signal]) };
+      const project = await this.store.loadProject(input.projectId, input.owner.owner_id);
+      if (!project) throw serviceError("not_found", "项目不存在", 404);
+      if (project.analysis.removed_by_admin) throw serviceError("snapshot_unavailable", "请重新分析后继续学习。", 409);
+      if (project.analysis.canonical_snapshot_key) {
+        snapshotLease = await this.store.acquireSnapshotReadLease(project.analysis.canonical_snapshot_key, this.config.repositoryReadLeaseMaxMinutes ?? 30);
+        if (!snapshotLease) throw serviceError("snapshot_expired", "旧版已过期，请刷新到最新版本。", 410);
+      }
+      return await this.executeLearningAction(input, project);
+    } finally {
+      clearTimeout(timer);
+      this.runOwners.delete(runId);
+      this.runtime.releaseRun(runId);
+      try {
+        if (snapshotLease) await this.store.releaseSnapshotReadLease(snapshotLease).catch(() => undefined);
+        await repositoryLease?.();
+      } finally { await admission?.release(); }
+    }
+  }
+
+  private async executeLearningAction(input: {
+    owner: ConversationOwner; projectId: string; actionId: string;
+    decision: LearningActionDecision; signal?: AbortSignal;
+  }, project: Project): Promise<{ project: Project; action: LearningActionCard; state_changed: boolean }> {
+    input.signal?.throwIfAborted();
+    const snapshot = await createConversationSnapshotReader(this.store, {
+      projectId: input.projectId, ownerId: input.owner.owner_id,
+      snapshotId: project.analysis.snapshot_id, publicSnapshotKey: project.analysis.canonical_snapshot_key,
+      signal: input.signal,
+    })();
     if (!snapshot) throw serviceError("snapshot_unavailable", "项目图谱尚未完成", 404);
     const existing = findLearningAction(project, input.actionId);
-    if (!existing || existing.status !== "pending") {
+    if (existing?.status === "executed") return { project, action: existing, state_changed: false };
+    if (!existing || !isRetryableLearningAction(existing)) {
       throw serviceError("learning_action_not_pending", "这个学习选择已经处理或不存在", 409);
     }
     try {
@@ -247,7 +299,7 @@ export class ConversationService {
     } catch {
       const expired = await this.store.updateProject(input.projectId, input.owner.owner_id, (row) => {
         const action = findLearningAction(row, input.actionId);
-        if (!action || action.status !== "pending") return;
+        if (!action || !isRetryableLearningAction(action)) return;
         action.status = "expired";
         action.resolved_at = nowIso();
         action.error = "学习目标或分析快照已经变化。";
@@ -260,7 +312,8 @@ export class ConversationService {
     if (input.decision === "decline") {
       const declined = await this.store.updateProject(input.projectId, input.owner.owner_id, (row) => {
         const action = findLearningAction(row, input.actionId);
-        if (!action || action.status !== "pending") {
+        input.signal?.throwIfAborted();
+        if (!action || !isRetryableLearningAction(action)) {
           throw serviceError("learning_action_not_pending", "这个学习选择已经处理或不存在", 409);
         }
         action.status = "declined";
@@ -273,30 +326,46 @@ export class ConversationService {
 
     if (!isRouteAction(existing)) {
       const completed = await this.store.updateProject(input.projectId, input.owner.owner_id, (row) => {
+        input.signal?.throwIfAborted();
         const action = findLearningAction(row, input.actionId);
-        if (!action || action.status !== "pending") {
+        if (!action || !isRetryableLearningAction(action)) {
           throw serviceError("learning_action_not_pending", "这个学习选择已经处理或不存在", 409);
         }
-        assertLearningActionStillCurrent(row, snapshot, action);
-        applyConfirmedLearningAction(row, action);
+        try {
+          assertLearningActionStillCurrent(row, snapshot, action);
+          applyConfirmedLearningAction(row, action);
+        } catch (error) {
+          if (!(error instanceof Error) || ![
+            "learning_action_no_longer_current", "learning_action_snapshot_mismatch", "learning_step_not_passed",
+          ].includes(error.message)) throw error;
+          action.status = "expired";
+          action.resolved_at = nowIso();
+          action.error = "当前路线、步骤或理解检查已经变化，请重新检查后继续。";
+          return;
+        }
         const timestamp = nowIso();
         action.status = "executed";
         action.resolved_at = timestamp;
         action.executed_at = timestamp;
+        recordLearningActionResult(row, action);
       });
       const action = completed ? findLearningAction(completed, input.actionId) : null;
       if (!completed || !action) throw serviceError("not_found", "项目不存在", 404);
-      return { project: completed, action, state_changed: true };
+      return { project: completed, action, state_changed: action.status === "executed" };
     }
 
     const reserved = await this.store.updateProject(input.projectId, input.owner.owner_id, (row) => {
+      input.signal?.throwIfAborted();
       const action = findLearningAction(row, input.actionId);
-      if (!action || action.status !== "pending") {
+      if (!action || !isRetryableLearningAction(action)) {
         throw serviceError("learning_action_not_pending", "这个学习选择已经处理或不存在", 409);
       }
       assertLearningActionStillCurrent(row, snapshot, action);
       action.status = "confirmed";
       action.resolved_at = nowIso();
+      action.run_id = randomUUID();
+      action.run_expires_at = new Date(Date.now() + LEARNING_ACTION_TIMEOUT_MS).toISOString();
+      action.error = null;
     });
     const reservedAction = reserved ? findLearningAction(reserved, input.actionId) : null;
     if (!reserved || !reservedAction?.target) throw serviceError("learning_action_invalid", "学习目标无效", 409);
@@ -304,15 +373,17 @@ export class ConversationService {
     const fail = async (message: string): Promise<{ project: Project; action: LearningActionCard; state_changed: false }> => {
       const failed = await this.store.updateProject(input.projectId, input.owner.owner_id, (row) => {
         const action = findLearningAction(row, input.actionId);
-        if (!action || action.status !== "confirmed") return;
+        if (!action || action.status !== "confirmed" || action.run_id !== reservedAction.run_id) return;
         action.status = "failed";
         action.error = message;
+        action.run_expires_at = null;
       });
       const action = failed ? findLearningAction(failed, input.actionId) : null;
       if (!failed || !action) throw serviceError("not_found", "项目不存在", 404);
       return { project: failed, action, state_changed: false };
     };
 
+    try {
     const config = await runtimeConfig(this.config, this.store);
     const settings = await this.store.loadSettings(input.owner.owner_id);
     const selectedModel = reserved.model_override || settings.model || await effectiveModelSelector(config, this.store, input.owner, settings);
@@ -327,7 +398,7 @@ export class ConversationService {
     const provider = selectedProvider;
     if (!provider) return fail("当前没有可用模型，路线尚未生成。");
     const { profile, memories } = await readLearner(this.store, this.memories, input.owner.owner_id);
-    const route = await generateLearningRoute({
+    const route = await (this.learningWorkers.generateRoute ?? generateLearningRoute)({
       project: reserved,
       snapshot,
       target: reservedAction.target,
@@ -344,6 +415,7 @@ export class ConversationService {
       }),
       signal: input.signal,
     });
+    input.signal?.throwIfAborted();
     const traceId = `learning-action-run:${randomUUID()}`;
     await this.store.saveTrace(traceId, {
       trace_id: traceId,
@@ -365,8 +437,9 @@ export class ConversationService {
     if (!route.steps.length) return fail("当前代码证据不足以生成可靠路线，现有学习状态没有改变。");
 
     const completed = await this.store.updateProject(input.projectId, input.owner.owner_id, (row) => {
+      input.signal?.throwIfAborted();
       const action = findLearningAction(row, input.actionId);
-      if (!action || action.status !== "confirmed") {
+      if (!action || action.status !== "confirmed" || action.run_id !== reservedAction.run_id) {
         throw serviceError("learning_action_not_confirmed", "学习路线请求已经失效", 409);
       }
       assertLearningActionStillCurrent(row, snapshot, action);
@@ -375,10 +448,17 @@ export class ConversationService {
       action.status = "executed";
       action.executed_at = timestamp;
       action.error = null;
+      action.run_expires_at = null;
+      recordLearningActionResult(row, action);
     });
     const action = completed ? findLearningAction(completed, input.actionId) : null;
     if (!completed || !action) throw serviceError("not_found", "项目不存在", 404);
     return { project: completed, action, state_changed: true };
+    } catch {
+      return await fail(input.signal?.aborted
+        ? "路线生成已取消或超时，可以重试。"
+        : "路线生成暂未完成，可以重试；现有学习进度未改变。");
+    }
   }
 
   async run(input: ConversationRunInput): Promise<ConversationResult | null> {
@@ -421,8 +501,10 @@ export class ConversationService {
       if (!snapshotLease) throw serviceError("snapshot_expired", "旧版已过期，请刷新到最新版本。", 410);
     }
     if (!input.replaceMessageId && input.retryRunId) {
-      const prior = project.messages.find(message => message.role === "user" && message.trace_id === input.retryRunId);
-      if (prior) input = { ...input, replaceMessageId: prior.message_id };
+      const prior = project.messages.find(message => message.role === "user"
+        && (message.trace_id === input.retryRunId || message.original_run_id === input.retryRunId));
+      if (!prior) throw serviceError("last_message_changed", "重试关联的消息已经变化，请刷新后重试。", 409);
+      input = { ...input, replaceMessageId: prior.message_id };
     }
     const previousUser = [...project.messages].reverse().find(message => message.role === "user");
     if (input.replaceMessageId && previousUser?.message_id !== input.replaceMessageId) {
@@ -486,6 +568,20 @@ export class ConversationService {
     });
     if (selections.length) userMessage.attachments = selections.map((item) => ({ ...item }));
     if (input.replaceMessageId) userMessage.message_id = input.replaceMessageId;
+    userMessage.original_run_id = input.replaceMessageId
+      ? previousUser?.original_run_id ?? previousUser?.trace_id ?? runId : runId;
+    if (input.replaceMessageId && previousUser?.learning_action_result) {
+      userMessage.learning_action_result = structuredClone(previousUser.learning_action_result);
+    }
+    // Upgrade old executed cards before removing the assistant message on resend.
+    if (input.replaceMessageId && !userMessage.learning_action_result) {
+      const oldAction = project.messages.slice(project.messages.findIndex(message => message.message_id === input.replaceMessageId) + 1)
+        .find(message => message.learning_action?.status === "executed")?.learning_action;
+      if (oldAction) userMessage.learning_action_result = {
+        action_id: oldAction.action_id, route_revision: oldAction.route_revision ?? 0,
+        step_id: oldAction.expected_step_id ?? oldAction.target?.stable_id ?? null,
+      };
+    }
     project.messages = [...beforeTurn, userMessage];
 
     const startedAt = Date.now();
@@ -496,6 +592,21 @@ export class ConversationService {
     const workerRuns: TeachingWorkerTrace[] = [];
     let stateChanged = false;
     const pendingLearningAction = { value: null as LearningActionCard | null };
+    let structuredSkip: LearningActionCard | null = null;
+    if (input.learningIntent && !userMessage.learning_action_result) {
+      const intent = input.learningIntent;
+      if (intent.kind !== "skip_current_step" || intent.route_revision !== (project.study.route_revision ?? 0)
+        || intent.snapshot_id !== capturedSnapshotId
+        || intent.step_id !== project.study.dynamic_learning_plan?.[project.study.current_step]?.step_id) {
+        throw serviceError("learning_action_no_longer_current", "当前学习步骤已经变化，请刷新后重试。", 409);
+      }
+      const snapshot = await getSnapshot();
+      if (!snapshot) throw serviceError("snapshot_unavailable", "项目图谱尚未完成", 404);
+      structuredSkip = createLearningActionProposal(project, snapshot, {
+        action: "advance_learning_step", targetKind: "learning_step", targetId: intent.step_id,
+        request: content, skipUnderstandingCheck: true,
+      });
+    }
     const assessment = { value: null as null | { verdict: string; masteredItems: string[]; evidenceIds: string[] } };
     const feedbackHint: { value: FeedbackHint | null } = { value: null };
     const tools = [
@@ -518,6 +629,7 @@ export class ConversationService {
       pendingLearningAction,
       assessment,
       currentUserMessage: content,
+      source_message_id: userMessage.message_id,
       modelRuntime,
       workerRuns,
       }),
@@ -538,28 +650,18 @@ export class ConversationService {
       checkExecution();
       if (input.signal?.aborted && /lease_lost|maintenance_connection_lost/.test(String(input.signal.reason))) input.signal.throwIfAborted();
       if (!turnStarted) throw serviceError(result.stopReason, failureMessage(result.stopReason), result.stopReason === "cancelled" ? 409 : 503);
-      const explicitAdvance = isExplicitAdvanceRequest(content);
-      if (explicitAdvance && pendingLearningAction.value?.action !== "advance_learning_step") {
-        const snapshot = await getSnapshot();
-        if (snapshot) try {
-          pendingLearningAction.value = createLearningActionProposal(project, snapshot, {
-            action: "advance_learning_step",
-            targetKind: "learning_step",
-            request: content,
-            skipUnderstandingCheck: true,
-            progress: null,
-          });
-          if (!toolsUsed.includes("propose_learning_action")) toolsUsed.push("propose_learning_action");
-        } catch {
-          // There is no current route step to advance; leave the model's answer intact.
-        }
-      }
+      if (result.stopReason !== "completed") project.study = structuredClone(originalStudy);
+      const explicitAdvance = Boolean(structuredSkip) || isExplicitAdvanceRequest(content);
+      // A text hint must never manufacture an action the tutor did not propose.
+      if (structuredSkip) pendingLearningAction.value = structuredSkip;
+      if (userMessage.learning_action_result) pendingLearningAction.value = null;
+      if (pendingLearningAction.value) pendingLearningAction.value.source_message_id = userMessage.message_id;
       const action = pendingLearningAction.value?.action === "advance_learning_step"
         && pendingLearningAction.value.skip_understanding_check
         ? pendingLearningAction.value
         : null;
       let directSkipApplied = false;
-      if (action && explicitAdvance && result.stopReason === "completed") {
+      if (action && explicitAdvance && result.stopReason === "completed" && !input.signal?.aborted && !runSignal?.aborted) {
         try {
           applyConfirmedLearningAction(project, action);
           const timestamp = nowIso();
@@ -567,25 +669,32 @@ export class ConversationService {
           action.resolved_at = timestamp;
           action.executed_at = timestamp;
           action.error = null;
+          recordLearningActionResult(project, action);
           directSkipApplied = true;
           stateChanged = true;
         } catch {
-          // Keep the action pending when the route changed during the turn.
+          action.status = "expired";
+          action.error = "当前步骤或学习路线已经变化。";
         }
       }
       const refusal = /不能跳过|按研学协议|只有本轮理解|需要先回答|只有掌握才/u.test(result.text);
       // Only a learner who asked to skip is told they chose to; the tool refuses model-initiated skips.
-      const skipNotice = action && explicitAdvance
+      const skipNotice = userMessage.learning_action_result && !directSkipApplied
+        ? "这条消息的学习操作已经执行过。本次仅重新生成回答，学习进度没有再次改变。"
+        : action && explicitAdvance
         ? directSkipApplied
           ? `你明确选择跳过“${action.target?.label ?? "当前步骤"}”的理解检查。已记录为主动跳过（不计入已掌握），现在进入下一步；之后仍可回看本步。`
           : `你明确选择跳过“${action.target?.label ?? "当前步骤"}”的理解检查。${action.description} 请确认卡片后继续。`
         : "";
-      const visibleText = action && refusal
+      let visibleText = action && refusal
         ? skipNotice
         : [result.stopReason === "paused"
         ? [result.text.trim(), "已暂停本轮处理。已经完成的查询结果会保留，你可以直接继续提问。"]
           .filter(Boolean).join("\n\n")
         : result.text, skipNotice].filter(Boolean).join("\n\n");
+      const question = project.study.teaching_question;
+      if (result.stopReason === "completed" && question?.created_message_id === userMessage.message_id
+        && !visibleText.includes(question.prompt)) visibleText += `\n\n${question.prompt}`;
       const validation = await validateAnswerCitations({
         text: visibleText,
         snapshot: null,
@@ -599,24 +708,21 @@ export class ConversationService {
       let acceptedEvidence = validation.evidence;
       let reviewStatus: Record<string, unknown> | null = null;
       let reviewUsage = combinedUsage();
+      let reviewedText = validation.text;
+      let evidenceReview: Message["evidence_review"];
       if (
         input.reviewEvidence === true
         && result.stopReason === "completed"
-        && toolsUsed.some((name) => ![
-          "get_learning_context",
-          "get_learner_profile",
-          "propose_learning_action",
-        ].includes(name))
       ) {
-        const review = await reviewAnswerEvidence({
-          text: result.text,
+        const review = await (this.learningWorkers.reviewEvidence ?? reviewAnswerEvidence)({
+          text: visibleText,
           evidence: validation.evidence,
           projectId: input.projectId,
           snapshotId: project.analysis.snapshot_id ?? "",
           store: this.store,
           modelRuntime,
           signal: input.signal,
-        });
+        }).catch(() => unavailableEvidenceReview());
         reviewStatus = {
           usage: review.usage,
           model: runtimeForSkill(modelRuntime, "citation-review").model.id,
@@ -625,12 +731,18 @@ export class ConversationService {
           supported: review.supported,
           stop_reason: review.stopReason,
           unsupported_claim_count: review.unsupportedClaims.length,
+          unsupported_claims: review.unsupportedClaims,
+          status: review.status,
+          issues: review.issues,
+          summary: review.summary,
         };
+        reviewedText = withEvidenceReviewNotice(validation.text, review);
+        evidenceReview = { status: review.status, supported: review.supported, summary: review.summary, issues: review.issues };
         reviewUsage = review.usage;
-        if (!review.completed) {
+        if (review.status === "unverified") {
           validationErrors.push("citation_review_unavailable");
           acceptedEvidence = [];
-        } else if (!review.supported) {
+        } else if (review.status === "reviewed" && !review.supported) {
           validationErrors.push("citation_review_not_supported");
           acceptedEvidence = [];
         } else {
@@ -645,7 +757,7 @@ export class ConversationService {
       );
       const assistantMessage = answerMessage(
         project,
-        withCitationNotice(validation.text, validationErrors),
+        withCitationNotice(reviewedText, validationErrors.filter(error => !error.startsWith("citation_review_"))),
         provider.model,
         result.stopReason,
         Date.now() - startedAt,
@@ -654,6 +766,7 @@ export class ConversationService {
         messageThinkingSummary(result.events),
       );
       assistantMessage.evidence = acceptedEvidence;
+      assistantMessage.evidence_review = evidenceReview;
       assistantMessage.unresolved_references = validation.unresolved;
       assistantMessage.context_eligible = result.stopReason === "completed" && validationErrors.length === 0;
       // The card is built and validated by the program, so a citation notice on the text does not drop it.
@@ -685,13 +798,22 @@ export class ConversationService {
       // changed while the model was running. Never replay an old transcript.
       const saved = await this.store.updateProject(input.projectId, input.owner.owner_id, row => {
         checkExecution();
+        if (!isDeepStrictEqual(originalStudy, project.study)) {
+          input.signal?.throwIfAborted();
+          runSignal?.throwIfAborted();
+        }
         const currentUser = [...row.messages].reverse().find(message => message.role === 'user');
         if (currentUser?.message_id !== userMessage.message_id || currentUser.trace_id !== runId) {
           throw serviceError('last_message_changed', '只能编辑最后一条消息，请刷新后重试。', 409);
         }
+        if (!isDeepStrictEqual(originalStudy, project.study) && !isDeepStrictEqual(row.study, originalStudy)) {
+          throw serviceError('learning_action_no_longer_current', '学习状态已经变化，请刷新后重试。', 409);
+        }
+        if (userMessage.learning_action_result) currentUser.learning_action_result = userMessage.learning_action_result;
         row.messages.push(assistantMessage);
         if (!isDeepStrictEqual(originalStudy, project.study) && isDeepStrictEqual(row.study, originalStudy)) {
           row.study = project.study;
+          stateChanged = true;
         }
       }, undefined, writeFence);
       if (!saved) throw serviceError('not_found', '项目不存在', 404);
@@ -911,6 +1033,23 @@ function findLearningAction(project: Project, actionId: string): LearningActionC
     if (message.learning_action?.action_id === actionId) return message.learning_action;
   }
   return null;
+}
+
+function isRetryableLearningAction(action: LearningActionCard): boolean {
+  return action.status === "pending" || action.status === "failed"
+    || (action.status === "confirmed" && (!action.run_expires_at || Date.parse(action.run_expires_at) <= Date.now()));
+}
+
+function recordLearningActionResult(project: Project, action: LearningActionCard): void {
+  const source = project.messages.find(message => message.role === "user" && message.message_id === action.source_message_id);
+  if (!source) return;
+  if (source.learning_action_result && source.learning_action_result.action_id !== action.action_id) {
+    throw serviceError("learning_action_already_applied", "这条消息的学习操作已经执行过。", 409);
+  }
+  source.learning_action_result = {
+    action_id: action.action_id, route_revision: action.route_revision ?? 0,
+    step_id: action.expected_step_id ?? null,
+  };
 }
 
 function combinedUsage(...values: PiUsageSummary[]): PiUsageSummary {

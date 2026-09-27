@@ -44,17 +44,14 @@ export function parseUiSelections(body: Record<string, unknown>): UiSelection[] 
   return result;
 }
 
-/** Deterministic intent hint used to keep an explicit user skip request ahead of old chat prose. */
+/** Conservative command grammar: mentions, questions and mixed prose never authorize progress. */
 export function isExplicitAdvanceRequest(message: string): boolean {
-  const normalized = message.replace(/[\s\u3000]+/gu, "").toLowerCase();
-  if (/(?:不能|不可|不可以|无法)(?:让?我)?(?:跳过|进入下一步|跳到下一步)/u.test(normalized)) return false;
-  if (/(?:cannot|can't|cant|don't|dont|shouldn't)(?:skip|goto|moveon)/u.test(normalized)) return false;
-  return /(?:直接|现在|请)?(?:进入|跳到|前往)(?:下一个|下一步|后一步)/u.test(normalized)
-    || /跳过(?:本轮|这一步|当前步骤)?(?:的)?(?:理解)?检查/u.test(normalized)
-    || /不要(?:再)?(?:做|进行)?(?:理解)?检查/u.test(normalized)
-    // The English wording of the one-tap skip option, and plain requests like it.
-    || /skip(?:the|this)?(?:understanding)?check/u.test(normalized)
-    || /(?:goto|moveonto|continueto|skipto)(?:the)?nextstep/u.test(normalized);
+  const normalized = message.trim().toLowerCase();
+  const chineseCommand = "(?:请|麻烦)?(?:我(?:明确)?(?:想|要)(?:直接)?|现在|直接)?(?:进入下一步|跳到下一步|前往下一步|继续到下一步|跳过(?:本轮|本步|这一步|当前步骤)?(?:的)?(?:理解)?检查|跳过(?:这一步|当前步骤))";
+  const chinese = new RegExp(`^${chineseCommand}(?:(?:，|,|并|然后|并且)${chineseCommand})?[。！!]*(?:[，,]?谢谢[。！!]*)?$`, "u");
+  const englishCommand = "(?:please )?(?:(?:i (?:want to|choose to)) )?(?:skip (?:the |this )?(?:understanding )?check(?: for this step)?|skip (?:this|the current) step|(?:go to|move on to|continue to|skip to) (?:the )?next step)";
+  const english = new RegExp(`^${englishCommand}(?: and ${englishCommand})?(?:,? please)?[.!]*(?: thank you[.!]*)?$`, "u");
+  return chinese.test(normalized) || english.test(normalized.replace(/\s+/gu, " "));
 }
 
 /** Plain-language learning state the tutor can say to the learner instead of internal phase values. */

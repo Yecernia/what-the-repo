@@ -384,6 +384,7 @@ export const apiClient = {
     replaceMessageId?: string,
     retryRunId?: string,
     viewSnapshotId?: string | null,
+    learningIntent?: import('./types').LearningIntent,
   ) =>
     api<import('./types').SendMessageResult>(
       `/api/projects/${id}/messages`, {
@@ -393,6 +394,7 @@ export const apiClient = {
           display_language: getUiLanguage(),
           ui_contexts: uiContexts,
           review_evidence: reviewEvidence,
+          ...(learningIntent ? { learning_intent: learningIntent } : {}),
           ...(replaceMessageId ? { replace_message_id: replaceMessageId } : {}),
           ...(retryRunId ? { retry_run_id: retryRunId } : {}),
           ...(viewSnapshotId ? { view_snapshot_id: viewSnapshotId } : {}),
@@ -408,6 +410,7 @@ export const apiClient = {
     replaceMessageId?: string,
     retryRunId?: string,
     viewSnapshotId?: string | null,
+    learningIntent?: import('./types').LearningIntent,
   ): Promise<import('./types').SendMessageResult> => {
     const requestedRunId = clientRunId();
     onProgress({ run_id: requestedRunId, stage: 'request_created', label: '', kind: 'summary',
@@ -434,6 +437,7 @@ export const apiClient = {
                   display_language: getUiLanguage(),
                   ui_contexts: uiContexts,
                   review_evidence: reviewEvidence,
+                  ...(learningIntent ? { learning_intent: learningIntent } : {}),
                 }),
               }
             : {

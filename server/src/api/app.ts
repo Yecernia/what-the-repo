@@ -848,6 +848,7 @@ const PUBLIC_ERROR_CODES = new Set([
   "analysis_not_active", "analysis_cancelled", "repository_migration_not_pending",
   "repository_migration_target_missing", "learning_action_not_pending",
   "learning_action_not_confirmed", "learning_action_invalid", "invalid_feedback_target",
+  "learning_action_no_longer_current", "learning_action_already_applied",
   "github_oauth_unavailable", "github_oauth_access_denied", "github_oauth_ticket_invalid",
   "github_oauth_ticket_replayed", "github_oauth_invalid_response", "github_oauth_token_invalid",
   "github_oauth_token_rejected", "github_oauth_user_rejected", "invalid_oauth_start",
@@ -884,6 +885,8 @@ function safePublicErrorMessage(status: number, code: unknown, rawMessage: unkno
   if (normalizedCode === "learning_action_not_pending") return "这个学习选择已经处理或不存在";
   if (normalizedCode === "learning_action_not_confirmed") return "学习路线请求已经失效";
   if (normalizedCode === "learning_action_invalid") return "学习目标无效";
+  if (normalizedCode === "learning_action_no_longer_current") return "学习步骤或路线已经变化，请刷新后重试。";
+  if (normalizedCode === "learning_action_already_applied") return "这条消息的学习操作已经执行过。";
   if (normalizedCode === "invalid_feedback_target") return "只能评价已经生成的回答";
   if (normalizedCode === "github_oauth_unavailable") return "GitHub 登录服务暂时不可用，请稍后重试。";
   if (normalizedCode === "github_oauth_access_denied") return "GitHub 登录已取消。";
@@ -1742,6 +1745,13 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const body = objectBody(request);
     const content = textField(body, "content", 20_000, true);
     const selections = parseUiSelections(body);
+    const intent = body.learning_intent as Record<string, unknown> | undefined;
+    if (intent !== undefined && (!intent || intent.kind !== "skip_current_step"
+      || !Number.isSafeInteger(intent.route_revision) || Number(intent.route_revision) < 0
+      || typeof intent.step_id !== "string" || intent.step_id.length > 200
+      || typeof intent.snapshot_id !== "string" || intent.snapshot_id.length > 200)) {
+      throw httpError(400, "学习操作参数无效");
+    }
     const requestedRunId = typeof body.run_id === "string" && /^[A-Za-z0-9_-]{16,128}$/u.test(body.run_id)
       ? body.run_id
       : null;
@@ -1773,6 +1783,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       retryRunId: typeof body.retry_run_id === "string" ? body.retry_run_id.slice(0, 128) : undefined,
       selections,
       reviewEvidence: body.review_evidence === true,
+      learningIntent: intent as { kind: "skip_current_step"; route_revision: number; step_id: string; snapshot_id: string } | undefined,
       runId,
       signal: controller.signal,
       onEvent: (event) => {
@@ -1855,7 +1866,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       vote,
     });
   });
-  app.post("/api/projects/:projectId/learning-actions/:actionId", async (request: RequestWithBody) => {
+  app.post("/api/projects/:projectId/learning-actions/:actionId", async (request: RequestWithBody, reply) => {
     const owner = await requiredOwner(request, store, config);
     const { projectId, actionId } = request.params as { projectId: string; actionId: string };
     const body = objectBody(request);
@@ -1863,13 +1874,23 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       ? body.decision
       : null;
     if (!decision) throw httpError(400, "学习选择必须是 confirm 或 decline");
+    const controller = new AbortController();
+    const disconnected = () => { if (!reply.raw.writableEnded) controller.abort(new Error("client_network_error")); };
+    request.raw.once("aborted", disconnected);
+    reply.raw.once("close", disconnected);
+    try {
     const result = await conversation.resolveLearningAction({
       owner,
       projectId,
       actionId,
       decision,
+      signal: controller.signal,
     });
     return { ...result, project: sanitizeProjectForResponse(result.project) };
+    } finally {
+      request.raw.off("aborted", disconnected);
+      reply.raw.off("close", disconnected);
+    }
   });
   app.post("/api/projects/:projectId/runs/:runId/pause", async (request) => {
     const owner = await requiredOwner(request, store, config);

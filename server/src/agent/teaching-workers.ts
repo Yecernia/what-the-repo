@@ -1,3 +1,5 @@
+import { loadEvidencePackets } from './evidence-packets.js';
+import type { TeachingQuestion } from './teaching-question.js';
 import { randomUUID } from "node:crypto";
 import { Type, type Static } from "typebox";
 import type {
@@ -24,6 +26,7 @@ import type { PiMemoryRecord, PiModelRuntime, PiUsageSummary } from "./types.js"
 import { routeConversation } from '../services/learner-context.js';
 
 const ASSESSMENT_RESULT = Type.Object({
+  answer_relevant: Type.Boolean(),
   verdict: Type.Union([
     Type.Literal("mastered"),
     Type.Literal("partial"),
@@ -40,6 +43,7 @@ const LEARNING_ROUTE_RESULT = Type.Object({
   steps: Type.Array(Type.Object({
     title: Type.String({ minLength: 1, maxLength: 120 }),
     objective: Type.String({ minLength: 1, maxLength: 500 }),
+    learning_targets: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 6 }),
     completion_check: Type.String({ minLength: 1, maxLength: 500 }),
     component_ids: Type.Array(Type.String({ maxLength: 256 }), { minItems: 1, maxItems: 8 }),
     evidence_ids: Type.Array(Type.String({ maxLength: 256 }), { minItems: 1, maxItems: 12 }),
@@ -56,6 +60,7 @@ function learningRouteLanguageError(
     ["title", step.title],
     ["objective", step.objective],
     ["completion_check", step.completion_check],
+    ...step.learning_targets.map((target, index) => ["learning_targets[" + index + "]", target]),
   ].filter(([, value]) => !languageHasNaturalText(value, language))
     .map(([field]) => field);
   return fields.length
@@ -77,19 +82,10 @@ export interface TeachingWorkerTrace {
   state_candidate: boolean;
 }
 
-interface EvidencePacket {
-  evidence_id: string;
-  label: string;
-  path: string;
-  start_line: number | null;
-  end_line: number | null;
-  kind: string;
-  excerpt: string[];
-}
-
 export async function runUnderstandingAssessment(input: {
   answer: string;
-  /** The learner's earlier replies during this step, oldest first. */
+  question: TeachingQuestion;
+  /** Earlier answers to this registered question only. */
   earlierAnswers?: string[];
   evidence: SnapshotEvidence[];
   project: Project;
@@ -108,47 +104,47 @@ export async function runUnderstandingAssessment(input: {
 }> {
   const workerRunId = `worker:assessment:${randomUUID()}`;
   const step = currentStep(input.snapshot, input.project.study);
-  const packets = await evidencePackets(
-    input.evidence,
-    input.project,
-    input.snapshot,
-    input.store,
-  );
-  const allowedIds = new Set(packets.map((packet) => packet.evidence_id));
+  const packetResult = await loadEvidencePackets({ evidence: input.evidence.map(row => ({ ...row, snapshot_id: input.snapshot.snapshot_id })), projectId: input.project.project_id, snapshotId: input.snapshot.snapshot_id, store: input.store, signal: input.signal });
+  const packets = packetResult.packets;
+  const allowedIds = new Set(packets.filter(packet => !packet.incomplete).map((packet) => packet.evidence_id));
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v1",
-    outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v4",
+    inputSchemaId: "understanding-assessment-input-v2",
+    outputSchemaId: "understanding-assessment-output-v2",
+    contextBuilderId: "understanding-assessment-context-v5",
     modelRuntime: input.modelRuntime,
     thinkingLevel: "medium",
     signal: input.signal,
     schema: ASSESSMENT_RESULT,
     systemPrompt: [
-      "The program has bound the current step, the learner's original message, their earlier replies during this step and bounded evidence to this run.",
+      "Judge ONLY current_question.prompt and current_question.target_items. Other step goals are not missing answers. A mastered verdict means this question is correct, not that the whole step is complete. Set answer_relevant=false for topic changes or ordinary chat; those are unclear, never new misconception or mastery.",
       "Do not read other repository content or replace the original answer. Evidence IDs must come from the input. Finish by calling submit_result.",
     ].join("\n"),
     userPrompt: JSON.stringify({
-      current_step: step,
+      current_question: { prompt: input.question.prompt, target_items: input.question.target_items, question_id: input.question.question_id },
       evidence: packets,
-      current_study: studySummary(input.project.study),
       original_user_answer: input.answer,
-      earlier_answers_in_this_step: input.earlierAnswers ?? [],
+      earlier_answers_to_this_question: input.earlierAnswers ?? [],
     }),
   });
   const acceptedEvidenceIds = result.value
     ? [...new Set(result.value.evidence_ids.filter((id) => allowedIds.has(id)))]
     : [];
-  const evidenceRequired = result.value?.verdict !== "unclear";
+  const verdict = result.value?.answer_relevant === false ? "unclear" : result.value?.verdict ?? null;
+  const evidenceRequired = verdict !== "unclear";
   const valid = Boolean(
     result.value
     && step
+    && (!packetResult.incomplete || verdict === "unclear")
+    && input.question.step_id === step.step_id
+    && input.question.snapshot_id === input.snapshot.snapshot_id
+    && input.question.route_revision === (input.project.study.route_revision ?? 0)
     && (!evidenceRequired || acceptedEvidenceIds.length),
   );
   return {
     completed: valid,
     feedback: result.value?.feedback ?? null,
-    verdict: result.value?.verdict ?? null,
+    verdict,
     masteredItems: result.value?.mastered_items ?? [],
     misconceptions: result.value?.misconceptions ?? [],
     acceptedEvidenceIds,
@@ -217,8 +213,8 @@ export async function generateLearningRoute(input: {
   const result = await runStructuredWorker({
     skillId: "learning-route",
     inputSchemaId: "learning-route-input-v4",
-    outputSchemaId: "learning-route-output-v3",
-    contextBuilderId: "learning-route-context-v5",
+    outputSchemaId: "learning-route-output-v4",
+    contextBuilderId: "learning-route-context-v6",
     modelRuntime: input.modelRuntime,
     thinkingLevel: "medium",
     signal: input.signal,
@@ -249,30 +245,32 @@ export async function generateLearningRoute(input: {
       recent_conversation: routeConversation(input.project),
       current_study: studySummary(input.project.study),
     }),
-    validateSubmitted: (value) => [...new Set(value.steps
-      .map((step) => learningRouteLanguageError(step, displayLanguage))
-      .filter((error): error is string => Boolean(error)))],
+    validateSubmitted: (value) => [...new Set(value.steps.flatMap((step, index) => {
+      const errors: string[] = [];
+      const languageError = learningRouteLanguageError(step, displayLanguage);
+      if (languageError) errors.push(languageError);
+      for (const id of step.component_ids) if (!componentIds.has(id)) errors.push('Step ' + (index + 1) + ': unknown component ' + id + '. Correct the binding and resubmit the complete route.');
+      for (const id of step.evidence_ids) if (!exploration.state.exposedEvidence.has(id)) errors.push('Step ' + (index + 1) + ': evidence ' + id + ' has not been read. Retrieve valid evidence and resubmit the complete route.');
+      return errors;
+    }))],
   });
-  const allowedEvidence = new Set(exploration.state.exposedEvidence.keys());
-  const steps = result.value?.steps.flatMap((step, index) => {
-    const validComponents = step.component_ids.filter((id) => componentIds.has(id));
-    const evidenceIds = [...new Set(step.evidence_ids.filter((id) => allowedEvidence.has(id)))];
-    if (!validComponents.length || !evidenceIds.length) return [];
-    return [{
-      step_id: `learning:${randomUUID().replaceAll("-", "").slice(0, 20)}`,
-      order: index + 1,
-      title: step.title,
-      objective: step.objective,
-      evidence_refs: evidenceIds,
-      component_ids: validComponents,
-      completion_check: step.completion_check,
-    }];
-  }) ?? [];
+  const routeValid = Boolean(result.value && result.stopReason === "completed" && result.validationErrors.length === 0);
+  const steps: SnapshotLearningStep[] = (routeValid ? result.value?.steps : undefined)?.map((step, index) => ({
+    step_id: 'learning:' + randomUUID().replaceAll('-', '').slice(0, 20),
+    order: index + 1,
+    title: step.title,
+    objective: step.objective,
+    evidence_refs: [...new Set(step.evidence_ids)],
+    component_ids: [...new Set(step.component_ids)],
+    completion_check: step.completion_check,
+    learning_targets: [...new Set(step.learning_targets)],
+  })) ?? [];
+
   return {
     // An explicit learning request can legitimately produce no route when the
     // snapshot does not contain enough evidence. Keep that as a completed,
     // honest result so the caller can explain the gap without mutating study.
-    completed: Boolean(result.value),
+    completed: routeValid,
     steps,
     trace: {
       worker_run_id: workerRunId,
@@ -280,48 +278,14 @@ export async function generateLearningRoute(input: {
       skill_version: result.skillVersion,
       model: result.model, provider: result.provider,
       stop_reason: result.validationErrors.length
-        ? `${result.stopReason}:language_mismatch_after_retry`
+        ? `${result.stopReason}:route_validation_failed_after_retry`
         : result.stopReason,
-      completed: Boolean(result.value),
+      completed: routeValid,
       usage: result.usage,
       evidence_ids: [...new Set(steps.flatMap((step) => step.evidence_refs))],
       state_candidate: Boolean(steps.length),
     },
   };
-}
-
-async function evidencePackets(
-  evidence: SnapshotEvidence[],
-  project: Project,
-  snapshot: EvidenceSnapshot,
-  store: ProductStore,
-): Promise<EvidencePacket[]> {
-  const packets: EvidencePacket[] = [];
-  for (const row of evidence.slice(0, 10)) {
-    const line = row.start_line ?? 1;
-    let excerpt: string[] = [];
-    try {
-      excerpt = (await store.readSourceLines(
-        project.project_id,
-        snapshot.snapshot_id,
-        row.path,
-        Math.max(1, line - 2),
-        Math.min((row.end_line ?? line) + 4, line + 30),
-      )).lines;
-    } catch {
-      // Graph metadata remains useful when a bounded source excerpt is unavailable.
-    }
-    packets.push({
-      evidence_id: row.stable_id,
-      label: row.label,
-      path: row.path,
-      start_line: row.start_line,
-      end_line: row.end_line,
-      kind: row.kind,
-      excerpt,
-    });
-  }
-  return packets;
 }
 
 function currentStep(snapshot: EvidenceSnapshot, study: StudyState): SnapshotLearningStep | null {

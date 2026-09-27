@@ -262,6 +262,18 @@ const project: Project = {
   model_override: null,
 };
 
+it('uses route positions rather than legacy order gaps for current lesson and numbering', () => {
+  const first = snapshot.learning_plan.steps[0]!;
+  const changed = { ...project, study: { ...project.study, current_step: 1, total_steps: 2,
+    dynamic_learning_plan: [first, { ...first, step_id: 'third', order: 3, title: '后续课程' }] } };
+  render(<RepositoryWorkspace snapshot={snapshot} project={changed} onOpenEvidence={vi.fn()} onAddContext={vi.fn()} />);
+  fireEvent.click(screen.getByRole('tab', { name: /学习路线/ }));
+  const current = screen.getByRole('button', { name: /后续课程/ });
+  expect(current).toHaveClass('current');
+  expect(current.querySelector('.learning-step-index')).toHaveTextContent('2');
+  expect(screen.getByRole('button', { name: /先看入口编排/ })).toHaveClass('completed');
+});
+
 const projectedSnapshot: Snapshot = {
   ...snapshot,
   snapshot_id: 'snapshot-projection',

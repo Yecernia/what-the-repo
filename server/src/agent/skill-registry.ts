@@ -81,7 +81,7 @@ function publishedSkill(value: {
 const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   "primary-conversational-supervisor": {
     id: "primary-conversational-supervisor",
-    version: "5.0.0",
+    version: "6.0.0",
     allowedTools: [
       "get_project_overview",
       "list_value_points",
@@ -91,6 +91,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
       "read_source_excerpt",
       "get_learning_context",
       "get_learner_profile",
+      "register_teaching_question",
       "assess_understanding",
       "propose_learning_action",
       "report_feedback_hint",
@@ -142,18 +143,18 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
     id: "understanding-assessment",
     version: "5.1.0",
     allowedTools: ["submit_result"],
-    inputSchemaId: "understanding-assessment-input-v1",
-    outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v4",
+    inputSchemaId: "understanding-assessment-input-v2",
+    outputSchemaId: "understanding-assessment-output-v2",
+    contextBuilderId: "understanding-assessment-context-v5",
     evalSuite: "understanding-assessment-v4",
   },
   "citation-review": {
     id: "citation-review",
-    version: "5.0.0",
+    version: "6.0.0",
     allowedTools: ["submit_result"],
-    inputSchemaId: "citation-review-input-v1",
-    outputSchemaId: "citation-review-output-v1",
-    contextBuilderId: "citation-review-context-v3",
+    inputSchemaId: "citation-review-input-v2",
+    outputSchemaId: "citation-review-output-v2",
+    contextBuilderId: "citation-review-context-v4",
     evalSuite: "citation-review-v5",
   },
   "memory-maintenance": {
@@ -208,8 +209,8 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
       "get_repository_file_outline",
     ],
     inputSchemaId: "learning-route-input-v4",
-    outputSchemaId: "learning-route-output-v3",
-    contextBuilderId: "learning-route-context-v5",
+    outputSchemaId: "learning-route-output-v4",
+    contextBuilderId: "learning-route-context-v6",
     evalSuite: "learning-route-v5",
   },
   "feedback-analysis": {

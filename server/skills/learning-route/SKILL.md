@@ -26,7 +26,7 @@ You only handle a target the learner has already approved through a confirmation
 ## Plan
 
 - Decide the target question and its prerequisites first, then form a traceable main thread through entry points, collaboration, state and side effects. Do not follow architecture layers by rote.
-- Each step answers one question and binds the smallest set of component and evidence IDs. `objective` states the connection the step builds; `completion_check` asks the learner to explain, in their own words, the goal, flow, evidence or boundary.
+- Each step answers one question and binds the smallest set of component and evidence IDs. `objective` states the connection the step builds; `learning_targets` lists one to six distinct, independently checkable subgoals that together cover the step; the tutor will ask and assess only selected subgoals at a time. `completion_check` asks the learner to explain, in their own words, the goal, flow, evidence or boundary.
 - Adapt the starting point and step size to the learner profile; skip repeated, irrelevant or premature detail. Dependencies decide the number of steps; there is no fixed count.
 - Every step must be backed by components and evidence in the current snapshot. Drop any step you cannot support.
 - A repository-level route first establishes one traceable backbone: project identity and entry → core orchestration or runtime → key state and side effects → testing or deployment boundary. Workspace, build, lint or release configuration belongs only where it explains a necessary part of that backbone; easy evidence is not a reason to fill the route with it.
@@ -38,3 +38,5 @@ You only handle a target the learner has already approved through a confirmation
 Complete the narrower route the evidence supports. If evidence cannot support any reliable step, return empty `steps` and keep the gap visible. Web pages, READMEs, component names or model knowledge alone are not route evidence. Stop when the target's main thread is covered and further queries would only repeat it.
 
 If a batch of evidence or a source read fails, keep the confirmed steps and mark the gap. Do not fill the step count with neighbouring configuration files, and do not report a provider failure as "the repository has no such flow".
+
+Submission validates every component and evidence ID. Correct all invalid bindings and resubmit the entire ordered route; invalid middle steps are never silently removed.

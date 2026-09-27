@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { runAbortCode } from '../services/execution-error.js';
 import { failureMessage } from './provider-error.js';
 import { buildSnapshotQueryDirectory, querySnapshotQueryDirectory, type SnapshotQueryInput } from '../domain/snapshot-query.js';
@@ -65,7 +66,13 @@ const SOURCE_INPUT = Type.Object({
   offset: Type.Optional(Type.Integer({ minimum: 1, maximum: 1_000_000, default: 1 })),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, default: 120 })),
 });
+const QUESTION_INPUT = Type.Object({
+  prompt: Type.String({ minLength: 1, maxLength: 1500 }),
+  target_items: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 6 }),
+  evidence_ids: Type.Array(Type.String({ maxLength: 256 }), { minItems: 1, maxItems: 10 }),
+});
 const ASSESSMENT_INPUT = Type.Object({
+  question_id: Type.String({ minLength: 1, maxLength: 256 }),
   evidence_ids: Type.Optional(Type.Array(Type.String({ maxLength: 256 }), { maxItems: 10 })),
 });
 const LEARNING_ACTION_INPUT = Type.Object({
@@ -120,6 +127,7 @@ export interface ConversationToolContext {
     };
   };
   currentUserMessage: string;
+  source_message_id?: string;
   modelRuntime: PiModelRuntime;
   workerRuns: TeachingWorkerTrace[];
   workerServices?: {
@@ -175,19 +183,6 @@ function errorResult(_toolName: string, message: string): never {
   // Pi Core turns thrown tool failures into an isError tool result and lets the
   // model decide whether to correct the arguments or choose another tool.
   throw new ToolExecutionError(message);
-}
-
-/** The learner's replies since the current step began (after the last confirmed action), oldest first. */
-function earlierAnswersInStep(project: Project, currentMessage: string): string[] {
-  const messages = project.messages;
-  let start = 0;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]!.learning_action?.status === "executed") { start = index + 1; break; }
-  }
-  const answers = messages.slice(start).filter((message) => message.role === "user").map((message) => message.content);
-  // The current message is bound separately; it may already be the last stored user message.
-  if (answers.at(-1) === currentMessage) answers.pop();
-  return answers.slice(-6).map((answer) => answer.slice(0, 1500));
 }
 
 function bounded<T>(rows: T[], limit: number): T[] {
@@ -596,11 +591,14 @@ export function createConversationTools(
             )
           ).lines,
         });
-        const evidence = [...context.exposedEvidence.values()]
-          .filter((row) => row.path === normalized);
+        const evidence = result.content ? expose(context, [{
+          stable_id: 'source:' + currentSnapshotId + ':' + normalized + ':' + result.start_line + '-' + result.end_line,
+          label: normalized + ':' + result.start_line + '-' + result.end_line,
+          path: normalized, start_line: result.start_line, end_line: result.end_line, kind: 'source_excerpt',
+        }]) : [];
         return textResult(
           "read_source_excerpt",
-          { ok: true, ...result },
+          { ok: true, ...result, evidence },
           { evidence_ids: evidence.map((row) => row.stable_id), paths: [normalized] },
         );
       } catch {
@@ -727,6 +725,35 @@ export function createConversationTools(
     },
   );
 
+  const registerQuestion = call(
+    'register_teaching_question',
+    '正在记录本次理解检查问题',
+    'Before asking a check question, register its exact text, target_items copied from current_step.learning_targets (legacy: completion_check), and exposed evidence. Relay that exact question to the learner. This never evaluates the current message. Register a new question when changing scope.',
+    QUESTION_INPUT,
+    async (_id, params) => {
+      const snapshot = await fullSnapshot();
+      const step = currentLearningStep(context.project);
+      if (!snapshot || !step) return errorResult('register_teaching_question', 'No active learning step.');
+      const input = params as Static<typeof QUESTION_INPUT>;
+      const targets = step.learning_targets?.length ? step.learning_targets : [step.completion_check];
+      if (!step.learning_targets?.length && input.prompt.trim() !== step.completion_check.trim()) {
+        return errorResult('register_teaching_question', 'This legacy step has no independent targets. Ask its exact completion_check, or create a new route with explicit targets; a narrow question cannot certify the whole step.');
+      }
+      if (input.target_items.some(item => !targets.includes(item))) return errorResult('register_teaching_question', 'Use only the current step learning_targets.');
+      const evidence = selectedEvidence(context, input.evidence_ids);
+      if (evidence.length !== new Set(input.evidence_ids).size) return errorResult('register_teaching_question', 'Read every requested evidence ID first.');
+      const question = {
+        question_id: 'question:' + randomUUID(), snapshot_id: snapshot.snapshot_id,
+        route_revision: context.project.study.route_revision ?? 0, step_id: step.step_id,
+        prompt: input.prompt, target_items: [...new Set(input.target_items)], evidence,
+        answers: [], answer_message_ids: [], created_message_id: context.source_message_id ?? context.project.messages.at(-1)?.message_id ?? '', assessment_sequence: 0,
+      };
+      context.project.study.teaching_question = question;
+      return textResult('register_teaching_question', { ok: true, question, state_changed: true }, { state_changed: true });
+    },
+    'sequential',
+  );
+
   const assessment = call(
     "assess_understanding",
     "正在判断当前理解和遗漏",
@@ -744,8 +771,16 @@ export function createConversationTools(
           "There is no current learning step to assess; progress is unchanged.",
         );
       }
-      const input = params as { evidence_ids?: string[] };
-      const rows = selectedEvidence(context, input.evidence_ids);
+      const input = params as { question_id: string; evidence_ids?: string[] };
+      const question = context.project.study.teaching_question;
+      const step = currentLearningStep(context.project);
+      const messageId = context.source_message_id ?? context.project.messages.at(-1)?.message_id ?? '';
+      if (!question || question.question_id !== input.question_id || question.step_id !== step?.step_id
+        || question.snapshot_id !== snapshot.snapshot_id || question.route_revision !== (context.project.study.route_revision ?? 0)
+        || question.created_message_id === messageId) {
+        return errorResult('assess_understanding', 'Ask a registered current question and wait for the learner answer before assessing.');
+      }
+      const rows = question.evidence;
       if (!rows.length) {
         return errorResult(
           "assess_understanding",
@@ -754,7 +789,8 @@ export function createConversationTools(
       }
       const result = await (context.workerServices?.assess ?? runUnderstandingAssessment)({
         answer: context.currentUserMessage,
-        earlierAnswers: earlierAnswersInStep(context.project, context.currentUserMessage),
+        question,
+        earlierAnswers: question.answers.filter((_answer, index) => question.answer_message_ids[index] !== messageId),
         evidence: rows,
         project: context.project,
         snapshot,
@@ -774,15 +810,42 @@ export function createConversationTools(
         masteredItems: result.masteredItems,
         evidenceIds: result.acceptedEvidenceIds,
       };
-      const step = currentLearningStep(context.project);
-      // A pass is kept for this step, so the advance card can still be offered as mastered in a later turn.
-      if (result.verdict === "mastered" && step) {
-        context.project.study.step_passed = {
-          step_id: step.step_id,
-          mastered_items: result.masteredItems,
-          evidence_ids: result.acceptedEvidenceIds,
-        };
+      if (result.verdict !== 'unclear') {
+        const answerIndex = question.answer_message_ids.indexOf(messageId);
+        if (answerIndex >= 0) question.answers[answerIndex] = context.currentUserMessage.slice(0, 2000);
+        else {
+          question.answers.push(context.currentUserMessage.slice(0, 2000));
+          question.answer_message_ids.push(messageId);
+        }
+        question.answers = question.answers.slice(-12);
+        question.answer_message_ids = question.answer_message_ids.slice(-12);
       }
+      question.assessment_sequence += 1;
+      const previous = context.project.study.latest_assessment;
+      const sameStep = previous?.step_id === step?.step_id && previous?.route_revision === question.route_revision && previous?.snapshot_id === snapshot.snapshot_id;
+      const targetEvidence = sameStep ? { ...context.project.study.mastered_target_evidence } : {};
+      const mastered = new Set(sameStep ? context.project.study.mastered_target_items ?? [] : []);
+      if (result.verdict === 'mastered') for (const item of question.target_items) { mastered.add(item); targetEvidence[item] = result.acceptedEvidenceIds; }
+      if (result.verdict === 'misconception' || result.verdict === 'partial') for (const item of question.target_items) { mastered.delete(item); delete targetEvidence[item]; }
+      const allTargets = step?.learning_targets?.length ? step.learning_targets : [step!.completion_check];
+      const stepCompleted = result.verdict === 'mastered' && allTargets.every(item => mastered.has(item));
+      if (result.verdict !== 'unclear') {
+        context.project.study.mastered_target_items = [...mastered];
+        context.project.study.mastered_target_evidence = targetEvidence;
+        context.project.study.latest_assessment = {
+          question_id: question.question_id, step_id: step!.step_id, snapshot_id: snapshot.snapshot_id,
+          route_revision: question.route_revision, sequence: (previous?.sequence ?? 0) + 1,
+          verdict: result.verdict, step_completed: stepCompleted,
+        };
+        context.project.study.step_passed = stepCompleted ? {
+          step_id: step!.step_id, mastered_items: [...mastered], evidence_ids: [...new Set(Object.values(targetEvidence).flat())],
+          snapshot_id: snapshot.snapshot_id, route_revision: question.route_revision,
+          assessment_sequence: context.project.study.latest_assessment.sequence,
+        } : null;
+      }
+      if (result.verdict === 'misconception') context.project.study.misconceptions = [...new Set([
+        ...context.project.study.misconceptions, ...(result.misconceptions.length ? result.misconceptions : [result.feedback]),
+      ])].slice(-20);
       return textResult(
         "assess_understanding",
         {
@@ -792,7 +855,10 @@ export function createConversationTools(
           mastered_items: result.masteredItems,
           misconceptions: result.misconceptions,
           evidence_ids: result.acceptedEvidenceIds,
-          may_propose_advance: result.verdict === "mastered",
+          question_correct: result.verdict === "mastered",
+          step_completed: stepCompleted,
+          remaining_targets: allTargets.filter(item => !mastered.has(item)),
+          may_propose_advance: stepCompleted,
           state_changed: false,
         },
         {
@@ -819,6 +885,8 @@ export function createConversationTools(
           "A learning action was already proposed this turn; only one card per turn.",
         );
       }
+      const sourceMessage = context.project.messages.find(message => message.message_id === context.source_message_id);
+      if (sourceMessage?.learning_action_result) return errorResult('propose_learning_action', 'This message already applied a learning action. Regeneration cannot authorize another state change.');
       const input = params as {
         action: "start_learning_route" | "advance_learning_step" | "switch_learning_target" | "stop_guided_learning";
         target_kind?: "repository" | "value_point" | "component" | "layer" | "learning_step";
@@ -826,9 +894,12 @@ export function createConversationTools(
       };
       const step = currentLearningStep(context.project);
       const stored = context.project.study.step_passed;
-      const passed = context.assessment.value?.verdict === "mastered"
-        ? { mastered_items: context.assessment.value.masteredItems, evidence_ids: context.assessment.value.evidenceIds }
-        : step && stored?.step_id === step.step_id ? stored : null;
+      const latest = context.project.study.latest_assessment;
+      const passed = step && stored?.step_id === step.step_id
+        && stored.snapshot_id === snapshot.snapshot_id && stored.route_revision === (context.project.study.route_revision ?? 0)
+        && (!latest || (latest.verdict === 'mastered' && latest.step_completed && latest.sequence === stored.assessment_sequence
+          && latest.step_id === step.step_id && latest.snapshot_id === snapshot.snapshot_id && latest.route_revision === stored.route_revision))
+        ? stored : null;
       if (input.action === "advance_learning_step" && !passed && !isExplicitAdvanceRequest(context.currentUserMessage)) {
         return errorResult(
           "propose_learning_action",
@@ -894,6 +965,7 @@ export function createConversationTools(
     staticFacts,
     learning,
     profile,
+    registerQuestion,
     assessment,
     proposeLearningAction,
   ];

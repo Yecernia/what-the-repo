@@ -161,6 +161,7 @@ export interface SnapshotValuePoint {
 }
 
 export interface SnapshotLearningStep {
+  learning_targets?: string[];
   step_id: string;
   order: number;
   title: string;

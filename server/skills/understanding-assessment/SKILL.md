@@ -5,9 +5,9 @@ description: Judge whether the learner's own explanation shows a correct mental 
 
 # Understanding Assessment
 
-Assess the program-bound `original_user_answer` against the current step's goal. Do not rewrite the learner's answer, and do not treat your verdict as committed progress.
+Assess the program-bound `original_user_answer` against only `current_question.prompt` and `current_question.target_items`. Do not rewrite the learner's answer, and do not treat your verdict as committed progress.
 
-`earlier_answers_in_this_step` holds the learner's previous replies during this step, oldest first. Judge the understanding they show together with the current answer: a learner who answered some parts earlier and the rest now has answered the whole question, and must not be asked to restate it in one message. A short reference such as "the points above are my answer" adopts what they already wrote. When the current answer corrects or contradicts an earlier one, the current answer decides.
+`earlier_answers_to_this_question` contains only answers explicitly assessed for this registered question. Combine these answers; the latest correction overrides earlier claims. A topic change or unrelated chat is `unclear` and must not count toward mastery or misconceptions. Never penalize the learner for unasked targets.
 
 ## Verdicts
 
@@ -16,7 +16,7 @@ Assess the program-bound `original_user_answer` against the current step's goal.
 - `misconception`: the object, call direction or data flow, or the line between fact and inference, is reversed badly enough to change the mental model.
 - `unclear`: the answer or the evidence is not enough to tell the first three apart reliably.
 
-Judge only what the current step actually asks. Work through: is the goal clear → is the flow or causality right → is it tied to evidence → does the learner know the unknown boundary. Not every step needs all four.
+Judge only the registered question. Do not infer hidden grading criteria from the whole step. Work through: is the goal clear → is the flow or causality right → is it tied to evidence → does the learner know the unknown boundary. Not every step needs all four.
 
 Some questions hide several judgments in one. For "both commands end up at the same entry file", check separately: whether each command executes source or published/build output; which script or `bin` declaration maps it to the entry; and whether the learner confused "the same logical entry" with "the same physical file". A wrong direction in any of these is usually `partial` or `misconception`, and one correct summary sentence does not cancel it.
 
@@ -32,4 +32,4 @@ For `partial`, structure the feedback as: what is already mastered → the one m
 
 ## What the verdict allows
 
-A `mastered` verdict lets the tutor offer the normal "next step" confirmation; nothing advances until the learner confirms. If the learner explicitly asked in this turn to go straight to the next step, the tutor may propose the advance; that explicit request authorises a narrow, deliberate skip, which the program records as skipped rather than mastered once the turn succeeds, without changing your verdict. A paused, cancelled or failed turn commits no skip.
+A `mastered` verdict means this question is correct. Only the program confirming all step targets are mastered lets the tutor offer the normal "next step" confirmation; nothing advances until the learner confirms. If the learner explicitly asked in this turn to go straight to the next step, the tutor may propose the advance; that explicit request authorises a narrow, deliberate skip, which the program records as skipped rather than mastered once the turn succeeds, without changing your verdict. A paused, cancelled or failed turn commits no skip.

@@ -11,6 +11,50 @@ import { TextSubmissionRepair } from "./text-submission-repair.js";
 import { providerFailureReason } from "./worker-failure.js";
 import { workerRequestContext } from "./worker-request-context.js";
 
+test("teaching and review workers stop repeated unknown tool calls at six requests", async () => {
+  for (const skillId of ["learning-route", "understanding-assessment", "citation-review"] as const) {
+    const faux = fauxProvider({ provider: `bounded-${skillId}` });
+    const models = createModels(); models.setProvider(faux.provider);
+    faux.setResponses(Array.from({ length: 21 }, () => fauxAssistantMessage(fauxToolCall("nonexistent_tool", {}))));
+    const metadata = skillMetadata(skillId);
+    const result = await runStructuredWorker({ skillId,
+      inputSchemaId: metadata.inputSchemaId, outputSchemaId: metadata.outputSchemaId, contextBuilderId: metadata.contextBuilderId,
+      schema: Type.Object({ ok: Type.Boolean() }), systemPrompt: "Submit result.", userPrompt: "Check.",
+      tools: metadata.allowedTools.filter(name => name !== "submit_result").map(name => ({ name, label: name, description: name,
+        parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) })),
+      modelRuntime: { models, model: faux.getModel() as Model<Api> },
+    });
+    assert.equal(result.value, null);
+    assert.equal(result.stopReason, "worker_call_limit_exceeded");
+    assert.equal(faux.state.callCount, 6);
+  }
+});
+
+test("review worker total deadline aborts an in-flight model request", async () => {
+  const faux = fauxProvider({ provider: "bounded-review-deadline" });
+  const models = createModels(); models.setProvider(faux.provider);
+  let aborted = false;
+  faux.setResponses([async (_context, options) => {
+    await new Promise<void>(resolve => {
+      if (options?.signal?.aborted) { aborted = true; resolve(); return; }
+      options?.signal?.addEventListener("abort", () => { aborted = true; resolve(); }, { once: true });
+    });
+    return fauxAssistantMessage("", { stopReason: "aborted" });
+  }]);
+  const metadata = skillMetadata("citation-review");
+  const keepAlive = setTimeout(() => {}, 1000);
+  try {
+    const result = await runStructuredWorker({ skillId: "citation-review",
+      inputSchemaId: metadata.inputSchemaId, outputSchemaId: metadata.outputSchemaId, contextBuilderId: metadata.contextBuilderId,
+      schema: Type.Object({ ok: Type.Boolean() }), systemPrompt: "Submit.", userPrompt: "Review.",
+      modelRuntime: { models, model: faux.getModel() as Model<Api> }, taskLimits: { timeoutMs: 20 },
+    });
+    assert.equal(result.stopReason, "worker_time_limit_exceeded");
+    assert.equal(result.value, null);
+    assert.equal(aborted, true);
+  } finally { clearTimeout(keepAlive); }
+});
+
 test("worker request annotations survive copied SDK contexts and reject rewritten history", () => {
   const append = workerRequestContext();
   const original: Context = { systemPrompt: "fixed", messages: [{ role: "user", content: "task", timestamp: 1 }] };
@@ -195,9 +239,9 @@ test("structured worker failure returns a stable reason without provider details
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v1",
-    outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v4",
+    inputSchemaId: "understanding-assessment-input-v2",
+    outputSchemaId: "understanding-assessment-output-v2",
+    contextBuilderId: "understanding-assessment-context-v5",
     systemPrompt: "提交结果。",
     userPrompt: "生成结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -221,9 +265,9 @@ test("structured worker exposes provider request failures separately from missin
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v1",
-    outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v4",
+    inputSchemaId: "understanding-assessment-input-v2",
+    outputSchemaId: "understanding-assessment-output-v2",
+    contextBuilderId: "understanding-assessment-context-v5",
     systemPrompt: "提交结果。",
     userPrompt: "生成结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -247,9 +291,9 @@ test("structured worker returns validation errors to the same agent and accepts 
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v1",
-    outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v4",
+    inputSchemaId: "understanding-assessment-input-v2",
+    outputSchemaId: "understanding-assessment-output-v2",
+    contextBuilderId: "understanding-assessment-context-v5",
     systemPrompt: "提交结果。",
     userPrompt: "生成中文结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -379,9 +423,9 @@ test("structured worker records SDK argument rejection and unknown tools without
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v1",
-    outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v4",
+    inputSchemaId: "understanding-assessment-input-v2",
+    outputSchemaId: "understanding-assessment-output-v2",
+    contextBuilderId: "understanding-assessment-context-v5",
     systemPrompt: "提交结果。", userPrompt: "生成结果。",
     schema: Type.Object({ answer: Type.String() }),
     modelRuntime: { models, model: faux.getModel() as Model<Api> },
@@ -414,9 +458,9 @@ test("structured worker retains the final evidence-backed submission after valid
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v1",
-    outputSchemaId: "understanding-assessment-output-v1",
-    contextBuilderId: "understanding-assessment-context-v4",
+    inputSchemaId: "understanding-assessment-input-v2",
+    outputSchemaId: "understanding-assessment-output-v2",
+    contextBuilderId: "understanding-assessment-context-v5",
     systemPrompt: "提交结果。",
     userPrompt: "生成中文结果。",
     schema: Type.Object({ answer: Type.String() }),

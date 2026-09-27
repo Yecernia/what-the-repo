@@ -1018,6 +1018,13 @@ export class RepositoryService {
     plan.selected_value_point = point.stable_id;
     const updated = await this.store.updateProject(projectId, ownerId, (row) => {
       row.study.selected_value_point = point.stable_id;
+      row.study.route_revision = (row.study.route_revision ?? 0) + 1;
+      row.study.step_passed = null;
+      row.study.teaching_question = null;
+      row.study.latest_assessment = null;
+      row.study.mastered_target_items = [];
+      row.study.mastered_target_evidence = {};
+      row.study.skipped_steps = [];
       row.study.phase = "proposing";
       row.study.dynamic_learning_plan = [];
       row.study.total_steps = 0;
@@ -1113,4 +1120,3 @@ function clampInteger(value: number | undefined, minimum: number, maximum: numbe
     ? Math.max(minimum, Math.min(maximum, candidate))
     : fallback;
 }
-

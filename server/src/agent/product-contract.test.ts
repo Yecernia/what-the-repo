@@ -400,6 +400,7 @@ test("online tool catalog contains no shell database or arbitrary file capabilit
       "propose_learning_action",
       "query_code_evidence",
       "read_source_excerpt",
+      "register_teaching_question",
     ]);
     assert.equal(names.some((name) => /shell|bash|sql|database|write|execute/.test(name)), false);
   } finally {
