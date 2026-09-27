@@ -19,6 +19,7 @@ export interface PiSessionIdentity {
 }
 
 export interface PiMemoryRecord {
+  sourceCreatedAt?: string;
   memoryId: string;
   ownerId: string;
   scope: "user" | "project" | "session";

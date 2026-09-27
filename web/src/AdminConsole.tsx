@@ -933,7 +933,7 @@ function Connections({
       <Card title="平台模型分配">
         <p className="admin-muted">
           多个 Agent
-          可以共用平台连接。学习路线、理解检验、引用检查和记忆维护跟随当前聊天模型，不单独配置。未设置的项目沿用部署默认值。
+          可以共用平台连接。学习路线、理解检验和引用检查跟随当前聊天模型；后台记忆维护使用平台免费模型。未设置的项目沿用部署默认值。
         </p>
         <div className="admin-agent-grid">
           {(data.roles as string[]).map((role) => (

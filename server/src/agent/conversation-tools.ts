@@ -104,6 +104,7 @@ export interface ConversationToolContext {
   assertSnapshotBinding?: () => Promise<void>;
   profile: LearnerProfile;
   agentMemories: PiMemoryRecord[];
+  getLearner?: () => Promise<{ profile: LearnerProfile; memories: PiMemoryRecord[] }>;
   store: ProductStore;
   /** Graph objects the learner attached to the current message (possibly none). */
   selected: Array<{ snapshot_id: string; kind: string; stable_id: string; label: string }>;
@@ -697,7 +698,8 @@ export function createConversationTools(
     "Read the learner's explicit profile and sourced inferences, when the learner has enabled the profile.",
     EMPTY_INPUT,
     async () => {
-      if (!context.profile.enabled) {
+      const current = context.getLearner ? await context.getLearner() : { profile: context.profile, memories: context.agentMemories };
+      if (!current.profile.enabled) {
         return textResult("get_learner_profile", {
           ok: true,
           enabled: false,
@@ -707,16 +709,16 @@ export function createConversationTools(
       return textResult("get_learner_profile", {
         ok: true,
         enabled: true,
-        memory_summary: context.profile.memory_summary,
-        memory_summary_is_projection: true,
+        memory_summary: current.profile.memory_summary,
+        memory_summary_is_projection: current.profile.memory_summary_mode !== 'edited',
         explicit: {
-          languages: context.profile.languages,
-          goals: context.profile.goals,
-          experience_level: context.profile.experience_level,
-          explanation_preference: context.profile.explanation_preference,
+          languages: current.profile.languages,
+          goals: current.profile.goals,
+          experience_level: current.profile.experience_level,
+          explanation_preference: current.profile.explanation_preference,
         },
-        inferred: context.profile.inferred.slice(-5),
-        memories: context.agentMemories.slice(-10).map((row) => ({
+        inferred: current.profile.inferred.slice(-5),
+        memories: current.memories.slice(-10).map((row) => ({
           key: row.key,
           value: row.value,
           confidence: row.confidence,

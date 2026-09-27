@@ -59,7 +59,7 @@ test("PostgreSQL owner merge sends parameterized transfers as separate commands"
     assert.equal(summary.projects, 1);
     assert.equal(summary.messages, 2);
     assert.equal(summary.traces, 3);
-    assert.equal(summary.memories, 4);
+    assert.equal(summary.memories, 0, 'count committed memory transfers, not the caller estimate');
     assert.equal(summary.sessions, 5);
     assert.equal(released, true);
     const sql = queries.map((item) => item.sql);

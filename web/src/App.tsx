@@ -1456,6 +1456,7 @@ function SettingsDialog({
             </button>
           </div>
           <p className="settings-status-note">{t("用于所有项目的讲解和学习路线。")}</p>
+          {profile?.memory_summary_mode === 'edited' && <p className="settings-status-note">{t("当前使用你手动修改的摘要；重新生成后恢复自动整理。")}</p>}
           {profile?.enabled === false && (
             <div className="settings-status-note">{t("已暂停使用和自动更新学习信息，已保存的内容会保留。")}</div>
           )}

@@ -1,3 +1,5 @@
+import { PostgresMemoryStore } from './postgres-memory-store.js';
+import { MemoryWorkQueue } from './memory-work.js';
 import { newAnalysisWriteMetrics } from './analysis-chunk-codec.js';
 import { managementReadPool } from '../admin/read-context.js';
 import { beijingBudgetDay, withBudgetDefaults } from "../agent/provider-budget.js";
@@ -15,6 +17,7 @@ import {
   emptyProfile,
   emptySettings,
   normalizeProfile,
+  mergeMemoryFactVersions,
   normalizeSettings,
   nowIso,
   REPOSITORY_ANALYSIS_OWNER_ID,
@@ -191,6 +194,9 @@ function mergeProfiles(source: LearnerProfile, target: LearnerProfile): LearnerP
   return {
     ...structuredClone(target),
     enabled: target.enabled && source.enabled,
+    memory_revision: Math.max(source.memory_revision ?? 0, target.memory_revision ?? 0) + 1,
+    memory_fact_versions: mergeMemoryFactVersions(source, target),
+    memory_cutoff_at: [source.memory_cutoff_at, target.memory_cutoff_at].filter((value): value is string => Boolean(value)).sort().at(-1) ?? null,
     languages: [...new Set([...(target.languages ?? []), ...(source.languages ?? [])])].slice(0, 50),
     goals: [...new Set([...(target.goals ?? []), ...(source.goals ?? [])])].slice(0, 50),
     explanation_preference: target.explanation_preference || source.explanation_preference,
@@ -3976,7 +3982,11 @@ export class PostgresStore extends FileStore {
     const lockIds = [input.sourceOwnerId, input.targetOwnerId].sort();
     try {
       await client.query("BEGIN");
+      for (const ownerId of lockIds) await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ['learner:' + ownerId]);
       for (const ownerId of lockIds) await this.lockOwner(client, ownerId);
+      // Chat writes lock the project before checking owner FKs and updating the outbox.
+      // Drain those writers before exclusively locking the owners being merged.
+      await client.query('SELECT project_id FROM projects WHERE owner_id=ANY($1::text[]) ORDER BY project_id FOR UPDATE', [lockIds]);
       const owners = await client.query<{ owner_id: string }>(
         "SELECT owner_id FROM app_users WHERE owner_id = ANY($1::text[]) FOR UPDATE",
         [lockIds],
@@ -4003,6 +4013,14 @@ export class PostgresStore extends FileStore {
         [input.sourceOwnerId],
       );
 
+      const memoryStore = new PostgresMemoryStore(client);
+      const targetKeys = new Set((await memoryStore.list(input.targetOwnerId)).map(row => row.key));
+      let migratedMemoryCount = 0;
+      for (const memory of await memoryStore.list(input.sourceOwnerId)) {
+        if (targetKeys.has(memory.key)) continue;
+        await memoryStore.upsert({ ...memory, ownerId: input.targetOwnerId });
+        migratedMemoryCount++;
+      }
       const sourceProfile = await client.query<{ payload: LearnerProfile }>(
         "SELECT payload FROM learner_profiles WHERE owner_id = $1",
         [input.sourceOwnerId],
@@ -4054,6 +4072,7 @@ export class PostgresStore extends FileStore {
          WHERE owner_id = $1`,
         [input.sourceOwnerId, input.targetOwnerId],
       );
+      await client.query('UPDATE memory_work SET owner_id=$2,lease_id=NULL,lease_until=NULL WHERE owner_id=$1', [input.sourceOwnerId, input.targetOwnerId]);
       await client.query(
         `UPDATE traces
          SET owner_id = $2,
@@ -4100,7 +4119,7 @@ export class PostgresStore extends FileStore {
         target_owner_id: input.targetOwnerId,
         projects: Number(projectCounts.rows[0]?.projects ?? 0),
         messages: Number(projectCounts.rows[0]?.messages ?? 0),
-        memories: input.memoryCount ?? 0,
+        memories: migratedMemoryCount,
         sessions: input.sessionCount ?? 0,
         traces: Number(traceCount.rows[0]?.count ?? 0),
         feedback_requests: Number(feedbackCount.rows[0]?.count ?? 0),
@@ -4367,6 +4386,11 @@ export class PostgresStore extends FileStore {
       )).rows.map(row => jsonObject<Message>(row.payload));
       const byId = new Map(previous.map(message => [message.message_id, message]));
       const changed = project.messages.filter(message => !isDeepStrictEqual(byId.get(message.message_id), message));
+      if (changed.some(message => message.role === 'user' && message.context_eligible && !message.error
+        && (byId.get(message.message_id)?.content !== message.content || !byId.get(message.message_id)?.context_eligible))) {
+        // The outbox intent commits with the user message, including edits, before any model call.
+        await new MemoryWorkQueue(this.root, client).enqueue(project.owner_id, project.project_id);
+      }
       if (changed.length) {
         await client.query(
           `INSERT INTO project_messages(message_id, project_id, role, created_at, payload)

@@ -158,11 +158,11 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "memory-maintenance": {
     id: "memory-maintenance",
-    version: "5.0.0",
+    version: "6.0.0",
     allowedTools: ["submit_result"],
     inputSchemaId: "memory-maintenance-input-v1",
-    outputSchemaId: "memory-maintenance-output-v1",
-    contextBuilderId: "memory-maintenance-context-v2",
+    outputSchemaId: "memory-maintenance-output-v2",
+    contextBuilderId: "memory-maintenance-context-v3",
     evalSuite: "memory-maintenance-v5",
   },
   "repository-value-discovery": {
@@ -197,7 +197,7 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "learning-route": {
     id: "learning-route",
-    version: "5.0.0",
+    version: "6.0.0",
     allowedTools: [
       "list_repository_components",
       "get_repository_component",
@@ -207,9 +207,9 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
       "submit_result",
       "get_repository_file_outline",
     ],
-    inputSchemaId: "learning-route-input-v3",
+    inputSchemaId: "learning-route-input-v4",
     outputSchemaId: "learning-route-output-v3",
-    contextBuilderId: "learning-route-context-v4",
+    contextBuilderId: "learning-route-context-v5",
     evalSuite: "learning-route-v5",
   },
   "feedback-analysis": {

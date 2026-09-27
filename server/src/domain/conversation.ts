@@ -245,6 +245,7 @@ export interface Project {
 }
 
 export interface ProfileClaim {
+  source_message_id?: string;
   claim_id: string;
   claim: string;
   confidence: number;
@@ -266,6 +267,10 @@ export interface LearnerProfile {
   memory_summary: string;
   memory_summary_mode: "generated" | "edited";
   memory_summary_updated_at: string | null;
+  /** Changed by explicit edits; stale background work may never overwrite them. */
+  memory_revision?: number;
+  memory_fact_versions?: Record<string, string>;
+  memory_cutoff_at?: string | null;
 }
 
 export type { ProviderPreset } from "../agent/provider-catalog.js";
@@ -416,6 +421,14 @@ export function emptyProfile(): LearnerProfile {
   };
 }
 
+export function mergeMemoryFactVersions(source: LearnerProfile, target: LearnerProfile): Record<string, string> {
+  const versions = { ...target.memory_fact_versions };
+  for (const [key, date] of Object.entries(source.memory_fact_versions ?? {})) {
+    if ((versions[key] ?? '') < date) versions[key] = date;
+  }
+  return versions;
+}
+
 export function normalizeProfile(value: unknown): LearnerProfile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return emptyProfile();
   const row = value as Record<string, unknown>;
@@ -447,6 +460,10 @@ export function normalizeProfile(value: unknown): LearnerProfile {
     memory_summary: memorySummary,
     memory_summary_mode: mode,
     memory_summary_updated_at: typeof row.memory_summary_updated_at === "string" ? row.memory_summary_updated_at : null,
+    memory_revision: Number.isSafeInteger(row.memory_revision) && Number(row.memory_revision) >= 0 ? Number(row.memory_revision) : 0,
+    memory_fact_versions: row.memory_fact_versions && typeof row.memory_fact_versions === 'object'
+      ? Object.fromEntries(Object.entries(row.memory_fact_versions).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {},
+    memory_cutoff_at: typeof row.memory_cutoff_at === "string" ? row.memory_cutoff_at : null,
   };
 }
 

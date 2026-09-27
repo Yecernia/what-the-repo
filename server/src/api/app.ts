@@ -1,3 +1,7 @@
+import { changeLearner, readLearner, invalidateMemory, type LearnerState } from '../services/learner-context.js';
+import { PostgresStore } from '../persistence/postgres-store.js';
+import { withLearnerLocks } from '../persistence/learner-lock.js';
+import { MemoryWorkQueue } from '../persistence/memory-work.js';
 import { runAbortCode, executionErrorCode } from '../services/execution-error.js';
 import { createAdminSecurity, registerAdminRoutes, recordPresence, adminCookie, ADMIN_CHALLENGE, ADMIN_SESSION } from '../admin/routes.js';
 import { runtimeConfig } from '../admin/runtime-config.js';
@@ -25,7 +29,7 @@ import type { PiRunEvent } from "../agent/types.js";
 import { displayForEvent, displayFromRecord } from "../agent/run-display.js";
 import { FAILURE_MESSAGES, failureMessage, analysisFailureCode } from "../agent/provider-error.js";
 import type { PiMemoryRepository } from "../agent/memory-store.js";
-import { generateMemorySummary, sanitizeMemorySummary } from "../agent/memory-summary.js";
+import { containsSensitiveMemory, generateMemorySummary, sanitizeMemorySummary } from "../agent/memory-summary.js";
 import { PiSessionStore, projectSessionId } from "../agent/session-store.js";
 import { parseUiSelections } from "../agent/prompts.js";
 import {
@@ -363,19 +367,8 @@ async function profileWithSummary(
   ownerId: string,
   store: ProductStore,
   memories: PiMemoryRepository,
-  profile?: LearnerProfile,
 ): Promise<LearnerProfile> {
-  const current = profile ?? await store.loadProfile(ownerId);
-  if (current.memory_summary_mode === "edited") return structuredClone(current);
-  const generated = generateMemorySummary(current, await memories.list(ownerId));
-  if (current.memory_summary !== generated || !current.memory_summary_updated_at) {
-    current.memory_summary = generated;
-    current.memory_summary_mode = "generated";
-    current.memory_summary_updated_at = nowIso();
-    current.updated_at = nowIso();
-    await store.saveProfile(ownerId, current);
-  }
-  return structuredClone(current);
+  return (await readLearner(store, memories, ownerId)).profile;
 }
 
 function safeProviderVerificationMessage(raw: unknown): string | null {
@@ -977,6 +970,8 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     taskQueue: dependencies.taskQueue,
   });
   const app = Fastify({ logger: false });
+  app.addHook("onListen", async () => { conversation.startMemoryMaintenance(); });
+  app.addHook("onClose", async () => { await conversation.stopMemoryMaintenance(); });
   registerByokBoundary(app);
   const requestStartedAt = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {
@@ -1206,7 +1201,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
         let migratedMemoryCount = 0;
         for (const memory of sourceMemories) {
           if (targetMemoryKeys.has(memory.key)) continue;
-          await memories.upsert({ ...memory, ownerId: owner.owner_id });
+          if (!(store instanceof PostgresStore)) await memories.upsert({ ...memory, ownerId: owner.owner_id });
           targetMemoryKeys.add(memory.key);
           migratedMemoryCount += 1;
         }
@@ -1231,14 +1226,16 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
           memoryCount: migratedMemoryCount,
           sessionCount: sourceSessions.length,
         });
-        await profileWithSummary(owner.owner_id, store, memories);
+        if (!(store instanceof PostgresStore)) await new MemoryWorkQueue(store.root).transferOwner(state.owner_id, owner.owner_id);
         await memories.clear(state.owner_id);
         await sessions.deleteOwner(state.owner_id);
         return summary;
       };
       oauthStage = "persist_owner";
+      const mergeWithLearnerLock = () => store instanceof PostgresStore ? merge()
+        : withLearnerLocks(store.root, [state.owner_id, owner.owner_id].filter((id): id is string => Boolean(id)), merge);
       mergeSummary = mergeKey
-        ? await ownerMergeMutex.runExclusive(mergeKey, merge)
+        ? await ownerMergeMutex.runExclusive(mergeKey, mergeWithLearnerLock)
         : await merge();
       oauthStage = "redirect_to_web";
       if (state.return_to === "/admin" || state.return_to.startsWith("/admin?")) {
@@ -1651,110 +1648,87 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     return { ...result, models_endpoint_supported: result.supported, settings: await settingsResponse(config, store, owner, settings) };
   });
 
-  app.get("/api/profile", async (request) => {
+  const mutateLearner = async (ownerId: string, change: (state: LearnerState) => void | Promise<void>, forgetPast = false) =>
+    changeLearner(store, memories, ownerId, async state => {
+      const enabled = state.profile.enabled, mode = state.profile.memory_summary_mode;
+      await change(state);
+      invalidateMemory(state.profile, forgetPast || enabled !== state.profile.enabled || mode !== state.profile.memory_summary_mode);
+      if (state.profile.memory_summary_mode !== "edited") state.profile.memory_summary = generateMemorySummary(state.profile, state.memories);
+      state.profile.memory_summary_updated_at = nowIso();
+      return { profile: state.profile };
+    });
+  const removeClaimMemories = async (state: LearnerState, claimId: string, ownerId: string) => {
+    const claim = state.profile.inferred.find(row => row.claim_id === claimId);
+    if (!claim) return;
+    const project = claim.source_project_id ? await store.loadProject(claim.source_project_id, ownerId) : null;
+    const sources = new Set(claim.source_message_id ? [claim.source_message_id]
+      : project?.messages.filter(row => row.role === 'user' && row.content.includes(claim.evidence)).map(row => row.message_id) ?? []);
+    state.memories = state.memories.filter(row => row.value !== claim.claim && !row.sourceMessageIds.some(id => sources.has(id)));
+  };
+  app.get("/api/profile", async request => {
     const owner = await requiredOwner(request, store, config);
     return { profile: await profileWithSummary(owner.owner_id, store, memories) };
   });
   app.put("/api/profile", async (request: RequestWithBody) => {
-    const owner = await requiredOwner(request, store, config);
-    const body = objectBody(request);
-    const profile = await store.loadProfile(owner.owner_id);
-    if (typeof body.enabled === "boolean") profile.enabled = body.enabled;
-    if (Array.isArray(body.languages)) profile.languages = body.languages.filter((value): value is string => typeof value === "string").slice(0, 50);
-    if (Array.isArray(body.goals)) profile.goals = body.goals.filter((value): value is string => typeof value === "string").slice(0, 50);
-    if (typeof body.explanation_preference === "string") profile.explanation_preference = body.explanation_preference.slice(0, 500);
-    if (typeof body.experience_level === "string") profile.experience_level = body.experience_level.slice(0, 100);
-    if (profile.memory_summary_mode !== "edited") {
-      profile.memory_summary = generateMemorySummary(profile, await memories.list(owner.owner_id));
-      profile.memory_summary_mode = "generated";
-      profile.memory_summary_updated_at = nowIso();
-    }
-    profile.updated_at = nowIso();
-    await store.saveProfile(owner.owner_id, profile);
-    return { profile: structuredClone(profile) };
+    const owner = await requiredOwner(request, store, config), body = objectBody(request);
+    return mutateLearner(owner.owner_id, ({ profile }) => {
+      if (typeof body.enabled === "boolean") profile.enabled = body.enabled;
+      const strings = (value: unknown[]) => value.filter((row): row is string => typeof row === 'string' && !containsSensitiveMemory(row)).slice(0, 50).map(row => row.slice(0, 500));
+      if (Array.isArray(body.languages)) profile.languages = strings(body.languages);
+      if (Array.isArray(body.goals)) profile.goals = strings(body.goals);
+      if (typeof body.explanation_preference === "string") profile.explanation_preference = sanitizeMemorySummary(body.explanation_preference).slice(0, 500);
+      if (typeof body.experience_level === "string") profile.experience_level = sanitizeMemorySummary(body.experience_level).slice(0, 100);
+    });
   });
   app.put("/api/profile/summary", async (request: RequestWithBody) => {
-    const owner = await requiredOwner(request, store, config);
-    const body = objectBody(request);
+    const owner = await requiredOwner(request, store, config), body = objectBody(request);
     if (typeof body.summary !== "string") throw httpError(400, "记忆摘要内容不正确");
-    const profile = await store.loadProfile(owner.owner_id);
     const summary = sanitizeMemorySummary(body.summary);
-    if (!summary) {
-      profile.memory_summary_mode = "generated";
-      profile.memory_summary = generateMemorySummary(profile, await memories.list(owner.owner_id));
-    } else {
+    return mutateLearner(owner.owner_id, ({ profile }) => {
       profile.memory_summary = summary;
-      profile.memory_summary_mode = "edited";
-    }
-    profile.memory_summary_updated_at = nowIso();
-    profile.updated_at = nowIso();
-    await store.saveProfile(owner.owner_id, profile);
-    return { profile: structuredClone(profile) };
+      profile.memory_summary_mode = summary ? "edited" : "generated";
+    }, true);
   });
-  app.post("/api/profile/summary/regenerate", async (request) => {
+  app.post("/api/profile/summary/regenerate", async request => {
     const owner = await requiredOwner(request, store, config);
-    const profile = await store.loadProfile(owner.owner_id);
-    profile.memory_summary_mode = "generated";
-    profile.memory_summary = generateMemorySummary(profile, await memories.list(owner.owner_id));
-    profile.memory_summary_updated_at = nowIso();
-    profile.updated_at = nowIso();
-    await store.saveProfile(owner.owner_id, profile);
-    return { profile: structuredClone(profile) };
+    return mutateLearner(owner.owner_id, ({ profile }) => { profile.memory_summary_mode = "generated"; });
   });
-  app.delete("/api/profile", async (request) => {
+  app.delete("/api/profile", async request => {
     const owner = await requiredOwner(request, store, config);
-    const profile = emptyProfile();
-    await store.saveProfile(owner.owner_id, profile);
-    return { profile };
+    return mutateLearner(owner.owner_id, state => {
+      state.profile = { ...emptyProfile(), enabled: state.profile.enabled, memory_revision: state.profile.memory_revision };
+      state.memories = []; state.clearMemories = true;
+    }, true);
   });
-  app.delete("/api/profile/inferred", async (request) => {
+  app.delete("/api/profile/inferred", async request => {
     const owner = await requiredOwner(request, store, config);
-    const profile = await store.loadProfile(owner.owner_id);
-    profile.inferred = [];
-    profile.last_inferred_message_id = null;
-    if (profile.memory_summary_mode !== "edited") {
-      profile.memory_summary = generateMemorySummary(profile, await memories.list(owner.owner_id));
-      profile.memory_summary_updated_at = nowIso();
-    }
-    profile.updated_at = nowIso();
-    await store.saveProfile(owner.owner_id, profile);
-    return { profile: structuredClone(profile) };
+    return mutateLearner(owner.owner_id, state => {
+      state.profile.inferred = []; state.profile.last_inferred_message_id = null;
+      state.memories = []; state.clearMemories = true;
+    }, true);
   });
-  app.delete("/api/profile/inferred/:claimId", async (request) => {
+  app.delete("/api/profile/inferred/:claimId", async request => {
     const owner = await requiredOwner(request, store, config);
     const { claimId } = request.params as { claimId: string };
-    const profile = await store.loadProfile(owner.owner_id);
-    profile.inferred = profile.inferred.filter((claim) => claim.claim_id !== claimId);
-    if (profile.memory_summary_mode !== "edited") {
-      profile.memory_summary = generateMemorySummary(profile, await memories.list(owner.owner_id));
-      profile.memory_summary_updated_at = nowIso();
-    }
-    profile.updated_at = nowIso();
-    await store.saveProfile(owner.owner_id, profile);
-    return { profile: structuredClone(profile) };
+    return mutateLearner(owner.owner_id, async state => {
+      await removeClaimMemories(state, claimId, owner.owner_id);
+      state.profile.inferred = state.profile.inferred.filter(row => row.claim_id !== claimId);
+    }, true);
   });
   app.patch("/api/profile/inferred/:claimId", async (request: RequestWithBody) => {
-    const owner = await requiredOwner(request, store, config);
+    const owner = await requiredOwner(request, store, config), body = objectBody(request);
     const { claimId } = request.params as { claimId: string };
-    const body = objectBody(request);
-    const profile = await store.loadProfile(owner.owner_id);
-    const claim = profile.inferred.find((row) => row.claim_id === claimId);
-    if (!claim) throw httpError(404, "画像推断不存在");
-    if (typeof body.claim === "string") {
-      const value = body.claim.trim().slice(0, 500);
-      if (!value) throw httpError(400, "画像内容不能为空");
-      claim.claim = value;
-    }
-    if (typeof body.confidence === "number" && Number.isFinite(body.confidence)) {
-      claim.confidence = Math.max(0, Math.min(1, body.confidence));
-    }
-    if (profile.memory_summary_mode !== "edited") {
-      profile.memory_summary = generateMemorySummary(profile, await memories.list(owner.owner_id));
-      profile.memory_summary_updated_at = nowIso();
-    }
-    profile.updated_at = nowIso();
-    await store.saveProfile(owner.owner_id, profile);
-    return { profile: structuredClone(profile) };
+    return mutateLearner(owner.owner_id, async state => {
+      const claim = state.profile.inferred.find(row => row.claim_id === claimId);
+      if (!claim) throw httpError(404, "画像推断不存在");
+      await removeClaimMemories(state, claimId, owner.owner_id);
+      if (typeof body.claim === "string") {
+        const value = body.claim.trim().slice(0, 500);
+        if (!value || containsSensitiveMemory(value)) throw httpError(400, "画像内容无效或包含敏感信息");
+        claim.claim = value;
+      }
+      if (typeof body.confidence === "number" && Number.isFinite(body.confidence)) claim.confidence = Math.max(0, Math.min(1, body.confidence));
+    }, true);
   });
 
   const sendMessage = async (

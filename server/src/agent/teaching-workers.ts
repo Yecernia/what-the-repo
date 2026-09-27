@@ -20,7 +20,8 @@ import {
 } from "../domain/display-language.js";
 import { createRepositoryExplorationTools } from "./repository-exploration-tools.js";
 import { runStructuredWorker } from "./structured-worker.js";
-import type { PiModelRuntime, PiUsageSummary } from "./types.js";
+import type { PiMemoryRecord, PiModelRuntime, PiUsageSummary } from "./types.js";
+import { routeConversation } from '../services/learner-context.js';
 
 const ASSESSMENT_RESULT = Type.Object({
   verdict: Type.Union([
@@ -171,6 +172,7 @@ export async function generateLearningRoute(input: {
   target: LearningActionTarget;
   request: string;
   profile: LearnerProfile;
+  memories?: PiMemoryRecord[];
   store: ProductStore;
   modelRuntime: PiModelRuntime;
   signal?: AbortSignal;
@@ -214,9 +216,9 @@ export async function generateLearningRoute(input: {
   });
   const result = await runStructuredWorker({
     skillId: "learning-route",
-    inputSchemaId: "learning-route-input-v3",
+    inputSchemaId: "learning-route-input-v4",
     outputSchemaId: "learning-route-output-v3",
-    contextBuilderId: "learning-route-context-v4",
+    contextBuilderId: "learning-route-context-v5",
     modelRuntime: input.modelRuntime,
     thinkingLevel: "medium",
     signal: input.signal,
@@ -225,6 +227,7 @@ export async function generateLearningRoute(input: {
     systemPrompt: [
       displayLanguageInstruction(displayLanguage),
       "The learner approved building a route for this target through a confirmation card.",
+      "Honor recent user requirements and current study progress. These project-specific requirements outrank older inferred preferences. An edited memory summary is the learner's explicit override.",
       "The program binds the current snapshot and target and validates the final component and evidence IDs; the route itself writes no state.",
     ].join("\n"),
     userPrompt: JSON.stringify({
@@ -241,7 +244,10 @@ export async function generateLearningRoute(input: {
       original_learning_request: input.request,
       confirmed_target: input.target,
       target_value_point: valuePoint,
-      learner: input.profile.enabled ? input.profile : null,
+      learner: input.profile.enabled ? { ...input.profile, memory_fact_versions: undefined } : null,
+      memories: input.profile.enabled ? (input.memories ?? []).map(({ key, value }) => ({ key, value })) : [],
+      recent_conversation: routeConversation(input.project),
+      current_study: studySummary(input.project.study),
     }),
     validateSubmitted: (value) => [...new Set(value.steps
       .map((step) => learningRouteLanguageError(step, displayLanguage))

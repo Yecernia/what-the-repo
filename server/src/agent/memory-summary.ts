@@ -2,8 +2,13 @@ import type { LearnerProfile } from "../domain/conversation.js";
 import type { PiMemoryRecord } from "./types.js";
 
 const SUMMARY_MAX_LENGTH = 4_000;
-const SENSITIVE_SUMMARY_PATTERN = /(?:bearer\s+|api[_ -]?key\s*[:=]|secret\s*[:=]|password\s*[:=]|token\s*[:=]|sk-[a-z0-9_-]{8,})[^\s,;，。；]{4,}/iu;
+const SENSITIVE_SUMMARY_PATTERN = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----|\b(?:sk-[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9]{12,}|github_pat_[a-z0-9_]+|AKIA[A-Z0-9]{16})|(?:bearer\s+|api[_ -]?key\s*[:=]|secret\s*[:=]|password\s*[:=]|token\s*[:=]|密码\s*[:：=]|密钥\s*[:：=])[^\s,;，。；]+/iu;
 const SENSITIVE_SUMMARY_GLOBAL_PATTERN = new RegExp(SENSITIVE_SUMMARY_PATTERN.source, "giu");
+
+/** Apply to evidence as well as values: hiding a summary does not protect raw facts. */
+export function containsSensitiveMemory(...values: string[]): boolean {
+  return values.some(value => /api[_ -]?key|secret|password|密码|密钥|\b(?:sk-[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9]{12,}|github_pat_[a-z0-9_]+|AKIA[A-Z0-9]{16})|-----BEGIN .*PRIVATE KEY|\bbearer\s+\S+|\btoken\s*[:=]/iu.test(value));
+}
 
 function clean(value: string, max: number): string {
   return value.replace(SENSITIVE_SUMMARY_GLOBAL_PATTERN, "[已隐藏]").replace(/\s+/g, " ").trim().slice(0, max);

@@ -1678,6 +1678,17 @@ test("profile summary endpoints sanitize legacy and edited content", async () =>
     assert.equal(regenerated.statusCode, 200);
     const regeneratedProfile = (regenerated.json() as { profile: { memory_summary_mode: string } }).profile;
     assert.equal(regeneratedProfile.memory_summary_mode, "generated");
+    const timestamp = new Date().toISOString();
+    await memories.upsert({ memoryId: 'clear-me', ownerId: identity.owner_id, scope: 'user', key: 'language', value: 'Go',
+      confidence: 1, sourceMessageIds: [], createdAt: timestamp, updatedAt: timestamp });
+    await browserInject(app, { method: 'PUT', url: '/api/profile', headers, payload: { enabled: false } });
+    const cleared = await browserInject(app, { method: 'DELETE', url: '/api/profile', headers: { cookie: headers.cookie } });
+    assert.equal(cleared.statusCode, 200);
+    assert.equal(cleared.json().profile.enabled, false, 'clearing does not silently re-enable collection');
+    assert.ok(cleared.json().profile.memory_cutoff_at);
+    assert.deepEqual(await memories.list(identity.owner_id), []);
+    const reread = await browserInject(app, { method: 'GET', url: '/api/profile', headers });
+    assert.equal(reread.json().profile.memory_summary.includes('Go'), false, 'GET cannot resurrect deleted memory');
     await app.close();
   } finally {
     await rm(root, { recursive: true, force: true });

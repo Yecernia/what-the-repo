@@ -13,6 +13,7 @@ import {
   emptyProfile,
   emptySettings,
   normalizeProfile,
+  mergeMemoryFactVersions,
   normalizeSettings,
   nowIso,
   recordAnalysisProgress,
@@ -2334,6 +2335,9 @@ export class FileStore implements ProductStore {
       const mergedProfile: LearnerProfile = {
         ...targetProfile,
         enabled: targetProfile.enabled && sourceProfile.enabled,
+        memory_revision: Math.max(sourceProfile.memory_revision ?? 0, targetProfile.memory_revision ?? 0) + 1,
+        memory_fact_versions: mergeMemoryFactVersions(sourceProfile, targetProfile),
+        memory_cutoff_at: [sourceProfile.memory_cutoff_at, targetProfile.memory_cutoff_at].filter((value): value is string => Boolean(value)).sort().at(-1) ?? null,
         languages: [...new Set([...targetProfile.languages, ...sourceProfile.languages])].slice(0, 50),
         goals: [...new Set([...targetProfile.goals, ...sourceProfile.goals])].slice(0, 50),
         explanation_preference: targetProfile.explanation_preference || sourceProfile.explanation_preference,

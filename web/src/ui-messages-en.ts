@@ -208,6 +208,7 @@ export const englishMessages: Record<string, string> = {
   '这份 API 配置尚未设置或暂不可用。': 'This API configuration is not set up or is unavailable.',
   '修改 API 配置需要先删除，再重新添加。': 'To change an API configuration, delete it and add it again.',
   '用于所有项目的讲解和学习路线。': 'Used for explanations and learning paths across all projects.',
+  '当前使用你手动修改的摘要；重新生成后恢复自动整理。': 'Your edited summary is in use. Regenerate it to resume automatic updates.',
   '包含 {0} 项内容': 'Contains {0} items',
   '收起分组：{0}': 'Collapse group: {0}',
   '当前显示 {0}/{1} 条关系': 'Showing {0} of {1} relationships',

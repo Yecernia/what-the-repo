@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createModels, type Api, type Model } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { createProject, emptyProfile } from "../domain/conversation.js";
+import { createMessage, createProject, emptyProfile } from "../domain/conversation.js";
 import type { EvidenceSnapshot, SnapshotEvidence } from "../domain/snapshot.js";
 import type { ProductStore } from "../persistence/store.js";
 import { generateLearningRoute, runUnderstandingAssessment } from "./teaching-workers.js";
@@ -126,19 +126,26 @@ test("understanding assessment rejects mastered results supported only by fabric
 
 test("learning route may return an honest empty result", async () => {
   const project = createProject("owner:route", "https://github.com/example/repo", "repo", "free:test");
+  project.messages = [createMessage('user', 'Only spend 20 minutes on routing; skip database internals.')];
+  const profile = { ...emptyProfile(), memory_summary: 'Current preference: examples first' };
   project.analysis.snapshot_id = "snapshot:teaching-worker";
   const result = await generateLearningRoute({
     project,
     snapshot: snapshot(),
     target: { kind: "repository", stable_id: null, label: "example/repo" },
     request: "Please help me learn this repository",
-    profile: emptyProfile(),
+    profile,
+    memories: [{ memoryId: 'm', ownerId: project.owner_id, scope: 'user', key: 'language', value: 'Go', confidence: 1, sourceMessageIds: [], createdAt: '', updatedAt: '' }],
     store,
     modelRuntime: selectedRuntime("learning-route", runtime("route-empty", (context: { messages: Array<{ role: string; content: unknown }> }) => {
       const user = context.messages.find(row => row.role === "user")!;
       const text = typeof user.content === "string" ? user.content
         : (user.content as Array<{ type: string; text: string }>).filter(row => row.type === "text").map(row => row.text).join("");
       assert.equal(JSON.parse(text).display_language, "en", "the Chinese project must not override the English request");
+      assert.equal(JSON.parse(text).recent_conversation[0].content, project.messages[0].content);
+      assert.equal(JSON.parse(text).learner.memory_summary, profile.memory_summary);
+      assert.equal(JSON.parse(text).memories[0].value, 'Go');
+      assert.ok(JSON.parse(text).current_study);
       return fauxAssistantMessage(fauxToolCall("submit_result", { steps: [] }));
     })),
   });

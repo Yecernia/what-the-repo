@@ -58,7 +58,7 @@ import {
 } from "../agent/prompts.js";
 import { validateAnswerCitations, withCitationNotice } from "../agent/citations.js";
 import { MemoryMaintenance } from "../agent/memory-maintenance.js";
-import { generateMemorySummary } from "../agent/memory-summary.js";
+import { readLearner } from './learner-context.js';
 import { FeedbackAnalysisWorker } from "../agent/feedback.js";
 import { reviewAnswerEvidence } from "../agent/citation-review.js";
 import {
@@ -137,11 +137,26 @@ export class ConversationService {
       ownerWaiting: 1, exclusiveResource: true,
     });
     this.runtime = new PiConversationRuntime(sessions, 30_000, true);
-    this.memoryMaintenance = new MemoryMaintenance(store, memories);
+    this.memoryMaintenance = new MemoryMaintenance(store, memories, (ownerId, taskId) => this.memoryRuntime(ownerId, taskId));
     this.feedbackWorker = new FeedbackAnalysisWorker(
       store,
       taskQueue ? (requestId) => taskQueue.enqueueEvolution(requestId) : undefined,
     );
+  }
+
+  startMemoryMaintenance(): void { this.memoryMaintenance.start(); }
+  stopMemoryMaintenance(): Promise<void> { return this.memoryMaintenance.stop(); }
+
+  private async memoryRuntime(ownerId: string, taskId: string) {
+    const config = await runtimeConfig(this.config, this.store);
+    const provider = resolveDeploymentProvider({ providerId: config.freeProviderId,
+      baseUrl: config.freeProviderBaseUrl, model: config.freeProviderModel,
+      apiKey: config.freeProviderApiKey, connectionId: config.freeConnectionId ?? 'deployment-free' });
+    return provider ? createModelRuntime(provider, {
+      providerGate: this.providerGateFactory?.(provider, 'chat', { ownerId, taskId }),
+      providerBudget: this.providerBudget, ownerId, metrics: this.metrics,
+      attribution: { business: 'chat', payer: 'platform', agentRole: 'memory-maintenance', configVersion: config.adminConfigVersion, taskId },
+    }) : undefined;
   }
 
   private async feedbackRuntime(taskId: string) {
@@ -311,13 +326,14 @@ export class ConversationService {
     const userPaid = selectedModel !== FREE_SELECTOR && input.owner.kind !== "guest";
     const provider = selectedProvider;
     if (!provider) return fail("当前没有可用模型，路线尚未生成。");
-    const profile = await this.store.loadProfile(input.owner.owner_id);
+    const { profile, memories } = await readLearner(this.store, this.memories, input.owner.owner_id);
     const route = await generateLearningRoute({
       project: reserved,
       snapshot,
       target: reservedAction.target,
       request: reservedAction.request,
       profile,
+      memories,
       store: this.store,
       modelRuntime: createModelRuntime(provider, {
         providerGate: this.providerGateFactory?.(provider, 'chat', { ownerId: input.owner.owner_id, taskId: input.actionId }),
@@ -461,11 +477,7 @@ export class ConversationService {
     const getSummary = createConversationSummaryReader(this.store, {
       project, snapshotId: capturedSnapshotId, assertSnapshotBinding,
     });
-    const agentMemories = await this.memories.list(input.owner.owner_id);
-    const profile = await this.store.loadProfile(input.owner.owner_id);
-    if (profile.memory_summary_mode !== "edited") {
-      profile.memory_summary = generateMemorySummary(profile, agentMemories);
-    }
+    const { profile, memories: agentMemories } = await readLearner(this.store, this.memories, input.owner.owner_id);
     const selections = (input.selections ?? []).filter((item) => item.snapshot_id === project.analysis.snapshot_id);
     const userMessage = createMessage("user", content, {
       trace_id: runId,
@@ -497,6 +509,7 @@ export class ConversationService {
       assertSnapshotBinding,
       profile,
       agentMemories,
+      getLearner: () => readLearner(this.store, this.memories, input.owner.owner_id),
       store: this.store,
       selected: selections,
       exposedEvidence,
@@ -728,13 +741,6 @@ export class ConversationService {
             } : {}),
           })),
       });
-      if (assistantMessage.context_eligible && modelRuntime.attribution?.payer !== "user") {
-        this.memoryMaintenance.schedule({
-          ownerId: input.owner.owner_id,
-          projectId: input.projectId,
-          modelRuntime,
-        });
-      }
       if (["completed", "paused"].includes(result.stopReason)) this.feedbackWorker.schedule({
         ownerId: input.owner.owner_id,
         projectId: input.projectId,
@@ -810,6 +816,7 @@ export class ConversationService {
         }, undefined, writeFence);
         if (!saved) throw serviceError("not_found", "项目不存在", 404);
         turnStarted = true;
+        await this.memoryMaintenance.schedule({ ownerId: input.owner.owner_id, projectId: input.projectId });
       },
       modelRuntime,
       thinkingLevel: provider.thinkingLevel ?? "medium",

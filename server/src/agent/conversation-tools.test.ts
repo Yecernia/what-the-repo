@@ -130,6 +130,19 @@ test("online conversation tools keep explanation in Primary and expose one actio
   ]);
 });
 
+test('learner tool reloads preferences and respects a pause after tools were constructed', async () => {
+  const profile = emptyProfile();
+  const tool = createConversationTools(context({ getLearner: async () => ({ profile, memories: [] }) }))
+    .find(row => row.name === 'get_learner_profile')!;
+  profile.explanation_preference = '最新偏好';
+  const latest = await tool.execute('latest', {});
+  assert.equal(JSON.parse((latest.content[0] as { text: string }).text).explicit.explanation_preference, '最新偏好');
+  profile.enabled = false;
+  const paused = await tool.execute('paused', {});
+  const result = JSON.parse((paused.content[0] as { text: string }).text);
+  assert.equal(result.enabled, false); assert.equal(result.explicit, undefined);
+});
+
 test("static file facts require exposed paths and page unresolved sites from the store", async () => {
   const reads: unknown[][] = [];
   const ctx = context({ store: { readStaticFile: async (...args: unknown[]) => {
