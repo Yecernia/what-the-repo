@@ -981,7 +981,7 @@ export class FileStore implements ProductStore {
     analyzerBundleVersion: string;
     analysisConfigDigest: string;
     excludeCommitSha?: string;
-  }): Promise<string | null> {
+  }, requireSameAnalysisConfig = true): Promise<string | null> {
     const { readdir } = await import("node:fs/promises");
     const names = await readdir(this.dirs.publicSnapshots).catch(() => [] as string[]);
     let selected: { publicKey: string; createdAt: string } | null = null;
@@ -994,7 +994,8 @@ export class FileStore implements ProductStore {
       if (
         String(row.repository_identity ?? "").toLowerCase() !== input.repository.toLowerCase()
         || row.analyzer_bundle_version !== input.analyzerBundleVersion
-        || row.analysis_config_digest !== input.analysisConfigDigest
+        || (requireSameAnalysisConfig && row.analysis_config_digest !== input.analysisConfigDigest)
+        || metadata?.payload_purged_at
         || row.commit_sha === input.excludeCommitSha
       ) continue;
       const createdAt = typeof metadata?.created_at === "string" ? metadata.created_at : "";
@@ -1009,7 +1010,8 @@ export class FileStore implements ProductStore {
     analysisConfigDigest: string;
     excludeCommitSha?: string;
   }): Promise<IncrementalSnapshotBase | null> {
-    const key = await this.latestPublicSnapshotKey(input);
+    // Compiler inputs can survive a model/prompt change; complete snapshot reuse cannot.
+    const key = await this.latestPublicSnapshotKey(input, false);
     if (!key) return null;
     const directory = join(this.dirs.publicSnapshots, safePublicKey(key));
     const [metadata, stored] = await Promise.all([
@@ -1018,7 +1020,8 @@ export class FileStore implements ProductStore {
     ]);
     if (!metadata || stored === null) throw new Error("public_snapshot_payload_missing");
     const base = await assembleIncrementalBasePayload(stored, chunk => this.readAnalysisChunk(directory, chunk));
-    return { metadata, analysisCache: base.analysis_cache, nodePaths: base.node_paths,
+    return { metadata: { ...metadata, ...(metadata.identity as Record<string, unknown>) },
+      analysisCache: base.analysis_cache, nodePaths: base.node_paths,
       factGraphAvailable: base.fact_graph_available };
   }
 

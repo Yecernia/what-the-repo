@@ -232,6 +232,9 @@ export interface ProductStore {
     analysisConfigDigest: string;
     excludeCommitSha?: string;
   }): Promise<PublicSnapshotBundle<T> | null>;
+  /** Compiler cache/fact-lineage candidate across semantic configurations.
+   * Callers must validate stage cache keys and invalidate fact history when
+   * metadata.analysis_config_digest differs from the current execution. */
   loadLatestPublicSnapshotIncrementalBase(input: {
     repository: string;
     analyzerBundleVersion: string;

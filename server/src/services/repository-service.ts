@@ -704,12 +704,20 @@ export class RepositoryService {
     const config = this.options.config;
     // Money limits are admin budgets, checked atomically by the store.
     if (!config?.repositoryBackgroundRefreshEnabled) return 'deferred:disabled';
+    // The candidate describes the published base. New work must use the current
+    // execution identity, resolving its digest and config version together.
+    const execution = await this.options.analysisExecution?.();
+    const identity: RepositoryIdentityInput = {
+      repository: `${parsed.owner}/${parsed.repo}`.toLowerCase(),
+      analyzerBundleVersion: ANALYZER_BUNDLE_VERSION,
+      analysisConfigDigest: execution?.digest ?? await this.options.analysisConfigDigest?.() ?? ANALYSIS_CONFIG_DIGEST,
+    };
     const job = newAnalysisJob(project.project_id,
       `background:${input.identity.repository}:${input.targetCommitSha}:${Date.now()}`);
     job.execution_role = 'background';
-    job.config_version = (await this.options.analysisExecution?.())?.configVersion;
+    job.config_version = execution?.configVersion;
     const result = await this.store.createBackgroundRepositoryUpdate({
-      project, job, identity: input.identity, targetCommitSha: input.targetCommitSha,
+      project, job, identity, targetCommitSha: input.targetCommitSha,
       maxActive: config.repositoryBackgroundMaxActive ?? 1,
       minUpdateIntervalHours: config.repositoryBackgroundMinUpdateIntervalHours ?? 24,
       failureRetryHours: config.repositoryBackgroundFailureRetryHours ?? 6,

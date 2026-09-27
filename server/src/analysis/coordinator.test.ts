@@ -1,7 +1,7 @@
 import { ANALYZER_BUNDLE_VERSION, ANALYSIS_CONFIG_DIGEST } from "./identity.js";
 import { resolveAnalysisExecution } from "./execution-identity.js";
 import assert from "node:assert/strict";
-import { buildFullPlan, buildIncrementalPlan, createAnalysisCache } from './incremental.js';
+import { buildFullPlan, buildIncrementalPlan, createAnalysisCache, type IncrementalPlan } from './incremental.js';
 import { decodeSource } from './source-input.js';
 import type { LspRunResult, ParsedFile } from './facts.js';
 import test from "node:test";
@@ -19,7 +19,7 @@ import type { ProductStore } from "../persistence/store.js";
 import { FileStore } from "../persistence/file-store.js";
 import { createSemanticBatch, type SemanticBatch } from "../domain/semantic-batch.js";
 import { createWorkerDiagnostics } from "../agent/worker-diagnostics.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { strToU8, zipSync } from "fflate";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -451,6 +451,111 @@ test("a repository checkpoint for the queued commit still resumes", async () => 
     assert.equal(cleared, 0);
     assert.equal(requested, 0);
     assert.equal(failure, "checkpoint_source_reused");
+  } finally {
+    globalThis.fetch = originalFetch;
+    assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a current execution can incrementally revisit the same commit from an older analysis configuration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "analysis-config-incremental-"));
+  const originalFetch = globalThis.fetch;
+  const target = "a".repeat(40);
+  const serverConfig = { ...config(1), dataDir: root } as ServerConfig;
+  const analysisConfigDigest = (await resolveAnalysisExecution(serverConfig)).digest;
+  const project = createProject("guest:config-incremental", "https://github.com/example/repo", "Config update", null);
+  let requests = 0, failure = "";
+  const lookups: Array<Parameters<ProductStore["loadLatestPublicSnapshotIncrementalBase"]>[0]> = [];
+  const semanticCheckpoints: Array<{ plan: IncrementalPlan; analysis_config_digest: string; parsed: ParsedFile[]; from_public_key: string }> = [];
+  try {
+    const paths = ["README.md", "GUIDE.md"];
+    const files = paths.map(path => decodeSource(path, Buffer.from("unchanged documentation\n")).file);
+    await Promise.all(paths.map(path => writeFile(join(root, path), "unchanged documentation\n")));
+    const manifest = files.map(({ path, bytes, digest }) => ({ path, bytes, digest }));
+    globalThis.fetch = (async () => { requests++; throw new Error("unexpected_network_request"); }) as typeof fetch;
+    const store = {
+      root,
+      loadProject: async () => project,
+      listRepositoryUpdateProjects: async () => [project],
+      updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },
+      heartbeatAnalysisJob: async () => true,
+      loadAnalysisCheckpoint: async () => ({ checkpoint: {
+        analyzer_bundle_version: ANALYZER_BUNDLE_VERSION, static_identity: ANALYSIS_CONFIG_DIGEST,
+        analysis_config_digest: analysisConfigDigest,
+        stage: "source", source_root: root, commit_sha: target, snapshot_id: "saved-source",
+        fetched: { owner: "example", repo: "repo", commitSha: target, files: paths, manifest },
+      } }),
+      loadRepositoryUpdateForProject: async () => ({ update_id: "config-update", target_commit_sha: target,
+        analysis_config_digest: analysisConfigDigest }),
+      loadPublicSnapshotView: async () => null,
+      loadLatestPublicSnapshotIncrementalBase: async (input: Parameters<ProductStore["loadLatestPublicSnapshotIncrementalBase"]>[0]) => {
+        lookups.push(input);
+        return { metadata: { analysis_snapshot_id: "old-config-snapshot", public_snapshot_key: "old-config-key",
+          commit_sha: target, analysis_config_digest: "old-config" }, factGraphAvailable: true,
+          nodePaths: paths.map((path, index) => ({ id: `old-node-${index}`, path })),
+          analysisCache: createAnalysisCache({ manifest, parsedFiles: files, syntaxFiles: files, lspResults: [] }) };
+      },
+      saveAnalysisCheckpoint: async (_id: string, saved: { stage: string } & typeof semanticCheckpoints[number]) => {
+        if (saved.stage === "semantic") {
+          semanticCheckpoints.push(saved);
+          throw new Error("static_stage_completed");
+        }
+      },
+      failRepositoryUpdate: async (_id: string, error: string) => { failure = error; },
+    } as unknown as ProductStore;
+    const coordinator = new AnalysisCoordinator(store, serverConfig) as unknown as {
+      processClaimedJob: (job: AnalysisJob, signal: AbortSignal) => Promise<void>;
+    };
+    await coordinator.processClaimedJob({ ...job("config-incremental"), project_id: project.project_id,
+      repository_update_id: "config-update", execution_role: "leader" }, new AbortController().signal);
+    assert.equal(requests, 0, "source recovery and static analysis need no network or model call");
+    assert.equal(failure, "static_stage_completed");
+    assert.equal(lookups.length, 1);
+    assert.equal(lookups[0]!.analysisConfigDigest, analysisConfigDigest);
+    assert.equal(lookups[0]!.excludeCommitSha, undefined, "the same commit can have an older analysis configuration");
+    assert.equal(semanticCheckpoints.length, 1);
+    const saved = semanticCheckpoints[0]!;
+    assert.equal(saved.analysis_config_digest, analysisConfigDigest);
+    assert.equal(saved.from_public_key, "old-config-key");
+    assert.equal(saved.plan.mode, "incremental");
+    assert.equal(saved.plan.parentSnapshotId, "old-config-snapshot");
+    assert.deepEqual(saved.plan.changes, [], "configuration changed without changing source bytes");
+    assert.deepEqual([...saved.plan.affectedPaths].sort(), [...paths].sort(), "all old facts must be revisited");
+    assert.deepEqual(saved.parsed.map(file => file.path).sort(), [...paths].sort(), "static analysis completed");
+  } finally {
+    globalThis.fetch = originalFetch;
+    assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an update whose execution digest changed still stops before fetching source", async () => {
+  const root = await mkdtemp(join(tmpdir(), "analysis-execution-mismatch-"));
+  const originalFetch = globalThis.fetch;
+  const project = createProject("guest:execution-mismatch", "https://github.com/example/repo", "Mismatch", null);
+  let requests = 0, baseReads = 0, failure = "";
+  try {
+    globalThis.fetch = (async () => { requests++; throw new Error("unexpected_network_request"); }) as typeof fetch;
+    const store = {
+      root,
+      loadProject: async () => project,
+      listRepositoryUpdateProjects: async () => [project],
+      updateProject: async (_id: string, _owner: string, mutate: (row: typeof project) => void) => { mutate(project); },
+      loadAnalysisCheckpoint: async () => null,
+      loadRepositoryUpdateForProject: async () => ({ update_id: "mismatched-update", target_commit_sha: "b".repeat(40),
+        analysis_config_digest: "not-the-current-execution" }),
+      loadLatestPublicSnapshotIncrementalBase: async () => { baseReads++; return null; },
+      failRepositoryUpdate: async (_id: string, error: string) => { failure = error; },
+    } as unknown as ProductStore;
+    const coordinator = new AnalysisCoordinator(store, { ...config(1), dataDir: root }) as unknown as {
+      processClaimedJob: (job: AnalysisJob, signal: AbortSignal) => Promise<void>;
+    };
+    await coordinator.processClaimedJob({ ...job("execution-mismatch"), project_id: project.project_id,
+      repository_update_id: "mismatched-update", execution_role: "leader" }, new AbortController().signal);
+    assert.equal(failure, "analysis_configuration_changed");
+    assert.equal(requests, 0);
+    assert.equal(baseReads, 0);
   } finally {
     globalThis.fetch = originalFetch;
     assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep));

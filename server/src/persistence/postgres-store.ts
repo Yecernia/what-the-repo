@@ -1224,13 +1224,13 @@ export class PostgresStore extends FileStore {
     analyzerBundleVersion: string;
     analysisConfigDigest: string;
     excludeCommitSha?: string;
-  }): Promise<string | null> {
+  }, requireSameAnalysisConfig = true): Promise<string | null> {
     const result = await this.pool.query<{ public_snapshot_key: string }>(
       `SELECT public_snapshot_key
        FROM canonical_public_repository_snapshots
        WHERE repository_identity = $1
          AND analyzer_bundle_version = $2
-         AND analysis_config_digest = $3
+         AND (NOT $5::boolean OR analysis_config_digest = $3)
          AND payload_purged_at IS NULL
          AND ($4::text IS NULL OR commit_sha <> $4)
        ORDER BY created_at DESC
@@ -1240,6 +1240,7 @@ export class PostgresStore extends FileStore {
         input.analyzerBundleVersion,
         input.analysisConfigDigest,
         input.excludeCommitSha ?? null,
+        requireSameAnalysisConfig,
       ],
     );
     return result.rows[0]?.public_snapshot_key ?? null;
@@ -1251,12 +1252,15 @@ export class PostgresStore extends FileStore {
     analysisConfigDigest: string;
     excludeCommitSha?: string;
   }): Promise<IncrementalSnapshotBase | null> {
-    const publicKey = await this.latestPublicSnapshotKeyFromDb(input);
+    // This reads compiler caches and fact lineage, never old model explanations.
+    // Each compiler stage validates its own cache key before reusing results.
+    const publicKey = await this.latestPublicSnapshotKeyFromDb(input, false);
     if (!publicKey) return null;
     const stored = await this.readPublicSnapshotParts(publicKey, 'analysis', false);
     if (!stored?.analysis) throw new Error('public_snapshot_payload_missing');
     const base = await assembleIncrementalBasePayload(stored.analysis, key => this.snapshotObjects.get(key));
-    return { metadata: stored.metadata, analysisCache: base.analysis_cache, nodePaths: base.node_paths,
+    return { metadata: { ...stored.metadata, ...(stored.metadata.identity as Record<string, unknown>) },
+      analysisCache: base.analysis_cache, nodePaths: base.node_paths,
       factGraphAvailable: base.fact_graph_available };
   }
 

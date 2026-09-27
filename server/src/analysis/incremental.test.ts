@@ -94,6 +94,43 @@ test("syntax reuse is separate from conservative semantic project invalidation",
     currentCompleteness: { inventoryComplete: true, knownSourceFiles: currentManifest.length, omitted: [], reasons: [] } }), plan);
 });
 
+test("configuration changes retire missing facts while retaining identical source facts", () => {
+  const previousFiles = [
+    parsed("main.ts", SHA_A, { imports: [{ source: "./helper", line: 1, resolvedPath: "helper.ts", status: "static" }] }),
+    parsed("helper.ts", SHA_B),
+  ];
+  const previousRaw = buildSnapshot({ snapshotId: "snap:previous", repository: "example/repo",
+    commitSha: COMMIT, files: previousFiles, sourceRoot: "C:/snapshot" });
+  const mainNode = previousRaw.fact_graph.nodes.find(node => node.attributes?.path === "main.ts")!;
+  previousRaw.fact_graph.nodes.push({ ...structuredClone(mainNode), id: "fact:obsolete", label: "Obsolete extraction" });
+  const previous = withProvenance(previousRaw, buildFullPlan(previousFiles.map(toManifest)));
+  const currentFiles = [parsed("main.ts", SHA_A), parsed("helper.ts", SHA_B)];
+  const plan = buildIncrementalPlan({
+    parentSnapshotId: previous.snapshot_id,
+    previousCache: createAnalysisCache({ manifest: previousFiles.map(toManifest), parsedFiles: previousFiles, lspResults: [] }),
+    previousFactGraph: previous.fact_graph,
+    currentManifest: currentFiles.map(toManifest),
+    invalidateAllFacts: true,
+  });
+  assert.deepEqual(plan.changes, []);
+  assert.deepEqual(plan.recomputePaths, []);
+  assert.deepEqual(plan.reusedPaths, ["helper.ts", "main.ts"]);
+  assert.deepEqual(plan.affectedPaths, ["helper.ts", "main.ts"]);
+  assert.deepEqual(plan.affectedStableIds, previous.fact_graph.nodes.map(node => node.id).sort());
+  // Compare normalized facts so equality does not depend on omitted lifecycle defaults.
+  const currentSnapshot = withProvenance(buildSnapshot({ snapshotId: "snap:current", repository: "example/repo",
+    commitSha: COMMIT, files: currentFiles, sourceRoot: "C:/snapshot" }), buildFullPlan(currentFiles.map(toManifest)));
+  const current = applyIncrementalProvenance({
+    snapshot: currentSnapshot,
+    previousFactGraph: previous.fact_graph, plan, currentParsedFiles: currentFiles,
+  });
+  assert.equal(current.fact_graph.nodes.find(node => node.id === "fact:obsolete")?.lifecycle_status, "tombstoned");
+  assert.ok(current.fact_graph.edges.some(edge => edge.lifecycle_status === "tombstoned"));
+  const helper = current.fact_graph.nodes.find(node => node.attributes?.path === "helper.ts");
+  assert.equal(helper?.incremental_provenance?.change_kind, "reused");
+  assert.equal(helper?.incremental_provenance?.reused_from_snapshot_id, previous.snapshot_id);
+});
+
 test("incremental facts match a same-commit full build and retain explicit tombstones", () => {
   const previousFiles = [
     parsed("main.ts", SHA_A, { imports: [

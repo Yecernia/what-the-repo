@@ -4,6 +4,7 @@ import { createProject } from "../domain/conversation.js";
 import type { PublicSnapshotMetadata, RepositoryUpdate } from "../domain/lifecycle.js";
 import { ANALYSIS_CONFIG_DIGEST, ANALYZER_BUNDLE_VERSION } from "../analysis/identity.js";
 import type { ProductStore } from "../persistence/store.js";
+import type { ServerConfig } from "../config.js";
 import { RepositoryService } from "./repository-service.js";
 import { resolveSnapshotView } from "./snapshot-view.js";
 
@@ -17,6 +18,70 @@ function readableProject() {
   project.analysis.snapshot_id = "current-snapshot";
   return project;
 }
+
+test("background updates resolve current execution identity and config version together, not from the old snapshot", async () => {
+  const project = readableProject();
+  const admissions: Array<Parameters<ProductStore["createBackgroundRepositoryUpdate"]>[0]> = [];
+  let executionReads = 0;
+  const store = {
+    loadProject: async () => project,
+    createBackgroundRepositoryUpdate: async (input: Parameters<ProductStore["createBackgroundRepositoryUpdate"]>[0]) => {
+      admissions.push(input);
+      return 'queued';
+    },
+  } as unknown as ProductStore;
+  const service = new RepositoryService(store, {
+    config: { repositoryBackgroundRefreshEnabled: true } as ServerConfig,
+    analysisExecution: async () => {
+      const version = ++executionReads;
+      return { digest: `current-config-${version}`, configVersion: version };
+    },
+    analysisConfigDigest: async () => { throw new Error('must use the same execution resolution'); },
+  });
+  const oldIdentity = { repository: 'EXAMPLE/REPO', analyzerBundleVersion: 'old-analyzer', analysisConfigDigest: 'old-config' };
+  for (let version = 1; version <= 2; version++) {
+    assert.equal(await service.requestBackgroundRepositoryUpdate({
+      identity: oldIdentity, projectId: project.project_id, targetCommitSha: newer,
+    }), 'queued');
+    assert.equal(executionReads, version, 'resolve exactly once for each admission');
+    const admitted = admissions[version - 1]!;
+    assert.deepEqual(admitted.identity, { repository: 'example/repo', analyzerBundleVersion: ANALYZER_BUNDLE_VERSION,
+      analysisConfigDigest: `current-config-${version}` });
+    assert.equal(admitted.job.config_version, version);
+    assert.equal(admitted.job.execution_role, 'background');
+    assert.equal(admitted.targetCommitSha, newer);
+    assert.equal(admitted.project, project);
+  }
+  assert.equal(oldIdentity.analysisConfigDigest, 'old-config', 'the published base identity stays unchanged');
+});
+
+test("background updates use the current digest fallback and reject an unrelated project before resolving it", async () => {
+  const project = readableProject();
+  let resolutions = 0;
+  let admission: Parameters<ProductStore["createBackgroundRepositoryUpdate"]>[0] | undefined;
+  const store = {
+    loadProject: async () => project,
+    createBackgroundRepositoryUpdate: async (input: Parameters<ProductStore["createBackgroundRepositoryUpdate"]>[0]) => {
+      admission = input;
+      return 'deferred:capacity';
+    },
+  } as unknown as ProductStore;
+  const service = new RepositoryService(store, {
+    config: { repositoryBackgroundRefreshEnabled: true } as ServerConfig,
+    analysisConfigDigest: async () => { resolutions++; return 'current-fallback'; },
+  });
+  const input = { identity: { repository: 'example/other', analyzerBundleVersion: 'old', analysisConfigDigest: 'old' },
+    projectId: project.project_id, targetCommitSha: newer };
+  assert.equal(await service.requestBackgroundRepositoryUpdate(input), 'deferred:unavailable');
+  assert.equal(resolutions, 0);
+  assert.equal(admission, undefined);
+  input.identity.repository = 'example/repo';
+  assert.equal(await service.requestBackgroundRepositoryUpdate(input), 'deferred:capacity');
+  assert.equal(resolutions, 1);
+  assert.deepEqual(admission!.identity, { repository: 'example/repo', analyzerBundleVersion: ANALYZER_BUNDLE_VERSION,
+    analysisConfigDigest: 'current-fallback' });
+  assert.equal(admission!.job.config_version, undefined);
+});
 
 function metadata(overrides: Partial<PublicSnapshotMetadata> = {}): PublicSnapshotMetadata {
   return { public_snapshot_key: "current-key", repository_identity: "example/repo", commit_sha: current,

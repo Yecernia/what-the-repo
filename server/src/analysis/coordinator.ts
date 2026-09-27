@@ -801,7 +801,6 @@ export class AnalysisCoordinator {
         repository,
         analyzerBundleVersion: ANALYZER_BUNDLE_VERSION,
         analysisConfigDigest,
-        excludeCommitSha: fetched.commitSha,
       });
       let previousCache = readAnalysisCache(previous?.analysisCache);
       if (previous) previous.analysisCache = null;
@@ -820,6 +819,9 @@ export class AnalysisCoordinator {
               previousNodePaths: previous.nodePaths,
               currentManifest: fetched.manifest,
               currentCompleteness: fetched.completeness,
+              // Revisit old facts after a configuration change even when source
+              // bytes are unchanged; static stages still validate their own caches.
+              invalidateAllFacts: previous.metadata.analysis_config_digest !== analysisConfigDigest,
             })
           : buildFullPlan(fetched.manifest);
       if (previous) previous.nodePaths = [];

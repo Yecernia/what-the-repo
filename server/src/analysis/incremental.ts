@@ -209,6 +209,8 @@ export function buildIncrementalPlan(input: {
   previousNodePaths?: Array<{ id: string; path: string | null }>;
   currentManifest: SourceFileManifest[];
   currentCompleteness?: import("./facts.js").SourceCompleteness;
+  /** A new analysis configuration can change facts even when source bytes match. */
+  invalidateAllFacts?: boolean;
 }): IncrementalPlan {
   const omitted = new Set(input.currentCompleteness?.omitted.map(row=>row.path) ?? []);
   const changes = classifyFileChanges(input.previousCache.manifest, input.currentManifest).filter(change =>
@@ -240,7 +242,13 @@ export function buildIncrementalPlan(input: {
   for (const file of input.previousCache.parsed_files) {
     if (structural || projects.has(file.project?.id) || changedLanguages.has(file.language)) affectedPaths.add(file.path);
   }
-  for (const node of previousNodePaths) if (affectedPaths.has(node.path ?? '')) affectedIds.add(node.id);
+  if (input.invalidateAllFacts) {
+    for (const file of input.previousCache.manifest) affectedPaths.add(file.path);
+    for (const file of input.currentManifest) affectedPaths.add(file.path);
+  }
+  for (const node of previousNodePaths) {
+    if (input.invalidateAllFacts || affectedPaths.has(node.path ?? '')) affectedIds.add(node.id);
+  }
   const currentPaths = new Set(input.currentManifest.map((item) => item.path));
   const recomputePaths = [...changedPaths].filter((path) => currentPaths.has(path)).sort();
   const reusedPaths = [...currentPaths].filter((path) => !changedPaths.has(path)).sort();
