@@ -166,7 +166,7 @@ for (const backend of ['file', 'postgres'])
         {
           const readBudgets = async () => {
             const response = await app.inject({
-              url: '/api/admin/budgets', cookies: signedCookies,
+              url: '/api/admin/budgets', cookies: signedCookies, headers: { 'x-admin-refresh': '1' },
             });
             assert.equal(response.statusCode, 200);
             return response.json();

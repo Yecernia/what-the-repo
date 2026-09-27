@@ -60,21 +60,3 @@ test('activity cohorts are fetched once for the page', async () => {
   assert.equal(result.repositories[0].user_count,1);
   assert.equal(calls.length,3);
 });
-
-test('background database estimate counts only matching rows', async () => {
-  const calls:string[]=[];
-  const pool={async query(sql:string) {
-    calls.push(sql);
-    if(sql.includes('FROM pg_class')) return {rows:[{relname:'project_messages',estimated_rows:100,
-      data_bytes:1000,index_bytes:200,columns:['project_id']}]};
-    if(sql.includes('SELECT analysis_snapshot_id')) return {rows:[]};
-    if(sql.includes('SELECT project_id FROM project_public_snapshot_bindings')) return {rows:[]};
-    if(sql.includes('SELECT directory_id::text')) return {rows:[]};
-    if(sql.includes('FROM ONLY "project_messages"')) return {rows:[{selected:10}]};
-    throw new Error('Unexpected SQL: '+sql);
-  }};
-  const store=Object.assign(Object.create(PostgresStore.prototype),{root:'unused',pool,adminPool:pool}) as PostgresStore;
-  const result=await new AdminRepositories(store,loadConfig({})).databaseBytes([],['project-1']);
-  assert.deepEqual([result.database_bytes,result.database_index_bytes],[100,20]);
-  assert.ok(calls.some(sql=>sql.includes('FROM ONLY "project_messages"') && sql.includes('WHERE')));
-});

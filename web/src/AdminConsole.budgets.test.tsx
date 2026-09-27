@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import AdminConsole from './AdminConsole';
 import { adminRequest, type AdminRow } from './admin-api';
 
-vi.mock('./admin-api', () => ({ adminRequest: vi.fn() }));
+vi.mock('./admin-api', async (original) => ({ ...await original<typeof import('./admin-api')>(), adminRequest: vi.fn() }));
 vi.mock('./AdminAudienceCharts', () => ({ AdminAudienceCharts: () => null }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 

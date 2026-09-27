@@ -1,4 +1,5 @@
 import { newAnalysisWriteMetrics } from './analysis-chunk-codec.js';
+import { managementReadPool } from '../admin/read-context.js';
 import { beijingBudgetDay, withBudgetDefaults } from "../agent/provider-budget.js";
 import { assertSessionPermit } from '../scheduling/permits.js';
 import { registerControlPool } from './control-pool.js';
@@ -371,6 +372,8 @@ export class PostgresStore extends FileStore {
   readonly controlPool: Pool;
   /** Small lane for authenticated management reads when application queries fill the main pool. */
   readonly adminPool: Pool;
+  /** One bounded capacity/collector connection; maintenance cannot consume management reads. */
+  readonly collectorPool: Pool;
   private readonly sourceManifestCache = new Map<string, CachedSourceManifest>();
   private readonly analysisChunkCompression: boolean;
   /** Pool connections left for parallel directory loading beside the publication transaction. */
@@ -404,10 +407,14 @@ export class PostgresStore extends FileStore {
       idleTimeoutMillis: 10000 });
     this.controlPool.on('error', () => console.error('database_control_unavailable'));
     registerControlPool(pool, this.controlPool);
-    this.adminPool = new Pool({ connectionString: options.databaseUrl, max: 2,
+    this.adminPool = managementReadPool(new Pool({ connectionString: options.databaseUrl, max: 2,
       application_name: postgresApplicationName((options.applicationRole ?? 'api') + ':admin'),
-      connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, statement_timeout: 5000 });
+      connectionTimeoutMillis: 1000, idleTimeoutMillis: 10000, statement_timeout: 2000 }));
     this.adminPool.on('error', () => console.error('database_admin_unavailable'));
+    this.collectorPool = new Pool({ connectionString: options.databaseUrl, max: 1,
+      application_name: postgresApplicationName((options.applicationRole ?? 'api') + ':collector'),
+      connectionTimeoutMillis: 1000, idleTimeoutMillis: 10000, statement_timeout: 2000 });
+    this.collectorPool.on('error', () => console.error('database_collector_unavailable'));
     this.snapshotObjects = boundedObjectStore(options.objectStore ?? new LocalSnapshotObjectStore(options.root),
       new ResourceScheduler(options.objectAdmissionStore ?? new PostgresPermitStore(this.controlPool)), options.objectStoreConcurrency ?? 8);
   }
@@ -433,7 +440,7 @@ export class PostgresStore extends FileStore {
   }
 
   override async close(): Promise<void> {
-    await Promise.all([this.pool.end(), this.controlPool.end(), this.adminPool.end()]);
+    await Promise.all([this.pool.end(), this.controlPool.end(), this.adminPool.end(), this.collectorPool.end()]);
   }
 
   override async checkHealth(): Promise<void> {
@@ -3028,8 +3035,8 @@ export class PostgresStore extends FileStore {
     return result.rows[0]?.public_snapshot_key ?? null;
   }
 
-  override async listPurgeablePublicSnapshots(now: string): Promise<PublicSnapshotMetadata[]> {
-    const result = await this.pool.query(
+  override async listPurgeablePublicSnapshots(now: string, pool = this.pool): Promise<PublicSnapshotMetadata[]> {
+    const result = await pool.query(
       `SELECT snapshot.public_snapshot_key, snapshot.repository_identity, snapshot.commit_sha,
               snapshot.analyzer_bundle_version, snapshot.analysis_config_digest,
               snapshot.analysis_snapshot_id, snapshot.language_overlay_version,

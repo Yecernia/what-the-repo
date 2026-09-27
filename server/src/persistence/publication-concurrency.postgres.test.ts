@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { PostgresStore } from './postgres-store.js';
 import { LocalSnapshotObjectStore } from './snapshot-object-store.js';
 import { LocalPermitStore } from '../scheduling/permits.js';
 import { createProject } from '../domain/conversation.js';
 import { newAnalysisJob } from '../domain/jobs.js';
 import { AnalysisLeaseLostError } from './store.js';
+import { reclaimSnapshotDirectoryBatch } from './directory-reclamation.js';
 
 const databaseUrl = process.env.WTR_PUBLICATION_TEST_DATABASE_URL;
 const modes = ['success', 'cancel', 'transfer', 'expire', 'write-failure', 'finalize-expire'] as const;
@@ -28,13 +29,31 @@ for (const mode of modes) test(`isolated PostgreSQL: publication ${mode} leaves 
   const admin = new Pool({ connectionString: url.toString(), max: 2 });
   const options = { root, databaseUrl: url.toString(), migrationsRoot: join(process.cwd(), 'migrations'),
     encryptionSecret: 'publication-lock-test-only', objectAdmissionStore: new LocalPermitStore(),
-    objectStore: new LocalSnapshotObjectStore(join(root, 'objects')), poolMax: 2 };
+    objectStore: new LocalSnapshotObjectStore(join(root, 'objects')), poolMax: 4 };
   const store = new PostgresStore(options);
   const controlUrl = new URL(url); controlUrl.searchParams.set('options', '-c lock_timeout=250ms -c statement_timeout=3000ms');
   const control = new PostgresStore({ ...options, databaseUrl: controlUrl.toString() });
   const blocker = await admin.connect();
   let publication: Promise<unknown> | undefined, outcome: Promise<unknown> | undefined;
   let projectId: string | undefined;
+  const patched = new Map<PoolClient, PoolClient['query']>();
+  const inject = (client: PoolClient) => {
+    if (patched.has(client)) return;
+    const query = client.query;
+    patched.set(client, query);
+    client.query = ((...args: unknown[]) => {
+      const result = (query as (...params: unknown[]) => unknown).apply(client, args);
+      if (typeof args[0] !== 'string' || !args[0].includes('stage_snapshot_directory_child')
+        || (args[1] as unknown[] | undefined)?.[1] !== 'edges') return result;
+      return Promise.resolve(result).then(async value => {
+        const child = (value as {rows: Array<{child_name: string}>}).rows[0]!.child_name;
+        assert.match(child, /^snapshot_directory_edges_g[1-9][0-9]*$/);
+        await Reflect.apply(query, client, [`CREATE TRIGGER ${trigger} BEFORE INSERT ON ${child}
+          FOR EACH ROW WHEN (NEW.edge_key='fact:gate-${id}') EXECUTE FUNCTION ${trigger}()`]);
+        return value;
+      });
+    }) as PoolClient['query'];
+  };
   try {
     await store.init();
     const sourceRoot = join(root, 'source'); await mkdir(sourceRoot);
@@ -68,11 +87,12 @@ for (const mode of modes) test(`isolated PostgreSQL: publication ${mode} leaves 
         END IF;
         PERFORM pg_advisory_xact_lock(${gate}::bigint);
         ${mode === 'write-failure' ? "RAISE EXCEPTION 'publication_injected_failure';" : ''}
-        RETURN NEW; END $$;
-      CREATE TRIGGER ${trigger} BEFORE INSERT ON snapshot_directory_edges
-      FOR EACH ROW WHEN (NEW.edge_key = 'fact:gate-${id}') EXECUTE FUNCTION ${trigger}();`);
+        RETURN NEW; END $$;`);
     if (mode === 'finalize-expire') await admin.query(`CREATE TRIGGER ${trigger}_finalize BEFORE UPDATE ON canonical_public_repository_snapshots
-      FOR EACH ROW WHEN (NEW.public_snapshot_key='${publicKey}') EXECUTE FUNCTION ${trigger}();`);
+      FOR EACH ROW WHEN (NEW.public_snapshot_key='${publicKey}' AND NEW.analysis_sha256 IS DISTINCT FROM OLD.analysis_sha256)
+      EXECUTE FUNCTION ${trigger}();`);
+    // Parent row triggers are not inherited by the staging children.
+    store.pool.on('acquire', inject);
     const nodes = Array.from({ length: 3_001 }, (_, i) => ({ ...node, id: 'new-' + i, name: 'new-' + i }));
     const edges = Array.from({ length: 4_001 }, (_, i) => ({ id: i ? `edge-${id}-${i}` : 'gate-' + id,
       source: 'new-0', target: 'new-1', relation_kind: 'calls', label: 'calls', description: '',
@@ -125,10 +145,20 @@ for (const mode of modes) test(`isolated PostgreSQL: publication ${mode} leaves 
       await assert.rejects(publication, mode === 'write-failure' ? /publication_injected_failure/ : (error: unknown) => error instanceof AnalysisLeaseLostError);
       assert.deepEqual((await store.loadPublicSnapshot(publicKey))?.analysis, previous!.analysis);
       assert.equal((await admin.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1', [publicKey])).rows[0].directory_id, oldDirectory);
-      assert.equal((await admin.query('SELECT 1 FROM snapshot_directory_reclamation q JOIN snapshot_directory_generations g USING(directory_id) WHERE g.public_snapshot_key=$1',[publicKey])).rowCount,0,
+      assert.equal((await admin.query(`SELECT 1 FROM snapshot_directory_reclamation q
+        JOIN snapshot_query_directories d USING(directory_id) WHERE d.public_snapshot_key=$1`,[publicKey])).rowCount,0,
         'failed finalization cannot enqueue a still-visible generation');
+      assert.equal((await admin.query(`SELECT 1 FROM snapshot_directory_generations g
+        WHERE g.public_snapshot_key=$1 AND g.directory_id<>$2
+          AND NOT EXISTS(SELECT 1 FROM snapshot_directory_reclamation q WHERE q.directory_id=g.directory_id)`,
+      [publicKey,oldDirectory])).rowCount,0,'failed candidates are durably queued for reclamation');
+      for (let pass = 0; pass < 40; pass++) {
+        await reclaimSnapshotDirectoryBatch(admin);
+        if (Number((await admin.query('SELECT count(*) AS n FROM snapshot_directory_generations WHERE public_snapshot_key=$1',
+          [publicKey])).rows[0].n) === 1) break;
+      }
       assert.equal(Number((await admin.query('SELECT count(*) AS n FROM snapshot_directory_generations WHERE public_snapshot_key=$1', [publicKey])).rows[0].n), 1,
-        'failed candidates leave no committed generation');
+        'reclamation removes the failed committed generation');
       if (mode === 'transfer') {
         await store.savePublicSnapshot({ ...base, analysis: { fact_graph: { nodes, edges } }, fence: {
           ...fence, workerId: replacement!.lease_owner!, attempt: replacement!.attempt } });
@@ -139,7 +169,10 @@ for (const mode of modes) test(`isolated PostgreSQL: publication ${mode} leaves 
   } finally {
     await blocker.query('SELECT pg_advisory_unlock($1::bigint)', [gate]).catch(() => undefined);
     await outcome;
-    await admin.query(`DROP TRIGGER IF EXISTS ${trigger} ON snapshot_directory_edges; DROP TRIGGER IF EXISTS ${trigger}_finalize ON canonical_public_repository_snapshots; DROP FUNCTION IF EXISTS ${trigger}();`).catch(() => undefined);
+    store.pool.off('acquire', inject);
+    for (const [client, query] of patched) client.query = query;
+    await admin.query(`DROP TRIGGER IF EXISTS ${trigger}_finalize ON canonical_public_repository_snapshots;
+      DROP FUNCTION IF EXISTS ${trigger}() CASCADE;`).catch(() => undefined);
     if (projectId) await admin.query('DELETE FROM projects WHERE project_id=$1', [projectId]);
     await admin.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1', [publicKey]);
     blocker.release();

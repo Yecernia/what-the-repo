@@ -1,6 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { Pool } from 'pg';
 import type { ProductStore } from '../persistence/store.js';
 import { PostgresStore } from '../persistence/postgres-store.js';
@@ -8,6 +6,10 @@ import type { ServerConfig } from '../config.js';
 import { adminDocuments } from './runtime-config.js';
 import { adminError } from './security.js';
 import { readObjectInventory } from './storage.js';
+import { AdminDocuments } from './documents.js';
+import { PHYSICAL_SAMPLE_INTERVAL_MS, BoundedFileScan, accountingFresh, accountingSignature,
+  emptyAccounting, emptyPhysicalSample, estimateSnapshotStorage, physicalSampleKey, repositoryFilePaths,
+  samplePhysicalTables, type PhysicalSample, type StoredAccounting } from './storage-accounting.js';
 
 const repoOfProject = "lower(regexp_replace(regexp_replace(p.payload->'source'->>'value', '^https?://github.com/', '', 'i'), '(\\.git)?/?$', ''))";
 // Resolve the current leader before sorting/pagination; waiters cannot override it.
@@ -54,37 +56,32 @@ const userJoins = 'JOIN app_users u ON u.owner_id=p.owner_id LEFT JOIN online_pr
 const storedFilter = `(payload_purged_at IS NULL OR EXISTS(SELECT 1 FROM admin_documents d
   WHERE d.key='repository-cleanup:'||repository_identity AND d.value->>'status' IN ('pending','failed')))`;
 const storedVersions = `WITH versions AS (
- SELECT repository_identity,public_snapshot_key,analysis_snapshot_id,NULL::text AS project_id,commit_sha,created_at
+ SELECT repository_identity,public_snapshot_key,analysis_snapshot_id,NULL::text AS project_id,commit_sha,created_at,
+ public_snapshot_key||':'||accounting_revision::text||':'||analysis_snapshot_id AS revision
  FROM canonical_public_repository_snapshots WHERE ${storedFilter}
- UNION ALL SELECT ${repoOfProject},NULL,s.analysis_snapshot_id,p.project_id,p.payload->'source'->>'commit_sha',s.updated_at
+ UNION ALL SELECT ${repoOfProject},NULL,s.analysis_snapshot_id,p.project_id,p.payload->'source'->>'commit_sha',s.updated_at,
+ p.project_id||':'||s.analysis_snapshot_id||':'||s.updated_at::text
  FROM project_snapshots s JOIN projects p USING(project_id) WHERE p.payload->'source'->>'kind'='github'
  AND NOT EXISTS(SELECT 1 FROM project_public_snapshot_bindings b WHERE b.project_id=p.project_id)
- UNION ALL SELECT substring(key FROM length('repository-cleanup:')+1),NULL,NULL,NULL,NULL,updated_at
+ UNION ALL SELECT substring(key FROM length('repository-cleanup:')+1),NULL,NULL,NULL,NULL,updated_at,key||':'||updated_at::text
  FROM admin_documents WHERE key LIKE 'repository-cleanup:%' AND value->>'status' IN ('pending','failed')
 ), stored AS (SELECT repository_identity,count(analysis_snapshot_id)::int AS versions,
  COALESCE(array_agg(public_snapshot_key ORDER BY public_snapshot_key) FILTER(WHERE public_snapshot_key IS NOT NULL),ARRAY[]::text[]) AS keys,
  COALESCE(array_agg(project_id ORDER BY project_id) FILTER(WHERE project_id IS NOT NULL),ARRAY[]::text[]) AS legacy_projects,
- array_agg(DISTINCT commit_sha) FILTER(WHERE commit_sha IS NOT NULL) AS commits,max(created_at) AS created_at
+ array_agg(DISTINCT commit_sha) FILTER(WHERE commit_sha IS NOT NULL) AS commits,max(created_at) AS created_at,
+ array_agg(revision ORDER BY revision) AS revisions
  FROM versions GROUP BY repository_identity)`;
-interface StoredAccounting {
-  observedAt: string;
-  signature: string;
-  host_file_bytes: number | null;
-  database_bytes: number | null;
-  database_index_bytes: number | null;
-}
-const emptyAccounting: StoredAccounting = {
-  observedAt: '', signature: '', host_file_bytes: null, database_bytes: null, database_index_bytes: null,
-};
-const accountingSignature=(row:{keys:string[];legacy_projects:string[];created_at:unknown})=>
-  JSON.stringify([row.keys,row.legacy_projects,row.created_at]);
 function validRepo(repository: string) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw adminError(400, 'admin_invalid_repository');
 }
 
 export class AdminRepositories {
   readonly docs;
-  constructor(readonly store: ProductStore, readonly config: ServerConfig, private readonly queryPool?: Pool) { this.docs = adminDocuments(store); }
+  private readonly accountingOwner = randomUUID();
+  private pendingScan?: {repository: string; signature: string; scan: BoundedFileScan; accounting: StoredAccounting};
+  constructor(readonly store: ProductStore, readonly config: ServerConfig, private readonly queryPool?: Pool) {
+    this.docs = queryPool ? new AdminDocuments(store.root,queryPool) : adminDocuments(store);
+  }
   get pool(): Pool { if (!this.docs.pool) throw adminError(503, 'admin_requires_postgres'); return this.queryPool??this.docs.pool; }
   async users(repository: string, kind: string, batch: string, limit?: number) {
     validRepo(repository);
@@ -165,7 +162,7 @@ export class AdminRepositories {
     const total = Number((await this.pool.query(`${storedVersions} SELECT count(*) AS n FROM stored`)).rows[0].n);
     const pagination = pageInfo(total,input);
     const result = await this.pool.query(`${storedVersions} SELECT * FROM stored ORDER BY created_at DESC,repository_identity LIMIT $1 OFFSET $2`,[25,(pagination.page-1)*25]);
-    const inventory = await readObjectInventory(this.docs);
+    const inventory = await readObjectInventory(this.docs,this.pool,result.rows.flatMap(row=>row.keys as string[]));
     const fresh = Number.isFinite(inventory.totalBytes) && !!inventory.snapshotBytes &&
       Date.parse(inventory.observedAt)>Date.now()-5*60_000;
     const identities = result.rows.map(row=>String(row.repository_identity));
@@ -238,6 +235,10 @@ export class AdminRepositories {
       repositories.push({ ...row,...(usersByRepository.get(row.repository_identity)??{users:[],user_count:0}),
         host_file_bytes:measured.host_file_bytes,database_bytes:measured.database_bytes,
         database_index_bytes:measured.database_index_bytes,observedAt:measured.observedAt,
+        accounting_fresh:accountingFresh(measured),accounting_status:measured.accounting_status??'pending',
+        logical_counts:measured.logical_counts??null,generation_counts:measured.generation_counts??null,
+        database_scope:'snapshot_directory_estimate',physical_observed_at:measured.physical_observed_at??null,
+        database_estimate_complete:measured.database_estimate_complete??false,
         database_estimated:true,last_conversation_at:usageByRepository.get(row.repository_identity)??null,
         cos_bytes:this.config.cosBucket ? objectBytes : 0, cos_enabled:Boolean(this.config.cosBucket),
         cleanup_status:cleanup.status==='completed' ? null : cleanup.status,
@@ -245,103 +246,113 @@ export class AdminRepositories {
     }
     return { storedRepositories:repositories, storedPagination:pagination };
   }
-  async localBytes(keys: string[], projectIds:string[] = []) {
-    let bytes = 0;
-    const walk = async (path:string):Promise<void> => {
-      const info = await lstat(path).catch(e=>{if(e.code==='ENOENT')return null;throw e;});
-      if (!info || info.isSymbolicLink()) return;
-      if (info.isFile()) { bytes += info.size; return; }
-      if(info.isDirectory()) for(const name of await readdir(path)) await walk(join(path,name));
-    };
+  async localBytes(keys: string[], projectIds: string[] = []) {
+    const scan = new BoundedFileScan(repositoryFilePaths(this.store.root, keys, projectIds));
     try {
-      for(const key of keys) {
-        if(!/^[a-f0-9]{64}$/.test(key)) return null;
-        await walk(join(this.store.root,'public-repository-snapshots',key));
-        await walk(join(this.store.root,'source-snapshots','public',key));
-        await walk(join(this.store.root,'snapshot-language-overlays',key));
-      }
-      for(const id of projectIds) if(/^[\w-]+$/.test(id)) {
-        await walk(join(this.store.root,'source-snapshots',id));
-        for(const folder of ['snapshots','analysis-results','analysis-checkpoints']) await walk(join(this.store.root,folder,id+'.json'));
-      }
-      return bytes;
-    } catch { return null; }
+      const result = await scan.step({maxEntries: 10_000, maxMs: 5_000});
+      return result.done ? result.bytes : null;
+    } finally { await scan.close(); }
   }
-  async databaseBytes(keys:string[],additionalProjects:string[] = []) {
-    // Heap/TOAST and B-tree pages are shared: report an explicit estimate, never physical reclaimable bytes.
-    const tables = (await this.pool.query(`SELECT c.relname,c.reltuples::float8 AS estimated_rows,pg_table_size(c.oid)::float8 AS data_bytes,
-      pg_indexes_size(c.oid)::float8 AS index_bytes,
-      array(SELECT a.attname::text FROM pg_attribute a WHERE a.attrelid=c.oid AND NOT a.attisdropped
-        AND a.attname IN ('public_snapshot_key','snapshot_id','analysis_snapshot_id','project_id','current_public_snapshot_key','directory_id')) AS columns
-      FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-      WHERE n.nspname=current_schema() AND c.relkind='r'`)).rows;
-    const projectIds=[...new Set([...additionalProjects,...(await this.pool.query('SELECT project_id FROM project_public_snapshot_bindings WHERE public_snapshot_key=ANY($1::text[])',[keys])).rows.map(r=>String(r.project_id))])];
-    const snapshotIds=(await this.pool.query(`SELECT analysis_snapshot_id FROM canonical_public_repository_snapshots WHERE public_snapshot_key=ANY($1::text[])
-      UNION SELECT analysis_snapshot_id FROM project_snapshots WHERE project_id=ANY($2::text[])`,[keys,projectIds])).rows.map(r=>String(r.analysis_snapshot_id));
-    const directoryIds=(await this.pool.query('SELECT directory_id::text FROM snapshot_query_directories WHERE public_snapshot_key=ANY($1::text[])',[keys])).rows.map(row=>String(row.directory_id));
-    let dataBytes=0,indexBytes=0;
-    for(const t of tables) {
-      if(!/^[a-z_][a-z_0-9]*$/.test(t.relname) || !t.columns.length) continue;
-      const clauses:string[]=[],params:string[][]=[];
-      for(const column of t.columns as string[]) {
-        params.push(column==='directory_id'?directoryIds:column==='project_id'?projectIds:column==='snapshot_id'||column==='analysis_snapshot_id'?snapshotIds:keys);
-        clauses.push(`"${column}"=ANY($${params.length}::${column==='directory_id'?'bigint':'text'}[])`);
-      }
-      const r=(await this.pool.query(`SELECT count(*)::float8 AS selected FROM ONLY "${t.relname}"
-        WHERE ${clauses.join(' OR ')}`,params)).rows[0];
-      // The result is already an estimate. Use catalog row estimates instead of
-      // recounting every large table for each repository.
-      const total=Math.max(Number(t.estimated_rows),Number(r.selected));
-      const share=total>0 ? Number(r.selected)/total : 0;
-      dataBytes+=Number(t.data_bytes)*share;indexBytes+=Number(t.index_bytes)*share;
-    }
-    return { database_bytes:Math.round(dataBytes), database_index_bytes:Math.round(indexBytes), database_estimated:true };
+  async databaseBytes(keys: string[], additionalProjects: string[] = []) {
+    const sample = await this.docs.read<PhysicalSample>(physicalSampleKey, emptyPhysicalSample);
+    return estimateSnapshotStorage(this.pool, keys, sample, additionalProjects);
+  }
+  async closeAccounting() {
+    await this.pendingScan?.scan.close(); this.pendingScan = undefined;
+    await this.pool.query(`UPDATE admin_documents SET value=jsonb_set(value,'{until}','0'::jsonb)
+      WHERE key='storage-accounting-lease' AND value->>'owner'=$1`, [this.accountingOwner]);
   }
   async refreshAccounting() {
-    const leaseKey='storage-accounting-lease', owner=randomUUID(), now=Date.now();
-    const acquired=await this.docs.change(leaseKey,{owner:'',until:0,cursor:''},state=>{
-      if(state.until>now) return false;
-      state.owner=owner;state.until=now+30*60_000;
-      return true;
-    });
-    if(!acquired) return;
+    const owner = this.accountingOwner;
+    // Atomic, short lease acquisition. Expired owners cannot publish after takeover.
+    const lease = (await this.pool.query(`INSERT INTO admin_documents(key,value)
+      VALUES('storage-accounting-lease',jsonb_build_object('owner',$1::text,'until',
+        extract(epoch FROM clock_timestamp())*1000+60000,'cursor',''))
+      ON CONFLICT(key) DO UPDATE SET value=admin_documents.value || jsonb_build_object(
+        'owner',$1::text,'until',extract(epoch FROM clock_timestamp())*1000+60000)
+      WHERE COALESCE((admin_documents.value->>'until')::numeric,0)<extract(epoch FROM clock_timestamp())*1000
+        OR admin_documents.value->>'owner'=$1
+      RETURNING value`, [owner])).rows[0]?.value as {cursor: string} | undefined;
+    if (!lease) {
+      await this.pendingScan?.scan.close(); this.pendingScan = undefined; return;
+    }
+    const publish = async (key: string, value: unknown) => this.pool.query(`WITH lease AS MATERIALIZED (
+      SELECT key FROM admin_documents lease WHERE lease.key='storage-accounting-lease'
+        AND lease.value->>'owner'=$3 AND (lease.value->>'until')::numeric>extract(epoch FROM clock_timestamp())*1000
+      FOR UPDATE)
+      INSERT INTO admin_documents(key,value) SELECT $1,$2::jsonb FROM lease
+      ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=clock_timestamp()`, [key,JSON.stringify(value),owner]);
+    let keepLease = false;
     try {
-      // Heavy estimates run only while analysis is idle, never in an admin GET.
-      const active=await this.pool.query("SELECT 1 FROM analysis_jobs WHERE status IN ('queued','running') LIMIT 1");
-      if(active.rowCount) return;
-      const lease=await this.docs.read(leaseKey,{owner:'',until:0,cursor:''});
-      const query=async(after:string)=>this.pool.query(`${storedVersions}
-        SELECT * FROM stored WHERE repository_identity>$1 ORDER BY repository_identity LIMIT 1`,[after]);
-      let rows=(await query(lease.cursor)).rows;
-      if(!rows.length) rows=(await query('')).rows;
-      const row=rows[0];
-      if(!row) return;
-      await this.docs.change(leaseKey,{owner:'',until:0,cursor:''},state=>{
-        if(state.owner===owner) state.cursor=String(row.repository_identity);
-      });
-      const key='storage-accounting:'+row.repository_identity;
-      const previous=await this.docs.read<StoredAccounting>(key,emptyAccounting);
-      const signature=accountingSignature(row);
-      if(previous.signature===signature && Date.parse(previous.observedAt)>now-6*60*60_000) return;
-      const cleanup=await this.docs.read<{status?:string;projectIds?:string[]}>(
-        'repository-cleanup:'+row.repository_identity,{},
-      );
-      const bindings=(await this.pool.query(
-        'SELECT project_id FROM project_public_snapshot_bindings WHERE public_snapshot_key=ANY($1::text[])',
-        [row.keys],
-      )).rows.map(value=>String(value.project_id));
-      const projectIds=[...new Set<string>([
-        ...bindings,...row.legacy_projects,...(cleanup.status!=='completed'?cleanup.projectIds??[]:[]),
-      ])];
-      const database=await this.databaseBytes(row.keys,projectIds);
-      const hostFiles=await this.localBytes(row.keys,projectIds);
-      await this.docs.change<StoredAccounting,void>(key,emptyAccounting,value=>{
-        Object.assign(value,{...database,host_file_bytes:hostFiles,signature,observedAt:new Date().toISOString()});
-      });
+      // Reconcile old published metadata in bounded batches; aborted staging stays
+      // explicitly unknown rather than being counted by scanning its fact rows.
+      await this.pool.query(`WITH batch AS (SELECT g.directory_id,d.node_count,d.edge_count,d.evidence_count,
+        d.layer_count,d.value_point_count FROM snapshot_directory_generations g
+        JOIN snapshot_query_directories d USING(directory_id) WHERE g.logical_counts IS NULL
+        ORDER BY g.directory_id LIMIT 100)
+        UPDATE snapshot_directory_generations g SET logical_counts=jsonb_build_object(
+          'nodes',b.node_count,'edges',b.edge_count,'evidence',b.evidence_count,
+          'layers',b.layer_count,'value_points',b.value_point_count)
+        FROM batch b WHERE g.directory_id=b.directory_id`);
+      let physical = await this.docs.read<PhysicalSample>(physicalSampleKey, emptyPhysicalSample);
+      if (!(Date.parse(physical.observedAt)>Date.now()-PHYSICAL_SAMPLE_INTERVAL_MS)) {
+        physical = await samplePhysicalTables(this.pool);
+        await publish(physicalSampleKey, physical);
+      }
+      const query = async (after: string, exact = false) => this.pool.query(`${storedVersions}
+        SELECT * FROM stored WHERE repository_identity${exact ? '=' : '>'}$1 ORDER BY repository_identity LIMIT 1`, [after]);
+      const active = (await this.pool.query("SELECT 1 FROM analysis_jobs WHERE status IN ('queued','running') LIMIT 1")).rowCount;
+      if (this.pendingScan) {
+        const current = (await query(this.pendingScan.repository, true)).rows[0];
+        if (!current || accountingSignature(current) !== this.pendingScan.signature) {
+          await this.pendingScan.scan.close(); this.pendingScan = undefined;
+        }
+      }
+      // A long disk scan must not hold up other repositories' cheap summaries.
+      let row = (await query(lease.cursor ?? '')).rows[0];
+      if (!row) row = (await query('')).rows[0];
+      if (row) {
+        await this.pool.query(`UPDATE admin_documents SET value=jsonb_set(value,'{cursor}',to_jsonb($2::text))
+          WHERE key='storage-accounting-lease' AND value->>'owner'=$1`, [owner,String(row.repository_identity)]);
+        const key = 'storage-accounting:' + row.repository_identity;
+        const previous = await this.docs.read<StoredAccounting>(key, emptyAccounting);
+        const signature = accountingSignature(row);
+        if (!(previous.signature === signature && accountingFresh(previous))
+          && this.pendingScan?.repository !== row.repository_identity) {
+          const cleanup = await this.docs.read<{status?: string; projectIds?: string[]}>(
+            'repository-cleanup:' + row.repository_identity, {});
+          const bindings = (await this.pool.query(
+            'SELECT project_id FROM project_public_snapshot_bindings WHERE public_snapshot_key=ANY($1::text[])',
+            [row.keys])).rows.map(value => String(value.project_id));
+          const projectIds = [...new Set<string>([...bindings,...row.legacy_projects,
+            ...(cleanup.status !== 'completed' ? cleanup.projectIds ?? [] : [])])];
+          const database = await estimateSnapshotStorage(this.pool, row.keys, physical, row.legacy_projects);
+          const accounting: StoredAccounting = {...database, signature, observedAt: new Date().toISOString(),
+            host_file_bytes: previous.signature === signature ? previous.host_file_bytes : null, accounting_status: 'scanning'};
+          await publish(key, accounting);
+          if (!active && !this.pendingScan) this.pendingScan = {repository: String(row.repository_identity), signature, accounting,
+            scan: new BoundedFileScan(repositoryFilePaths(this.store.root, row.keys, projectIds))};
+        }
+      }
+      // Metadata stays available under analysis load. Only disk work yields.
+      if (active || !this.pendingScan) { keepLease = Boolean(this.pendingScan); return; }
+      const pending = this.pendingScan!;
+      const result = await pending.scan.step();
+      if (!result.done) { keepLease = true; return; }
+      await pending.scan.close(); this.pendingScan = undefined;
+      pending.accounting.host_file_bytes = result.bytes;
+      pending.accounting.accounting_status = result.bytes === null || pending.accounting.generation_counts?.unknown
+        ? 'incomplete' : 'ready';
+      pending.accounting.observedAt = new Date().toISOString();
+      const current = (await query(pending.repository,true)).rows[0];
+      if (current && accountingSignature(current) === pending.signature)
+        await publish('storage-accounting:' + pending.repository, pending.accounting);
     } finally {
-      await this.docs.change(leaseKey,{owner:'',until:0,cursor:''},state=>{
-        if(state.owner===owner) state.until=0;
-      });
+      if (!keepLease) {
+        await this.pendingScan?.scan.close(); this.pendingScan = undefined;
+        await this.pool.query(`UPDATE admin_documents SET value=jsonb_set(value,'{until}','0'::jsonb)
+          WHERE key='storage-accounting-lease' AND value->>'owner'=$1`, [owner]);
+      }
     }
   }
   async deletionPlan(repository:string) {
@@ -359,7 +370,7 @@ export class AdminRepositories {
       JOIN canonical_public_repository_snapshots s USING(public_snapshot_key) WHERE s.repository_identity=$1 ORDER BY b.project_id`,[repository])).rows;
     const token=createHash('sha256').update(JSON.stringify({repository,snapshots,bindings,legacy})).digest('hex');
     const keys=snapshots.map(s=>String(s.public_snapshot_key));
-    const inventory=await readObjectInventory(this.docs);
+    const inventory=await readObjectInventory(this.docs,this.pool,keys);
     const fresh=Number.isFinite(inventory.totalBytes) && !!inventory.snapshotBytes &&
       Date.parse(inventory.observedAt)>Date.now()-5*60_000;
     const cosBytes=this.config.cosBucket ? (fresh ? keys.reduce((n,key)=>n+(inventory.snapshotBytes[key]??0),0) : null) : 0;
@@ -378,8 +389,8 @@ export class AdminRepositories {
 /** One bounded accounting pass at a time across API replicas. */
 export function collectStoredRepositoryAccounting(store:ProductStore,config:ServerConfig) {
   if(!adminDocuments(store).pool) return async()=>undefined;
-  // Collection uses the ordinary pool; it must not occupy the small admin read lane.
-  const repository=new AdminRepositories(store,config,store instanceof PostgresStore?store.pool:undefined);
+  const pool = store instanceof PostgresStore ? store.collectorPool : undefined;
+  const repository=new AdminRepositories(store,config,pool);
   let pending:Promise<void>|undefined;
   let lastErrorLog=0;
   const sample=()=>{
@@ -394,5 +405,5 @@ export function collectStoredRepositoryAccounting(store:ProductStore,config:Serv
   sample();
   const timer=setInterval(sample,15_000);
   timer.unref();
-  return async()=>{clearInterval(timer);await pending;};
+  return async()=>{clearInterval(timer);await pending;await repository.closeAccounting();};
 }

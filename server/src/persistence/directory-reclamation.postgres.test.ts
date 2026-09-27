@@ -12,6 +12,7 @@ import { bindSnapshotQueryDirectory } from './snapshot-directory-publication.js'
 import { streamSnapshotQueryDirectory } from '../domain/snapshot-query.js';
 
 const databaseUrl = process.env.WTR_RECLAMATION_TEST_DATABASE_URL;
+const childKinds = ['nodes','edges','evidence','evidence_links'] as const;
 async function fixture(task: (store: PostgresStore, key: string, directoryId: string, base: Parameters<PostgresStore['savePublicSnapshot']>[0]) => Promise<void>,
   storage: 'legacy' | 'child' = 'legacy') {
   const url = new URL(databaseUrl!);
@@ -20,8 +21,10 @@ async function fixture(task: (store: PostgresStore, key: string, directoryId: st
   const store = new PostgresStore({ root, databaseUrl: url.toString(), migrationsRoot: join(process.cwd(),'migrations'),
     encryptionSecret: 'isolated-directory-reclamation-only', poolMax: 3, objectAdmissionStore: new LocalPermitStore() });
   const key = createHash('sha256').update(randomUUID()).digest('hex');
+  let initialized = false;
   try {
-    await store.init(); const sourceRoot = join(root,'source'); await mkdir(sourceRoot);
+    await store.init(); initialized = true;
+    const sourceRoot = join(root,'source'); await mkdir(sourceRoot);
     await writeFile(join(sourceRoot,'one.ts'), 'export const x=1;');
     const snapshotId = 'reclaim-' + key.slice(0,12);
     const view = { snapshot_id: snapshotId, graph: { nodes: [], edges: [], layers: [] }, value_points: [], learning_plan: { steps: [] } };
@@ -32,24 +35,40 @@ async function fixture(task: (store: PostgresStore, key: string, directoryId: st
     if (storage === 'legacy') {
       // Keep the pre-existing bounded cleanup contract under test. Production
       // generations written before 0031 already have this physical layout.
-      const columns = ['directory_id','node_key','node_id','node_kind','entity_kind','parent_entity_id','depth',
-        'label','name','responsibility','path','language','layer_id','layer_name','certainty','lifecycle_status','payload'].join(',');
-      const child = `snapshot_directory_nodes_g${directoryId}`;
-      await store.pool.query(`INSERT INTO snapshot_directory_nodes(${columns})
-        SELECT ${columns} FROM ONLY ${child}`);
-      await store.pool.query(`DROP TABLE ${child}`);
-      await store.pool.query(`DROP TABLE snapshot_directory_edges_g${directoryId}`);
+      // Current publications also give evidence and evidence links their own
+      // children. Move all four back, in FK order, to model a genuinely legacy
+      // generation; leaving even an empty child changes reader-pinning behavior.
+      for (const kind of childKinds) {
+        const parent = 'snapshot_directory_' + kind;
+        const columns = (await store.pool.query(`SELECT attname FROM pg_attribute
+          WHERE attrelid=$1::regclass AND attnum>0 AND NOT attisdropped AND attgenerated=''
+          ORDER BY attnum`, [parent])).rows.map(row => '"' + String(row.attname).replaceAll('"','""') + '"').join(',');
+        await store.pool.query(`INSERT INTO ${parent}(${columns})
+          SELECT ${columns} FROM ONLY ${parent}_g${directoryId}`);
+      }
+      await store.pool.query(`DROP TABLE ${childKinds.map(kind => `snapshot_directory_${kind}_g${directoryId}`).join(',')}`);
     }
     await task(store,key,directoryId,base);
   } finally {
-    const generations = await store.pool.query('SELECT directory_id FROM snapshot_directory_generations WHERE public_snapshot_key=$1',[key]).catch(() => ({rows: []}));
-    for (const row of generations.rows) {
-      const id = String(row.directory_id);
-      if (!/^[1-9][0-9]*$/.test(id)) throw new Error('test_directory_id_invalid');
-      await store.pool.query(`DROP TABLE IF EXISTS snapshot_directory_edges_g${id}, snapshot_directory_nodes_g${id}`).catch(()=>undefined);
-    }
-    await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[key]).catch(()=>undefined);
-    await store.close(); await rm(root,{recursive:true,force:true});
+    try {
+      if (initialized) {
+        const generations = await store.pool.query('SELECT directory_id FROM snapshot_directory_generations WHERE public_snapshot_key=$1',[key]);
+        for (const row of generations.rows) {
+          const id = String(row.directory_id);
+          if (!/^[1-9][0-9]*$/.test(id)) throw new Error('test_directory_id_invalid');
+          await store.pool.query(`DROP TABLE IF EXISTS ${childKinds.map(kind => `snapshot_directory_${kind}_g${id}`).join(',')}`);
+        }
+        await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1',[key]);
+        // 0032 deliberately removed the snapshot-to-generation FK to allow
+        // parallel staging before a snapshot exists. Deleting a snapshot alone
+        // therefore leaves both generations and their reclamation work alive.
+        await store.pool.query('DELETE FROM snapshot_directory_generations WHERE public_snapshot_key=$1',[key]);
+        assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE public_snapshot_key=$1',[key])).rowCount,0,
+          'fixture cleanup must remove every generation and its queued work');
+        assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=ANY($1::bigint[])',
+          [generations.rows.map(row => row.directory_id)])).rowCount,0);
+      }
+    } finally { await store.close(); await rm(root,{recursive:true,force:true}); }
   }
 }
 
@@ -97,11 +116,10 @@ test('inherited directory children wait for pinned readers, then drop without le
       assert.equal((await reader.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id,oldId);
       assert.equal((await reader.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,2_005);
       await store.savePublicSnapshot({...base,analysis:{fact_graph:{nodes:[],edges:[]}}});
-      for (let table=0; table<4; table++) {
-        assert.equal((await reclaimSnapshotDirectoryBatch(store.pool)).status,'progress');
-      }
       assert.equal((await reclaimSnapshotDirectoryBatch(store.pool)).status,'progress',
-        'first child pass records a post-publication observation boundary');
+        'the evidence-links child is first and records the post-publication observation boundary');
+      const observed = (await store.pool.query('SELECT table_index,cleanup_observed_at FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0];
+      assert.equal(observed.table_index,0); assert.ok(observed.cleanup_observed_at);
       const held = await reclaimSnapshotDirectoryBatch(store.pool);
       assert.equal(held.status,'busy');
       assert.equal((await reader.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,2_005);
@@ -117,7 +135,7 @@ test('inherited directory children wait for pinned readers, then drop without le
     assert.equal(removed,2_005);
     assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE directory_id=$1',[oldId])).rowCount,0);
     assert.equal((await store.pool.query(`SELECT 1 FROM pg_class WHERE relname=ANY($1::text[])`,
-      [[`snapshot_directory_nodes_g${oldId}`,`snapshot_directory_edges_g${oldId}`]])).rowCount,0);
+      [childKinds.map(kind => `snapshot_directory_${kind}_g${oldId}`)])).rowCount,0);
     assert.equal((await store.pool.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,0);
   }, 'child');
 });

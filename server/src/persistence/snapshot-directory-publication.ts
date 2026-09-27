@@ -24,9 +24,14 @@ export async function stageSnapshotQueryDirectory(pool: Pool, client: PoolClient
   directory: SnapshotQueryDirectorySource, options: DirectoryStagingOptions): Promise<string> {
   const parallel = options.parallelism > 0;
   const inserted = await (parallel ? pool : client).query<{ directory_id: string }>(
-    `INSERT INTO snapshot_directory_generations(public_snapshot_key, snapshot_id, staging_expires_at)
-     VALUES ($1, $2, clock_timestamp() + make_interval(secs => $3)) RETURNING directory_id`,
-    [directory.public_snapshot_key, directory.snapshot_id, STAGING_TTL_SECONDS]);
+    `INSERT INTO snapshot_directory_generations(public_snapshot_key, snapshot_id, staging_expires_at, logical_counts)
+     VALUES ($1, $2, clock_timestamp() + make_interval(secs => $3), $4::jsonb) RETURNING directory_id`,
+    [directory.public_snapshot_key, directory.snapshot_id, STAGING_TTL_SECONDS, JSON.stringify({
+      nodes: directory.nodes.length, edges: directory.edges.length, evidence: directory.evidence.length,
+      layers: directory.layers.length, value_points: directory.value_points.length,
+      evidence_links: directory.evidence_links.length, overlay_memberships: directory.memberships?.length ?? 0,
+      projection_nodes: directory.projections?.length ?? 0, projection_edges: directory.aggregates?.length ?? 0,
+    })]);
   const directoryId = inserted.rows[0]?.directory_id;
   if (!directoryId) throw new Error('snapshot_query_directory_identity_missing');
   const timings = options.timings;

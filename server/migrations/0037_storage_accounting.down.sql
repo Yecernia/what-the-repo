@@ -1,0 +1,10 @@
+BEGIN;
+DROP TRIGGER directory_storage_accounting ON snapshot_query_directories;
+DROP FUNCTION record_directory_storage_accounting();
+DROP TRIGGER binding_storage_accounting ON project_public_snapshot_bindings;
+DROP TRIGGER generation_storage_accounting ON snapshot_directory_generations;
+DROP FUNCTION invalidate_snapshot_storage_accounting();
+ALTER TABLE snapshot_directory_generations DROP COLUMN logical_counts;
+ALTER TABLE canonical_public_repository_snapshots DROP COLUMN accounting_revision;
+DELETE FROM schema_migrations WHERE version='0037_storage_accounting';
+COMMIT;

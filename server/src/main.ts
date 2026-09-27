@@ -33,10 +33,15 @@ await store.init();
 const stopObservations = collectRuntimeObservations(store, 'api', defaultRuntimeMetrics);
 const stopStorageInventory = collectStorageInventory(store, config);
 const stopStoredAccounting = config.adminGithubId ? collectStoredRepositoryAccounting(store, config) : async () => undefined;
-const stopAudience = collectAudience(adminDocuments(store).pool);
+const stopAudience = collectAudience(store instanceof PostgresStore ? store.collectorPool : adminDocuments(store).pool);
 const databaseMetrics = store instanceof PostgresStore
   ? new DatabaseMetricsCollector({
       pool: store.pool,
+      queryPool: store.collectorPool,
+      extraPools: [
+        { role: 'api:admin', pool: store.adminPool, max: 2 },
+        { role: 'api:collector', pool: store.collectorPool, max: 1 },
+      ],
       metrics: defaultRuntimeMetrics,
       localRole: "api",
       configuredPoolMax: config.databasePoolMax ?? 10,

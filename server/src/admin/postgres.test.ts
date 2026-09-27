@@ -15,6 +15,8 @@ import {PostgresStore} from '../persistence/postgres-store.js';
 import {createProject} from '../domain/conversation.js';
 import {newAnalysisJob} from '../domain/jobs.js';
 import { audienceCounts, sampleAudience } from './audience.js';
+import { StorageManager } from './storage.js';
+import { loadConfig } from '../config.js';
 
 const url = process.env.WTR_ADMIN_TEST_DATABASE_URL;
 test(
@@ -140,6 +142,18 @@ test(
         await store.saveUser('github:987',{owner_id:'github:987',kind:'github',login:'isolated',display_name:'Isolated',avatar_url:null});
         const project=createProject('github:987','https://github.com/example/fixture','Isolated',null);const job=newAnalysisJob(project.project_id,'storage-protection');
         await store.createProjectWithJob(project,job);
+        const disk = (async () => ({blocks: 100 * 1024 ** 3, bavail: 20 * 1024 ** 3, bsize: 1})) as
+          unknown as typeof import('node:fs/promises').statfs;
+        const storage = new StorageManager(store, loadConfig({}), disk);
+        let activeAdmissions = 0, maxAdmissions = 0;
+        await Promise.all(Array.from({length: 4}, () => storage.admit(job, async () => {
+          activeAdmissions++;
+          maxAdmissions = Math.max(maxAdmissions, activeAdmissions);
+          // Other admissions may be queued, but management and business reads stay available.
+          await Promise.all([store.adminPool.query('SELECT 1'), store.pool.query('SELECT 1')]);
+          activeAdmissions--;
+        })));
+        assert.equal(maxAdmissions, 1, 'capacity admission serializes without nested pool acquisition');
         const key='b'.repeat(64);
         await pool.query(`INSERT INTO canonical_public_repository_snapshots(public_snapshot_key,repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,view_payload,analysis_payload,source_storage_key,purge_after) VALUES($1,'example/fixture','commit','test','test','isolated','{}','{}','',clock_timestamp()-interval '1 day')`,[key]);
         const now=new Date().toISOString();

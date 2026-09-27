@@ -50,10 +50,20 @@ test('fixed GitHub ID, confirmed enrollment, replay protection, durable lockout,
       totp(enrollment.seed, Math.floor(now / 30000)),
     );
     assert.equal(session.recovery_codes.length, 10);
+    let writes = 0;
+    const change = docs.change.bind(docs);
+    docs.change = ((...args: Parameters<typeof change>) => { writes++; return change(...args); }) as typeof docs.change;
     assert.equal(
       await security.authorize(session.token, session.csrf),
       'github:123',
     );
+    assert.equal(writes, 0, 'Authenticated reads use authoritative state without a write lock');
+    now += 60_000;
+    await security.authorize(session.token);
+    assert.equal(writes, 1, 'Only an expired heartbeat needs a write');
+    await security.authorize(session.token);
+    assert.equal(writes, 1);
+    now -= 60_000;
     await assert.rejects(
       () => security.authorize(session.token, 'bad'),
       /admin_csrf/,

@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { KeyedMutex } from '../agent/mutex.js';
 
 export interface AuditEntry {
@@ -21,11 +21,11 @@ export class AdminDocuments {
   private path(key: string) {
     return join(this.root, 'admin', Buffer.from(key).toString('hex') + '.json');
   }
-  async read<T>(key: string, fallback: T): Promise<T> {
-    if (this.pool)
+  async read<T>(key: string, fallback: T, query: Pick<Pool, 'query'> | undefined = this.pool): Promise<T> {
+    if (query)
       return (
         (
-          await this.pool.query(
+          await query.query(
             'SELECT value FROM admin_documents WHERE key=$1',
             [key],
           )
@@ -41,7 +41,7 @@ export class AdminDocuments {
   async change<T, R>(
     key: string,
     fallback: T,
-    mutate: (value: T) => R | Promise<R>,
+    mutate: (value: T, client?: PoolClient) => R | Promise<R>,
     audit?: AuditEntry,
   ): Promise<R> {
     if (!this.pool)
@@ -69,9 +69,10 @@ export class AdminDocuments {
             [key],
           )
         ).rows[0]?.value ?? structuredClone(fallback);
-      const result = await mutate(value);
+      const result = await mutate(value, client);
       await client.query(
-        `INSERT INTO admin_documents(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=clock_timestamp()`,
+        `INSERT INTO admin_documents(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=clock_timestamp()
+         WHERE admin_documents.value IS DISTINCT FROM EXCLUDED.value`,
         [key, JSON.stringify(value)],
       );
       if (audit)

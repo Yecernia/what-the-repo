@@ -21,6 +21,8 @@ export interface SnapshotObjectStore {
   /** Irreversible reclamation of an already-unreferenced object, including retained versions. */
   purge?(key: string): Promise<void>;
   inventory?(): Promise<Array<{ key: string; bytes: number }>>;
+  /** Stream inventory without retaining every object/version in process memory. */
+  inventoryEntries?(signal?: AbortSignal): AsyncIterable<{ key: string; bytes: number }>;
 }
 
 export function snapshotObjectDigest(body: Uint8Array): string {
@@ -144,23 +146,34 @@ export class TencentCosObjectStore implements SnapshotObjectStore {
   }
 
   async inventory(): Promise<Array<{key:string;bytes:number}>> {
-    const rows=new Map<string,number>();let marker='';
-    if(await this.hasVersions()){
-      for(const object of await this.objectVersions(this.prefix?this.prefix+'/':'')){
-        const key=this.prefix?object.key.slice(this.prefix.length+1):object.key;
-        rows.set(key,(rows.get(key)??0)+object.bytes);
-      }
-      return [...rows].map(([key,bytes])=>({key,bytes}));
+    const rows = new Map<string,number>();
+    for await (const object of this.inventoryEntries())
+      rows.set(object.key, (rows.get(object.key) ?? 0) + object.bytes);
+    return [...rows].map(([key,bytes]) => ({key,bytes}));
+  }
+
+  async *inventoryEntries(signal?: AbortSignal): AsyncIterable<{key:string;bytes:number}> {
+    const prefix = this.prefix ? this.prefix + '/' : '';
+    if (await this.hasVersions()) {
+      for await (const object of this.versionEntries(prefix, signal))
+        yield { key: object.key.slice(prefix.length), bytes: object.bytes };
+      return;
     }
-    for(let page=0;page<10_000;page++) {
-      const response=await this.client.getBucket({Bucket:this.options.bucket,Region:this.options.region,Prefix:this.prefix?this.prefix+'/':'',Marker:marker,MaxKeys:1000});
-      for(const object of response.Contents??[]){
-        const bytes=Number(object.Size);
-        if(!Number.isFinite(bytes)||bytes<0||this.prefix&&!object.Key.startsWith(this.prefix+'/'))throw new Error('object_inventory_invalid');
-        rows.set(this.prefix?object.Key.slice(this.prefix.length+1):object.Key,bytes);
+    let marker = '';
+    for (let page = 0; page < 10_000; page++) {
+      signal?.throwIfAborted();
+      const response = await this.client.getBucket({ Bucket: this.options.bucket, Region: this.options.region,
+        Prefix: prefix, Marker: marker, MaxKeys: 1000 });
+      for (const object of response.Contents ?? []) {
+        const bytes = Number(object.Size);
+        if (!Number.isFinite(bytes) || bytes < 0 || !object.Key.startsWith(prefix))
+          throw new Error('object_inventory_invalid');
+        yield { key: object.Key.slice(prefix.length), bytes };
       }
-      if(String(response.IsTruncated)!=='true')return [...rows].map(([key,bytes])=>({key,bytes}));
-      const next=response.NextMarker;if(!next||next===marker)throw new Error('object_inventory_incomplete');marker=next;
+      if (String(response.IsTruncated) !== 'true') return;
+      const next = response.NextMarker;
+      if (!next || next === marker) throw new Error('object_inventory_incomplete');
+      marker = next;
     }
     throw new Error('object_inventory_too_large');
   }
@@ -172,16 +185,22 @@ export class TencentCosObjectStore implements SnapshotObjectStore {
     const enabled=status==='Enabled'||status==='Suspended';this.versioning={at:Date.now(),enabled};return enabled;
   }
   private async objectVersions(prefix:string):Promise<Array<{key:string;version:string;bytes:number}>>{
-    const rows=new Map<string,{key:string;version:string;bytes:number}>();let marker='',versionMarker='';
+    const rows=new Map<string,{key:string;version:string;bytes:number}>();
+    for await (const object of this.versionEntries(prefix)) rows.set(object.key+'\0'+object.version,object);
+    return [...rows.values()];
+  }
+  private async *versionEntries(prefix:string, signal?: AbortSignal):AsyncIterable<{key:string;version:string;bytes:number}>{
+    let marker='',versionMarker='';
     for(let page=0;page<10_000;page++){
+      signal?.throwIfAborted();
       const response=await this.client.listObjectVersions({Bucket:this.options.bucket,Region:this.options.region,Prefix:prefix,Marker:marker,VersionIdMarker:versionMarker,MaxKeys:'1000'});
       for(const item of [...(response.Versions??[]),...(response.DeleteMarkers??[])]){
         if(!item.Key.startsWith(prefix))throw new Error('object_inventory_out_of_scope');
         const version=String(item.VersionId??'null'),bytes='Size' in item?Number(item.Size):0;
         if(!Number.isFinite(bytes)||bytes<0)throw new Error('object_inventory_invalid_size');
-        rows.set(item.Key+'\0'+version,{key:item.Key,version,bytes});
+        yield {key:item.Key,version,bytes};
       }
-      if(String(response.IsTruncated)!=='true')return [...rows.values()];
+      if(String(response.IsTruncated)!=='true')return;
       const next=response.NextMarker??'',nextVersion=response.NextVersionIdMarker??'';
       if(!next||(next===marker&&nextVersion===versionMarker))throw new Error('object_inventory_incomplete');
       marker=next;versionMarker=nextVersion;

@@ -340,12 +340,23 @@ export class AdminSecurity {
     });
   }
   async authorize(token: string, csrf?: string) {
-    return this.transaction((state) => {
+    if (!this.enabled) throw adminError(404, 'admin_unavailable');
+    // Always read authoritative state so revocation is immediate on every replica.
+    // Most reads need no write lock; coalesce idle-session heartbeats to once a minute.
+    const now = this.now();
+    const validate = (state: AuthState) => {
       const session = state.sessions.find((s) => s.hash === digest(token));
-      if (!session) throw adminError(403, 'admin_session_required');
+      if (!session || session.expires <= now || session.lastSeen <= now - 30 * 60_000)
+        throw adminError(403, 'admin_session_required');
       if (csrf !== undefined && !equalSecret(session.csrf, csrf))
         throw adminError(403, 'admin_csrf');
-      session.lastSeen = this.now();
+      return session;
+    };
+    const session = validate(await this.documents.read(this.key(), empty()));
+    if (session.lastSeen > now - 60_000) return `github:${this.config.githubId}`;
+    return this.transaction((state) => {
+      // Recheck under the lock: logout may have raced with the initial read.
+      validate(state).lastSeen = this.now();
       return `github:${this.config.githubId}`;
     });
   }

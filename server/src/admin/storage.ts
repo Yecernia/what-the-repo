@@ -5,7 +5,7 @@ import type { AnalysisJob } from '../domain/jobs.js';
 import type { ServerConfig } from '../config.js';
 import { createSnapshotObjectStore } from '../persistence/factory.js';
 import { adminDocuments } from './runtime-config.js';
-import type { AdminDocuments } from './documents.js';
+import { AdminDocuments } from './documents.js';
 import type { Pool } from 'pg';
 import { adminError } from './security.js';
 import { PostgresStore } from '../persistence/postgres-store.js';
@@ -35,25 +35,18 @@ export interface ObjectInventory {
   snapshotBytes: Record<string,number>;
 }
 export const EMPTY_OBJECT_INVENTORY: ObjectInventory={observedAt:'',totalBytes:0,snapshotBytes:{}};
-export async function readObjectInventory(docs:AdminDocuments,pool:Pool|undefined=docs.pool):Promise<ObjectInventory> {
+export async function readObjectInventory(docs:AdminDocuments,pool:Pick<Pool, 'query'>|undefined=docs.pool, keys?: string[]):Promise<ObjectInventory> {
   if(!pool) return docs.read('object-inventory',EMPTY_OBJECT_INVENTORY);
   // Project only the compact fields. An old per-object document can be very large
   // until the background collector replaces it.
   const result=await pool.query(`SELECT jsonb_build_object(
     'observedAt',value->'observedAt','totalBytes',value->'totalBytes',
-    'snapshotBytes',value->'snapshotBytes') AS value
-    FROM admin_documents WHERE key='object-inventory'`);
+    'snapshotBytes',CASE WHEN jsonb_typeof(value->'snapshotBytes') IS DISTINCT FROM 'object' THEN NULL
+      WHEN $1::text[] IS NULL THEN value->'snapshotBytes'
+      ELSE (SELECT COALESCE(jsonb_object_agg(k,COALESCE(value->'snapshotBytes'->k,'0'::jsonb)),'{}'::jsonb)
+        FROM unnest($1::text[]) AS selected(k)) END) AS value
+    FROM admin_documents WHERE key='object-inventory'`, [keys ?? null]);
   return result.rows[0]?.value??structuredClone(EMPTY_OBJECT_INVENTORY);
-}
-function summarizeObjects(objects:Array<{key:string;bytes:number}>):ObjectInventory {
-  const snapshotBytes:Record<string,number>={};
-  let totalBytes=0;
-  for(const object of objects) {
-    totalBytes+=object.bytes;
-    const key=/^public-repository-snapshots\/([a-f0-9]{64})\//.exec(object.key)?.[1];
-    if(key) snapshotBytes[key]=(snapshotBytes[key]??0)+object.bytes;
-  }
-  return {observedAt:new Date().toISOString(),totalBytes,snapshotBytes};
 }
 function publishInventory(target:ObjectInventory,summary:ObjectInventory) {
   // Existing deployments may still have the old per-object JSON document.
@@ -70,8 +63,23 @@ export class StorageManager {
   ) {
     this.docs = adminDocuments(store);
   }
-  async policy() {
-    return this.docs.read('storage-policy', DEFAULT_STORAGE_POLICY);
+  async policy(query: Pick<Pool, 'query'> | undefined = this.docs.pool) {
+    return this.docs.read('storage-policy', DEFAULT_STORAGE_POLICY, query);
+  }
+  async capacity() {
+    const [status, sample] = await Promise.all([
+      this.status(),
+      this.docs.pool
+        ? this.docs.pool.query("SELECT value - 'tables' AS value FROM admin_documents WHERE key='storage-physical-sample'")
+          .then(result => result.rows[0]?.value)
+        : this.docs.read<Record<string, unknown>>('storage-physical-sample', {}),
+    ]);
+    return { status, database: {
+      dataBytes: sample?.observedAt ? sample.database_bytes : null,
+      indexBytes: sample?.observedAt ? sample.database_index_bytes : null,
+      observedAt: sample?.observedAt || null,
+      fresh: Date.parse(String(sample?.observedAt ?? '')) > Date.now() - 20 * 60_000,
+    } };
   }
   async updatePolicy(input: StoragePolicy, actor: string) {
     if (
@@ -107,45 +115,70 @@ export class StorageManager {
       },
     );
   }
-  async refreshInventoryIfDue(now = Date.now(), force = false) {
+  async refreshInventoryIfDue(now = Date.now(), force = false, signal?: AbortSignal) {
+    const docs = this.store instanceof PostgresStore
+      ? new AdminDocuments(this.store.root, this.store.collectorPool) : this.docs;
     const fallback = EMPTY_OBJECT_INVENTORY;
-    const current=await readObjectInventory(this.docs,this.store instanceof PostgresStore?this.store.pool:undefined);
+    const current=await readObjectInventory(docs, docs.pool, []);
     if (!force && Number.isFinite(current.totalBytes) && current.snapshotBytes &&
       Date.parse(current.observedAt)>now-2*60_000)
       return 'fresh';
     const owner=randomUUID(), leaseKey='object-inventory-lease';
-    const acquired=await this.docs.change(leaseKey,{owner:'',until:0},state=>{
+    const acquired=await docs.change(leaseKey,{owner:'',until:0},state=>{
       if(state.until>now) return false;
       state.owner=owner;state.until=now+30*60_000;
       return true;
     });
     if(!acquired) return 'in_progress';
     try {
-      const objects=await this.objects(this.config).inventory?.();
-      if(!objects) throw adminError(503,'storage_inventory_unavailable');
-      const summary=summarizeObjects(objects);
+      const objects = this.objects(this.config);
+      const entries = objects.inventoryEntries?.(signal) ?? await objects.inventory?.();
+      if (!entries) throw adminError(503,'storage_inventory_unavailable');
+      const summary: ObjectInventory = { observedAt: '', totalBytes: 0, snapshotBytes: {} };
+      let renewedAt = Date.now();
+      for await (const object of entries) {
+        signal?.throwIfAborted();
+        // Network I/O never holds a DB transaction; renew/fence only the short lease.
+        if (Date.now() - renewedAt >= 60_000) {
+          const retained = await docs.change(leaseKey, {owner:'',until:0}, state => {
+            if (state.owner !== owner || state.until <= Date.now()) return false;
+            state.until = Date.now() + 30 * 60_000;
+            return true;
+          });
+          if (!retained) throw adminError(409, 'storage_inventory_lease_lost');
+          renewedAt = Date.now();
+        }
+        summary.totalBytes += object.bytes;
+        const key = /^public-repository-snapshots\/([a-f0-9]{64})\//.exec(object.key)?.[1];
+        if (key) summary.snapshotBytes[key] = (summary.snapshotBytes[key] ?? 0) + object.bytes;
+      }
+      signal?.throwIfAborted();
+      summary.observedAt = new Date().toISOString();
       if(this.store instanceof PostgresStore)
-        await this.store.pool.query(`INSERT INTO admin_documents(key,value)
-          VALUES('object-inventory',$1::jsonb)
+        await this.store.collectorPool.query(`WITH lease AS MATERIALIZED (
+            SELECT key FROM admin_documents WHERE key='object-inventory-lease'
+              AND value->>'owner'=$3 AND (value->>'until')::bigint>$4 FOR UPDATE)
+          INSERT INTO admin_documents(key,value)
+          SELECT 'object-inventory',$1::jsonb FROM lease
           ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=clock_timestamp()
           WHERE COALESCE(admin_documents.value->>'observedAt','')<=$2`,
-          [JSON.stringify(summary),new Date(now).toISOString()]);
-      else await this.docs.change<ObjectInventory,void>('object-inventory',fallback,value=>{
+          [JSON.stringify(summary),new Date(now).toISOString(),owner,Date.now()]);
+      else await docs.change<ObjectInventory,void>('object-inventory',fallback,value=>{
         // A manual refresh may have published a newer result while this scan ran.
         if(Date.parse(value.observedAt)>now) return;
         publishInventory(value,summary);
       });
       return 'refreshed';
     } finally {
-      await this.docs.change(leaseKey,{owner:'',until:0},state=>{
+      await docs.change(leaseKey,{owner:'',until:0},state=>{
         if(state.owner===owner) state.until=0;
       });
     }
   }
-  async status(extraReservations = 0) {
-    const policy = await this.policy();
+  async status(extraReservations = 0, query: Pick<Pool, 'query'> | undefined = this.docs.pool, previousBlocked?: boolean) {
+    const policy = await this.policy(query);
     const activeTasks = this.store instanceof PostgresStore
-      ? await this.docs.pool!.query("SELECT count(*)::int AS n FROM analysis_jobs WHERE status IN ('queued','running')").then(r=>Number(r.rows[0].n))
+      ? await query!.query("SELECT count(*)::int AS n FROM analysis_jobs WHERE status IN ('queued','running')").then(r=>Number(r.rows[0].n))
       : (await this.store.listJobs()).filter(j=>j.status==='queued'||j.status==='running').length;
     const paths = [
       ...new Set([this.store.root, ...(this.config.storageVolumePaths ?? [])]),
@@ -165,15 +198,16 @@ export class StorageManager {
         }
       }),
     );
-    const inventory = await readObjectInventory(this.docs);
+    const inventory = await readObjectInventory(this.docs, query, []);
     const fresh = Number.isFinite(inventory.totalBytes) && !!inventory.snapshotBytes &&
       Date.parse(inventory.observedAt) > Date.now() - 5 * 60_000;
     const objectBytes = fresh ? inventory.totalBytes : null;
     const held = (activeTasks + extraReservations) * policy.taskBytes;
-    const previous = await this.docs.read<{ blocked: boolean }>(
+    const previous = previousBlocked === undefined ? await this.docs.read<{ blocked: boolean }>(
       'storage-state',
       { blocked: false },
-    );
+      query,
+    ) : { blocked: previousBlocked };
     const threshold = previous.blocked
       ? policy.resumeBytes
       : policy.reserveBytes;
@@ -227,11 +261,15 @@ export class StorageManager {
     };
   }
   async admit<T>(job: AnalysisJob, operation: () => Promise<T>): Promise<T> {
-    const result = await this.docs.change<
+    // Admission may wait on business writes. Keep it off the management pool and
+    // reuse this transaction's connection for every capacity read (including with max=1).
+    const admission = this.store instanceof PostgresStore
+      ? new AdminDocuments(this.store.root, this.store.collectorPool) : this.docs;
+    const result = await admission.change<
       { blocked: boolean },
       { allowed: false } | { allowed: true; value: T }
-    >('storage-state', { blocked: false }, async (state) => {
-      const capacity = await this.status(1);
+    >('storage-state', { blocked: false }, async (state, client) => {
+      const capacity = await this.status(1, client ?? admission.pool, state.blocked);
       state.blocked = capacity.state === 'blocked';
       if (state.blocked) return { allowed: false };
       return { allowed: true, value: await operation() };
@@ -243,10 +281,10 @@ export class StorageManager {
     const status = await this.status();
     if (status.state === 'healthy')
       return { status, candidates: [], scan: 'not_needed' };
-    const inventory = await readObjectInventory(this.docs);
-    const rows = await this.store.listPurgeablePublicSnapshots(
-      new Date().toISOString(),
-    );
+    const rows = this.store instanceof PostgresStore
+      ? await this.store.listPurgeablePublicSnapshots(new Date().toISOString(), this.docs.pool)
+      : await this.store.listPurgeablePublicSnapshots(new Date().toISOString());
+    const inventory = await readObjectInventory(this.docs, this.docs.pool, rows.map(row => row.public_snapshot_key));
     const candidates = rows.map((row) => ({
       ...row,
       location: this.config.cosBucket ? 'cos' : 'host',
@@ -292,10 +330,11 @@ export function collectStorageInventory(store: ProductStore, config: ServerConfi
   if (!config.cosBucket || !adminDocuments(store).pool) return async () => undefined;
   const storage = new StorageManager(store, config);
   let pending: Promise<unknown> | undefined;
+  const controller = new AbortController();
   let lastErrorLog=0;
   const sample = () => {
     if (pending) return;
-    pending = storage.refreshInventoryIfDue()
+    pending = storage.refreshInventoryIfDue(Date.now(), false, controller.signal)
       .catch(error => {
         // Keep the old timestamp: a failed scan must never become a healthy zero.
         if(Date.now()-lastErrorLog>60_000) {
@@ -308,5 +347,5 @@ export function collectStorageInventory(store: ProductStore, config: ServerConfi
   sample();
   const timer = setInterval(sample, 2 * 60_000);
   timer.unref();
-  return async () => { clearInterval(timer); await pending; };
+  return async () => { clearInterval(timer); controller.abort(); await pending; };
 }

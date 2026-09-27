@@ -26,6 +26,7 @@ import { AdminRepositories } from './repositories.js';
 import { defaultRuntimeMetrics } from '../observability/metrics.js';
 import { CONFIGURABLE_PROVIDER_IDS } from '../agent/provider-catalog.js';
 import { PostgresStore } from '../persistence/postgres-store.js';
+import { AdminReadCache } from './read-cache.js';
 
 export const ADMIN_SESSION = 'what_the_repo_admin';
 export const ADMIN_CHALLENGE = 'what_the_repo_admin_challenge';
@@ -96,8 +97,54 @@ export function registerAdminRoutes(
     repositories = new AdminRepositories(store, config),
     production = config.nodeEnv === 'production';
   const actor = `github:${config.adminGithubId}`;
+  const reads = new AdminReadCache(Date.now, deps.metrics);
+  const inventoryController = new AbortController();
+  let inventoryRefresh: Promise<unknown> | undefined;
+  const authorizedWrites = new WeakSet<FastifyRequest>();
+  const invalidateDisplay = (request: FastifyRequest) => {
+    const path = request.routeOptions.url ?? '';
+    const resources = ['/audit'];
+    if (/\/(config|connections)\b/.test(path)) resources.push('/config', '/overview');
+    if (/\/budgets\b/.test(path)) resources.push('/budgets', '/overview');
+    if (/\/evolution\b/.test(path)) resources.push('/feedback', '/budgets', '/overview');
+    if (/\/(storage|repositories)\b/.test(path)) resources.push('/storage', '/overview');
+    if (/\/repositories\b/.test(path)) resources.push('/activity');
+    reads.invalidate(resources);
+  };
   void app.register(
     async (admin) => {
+      const freshness: Record<string, number> = {
+        '/overview': 10_000, '/activity': 10_000, '/audit': 10_000,
+        '/storage': 30_000, '/storage/capacity': 15_000, '/storage/candidates': 30_000,
+        '/budgets': 15_000, '/feedback': 15_000, '/config': 5_000,
+      };
+      admin.addHook('onRoute', route => {
+        const path = route.url.replace(/^\/api\/admin/, '');
+        if (route.method !== 'GET' || !freshness[path]) return;
+        const handler = route.handler;
+        route.handler = async function (request, reply) {
+          // preHandler authorization has completed before any cached data is read.
+          const query = request.query as Record<string, unknown>;
+          const keys = path === '/activity' ? ['user_page', 'repository_page']
+            : path === '/storage' ? ['repository_page'] : [];
+          const key = path + (keys.length ? '?' + keys.map(name => {
+            const value = Number(query[name]);
+            return name + '=' + (Number.isSafeInteger(value) && value > 0 ? value : 1);
+          }).join('&') : '');
+          return reads.read(key, freshness[path], async () =>
+            await handler.call(this, request, reply) as Record<string, unknown>,
+            request.headers['x-admin-refresh'] === '1');
+        };
+      });
+      admin.addHook('onClose', async () => {
+        inventoryController.abort();
+        await Promise.all([reads.close(), inventoryRefresh]);
+      });
+      admin.addHook('onResponse', async request => {
+        // Even failed writes can have partial effects. Invalidate again after completion
+        // to discard any display read that raced with the operation.
+        if (authorizedWrites.has(request)) invalidateDisplay(request);
+      });
       admin.addHook('onRequest', async (request, reply) => {
         reply
           .header('cache-control', 'no-store')
@@ -153,6 +200,10 @@ export function registerAdminRoutes(
             ? undefined
             : String(request.headers['x-admin-csrf'] ?? ''),
         );
+        if (request.method !== 'GET') {
+          authorizedWrites.add(request);
+          invalidateDisplay(request);
+        }
       });
       admin.get('/auth/status', async (request) => ({
         ...(await security.status(
@@ -231,7 +282,8 @@ export function registerAdminRoutes(
         return { ok: true };
       });
       admin.get('/overview', async () => {
-        const health = await store.checkHealth().then(
+        const health = await (store instanceof PostgresStore
+          ? store.adminPool.query('SELECT 1') : store.checkHealth()).then(
           () => true,
           () => false,
         );
@@ -689,7 +741,8 @@ export function registerAdminRoutes(
       admin.get('/storage', async (request) => docs.pool
         ? repositories.stored((request.query as {repository_page?:string}).repository_page)
         : {storedRepositories:[],storedPagination:{total:0,pages:1,page:1,pageSize:25}});
-      admin.get('/storage/capacity', async () => storage.candidates());
+      admin.get('/storage/capacity', async () => storage.capacity());
+      admin.get('/storage/candidates', async () => storage.candidates());
       admin.put('/storage/policy', async (request) => {
         await storage.updatePolicy(request.body as StoragePolicy, actor);
         return storage.status();
@@ -697,8 +750,9 @@ export function registerAdminRoutes(
       admin.post('/storage/inventory', async () => {
         // A full COS listing may take minutes; lease coordination and publication
         // happen in the background while the browser keeps the last observation.
-        void storage.refreshInventoryIfDue(Date.now(),true).catch(error =>
-          console.error('admin_storage_inventory_refresh_failed',error instanceof Error?error.name:'unknown'));
+        inventoryRefresh ??= storage.refreshInventoryIfDue(Date.now(),true,inventoryController.signal)
+          .catch(error => console.error('admin_storage_inventory_refresh_failed',error instanceof Error?error.name:'unknown'))
+          .finally(() => { inventoryRefresh = undefined; });
         await docs.audit({
           actor,
           action: 'storage.inventory',

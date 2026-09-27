@@ -9,7 +9,8 @@ import QRCode from 'qrcode';
 import ShieldCheck from '@sketchyicons/react/icons/shield-check';
 import RefreshCw from '@sketchyicons/react/icons/refresh-cw';
 import { Settings, LogOut, Plus } from './HandIcons';
-import { adminRequest, type AdminRow } from './admin-api';
+import { adminRequest, adminAuthExpiredEvent, isAdminAuthError, type AdminRow } from './admin-api';
+import { affectedAdminResources, useAdminDraft, useAdminQuery, type AdminCache } from './useAdminQuery';
 import {
   AdminAudienceCharts,
   type AudienceSample,
@@ -89,6 +90,15 @@ const perItemBudgets: Record<string, { unit: string; view: string }> = {
   evolution_task: { unit: ' / 任务', view: '按任务查看' },
   repository_update: { unit: ' / 次更新', view: '按更新查看' },
 };
+function ReadState({ data, fetchedAt, label = '页面数据' }: { data: AdminRow; fetchedAt?: number; label?: string }) {
+  const state = record(data.readState);
+  const observedAt = state.observedAt ?? (fetchedAt ? new Date(fetchedAt).toISOString() : null);
+  return <p className={state.stale || state.refreshFailed ? 'admin-warning' : 'admin-muted'}>
+    {label}更新于 {time(observedAt)}
+    {state.stale ? ' · 统计已过期' : ''}
+    {state.refreshFailed ? ' · 后台刷新失败，保留上次结果' : state.refreshing ? ' · 后台刷新中' : ''}
+  </p>;
+}
 function Card({
   title,
   children,
@@ -130,43 +140,12 @@ export default function AdminConsole() {
     [userPage, setUserPage] = useState(1),
     [repositoryPage, setRepositoryPage] = useState(1),
     [storedPage, setStoredPage] = useState(1),
-    [pageData, setPageData] = useState<{ path: string; value: AdminRow } | null>(null),
-    [capacityData, setCapacityData] = useState<AdminRow | null>(null),
-    [capacityError, setCapacityError] = useState(''),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false);
-  const requestSequence = useRef(0);
-  const activePage = useRef(page);
-  activePage.current = page;
-  const cachedPages = useRef(new Map<string, { value: AdminRow; fetchedAt: number }>());
-  const capacitySequence = useRef(0);
-  const pendingCapacity = useRef<Promise<void> | null>(null);
-  const capacityController = useRef<AbortController | null>(null);
-  const pendingLoad = useRef<{
-    path: string;
-    sequence: number;
-    completion: Promise<void>;
-    controller: AbortController;
-  } | null>(null);
-  const reloadAfterMutation = useRef<(() => Promise<void>) | null>(null);
-  const invalidateLoad = useCallback(() => {
-    requestSequence.current++;
-    pendingLoad.current?.controller.abort();
-    pendingLoad.current = null;
-    reloadAfterMutation.current = null;
-  }, []);
-  const invalidateCapacity = useCallback(() => {
-    capacitySequence.current++;
-    capacityController.current?.abort();
-    capacityController.current = null;
-    pendingCapacity.current = null;
-  }, []);
-  const setPage = (next: Page) => {
-    if (next === page) return;
-    invalidateLoad();
-    setPageValue(next);
-  };
+  const cachedPages = useRef<AdminCache>(new Map());
+  const drafts = useRef(new Map<string, unknown>());
+  const setPage = (next: Page) => setPageValue(next);
   const [code, setCode] = useState(''),
     [bootstrap, setBootstrap] = useState(''),
     [enrollment, setEnrollment] = useState<{
@@ -176,149 +155,79 @@ export default function AdminConsole() {
     } | null>(null),
     [recovery, setRecovery] = useState<string[]>([]),
     [recoverMode, setRecoverMode] = useState(false);
+  const sessionGeneration = useRef(0);
+  const clearSession = useCallback(() => {
+    sessionGeneration.current++;
+    cachedPages.current.clear();
+    cachedPages.current = new Map();
+    drafts.current.clear();
+    setAuth(null);
+    setEnrollment(null);
+    setRecovery([]);
+    setCode('');
+    setBootstrap('');
+    setNotice('');
+  }, []);
+  const handleReadError = useCallback((failure: unknown) => {
+    if (isAdminAuthError(failure)) {
+      clearSession();
+      setError((failure as Error).message);
+    }
+  }, [clearSession]);
   const loadAuth = useCallback(async () => {
     try {
       const status = await adminRequest<Auth>('/auth/status');
-      if (!status.authenticated) {
-        cachedPages.current.clear();
-        invalidateLoad();
-        setPageData(null);
-        invalidateCapacity();
-        setCapacityData(null);
-      }
+      if (!status.authenticated) clearSession();
       setAuth(status);
     } catch (e) {
-      cachedPages.current.clear();
-      invalidateLoad();
-      setPageData(null);
-      invalidateCapacity();
-      setCapacityData(null);
-      setAuth(null);
+      handleReadError(e);
       setError((e as Error).message);
     }
-  }, [invalidateCapacity, invalidateLoad]);
+  }, [clearSession, handleReadError]);
   const pagePath = adminPagePath(page, userPage, repositoryPage, storedPage);
-  const data = pageData?.path === pagePath
-    ? pageData.value : cachedPages.current.get(pagePath)?.value ?? null;
-  const load = useCallback(async ({ force = false }: { force?: boolean } = {}) => {
-    if (!auth?.authenticated) return;
-    // Polls and refresh clicks share the current read without invalidating it.
-    const pending = pendingLoad.current;
-    if (!force && pending?.path === pagePath && pending.sequence === requestSequence.current)
-      return pending.completion;
-
-    pending?.controller.abort();
-    const sequence = ++requestSequence.current;
-    const controller = new AbortController();
-    const completion = (async () => {
-      try {
-        const result = await adminRequest(pagePath, 'GET', undefined, undefined, controller.signal);
-        if (sequence !== requestSequence.current) return;
-        // This cache belongs only to the current admin session, never browser storage.
-        cachedPages.current.delete(pagePath);
-        cachedPages.current.set(pagePath, { value: result, fetchedAt: Date.now() });
-        if (cachedPages.current.size > 32) cachedPages.current.delete(cachedPages.current.keys().next().value!);
-        setPageData({ path: pagePath, value: result });
-        setError('');
-      } catch (e) {
-        if (controller.signal.aborted) return;
-        if (sequence !== requestSequence.current) return;
-        setError((e as Error).message);
-        await loadAuth();
-      } finally {
-        // An obsolete request must not release a newer request's slot.
-        if (pendingLoad.current?.sequence === sequence) pendingLoad.current = null;
-      }
-    })();
-    pendingLoad.current = { path: pagePath, sequence, completion, controller };
-    return completion;
-  }, [pagePath, auth?.authenticated, loadAuth]);
-  const loadCapacity = useCallback(async ({ force = false }: { force?: boolean } = {}) => {
-    if (!auth?.authenticated) return;
-    if (!force && pendingCapacity.current) return pendingCapacity.current;
-    capacityController.current?.abort();
-    const sequence = ++capacitySequence.current;
-    const controller = new AbortController();
-    capacityController.current = controller;
-    const completion = (async () => {
-      try {
-        const result = await adminRequest('/storage/capacity', 'GET', undefined, undefined, controller.signal);
-        if (sequence !== capacitySequence.current) return;
-        cachedPages.current.delete('/storage/capacity');
-        cachedPages.current.set('/storage/capacity', { value: result, fetchedAt: Date.now() });
-        if (cachedPages.current.size > 32) cachedPages.current.delete(cachedPages.current.keys().next().value!);
-        setCapacityData(result);
-        setCapacityError('');
-      } catch (e) {
-        if (controller.signal.aborted) return;
-        if (sequence !== capacitySequence.current) return;
-        setCapacityError((e as Error).message);
-        await loadAuth();
-      } finally {
-        if (sequence === capacitySequence.current) {
-          pendingCapacity.current = null;
-          capacityController.current = null;
-        }
-      }
-    })();
-    pendingCapacity.current = completion;
-    return completion;
-  }, [auth?.authenticated, loadAuth]);
+  const query = useAdminQuery({ path: pagePath, enabled: !!auth?.authenticated,
+    cache: cachedPages.current, freshMs: pageFreshMs[page],
+    pollMs: ['overview', 'activity', 'audit'].includes(page) ? 15_000 : undefined,
+    onError: handleReadError });
+  const capacityQuery = useAdminQuery({ path: '/storage/capacity',
+    enabled: page === 'storage' && !!auth?.authenticated, cache: cachedPages.current,
+    freshMs: 30_000, pollMs: 30_000, onError: handleReadError });
+  const { data } = query;
+  const activeQueries = useRef({ page, query, capacityQuery });
+  activeQueries.current = { page, query, capacityQuery };
   useEffect(() => {
     document.title = '管理台 · what-the-repo';
     void loadAuth();
-  }, [loadAuth]);
-  useEffect(() => {
-    setError('');
-    // A mutation may finish after navigation; refresh the page visible then.
-    reloadAfterMutation.current = () => load({ force: true });
-    const cached = cachedPages.current.get(pagePath);
-    if (!cached || Date.now() - cached.fetchedAt > pageFreshMs[page]) void load();
-    return invalidateLoad;
-  }, [load, invalidateLoad, page, pagePath]);
-  useEffect(() => {
-    if (page !== 'storage' || !auth?.authenticated) return;
-    const cached = cachedPages.current.get('/storage/capacity');
-    if (cached) setCapacityData(cached.value);
-    if (!cached || Date.now() - cached.fetchedAt > 30_000) void loadCapacity();
-    return invalidateCapacity;
-  }, [page, auth?.authenticated, loadCapacity, invalidateCapacity]);
-  useEffect(() => {
-    if (page !== 'storage' || !auth?.authenticated) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const refresh = async () => {
-      if (document.visibilityState === 'visible') await loadCapacity();
-      if (!stopped) timer = setTimeout(() => void refresh(), 30_000);
+    const expire = () => {
+      clearSession();
+      setError('管理权限或会话已失效，请重新登录。');
     };
-    timer = setTimeout(() => void refresh(), 30_000);
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [page, auth?.authenticated, loadCapacity]);
-  useEffect(() => {
-    if (!auth?.authenticated) return;
-    if (!['overview', 'activity', 'audit'].includes(page)) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const refresh = async () => {
-      if (document.visibilityState === 'visible') await load();
-      // Wait after completion so a slow response does not queue another poll.
-      if (!stopped) timer = setTimeout(() => void refresh(), 15_000);
-    };
-    timer = setTimeout(() => void refresh(), 15_000);
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [auth?.authenticated, page, load]);
+    window.addEventListener(adminAuthExpiredEvent, expire);
+    return () => window.removeEventListener(adminAuthExpiredEvent, expire);
+  }, [clearSession, loadAuth]);
   async function action(path: string, body: unknown = {}, method = 'POST') {
+    const generation = sessionGeneration.current;
     setBusy(true);
     setError('');
     setNotice('');
     try {
       const result = await adminRequest(path, method, body, auth?.csrf);
+      if (generation !== sessionGeneration.current) return null;
+      if (path.startsWith('/auth/')) return result;
       setNotice(path === '/storage/inventory' ? '已开始采集对象用量，完成后会自动更新。' : '操作已完成。');
-      // A read started before the mutation cannot confirm its updated state.
-      cachedPages.current.clear();
-      await Promise.all([reloadAfterMutation.current?.(), activePage.current === 'storage' ? loadCapacity({ force: true }) : undefined]);
+      const affected = affectedAdminResources(path);
+      for (const [key, entry] of cachedPages.current) {
+        if (affected.has(key.split(/[/?]/)[1])) entry.invalidated = true;
+      }
+      // Read after the write; a pre-write request cannot confirm the saved state.
+      const active = activeQueries.current;
+      await Promise.all([
+        affected.has(active.page) ? active.query.load(true) : undefined,
+        active.page === 'storage' && affected.has('storage') ? active.capacityQuery.load(true) : undefined,
+      ]);
       return result;
     } catch (e) {
+      handleReadError(e);
       setError((e as Error).message);
       return null;
     } finally {
@@ -489,6 +398,7 @@ export default function AdminConsole() {
               aria-current={page === id ? 'page' : undefined}
               onClick={() => {
                 setPage(id);
+                setError('');
                 setNotice('');
               }}
             >
@@ -502,11 +412,7 @@ export default function AdminConsole() {
           <button
             onClick={async () => {
               if (await action('/auth/logout')) {
-                setAuth(null);
-                cachedPages.current.clear();
-                setPageData(null);
-                invalidateCapacity();
-                setCapacityData(null);
+                clearSession();
                 await loadAuth();
               }
             }}
@@ -527,7 +433,7 @@ export default function AdminConsole() {
           <button
             className="admin-refresh"
             disabled={busy}
-            onClick={() => { void load(); if (page === 'storage') void loadCapacity({ force: true }); }}
+            onClick={() => { setError(''); void query.load(false, true); if (page === 'storage') void capacityQuery.load(false, true); }}
           >
             <RefreshCw size={17} />
             刷新
@@ -539,11 +445,12 @@ export default function AdminConsole() {
             隔离本机预览 · 模拟 GitHub 身份与示例数据 · 不连接付费模型
           </div>
         )}
-        {error && (
+        {(error || query.error) && (
           <div className="admin-error" role="alert">
-            {error}
+            {error || ('刷新失败：' + query.error + (data ? '。以下保留上次读取结果。' : ''))}
           </div>
         )}
+        {data && <ReadState data={data} fetchedAt={query.fetchedAt} />}
         {notice && (
           <div className="admin-notice" role="status">
             {notice}
@@ -563,19 +470,21 @@ export default function AdminConsole() {
           </Card>
         )}
         {!data ? (
-          <p className="admin-empty">正在读取…</p>
+          <p className="admin-empty">{query.error ? '读取失败，请点击刷新重试。' : '正在读取…'}</p>
         ) : page === 'overview' ? (
           <Overview data={data} />
         ) : page === 'activity' ? (
           <Activity data={data} onUserPage={setUserPage} onRepositoryPage={setRepositoryPage} />
         ) : page === 'budgets' ? (
           <Budgets
+            drafts={drafts.current}
             data={data}
             busy={busy}
             save={(b) => action('/budgets', b, 'PUT')}
           />
         ) : page === 'config' ? (
           <Connections
+            drafts={drafts.current}
             data={data}
             busy={busy}
             save={(b) => action('/config', b, 'PUT')}
@@ -588,7 +497,7 @@ export default function AdminConsole() {
             act={(id, a, b) => action('/evolution/' + id + '/' + a, b)}
           />
         ) : page === 'storage' ? (
-          <Storage data={data} capacity={capacityData} capacityError={capacityError}
+          <Storage cache={cachedPages.current} drafts={drafts.current} data={data} capacity={capacityQuery.data} capacityError={capacityQuery.error} capacityUpdatedAt={capacityQuery.fetchedAt}
             busy={busy} act={action} onRepositoryPage={setStoredPage} />
         ) : (
           <Card title="最近的管理操作">
@@ -733,6 +642,7 @@ function Activity({ data, onUserPage, onRepositoryPage }: { data: AdminRow; onUs
   );
 }
 function Budgets({
+  drafts,
   data,
   busy,
   save,
@@ -740,13 +650,10 @@ function Budgets({
   data: AdminRow;
   busy: boolean;
   save: (b: unknown) => Promise<unknown>;
+  drafts: Map<string, unknown>;
 }) {
-  const [policies, setPolicies] = useState<Record<string, number | null>>(
-    record(data.policies) as Record<string, number | null>,
-  );
-  useEffect(() => {
-    setPolicies(record(data.policies) as Record<string, number | null>);
-  }, [data]);
+  const [policies, setPolicies, saved, discard] = useAdminDraft('budgets',
+    record(data.policies) as Record<string, number | null>, drafts);
   return (
     <>
       <p className="admin-description">
@@ -831,10 +738,11 @@ function Budgets({
       <button
         className="admin-primary"
         disabled={busy}
-        onClick={() => void save(policies)}
+        onClick={async () => { if (await save(policies)) saved(policies); }}
       >
         保存预算
       </button>
+      {drafts.has('budgets') && <button disabled={busy} onClick={discard}>放弃预算草稿</button>}
       <p className="admin-muted">
         0 表示不接受新的有费用调用；不设限不会绕过其他适用预算。用户自带 Key
         不扣平台额度，个人金额限制默认不启用。
@@ -856,6 +764,7 @@ function Budgets({
   );
 }
 function Connections({
+  drafts,
   data,
   busy,
   save,
@@ -864,19 +773,19 @@ function Connections({
   data: AdminRow;
   busy: boolean;
   save: (b: unknown) => Promise<unknown>;
+  drafts: Map<string, unknown>;
   verify: (id: string) => Promise<AdminRow | null>;
 }) {
   const history = (data.versions ?? []) as Version[],
     current = history.at(-1);
-  const [connections, setConnections] = useState<Connection[]>(
-      current?.connections ?? [],
-    ),
-    [agents, setAgents] = useState<Version['agents']>(current?.agents ?? {}),
-    [result, setResult] = useState('');
-  useEffect(() => {
-    setConnections(current?.connections ?? []);
-    setAgents(current?.agents ?? {});
-  }, [current]);
+  const [draft, setDraft, saved, discard] = useAdminDraft('config', {
+    connections: current?.connections ?? [], agents: current?.agents ?? {},
+    baseVersion: current?.version ?? 0,
+  }, drafts);
+  const { connections, agents } = draft;
+  const setConnections = (next: Connection[]) => setDraft({ ...draft, connections: next });
+  const setAgents = (next: Version['agents']) => setDraft({ ...draft, agents: next });
+  const [result, setResult] = useState('');
   function change(index: number, patch: Partial<Connection>) {
     setConnections(
       connections.map((c, i) => (i === index ? { ...c, ...patch } : c)),
@@ -1009,14 +918,10 @@ function Connections({
               </button>
               <button
                 onClick={() => {
-                  setConnections(connections.filter((_, n) => n !== i));
-                  setAgents(
-                    Object.fromEntries(
-                      Object.entries(agents).filter(
-                        ([, a]) => a.connectionId !== c.id,
-                      ),
-                    ),
-                  );
+                  setDraft({ ...draft,
+                    connections: connections.filter((_, n) => n !== i),
+                    agents: Object.fromEntries(Object.entries(agents).filter(([, a]) => a.connectionId !== c.id)),
+                  });
                 }}
               >
                 移除连接
@@ -1078,9 +983,9 @@ function Connections({
       <button
         className="admin-primary"
         disabled={busy}
-        onClick={() =>
-          void save({
-            baseVersion: current?.version ?? 0,
+        onClick={async () => {
+          if (await save({
+            baseVersion: draft.baseVersion,
             connections: connections.map((c) => ({
               ...c,
               models: c.models.map((m) => m.trim()).filter(Boolean),
@@ -1090,12 +995,16 @@ function Connections({
                 (data.roles as string[]).includes(role),
               ),
             ),
-          })
-        }
+          })) saved(draft);
+        }}
       >
         <Settings size={17} />
         保存并应用于新任务
       </button>
+      {drafts.has('config') && <p className="admin-muted">
+        未保存草稿基于版本 {draft.baseVersion}，刷新不会覆盖输入。
+        <button disabled={busy} onClick={discard}>放弃连接草稿并使用最新配置</button>
+      </p>}
       <Card title="配置版本历史">
         <Table
           data={history.slice().reverse() as unknown as AdminRow[]}
@@ -1293,6 +1202,12 @@ function Feedback({
     </>
   );
 }
+function accountingState(row: AdminRow) {
+  const status = row.accounting_status === 'scanning' ? '分批采集中'
+    : row.accounting_status === 'incomplete' ? '采集未完成'
+    : !row.observedAt || row.accounting_status === 'pending' ? '待采集' : '已采集';
+  return status + (row.observedAt && row.accounting_fresh === false ? ' · 统计已过期' : '');
+}
 function StoredRepositories({data,busy,act,onPage}: {data:AdminRow;busy:boolean;act:(path:string,b?:unknown,method?:string)=>Promise<AdminRow|null>;onPage:(n:number)=>void}) {
   const [plan,setPlan]=useState<AdminRow|null>(null),[planError,setPlanError]=useState(''),[loading,setLoading]=useState(false),[confirmation,setConfirmation]=useState('');
   const inspect=async(row:AdminRow)=>{
@@ -1306,8 +1221,9 @@ function StoredRepositories({data,busy,act,onPage}: {data:AdminRow;busy:boolean;
       ['repository_identity','仓库',(_,r)=><><RepositoryName row={r}/><small className="admin-muted">{text(r.versions)} 个保存版本{r.cleanup_status ? ' · 清理未完成，可重试' : ''}</small></>],
       ['users','使用者',(_,r)=><><span className="admin-user-count">共 {text(r.user_count)} 位</span><RepositoryUsers row={r} kind="storage"/></>],
       ['cos_bytes','COS 完整占用',(v,r)=><div>{r.cos_enabled ? bytes(v) : '未启用 COS'}<small className="admin-cell-note">{r.cos_enabled ? '含对象保留历史版本' : '对象保存在本机文件中'}{r.cos_enabled && !r.inventory_fresh ? ' · 统计已过期' : ''}</small></div>],
-      ['host_file_bytes','服务器文件',(v)=><div>{bytes(v)}<small className="admin-cell-note">快照、安全源码及本地副本</small></div>],
-      ['database_bytes','数据库与索引',(v,r)=><div>{bytes(typeof v==='number'&&typeof r.database_index_bytes==='number'?v+r.database_index_bytes:null)}<small className="admin-cell-note">记录 {bytes(v)} · 索引 {bytes(r.database_index_bytes)}<br/>共享数据库空间按记录数分摊估算 · 采集 {time(r.observedAt)}</small></div>],
+      ['host_file_bytes','服务器文件',(v,r)=><div>{bytes(v)}<small className="admin-cell-note">快照、安全源码及本地副本<br/>{accountingState(r)} · 采集 {time(r.observedAt)}</small></div>],
+      ['database_bytes','数据库与索引',(v,r)=><div>{bytes(typeof v==='number'&&typeof r.database_index_bytes==='number'?v+r.database_index_bytes:null)}<small className="admin-cell-note">记录 {bytes(v)} · 索引 {bytes(r.database_index_bytes)}<br/>快照元数据与查询目录分摊估算，不含对话历史{r.database_estimate_complete === false ? ' · 部分估算' : ''}<br/>{accountingState(r)} · 采集 {time(r.observedAt)}</small></div>],
+      ['logical_counts','已发布逻辑记录 / 版本',(v,r)=><div>{v ? <>节点 {text(record(v).nodes)} · 边 {text(record(v).edges)}<br/>证据 {text(record(v).evidence)} · 层 {text(record(v).layers)} · 价值点 {text(record(v).value_points)}</> : '待采集'}{r.generation_counts ? <small className="admin-cell-note">已发布 {text(record(r.generation_counts).published)} · 暂存 {text(record(r.generation_counts).staging)} · 已退役 {text(record(r.generation_counts).retired)}{Number(record(r.generation_counts).unknown) > 0 ? ' · 未知 ' + text(record(r.generation_counts).unknown) : ''}</small> : null}</div>],
       ['last_conversation_at','最后用于对话',v=>v ? time(v) : '尚无可确认的对话记录'],
       ['repository_identity','操作',(_,r)=><button className="admin-danger-button" disabled={busy||loading} onClick={()=>void inspect(r)}>查看并清理</button>],
     ]}/>
@@ -1330,6 +1246,9 @@ function StoredRepositories({data,busy,act,onPage}: {data:AdminRow;busy:boolean;
   </Card>;
 }
 function Storage({
+  cache,
+  drafts,
+  capacityUpdatedAt,
   data,
   capacity,
   capacityError,
@@ -1340,6 +1259,9 @@ function Storage({
   data: AdminRow;
   capacity: AdminRow | null;
   capacityError: string;
+  capacityUpdatedAt?: number;
+  cache: AdminCache;
+  drafts: Map<string, unknown>;
   onRepositoryPage: (page:number) => void;
   busy: boolean;
   act: (path: string, b?: unknown, method?: string) => Promise<AdminRow | null>;
@@ -1347,25 +1269,53 @@ function Storage({
   return <>
     <StoredRepositories data={data} busy={busy} act={act} onPage={onRepositoryPage} />
     {capacity && capacityError && <p className="admin-error" role="alert">容量状态刷新失败：{capacityError}。以下是上次读取结果。</p>}
-    {capacity ? <StorageCapacity data={capacity} busy={busy} act={act} />
+    {capacity && <ReadState data={capacity} fetchedAt={capacityUpdatedAt} label="容量数据" />}
+    {capacity ? <StorageCapacity cache={cache} drafts={drafts} data={capacity} busy={busy} act={act} />
       : <Card title="容量状态"><p>{capacityError || '正在读取容量状态…'}</p></Card>}
   </>;
 }
-function StorageCapacity({data,busy,act}: {
+function StorageCandidates({ busy, act, cache }: {
+  cache: AdminCache;
+  busy: boolean; act: (path: string, b?: unknown, method?: string) => Promise<AdminRow | null>;
+}) {
+  const [requested, setRequested] = useState(false);
+  const [confirm, setConfirm] = useState('');
+  const query = useAdminQuery({ path: '/storage/candidates', enabled: requested,
+    cache, freshMs: 30_000 });
+  return <Card title="容量回收候选" aside={<button disabled={busy} onClick={() => {
+    if (requested) void query.load(false, true); else setRequested(true);
+  }}>检查回收候选</button>}>
+    <p>按需检查长期未使用且没有有效引用的快照。最终删除前会重新检查引用、任务和状态。</p>
+    {query.error && <p role="alert" className="admin-error">候选刷新失败：{query.error}</p>}
+    {requested && !query.data && <p>{query.error ? '请重新检查候选。' : '正在检查回收候选…'}</p>}
+    {query.data && <>
+      <ReadState data={query.data} fetchedAt={query.fetchedAt} label="候选数据" />
+      {query.data.scan === 'not_needed' && <p className="admin-muted">当前容量正常，无需容量回收。</p>}
+      {cache.get('/storage/candidates')?.invalidated && <p className="admin-warning">相关操作已改变存储状态，请重新检查候选。</p>}
+      <Table data={rows(query.data.candidates)} columns={[
+        ['repository_identity', '仓库'], ['location', '位置'], ['references', '引用数'],
+        ['reclaimableBytes', '预计回收', bytes], ['impact', '影响'],
+        ['public_snapshot_key', '操作', (v) => <button disabled={busy} onClick={() => setConfirm(String(v))}>检查并删除</button>],
+      ]} />
+    </>}
+    {confirm && <div className="admin-warning">
+      <p>确认永久删除这份无引用快照的分析与源码载荷及 COS 保留版本？</p><code>{confirm}</code>
+      <div className="admin-inline"><button disabled={busy} onClick={async () => {
+        if (await act('/storage/' + confirm + '/delete', { confirm })) { setConfirm(''); await query.load(true); }
+      }}>确认删除</button><button onClick={() => setConfirm('')}>取消</button></div>
+    </div>}
+  </Card>;
+}
+function StorageCapacity({data,busy,act,drafts,cache}: {
+  cache: AdminCache;
+  drafts: Map<string, unknown>;
   data: AdminRow;
   busy: boolean;
   act: (path: string, b?: unknown, method?: string) => Promise<AdminRow | null>;
 }) {
   const status = record(data.status),
-    cos = record(status.cos);
-  const [confirm, setConfirm] = useState(''),
-    [policy, setPolicy] = useState<Record<string, string>>(
-      storagePolicyInputs(record(status.policy)),
-    );
-  useEffect(
-    () => setPolicy(storagePolicyInputs(record(status.policy))),
-    [status.policy],
-  );
+    cos = record(status.cos), database = record(data.database);
+  const [policy, setPolicy, saved, discard] = useAdminDraft('storage-policy', storagePolicyInputs(record(status.policy)), drafts);
   return (
     <>
       <p className="admin-description">
@@ -1392,6 +1342,16 @@ function StorageCapacity({data,busy,act}: {
         />
         <p className="admin-muted">
           不同路径可能位于同一卷，容量不相加。预留正常数据库写入与任务所需空间。
+        </p>
+      </Card>
+      <Card title="数据库全局物理用量">
+        <dl className="admin-amounts">
+          <div><dt>表数据</dt><dd>{bytes(database.dataBytes)}</dd></div>
+          <div><dt>索引</dt><dd>{bytes(database.indexBytes)}</dd></div>
+        </dl>
+        <p className="admin-muted">
+          采集 {time(database.observedAt)}{!database.observedAt ? ' · 待采集' : !database.fresh ? ' · 统计已过期' : ''}。
+          全库物理大小包含共享数据，不等于上表仓库估算之和；删除记录后文件不保证立即缩小。
         </p>
       </Card>
       <Card
@@ -1426,7 +1386,7 @@ function StorageCapacity({data,busy,act}: {
               </div>
             </dl>
             <p className="admin-muted">
-              采集 {time(cos.observedAt)}。COS 没有主机磁盘剩余百分比；删除 COS
+              采集 {time(cos.observedAt)}{!cos.observedAt ? ' · 待采集' : !cos.fresh ? ' · 统计已过期' : ''}。COS 没有主机磁盘剩余百分比；删除 COS
               对象不释放主机磁盘。
             </p>
           </>
@@ -1434,48 +1394,7 @@ function StorageCapacity({data,busy,act}: {
           <p>当前使用本地对象存储。</p>
         )}
       </Card>
-      <Card title="容量回收候选">
-        <p>
-          仅在容量偏低时检查长期未使用且没有有效引用的快照。最终删除前会重新检查引用、任务和状态。
-        </p>
-        <Table
-          data={rows(data.candidates)}
-          columns={[
-            ['repository_identity', '仓库'],
-            ['location', '位置'],
-            ['references', '引用数'],
-            ['reclaimableBytes', '预计回收', bytes],
-            ['impact', '影响'],
-            [
-              'public_snapshot_key',
-              '操作',
-              (v) => (
-                <button disabled={busy} onClick={() => setConfirm(String(v))}>
-                  检查并删除
-                </button>
-              ),
-            ],
-          ]}
-        />
-        {confirm && (
-          <div className="admin-warning">
-            <p>确认永久删除这份无引用快照的分析与源码载荷及 COS 保留版本？</p>
-            <code>{confirm}</code>
-            <div className="admin-inline">
-              <button
-                disabled={busy}
-                onClick={async () => {
-                  if (await act('/storage/' + confirm + '/delete', { confirm }))
-                    setConfirm('');
-                }}
-              >
-                确认删除
-              </button>
-              <button onClick={() => setConfirm('')}>取消</button>
-            </div>
-          </div>
-        )}
-      </Card>
+      <StorageCandidates cache={cache} busy={busy} act={act} />
       <Card title="全站容量策略">
         <p className="admin-muted">
           容量输入与显示使用 GB，1 GB = 1,000,000,000
@@ -1515,12 +1434,11 @@ function StorageCapacity({data,busy,act}: {
         </div>
         <button
           disabled={busy}
-          onClick={() =>
-            void act('/storage/policy', storagePolicyPayload(policy), 'PUT')
-          }
+          onClick={async () => { if (await act('/storage/policy', storagePolicyPayload(policy), 'PUT')) saved(policy); }}
         >
           保存容量策略
         </button>
+        {drafts.has('storage-policy') && <button disabled={busy} onClick={discard}>放弃容量策略草稿</button>}
       </Card>
       <Card title="访客生命周期">
         <p>

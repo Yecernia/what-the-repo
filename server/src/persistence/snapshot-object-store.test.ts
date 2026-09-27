@@ -38,6 +38,22 @@ test('COS inventory permission failure remains unknown rather than falling back 
   await assert.rejects(()=>store.inventory(),/AccessDenied/);
 });
 
+test('streamed COS inventory pauses between pages and stops before fetching after cancellation', async () => {
+  const store = new TencentCosObjectStore({bucket:'isolated',region:'test',secretId:'test',secretKey:'test',prefix:'product'});
+  let calls = 0;
+  (store as unknown as {client:unknown}).client = {
+    async getBucketVersioning() { return {}; },
+    async getBucket() { calls++; return {Contents:[{Key:'product/one',Size:10}],IsTruncated:'true',NextMarker:'one'}; },
+  };
+  const controller = new AbortController();
+  const entries = store.inventoryEntries(controller.signal)[Symbol.asyncIterator]();
+  assert.deepEqual((await entries.next()).value, {key:'one',bytes:10});
+  assert.equal(calls, 1);
+  controller.abort(new Error('stopped'));
+  await assert.rejects(entries.next(), /stopped/);
+  assert.equal(calls, 1);
+});
+
 test("source preparation stops queued uploads and settles active uploads before returning cancellation", async () => {
   const root = await mkdtemp(join(tmpdir(), "snapshot-preparation-cancel-"));
   const controller = new AbortController();

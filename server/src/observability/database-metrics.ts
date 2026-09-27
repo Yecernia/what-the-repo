@@ -37,6 +37,8 @@ export class DatabaseMetricsCollector {
 
   constructor(private readonly options: {
     pool: DatabaseMetricsPool;
+    queryPool?: DatabaseMetricsPool;
+    extraPools?: Array<{ role: string; pool: DatabaseMetricsPool; max: number }>;
     metrics: RuntimeMetrics;
     localRole: string;
     configuredPoolMax: number;
@@ -45,13 +47,18 @@ export class DatabaseMetricsCollector {
 
   async refresh(): Promise<void> {
     this.recordLocalPool();
+    for (const { role, pool, max } of this.options.extraPools ?? []) {
+      for (const [state, value] of Object.entries({ configured: max, total: pool.totalCount,
+        idle: pool.idleCount, active: pool.totalCount - pool.idleCount, waiting: pool.waitingCount }))
+        this.options.metrics.setGauge(METRIC_NAMES.databasePoolConnections, value, { role, state });
+    }
     const control = registeredControlPool(this.options.pool);
     if (control) for (const [state,value] of Object.entries({configured:1,total:control.totalCount,idle:control.idleCount,
       active:control.totalCount-control.idleCount,waiting:control.waitingCount})) {
       this.options.metrics.setGauge(METRIC_NAMES.databasePoolConnections,value,{role:this.options.localRole+':control',state});
     }
     try {
-      const result = await this.options.pool.query<DatabaseSnapshotRow>(
+      const result = await (this.options.queryPool ?? this.options.pool).query<DatabaseSnapshotRow>(
         `SELECT
            current_setting('max_connections')::integer AS max_connections,
            current_setting('superuser_reserved_connections')::integer AS superuser_reserved_connections,

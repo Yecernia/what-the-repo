@@ -9,6 +9,7 @@ import { parseAnalysisPayloadEnvelope } from './analysis-payload.js';
 import { FACT_CHUNK_FORMAT } from './fact-chunk-dictionary.js';
 import { LocalSnapshotObjectStore } from './snapshot-object-store.js';
 import { LocalPermitStore } from '../scheduling/permits.js';
+import { reclaimSnapshotDirectoryBatch } from './directory-reclamation.js';
 import { buildSnapshot } from '../analysis/graph.js';
 import { buildFullPlan, createAnalysisCache, takeCheckpointAnalysisCache } from '../analysis/incremental.js';
 import { preparePublicationCache, preparePublicationSnapshot } from '../analysis/publication-snapshot.js';
@@ -95,7 +96,17 @@ test('checkpoint publication persists and reloads facts, cache, sources and atom
       await assert.rejects(store.savePublicSnapshot(input), /publication_test_injected_failure/);
       assert.deepEqual((await store.pool.query('SELECT directory_digest, node_count, edge_count FROM snapshot_query_directories WHERE public_snapshot_key=$1', [publicKey])).rows[0], before);
       assert.deepEqual((await store.loadPublicSnapshot<typeof analysis>(publicKey))?.analysis, expected);
-      assert.equal(await children(),beforeChildren,'failed publication must roll back both staged children');
+      const abandoned = (await store.pool.query(`SELECT g.directory_id FROM snapshot_directory_generations g
+        JOIN snapshot_directory_reclamation q USING(directory_id)
+        WHERE g.public_snapshot_key=$1 AND NOT EXISTS
+          (SELECT 1 FROM snapshot_query_directories d WHERE d.directory_id=g.directory_id)`, [publicKey])).rows;
+      assert.equal(abandoned.length, 1, 'failed parallel staging is invisible and durably queued');
+      for (let pass = 0; pass < 40; pass++) {
+        await reclaimSnapshotDirectoryBatch(store.pool);
+        if (!(await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE directory_id=$1',
+          [abandoned[0].directory_id])).rowCount) break;
+      }
+      assert.equal(await children(),beforeChildren,'bounded reclamation removes failed staging children');
     } finally {
       await store.pool.query(`DROP TRIGGER ${failureFunction} ON snapshot_query_directories; DROP FUNCTION ${failureFunction}();`);
     }
@@ -104,7 +115,8 @@ test('checkpoint publication persists and reloads facts, cache, sources and atom
     for (const row of ids.rows) {
       const id = String(row.directory_id);
       if (!/^[1-9][0-9]*$/.test(id)) throw new Error('test_directory_id_invalid');
-      await store.pool.query(`DROP TABLE IF EXISTS snapshot_directory_edges_g${id}, snapshot_directory_nodes_g${id}`).catch(()=>undefined);
+      await store.pool.query(`DROP TABLE IF EXISTS snapshot_directory_evidence_links_g${id}, snapshot_directory_evidence_g${id},
+        snapshot_directory_edges_g${id}, snapshot_directory_nodes_g${id}`).catch(()=>undefined);
     }
     await store.pool.query('DELETE FROM canonical_public_repository_snapshots WHERE public_snapshot_key=$1', [publicKey]).catch(() => undefined);
     await store.close();
