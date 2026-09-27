@@ -78,7 +78,7 @@ test('checkpoint publication persists and reloads facts, cache, sources and atom
     assert.deepEqual(source.lines, ['export const entry = 1;', '']);
     const before = (await store.pool.query('SELECT directory_digest, node_count, edge_count FROM snapshot_query_directories WHERE public_snapshot_key=$1', [publicKey])).rows[0];
     assert.equal(Number(before.edge_count), 2_101);
-    const rows = await store.pool.query('SELECT node_id FROM snapshot_query_nodes WHERE public_snapshot_key=$1 AND node_kind=$2', [publicKey, 'fact']);
+    const rows = await store.pool.query(`SELECT substr(n.node_key,6) AS node_id FROM snapshot_directory_nodes n JOIN snapshot_query_directories d USING(directory_id) WHERE d.public_snapshot_key=$1 AND n.node_key LIKE $2`, [publicKey, 'fact:%']);
     assert.deepEqual(rows.rows.map(row => row.node_id).sort(), analysis.fact_graph!.nodes.map(row => row.id).sort());
     const directoryId = String((await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1', [publicKey])).rows[0].directory_id);
     assert.match(directoryId, /^\d+$/);

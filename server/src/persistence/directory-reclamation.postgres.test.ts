@@ -10,6 +10,7 @@ import { LocalPermitStore } from '../scheduling/permits.js';
 import { reclaimSnapshotDirectoryBatch, snapshotDirectoryReclamationBacklog } from './directory-reclamation.js';
 import { bindSnapshotQueryDirectory } from './snapshot-directory-publication.js';
 import { streamSnapshotQueryDirectory } from '../domain/snapshot-query.js';
+import { parseDirectoryManifest } from './directory-objects.js';
 
 const databaseUrl = process.env.WTR_RECLAMATION_TEST_DATABASE_URL;
 const childKinds = ['nodes','edges','evidence','evidence_links'] as const;
@@ -63,6 +64,8 @@ async function fixture(task: (store: PostgresStore, key: string, directoryId: st
         // parallel staging before a snapshot exists. Deleting a snapshot alone
         // therefore leaves both generations and their reclamation work alive.
         await store.pool.query('DELETE FROM snapshot_directory_generations WHERE public_snapshot_key=$1',[key]);
+        await store.pool.query('DELETE FROM directory_object_deletions WHERE object_key LIKE $1',
+          [`public-repository-snapshots/${key}/directory/%`]);
         assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE public_snapshot_key=$1',[key])).rowCount,0,
           'fixture cleanup must remove every generation and its queued work');
         assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=ANY($1::bigint[])',
@@ -84,11 +87,18 @@ test('retired directory cleanup resumes bounded primary-key batches across maint
     assert.equal((await store.pool.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,2_005);
     const visibleId = (await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id;
     assert.notEqual(visibleId,oldId);
-    let deleted = 0, batches = 0;
+    let deleted = 0, batches = 0, releasedReader = false;
     while (await store.pool.query('SELECT 1 FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId]).then(r=>r.rowCount)) {
       const worker = new Pool({connectionString:databaseUrl!,max:1});
       try {
         const result = await reclaimSnapshotDirectoryBatch(worker,{batchRows:137});
+        if (result.status === 'busy' && !releasedReader) {
+          assert.equal((await reader.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,2_005,
+            'old SQL rows remain visible while object retirement waits for the reader');
+          assert.equal((await store.pool.query('SELECT count(*)::int AS n FROM directory_object_deletions')).rows[0].n,0);
+          await reader.query('ROLLBACK'); releasedReader = true;
+          continue;
+        }
         assert.ok(['progress','finished'].includes(result.status)); assert.ok(result.deletedRows<=137);
         deleted+=result.deletedRows; batches++;
         const progress = (await store.pool.query('SELECT * FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0];
@@ -99,9 +109,8 @@ test('retired directory cleanup resumes bounded primary-key batches across maint
     assert.equal(deleted,2_005);
     assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE directory_id=$1',[oldId])).rowCount,0);
     assert.equal((await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id,visibleId);
-    assert.equal((await reader.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,2_005,
-      'an already-pinned reader keeps its complete old generation under MVCC');
-    assert.equal((await reader.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id,oldId);
+    assert.equal(releasedReader,true,'COS deletion ownership is queued only after the pinned reader exits');
+    assert.ok((await store.pool.query('SELECT count(*)::int AS n FROM directory_object_deletions')).rows[0].n>0);
     console.log(JSON.stringify({reclamationRows:deleted,boundedBatches:batches,batchLimit:137,oldReaderRemainsConsistent:true}));
     } finally {await reader.query('ROLLBACK');reader.release();}
   });
@@ -115,7 +124,8 @@ test('inherited directory children wait for pinned readers, then drop without le
     try {
       assert.equal((await reader.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id,oldId);
       assert.equal((await reader.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,2_005);
-      await store.savePublicSnapshot({...base,analysis:{fact_graph:{nodes:[],edges:[]}}});
+      await store.savePublicSnapshot({...base,analysis:{fact_graph:{nodes:[{id:'current-node',name:'Current node',
+        label:'current',responsibility:'',members:[],evidence:[],certainty:'verified',fan_in:0,fan_out:0}],edges:[]}}});
       assert.equal((await reclaimSnapshotDirectoryBatch(store.pool)).status,'progress',
         'the evidence-links child is first and records the post-publication observation boundary');
       const observed = (await store.pool.query('SELECT table_index,cleanup_observed_at FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0];
@@ -137,6 +147,16 @@ test('inherited directory children wait for pinned readers, then drop without le
     assert.equal((await store.pool.query(`SELECT 1 FROM pg_class WHERE relname=ANY($1::text[])`,
       [childKinds.map(kind => `snapshot_directory_${kind}_g${oldId}`)])).rowCount,0);
     assert.equal((await store.pool.query('SELECT count(*)::int AS n FROM snapshot_directory_nodes WHERE directory_id=$1',[oldId])).rows[0].n,0);
+    const retiredKeys = (await store.pool.query('SELECT object_key FROM directory_object_deletions')).rows.map(row => String(row.object_key));
+    const currentGeneration = (await store.pool.query(`SELECT g.object_manifest FROM snapshot_query_directories d
+      JOIN snapshot_directory_generations g USING(directory_id) WHERE d.public_snapshot_key=$1`, [key])).rows[0];
+    const currentKeys = Object.values(parseDirectoryManifest(currentGeneration.object_manifest).sections).flat().map(chunk => chunk.key);
+    assert.ok(retiredKeys.length > 0); assert.ok(currentKeys.length > 0);
+    assert.ok(await store.snapshotObjects.get(retiredKeys[0]), 'prime the retired object cache before deletion');
+    const drained = await store.deleteRetiredSnapshotObjectsBatch();
+    assert.equal(drained.failed, 0); assert.equal(drained.deleted, retiredKeys.length);
+    for (const objectKey of retiredKeys) assert.equal(await store.snapshotObjects.get(objectKey), null);
+    for (const objectKey of currentKeys) assert.ok(await store.snapshotObjects.get(objectKey));
   }, 'child');
 });
 
@@ -214,6 +234,7 @@ test('finalization rollback retains work and restores pooled planner policy', {s
       while ((await store.pool.query('SELECT table_index FROM snapshot_directory_reclamation WHERE directory_id=$1',[oldId])).rows[0].table_index<9) {
         assert.equal((await reclaimSnapshotDirectoryBatch(worker,{batchRows:5000})).status,'progress');
       }
+      assert.equal((await reclaimSnapshotDirectoryBatch(worker)).status,'progress','record the COS reader fence before fault injection');
       const before=(await worker.query(settings)).rows[0];
       await store.pool.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
         RAISE EXCEPTION 'finalization-fault-private-text'; END $$;
@@ -250,6 +271,7 @@ test('finalization refuses unreviewed foreign keys instead of running unbounded 
       assert.equal((await store.pool.query('SELECT 1 FROM snapshot_directory_generations WHERE directory_id=$1',[oldId])).rowCount,1);
     } finally {await store.pool.query(`DROP TABLE ${name}`);}
     await store.pool.query('UPDATE snapshot_directory_reclamation SET available_at=clock_timestamp() WHERE directory_id=$1',[oldId]);
+    assert.equal((await reclaimSnapshotDirectoryBatch(store.pool)).status,'progress','record reader fence after schema validation');
     assert.equal((await reclaimSnapshotDirectoryBatch(store.pool)).status,'finished');
   });
 });

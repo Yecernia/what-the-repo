@@ -578,14 +578,21 @@ export function encodeSnapshotQueryCursor(key: string): string {
   return Buffer.from(`k:${key}`, "utf8").toString("base64url");
 }
 
+/** Literal, case-insensitive human text search; machine IDs use explicit ID
+ * filters. Arbitrary payload JSON is deliberately not a searchable document. */
+export function nodeSearchText(row: SnapshotQueryNodeRow): string {
+  return [row.name,row.label,row.responsibility,row.path].filter(Boolean).join(' ').toLowerCase();
+}
+export function edgeSearchText(row: SnapshotQueryEdgeRow): string {
+  return [row.relation_kind,row.label,row.description].filter(Boolean).join(' ').toLowerCase();
+}
 export function nodeMatches(row: SnapshotQueryNodeRow, input: SnapshotQueryInput): boolean {
   const textValue = input.text?.trim().toLowerCase() ?? "";
   const paths = input.paths ?? [];
   const languages = (input.languages ?? []).map((item) => item.toLowerCase());
   const ids = new Set([...(input.component_ids ?? []), ...(input.entity_ids ?? [])]);
   const symbolIds = new Set(input.symbol_ids ?? []);
-  const searchable = [row.node_key, row.node_id, row.name, row.label, row.responsibility, row.path, JSON.stringify(row.payload)]
-    .filter(Boolean).join(" ").toLowerCase();
+  const searchable = nodeSearchText(row);
   const exactEntityFilter = !ids.size || !input.scope || input.scope === "self";
   return (!textValue || searchable.includes(textValue))
     && (!paths.length || paths.some((path) => (row.path ?? "").includes(path)))
@@ -645,8 +652,7 @@ function scopedNodeKeys(directory: SnapshotQueryDirectory, input: SnapshotQueryI
 export function edgeMatches(row: SnapshotQueryEdgeRow, input: SnapshotQueryInput): boolean {
   const textValue = input.text?.trim().toLowerCase() ?? "";
   const kinds = new Set(input.relation_kinds ?? []);
-  const searchable = [row.edge_key, row.edge_id, row.relation_kind, row.label, row.description, row.source_node_key, row.target_node_key]
-    .join(" ").toLowerCase();
+  const searchable = edgeSearchText(row);
   return (!textValue || searchable.includes(textValue))
     && (!kinds.size || kinds.has(row.relation_kind));
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { applySnapshotLanguageOverlay, SNAPSHOT_LANGUAGE_OVERLAY_VERSION, type SnapshotLanguageOverlayPayload } from "./snapshot-language.js";
 import type { EvidenceSnapshot, SnapshotEvidence } from "./snapshot.js";
-import { conversationSummaryFromSource } from "./conversation-summary.js";
+import { conversationSummaryFromSource, conversationSummarySource, MAX_CONVERSATION_SUMMARY_BYTES } from "./conversation-summary.js";
 
 function fixture(): EvidenceSnapshot {
   const evidence = (index: number): SnapshotEvidence => ({ stable_id: `evidence:${index}`, label: `Evidence ${index}`,
@@ -73,4 +73,44 @@ test("conversation summary rejects empty placeholders and keeps empty collection
   snapshot.value_points = [];
   assert.deepEqual(conversationSummaryFromSource(snapshot)?.components, []);
   assert.deepEqual(conversationSummaryFromSource(snapshot)?.value_points, []);
+});
+
+test("publication summary bounds UTF-8 bytes, nested metadata and oversized localized prose", () => {
+  const snapshot = fixture();
+  const original = structuredClone(snapshot);
+  snapshot.graph.nodes.forEach(node => { node.responsibility = "复杂😀".repeat(20_000); });
+  snapshot.value_points.forEach(point => {
+    point.claim = "详细解释😀".repeat(20_000);
+    point.component_ids = Array(10_000).fill("component:long");
+  });
+  snapshot.static_analysis!.limitations = Array(100).fill("限制😀".repeat(10_000));
+  const source = conversationSummarySource(snapshot)!;
+  assert.ok(Buffer.byteLength(JSON.stringify(source, null, 1)) <= MAX_CONVERSATION_SUMMARY_BYTES);
+  assert.ok(source.graph.nodes.every(node => Buffer.byteLength(node.responsibility) <= 1024));
+  assert.ok(snapshot.graph.nodes[1]!.responsibility.length > 1024, "the full canonical view is not mutated");
+  const overlay = {
+    schema_version: SNAPSHOT_LANGUAGE_OVERLAY_VERSION, language: "zh-CN", generated_at: "2026-09-27T00:00:00Z",
+    components: original.graph.nodes.map(node => ({ id: node.id, name: "名称".repeat(10_000),
+      responsibility: "职责".repeat(10_000), grouping_rationale: "", architecture_layer_rationale: null })),
+    layers: [], relations: [], value_points: [],
+  } satisfies SnapshotLanguageOverlayPayload;
+  const result = conversationSummaryFromSource(original, overlay)!;
+  assert.ok(Buffer.byteLength(JSON.stringify(result, null, 1)) <= MAX_CONVERSATION_SUMMARY_BYTES);
+  assert.ok(result.components.every(node => Buffer.byteLength(node.name) <= 1024));
+  assert.equal(JSON.stringify(result).includes("\ufffd"), false, "UTF-8 truncation preserves characters");
+});
+
+test("bounded context never truncates evidence paths, identifiers or component references", () => {
+  const snapshot = fixture();
+  const tooLong = "identifier:" + "长".repeat(1000);
+  snapshot.graph.nodes[1]!.architecture_layer_id = tooLong;
+  snapshot.value_points[0]!.evidence[0]!.path = "src/" + "目录".repeat(1000) + "/file.ts";
+  snapshot.value_points[0]!.evidence[1]!.stable_id = tooLong;
+  snapshot.value_points[1]!.component_ids = [tooLong];
+  const source = conversationSummarySource(snapshot)!;
+  assert.equal(source.graph.nodes.some(node => node.id === "component:0"), false);
+  assert.equal(source.value_points.some(point => point.stable_id === "value:1"), false);
+  assert.deepEqual(source.value_points[0]!.evidence.map(row => row.stable_id),
+    snapshot.value_points[0]!.evidence.slice(2, 6).map(row => row.stable_id));
+  assert.ok(source.value_points[0]!.evidence.every(row => row.path === "src/example.ts"));
 });

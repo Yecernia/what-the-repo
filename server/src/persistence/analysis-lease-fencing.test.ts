@@ -8,6 +8,7 @@ import { newAnalysisJob } from "../domain/jobs.js";
 import { FileStore } from "./file-store.js";
 import { AnalysisLeaseLostError } from "./store.js";
 import { PostgresStore } from "./postgres-store.js";
+import { LocalPermitStore } from "../scheduling/permits.js";
 
 test("Postgres tail replacement deletes only the removed answer inside the project transaction", async () => {
   const root = await mkdtemp(join(tmpdir(), "wtr-turn-replace-pg-"));
@@ -406,8 +407,12 @@ test("PostgreSQL fenced overlay publication can finalize its own running job", a
     async query(sql: string, values: unknown[] = []) {
       const normalized = sql.replace(/\s+/gu, " ").trim();
       queries.push(normalized);
-      if (normalized.startsWith("SELECT pg_advisory_xact_lock")) {
+      if (normalized.startsWith("SELECT pg_advisory_xact_lock(")) {
         advisoryLocks.push(String(values[0]));
+      }
+      if (normalized.startsWith("SELECT conversation_summary_payload FROM canonical_public_repository_snapshots")) {
+        return { rows: [{ conversation_summary_payload: { snapshot_id: "overlay-snapshot", summary: {}, languages: [],
+          graph: { semantic_mode: "model_supported", nodes: [] }, value_points: [] } }], rowCount: 1 };
       }
       if (normalized.startsWith("SELECT project_id FROM analysis_jobs")) {
         return { rows: [{ project_id: "project-overlay" }], rowCount: 1 };
@@ -457,6 +462,7 @@ test("PostgreSQL fenced overlay publication can finalize its own running job", a
     root,
     migrationsRoot: join(root, "migrations"),
     encryptionSecret: "overlay-fence-test-secret",
+    objectAdmissionStore: new LocalPermitStore(),
   });
   const originalPool = store.pool;
   (store as unknown as { pool: { connect(): Promise<typeof client> } }).pool = {

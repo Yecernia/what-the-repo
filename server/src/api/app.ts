@@ -851,7 +851,7 @@ const PUBLIC_ERROR_CODES = new Set([
   ...Object.keys(FAILURE_MESSAGES), "last_message_changed", "analysis_retry_scheduled",
   "cancelled", "no_result", "invalid_request", "not_found", "forbidden",
   "auth_required", "rate_limited", "provider_unavailable", "provider_key_required",
-  "session_busy", "snapshot_unavailable", "snapshot_mismatch", "analysis_in_progress",
+  "session_busy", "snapshot_unavailable", "snapshot_mismatch", "snapshot_directory_reanalysis_required", "analysis_in_progress",
   "analysis_not_active", "analysis_cancelled", "repository_migration_not_pending",
   "repository_migration_target_missing", "learning_action_not_pending",
   "learning_action_not_confirmed", "learning_action_invalid", "invalid_feedback_target",
@@ -884,6 +884,7 @@ function safePublicErrorMessage(status: number, code: unknown, rawMessage: unkno
   if (normalizedCode === "rate_limited") return "请求过于频繁，请稍后重试";
   if (normalizedCode === "not_found") return "项目不存在";
   if (normalizedCode === "snapshot_unavailable") return "项目图谱尚未完成";
+  if (normalizedCode === "snapshot_directory_reanalysis_required") return "此仓库的分析资料需要重新生成，请重新分析后继续。";
   if (normalizedCode === "snapshot_mismatch") return "请求的证据快照不是项目当前快照";
   if (normalizedCode === "analysis_in_progress") return "分析正在进行，请先停止当前分析";
   if (normalizedCode === "analysis_not_active") return "分析任务已结束或不存在";

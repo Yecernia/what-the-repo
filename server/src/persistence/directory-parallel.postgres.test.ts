@@ -85,7 +85,7 @@ test('isolated PostgreSQL: parallel directory loading binds complete child gener
     assert.deepEqual(read.map(row => row.stable_id), ['ev-n3', 'ev-e5']);
     // The links' evidence foreign key is validated against the same generation.
     await assert.rejects(store.pool.query(`INSERT INTO snapshot_directory_evidence_links_g${bound.directory_id}
-      (directory_id, evidence_id, owner_kind, owner_key, role) VALUES ($1,'missing','node','x','evidence')`, [bound.directory_id]), /foreign key/);
+      (directory_id, evidence_no, owner_kind, owner_no, role) VALUES ($1,999999,0,0,0)`, [bound.directory_id]), /foreign key/);
 
     await publish('snap:parallel:2');
     const second = await current();

@@ -4,9 +4,8 @@ import { beijingBudgetDay, withBudgetDefaults } from "../agent/provider-budget.j
 import { assertSessionPermit } from '../scheduling/permits.js';
 import { registerControlPool } from './control-pool.js';
 import { EncryptedPostgresKeyVault } from "./encrypted-key-vault.js";
-import { readSnapshotQuery } from './snapshot-query-reader.js';
+import { readSnapshotQuery, readDirectoryEvidence } from './snapshot-query-reader.js';
 import { boundedEvidenceIds, snapshotEvidence, type SnapshotEvidenceRequest } from './snapshot-evidence.js';
-import type { SnapshotQueryEvidenceRow } from '../domain/snapshot-query.js';
 import { randomUUID, createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { rm } from "node:fs/promises";
@@ -56,15 +55,11 @@ import {
   asSnapshotLanguageOverlayPayload,
   SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
 } from "../domain/snapshot-language.js";
-import { asEvidenceSnapshot, EVIDENCE_GRAPH_SCHEMA_VERSION } from "../domain/snapshot.js";
-import { conversationSummaryFromSource, type ConversationSummary, type ConversationSummarySource } from "../domain/conversation-summary.js";
+import { asEvidenceSnapshot } from "../domain/snapshot.js";
+import { conversationSummaryFromSource, conversationSummarySource, type ConversationSummary, type ConversationSummarySource } from "../domain/conversation-summary.js";
 import { normalizeDisplayLanguage } from "../domain/display-language.js";
 import {
-  buildSnapshotQueryDirectory,
   streamSnapshotQueryDirectory,
-  type SnapshotQueryDirectorySource,
-  querySnapshotQueryDirectory,
-  type SnapshotQueryDirectory,
   type SnapshotQueryInput,
   type SnapshotQueryResult,
 } from "../domain/snapshot-query.js";
@@ -72,6 +67,10 @@ import { FileStore } from "./file-store.js";
 import { stageSnapshotQueryDirectory, bindSnapshotQueryDirectory } from "./snapshot-directory-publication.js";
 import { applyMigrations } from "./migrations.js";
 import { boundedObjectStore } from './bounded-object-store.js';
+import { cachedObjectStore } from './cached-object-store.js';
+import { deleteDirectoryObjectsBatch } from './directory-object-reclamation.js';
+import { parseDirectoryManifest } from './directory-objects.js';
+import { serviceError } from '../services/errors.js';
 import { ResourceScheduler } from '../scheduling/resources.js';
 import { PostgresPermitStore, type PermitStore } from '../scheduling/permits.js';
 import {
@@ -94,7 +93,6 @@ import {
   normalizeSourceSnapshotPath,
   parseSourceSnapshotManifest,
   parseSnapshotManifest,
-  parseJsonObject,
   putSourceSnapshot,
   readSourceSnapshotFile,
   sourceSnapshotManifestBytes,
@@ -126,12 +124,6 @@ import {
 
 type Db = Pool | PoolClient;
 
-export const MAX_INLINE_PUBLIC_SNAPSHOT_BYTES = 64 * 1024 * 1024;
-
-export function shouldInlinePublicSnapshotPayload(fileBytes: number): boolean {
-  return fileBytes <= MAX_INLINE_PUBLIC_SNAPSHOT_BYTES;
-}
-
 interface PostgresStoreOptions {
   analysisLimits?: AnalysisLimits;
   databaseUrl: string;
@@ -145,6 +137,8 @@ interface PostgresStoreOptions {
   connectionTimeoutMs?: number;
   objectStore?: SnapshotObjectStore;
   objectStoreConcurrency?: number;
+  objectCacheBytes?: number;
+  objectCacheEntryBytes?: number;
   analysisChunkCompression?: boolean;
   objectAdmissionStore?: PermitStore;
 }
@@ -347,6 +341,7 @@ interface SourceManifestRow {
 interface CachedSourceManifest {
   manifest: SourceSnapshotManifest;
   files: Map<string, SourceSnapshotManifestFile>;
+  weight: number;
 }
 
 function sourceLines(
@@ -375,6 +370,8 @@ export class PostgresStore extends FileStore {
   /** One bounded capacity/collector connection; maintenance cannot consume management reads. */
   readonly collectorPool: Pool;
   private readonly sourceManifestCache = new Map<string, CachedSourceManifest>();
+  private sourceManifestCacheBytes = 0;
+  private readonly sourceManifestCacheBudget: number;
   private readonly analysisChunkCompression: boolean;
   /** Pool connections left for parallel directory loading beside the publication transaction. */
   private readonly directoryParallelism: number;
@@ -415,8 +412,11 @@ export class PostgresStore extends FileStore {
       application_name: postgresApplicationName((options.applicationRole ?? 'api') + ':collector'),
       connectionTimeoutMillis: 1000, idleTimeoutMillis: 10000, statement_timeout: 2000 });
     this.collectorPool.on('error', () => console.error('database_collector_unavailable'));
-    this.snapshotObjects = boundedObjectStore(options.objectStore ?? new LocalSnapshotObjectStore(options.root),
-      new ResourceScheduler(options.objectAdmissionStore ?? new PostgresPermitStore(this.controlPool)), options.objectStoreConcurrency ?? 8);
+    const objectCacheBytes = options.objectCacheBytes ?? 64 * 1024 * 1024;
+    this.sourceManifestCacheBudget = Math.min(objectCacheBytes, 8 * 1024 * 1024);
+    this.snapshotObjects = cachedObjectStore(boundedObjectStore(options.objectStore ?? new LocalSnapshotObjectStore(options.root),
+      new ResourceScheduler(options.objectAdmissionStore ?? new PostgresPermitStore(this.controlPool)), options.objectStoreConcurrency ?? 8),
+    { maxBytes: objectCacheBytes, maxEntryBytes: options.objectCacheEntryBytes ?? 8 * 1024 * 1024 });
   }
 
   override async init(): Promise<void> {
@@ -455,20 +455,30 @@ export class PostgresStore extends FileStore {
     const cached = {
       manifest,
       files: new Map(manifest.files.map((file) => [file.path, file])),
+      // Encoded UTF-16 text plus per-file map/object allowance. This is an
+      // accounting weight, not a claim to measure the JavaScript heap exactly.
+      weight: Buffer.byteLength(JSON.stringify(manifest)) * 2 + manifest.files.length * 192,
     };
-    this.sourceManifestCache.delete(cacheKey);
+    this.evictSourceManifest(cacheKey);
+    if (cached.weight > this.sourceManifestCacheBudget || !this.sourceManifestCacheBudget) return cached;
     this.sourceManifestCache.set(cacheKey, cached);
-    while (this.sourceManifestCache.size > 8) {
+    this.sourceManifestCacheBytes += cached.weight;
+    while (this.sourceManifestCache.size > 8 || this.sourceManifestCacheBytes > this.sourceManifestCacheBudget) {
       const oldest = this.sourceManifestCache.keys().next().value as string | undefined;
       if (!oldest) break;
-      this.sourceManifestCache.delete(oldest);
+      this.evictSourceManifest(oldest);
     }
     return cached;
   }
 
+  private evictSourceManifest(key: string): void {
+    const cached = this.sourceManifestCache.get(key);
+    if (cached) { this.sourceManifestCacheBytes -= cached.weight; this.sourceManifestCache.delete(key); }
+  }
+
   private forgetSourceManifest(publicKey: string): void {
     for (const key of this.sourceManifestCache.keys()) {
-      if (key.startsWith(`${publicKey}:`)) this.sourceManifestCache.delete(key);
+      if (key.startsWith(`${publicKey}:`)) this.evictSourceManifest(key);
     }
   }
 
@@ -491,7 +501,7 @@ export class PostgresStore extends FileStore {
     }
     const cacheKey = `${publicKey}:${snapshotId}:${row.source_manifest_sha256}`;
     const cached = this.sourceManifestCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) { this.sourceManifestCache.delete(cacheKey); this.sourceManifestCache.set(cacheKey, cached); return cached; }
     const body = verifySourceSnapshotObject(
       await this.snapshotObjects.get(row.source_storage_key),
       { bytes: manifestBytes, sha256: row.source_manifest_sha256 as string },
@@ -844,18 +854,15 @@ export class PostgresStore extends FileStore {
       overlay_available: boolean;
     }>(
       `SELECT b.public_snapshot_key, s.analysis_snapshot_id, s.payload_purged_at,
-              (s.view_storage_key IS NOT NULL OR s.view_payload IS NOT NULL) AS view_available,
+              (s.view_storage_key IS NOT NULL AND s.manifest_storage_key IS NOT NULL
+                AND s.manifest_sha256 IS NOT NULL AND s.view_sha256 IS NOT NULL) AS view_available,
               s.language_overlay_version,
               EXISTS (SELECT 1 FROM public_snapshot_language_overlays o
                 WHERE o.public_snapshot_key = b.public_snapshot_key
                   AND o.language = ANY($3::text[])
                   AND o.status IN ('ready', 'degraded')
-                  AND o.payload->>'schema_version' = $4
-                  AND jsonb_typeof(o.payload->'language') = 'string'
-                  AND jsonb_typeof(o.payload->'components') = 'array'
-                  AND jsonb_typeof(o.payload->'layers') = 'array'
-                  AND jsonb_typeof(o.payload->'relations') = 'array'
-                  AND jsonb_typeof(o.payload->'value_points') = 'array') AS overlay_available
+                  AND o.schema_version = $4 AND o.object_key IS NOT NULL
+                  AND o.object_sha256 IS NOT NULL AND o.object_bytes > 0) AS overlay_available
        FROM project_public_snapshot_bindings b
        LEFT JOIN canonical_public_repository_snapshots s
          ON s.public_snapshot_key = b.public_snapshot_key AND s.analysis_snapshot_id = $2
@@ -929,149 +936,62 @@ export class PostgresStore extends FileStore {
       if (snapshot.snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
       return conversationSummaryFromSource(snapshot);
     };
-    // PostgreSQL builds only the bounded projection. The full view stays in the
-    // database (or object storage) on the normal canonical path.
-    const result = await this.pool.query<{
+    // Canonical chat context is a byte-bounded publication artifact. Chat never
+    // downloads the full view, including when the caller pins a historical version.
+    type SummaryRow = {
       current_snapshot_id: string | null; current_public_key: string | null;
       public_snapshot_key: string | null; analysis_snapshot_id: string | null;
-      payload_purged_at: Date | string | null; view_storage_key: string | null;
-      inline_view: boolean | null; language_overlay_version: string | null;
+      payload_purged_at: Date | string | null; language_overlay_version: string | null;
       summary_payload: unknown;
-    }>(
+    };
+    const result = await this.pool.query<SummaryRow>(
       `SELECT p.payload #>> '{analysis,snapshot_id}' AS current_snapshot_id,
               p.payload #>> '{analysis,canonical_snapshot_key}' AS current_public_key,
               b.public_snapshot_key, s.analysis_snapshot_id, s.payload_purged_at,
-              s.view_storage_key, (s.view_payload IS NOT NULL) AS inline_view,
-              s.language_overlay_version,
-              CASE WHEN b.public_snapshot_key = $3::text
-                AND s.analysis_snapshot_id = $2 AND s.payload_purged_at IS NULL
-                AND root.snapshot_id = to_jsonb($2::text)
-                AND jsonb_typeof(root.summary) = 'object'
-                AND jsonb_typeof(root.languages) = 'array'
-                AND jsonb_typeof(root.graph) = 'object'
-                AND graph.schema_version = to_jsonb($4::text)
-                AND jsonb_typeof(graph.nodes) = 'array'
-                AND jsonb_typeof(graph.edges) = 'array'
-                AND jsonb_typeof(graph.semantic_mode) = 'string'
-                AND jsonb_typeof(root.value_points) = 'array'
-                AND COALESCE(components.normalized, true)
-                AND COALESCE(vals.normalized, true)
-              THEN jsonb_build_object(
-                'snapshot_id', root.snapshot_id,
-                'summary', root.summary,
-                'languages', root.languages,
-                'static_analysis', CASE WHEN jsonb_typeof(root.static_analysis) = 'object'
-                  THEN jsonb_strip_nulls(jsonb_build_object(
-                    'completeness', stat.completeness,
-                    'limitations', stat.limitations))
-                  ELSE NULL END,
-                'graph', jsonb_build_object(
-                  'semantic_mode', graph.semantic_mode,
-                  'nodes', COALESCE(components.items, '[]'::jsonb)),
-                'value_points', COALESCE(vals.items, '[]'::jsonb))
-              ELSE NULL END AS summary_payload
+              s.language_overlay_version, s.conversation_summary_payload AS summary_payload
        FROM projects AS p
        LEFT JOIN project_public_snapshot_bindings AS b ON b.project_id = p.project_id
        LEFT JOIN canonical_public_repository_snapshots AS s ON s.public_snapshot_key = b.public_snapshot_key
-       LEFT JOIN LATERAL jsonb_to_record(CASE WHEN jsonb_typeof(s.view_payload) = 'object'
-         THEN s.view_payload ELSE '{}'::jsonb END) AS root(
-           snapshot_id jsonb, summary jsonb, languages jsonb, static_analysis jsonb,
-           graph jsonb, value_points jsonb) ON TRUE
-       LEFT JOIN LATERAL jsonb_to_record(CASE WHEN jsonb_typeof(root.graph) = 'object'
-         THEN root.graph ELSE '{}'::jsonb END) AS graph(
-           schema_version jsonb, semantic_mode jsonb, nodes jsonb, edges jsonb) ON TRUE
-       LEFT JOIN LATERAL jsonb_to_record(CASE WHEN jsonb_typeof(root.static_analysis) = 'object'
-         THEN root.static_analysis ELSE '{}'::jsonb END) AS stat(completeness jsonb, limitations jsonb) ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT jsonb_agg(jsonb_build_object(
-           'id', node.item->'id', 'name', node.item->'name',
-           'responsibility', node.item->'responsibility',
-           'architecture_layer_id', node.item->'architecture_layer_id',
-           'architecture_layer_name', node.item->'architecture_layer_name') ORDER BY node.ordinal) AS items,
-           bool_and(COALESCE(jsonb_typeof(node.item) = 'object'
-             AND jsonb_typeof(node.item->'id') = 'string'
-             AND jsonb_typeof(node.item->'name') = 'string'
-             AND jsonb_typeof(node.item->'responsibility') = 'string'
-             AND jsonb_typeof(node.item->'architecture_layer_id') IN ('string', 'null')
-             AND jsonb_typeof(node.item->'architecture_layer_name') IN ('string', 'null'), false)) AS normalized
-         FROM (SELECT item, ordinal
-           FROM jsonb_array_elements(CASE WHEN jsonb_typeof(graph.nodes) = 'array'
-             THEN graph.nodes ELSE '[]'::jsonb END) WITH ORDINALITY AS entries(item, ordinal)
-           WHERE item->>'id' LIKE 'component:%'
-           ORDER BY ordinal LIMIT 20) AS node) AS components ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT jsonb_agg(jsonb_set(CASE WHEN jsonb_typeof(point.item) = 'object'
-           THEN point.item ELSE '{}'::jsonb END, '{evidence}', COALESCE((
-           SELECT jsonb_agg(ev.item ORDER BY ev.ordinal)
-           FROM jsonb_array_elements(CASE WHEN jsonb_typeof(point.item->'evidence') = 'array'
-             THEN point.item->'evidence' ELSE '[]'::jsonb END)
-             WITH ORDINALITY AS ev(item, ordinal)
-           WHERE ev.ordinal <= 6), '[]'::jsonb), true) ORDER BY point.ordinal) AS items,
-           bool_and(COALESCE(jsonb_typeof(point.item) = 'object'
-             AND jsonb_typeof(point.item->'evidence') = 'array', false)) AS normalized
-         FROM jsonb_array_elements(CASE WHEN jsonb_typeof(root.value_points) = 'array'
-           THEN root.value_points ELSE '[]'::jsonb END) WITH ORDINALITY AS point(item, ordinal)
-         WHERE point.ordinal <= 8) AS vals ON TRUE
        WHERE p.project_id = $1`,
-      [project.project_id, snapshotId, publicKey, EVIDENCE_GRAPH_SCHEMA_VERSION],
+      [project.project_id],
     );
-    const row = result.rows[0];
+    let row = result.rows[0];
     if (!row) return null;
     if (row.current_snapshot_id !== snapshotId || row.current_public_key !== publicKey) {
-      // A turn pinned to a retired version of the same repository keeps reading it.
       const pinned = await this.historicalPublicKey(project.project_id, snapshotId);
       if (!pinned || pinned !== publicKey) throw new Error("snapshot_not_bound");
-      const view = asEvidenceSnapshot((await this.loadPublicSnapshotView(pinned))?.view);
-      return view?.snapshot_id === snapshotId ? conversationSummaryFromSource(view) : null;
+      const historical = await this.pool.query<SummaryRow>(
+        `SELECT public_snapshot_key, analysis_snapshot_id, payload_purged_at,
+                language_overlay_version, conversation_summary_payload AS summary_payload
+         FROM canonical_public_repository_snapshots WHERE public_snapshot_key = $1`, [pinned]);
+      row = historical.rows[0];
+      if (!row) return null;
     }
     if (!row.public_snapshot_key) return publicKey ? null : fallback();
     if (row.public_snapshot_key !== publicKey) throw new Error("snapshot_not_bound");
     if (!row.analysis_snapshot_id) return null;
     if (row.analysis_snapshot_id !== snapshotId || row.payload_purged_at) throw new Error("snapshot_not_bound");
-    if (!row.inline_view && !row.view_storage_key) return null;
     const source = row.summary_payload ? jsonObject<ConversationSummarySource>(row.summary_payload) : null;
-    if (!source || !conversationSummaryFromSource(source)) return fallback();
+    if (!source || !conversationSummaryFromSource(source)) return null;
     if (source.snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
     if (!row.language_overlay_version) return conversationSummaryFromSource(source);
-    const componentIds = source.graph.nodes.map(node => node.id);
-    const layerIds = [...new Set(source.graph.nodes.map(node => node.architecture_layer_id).filter((id): id is string => Boolean(id)))];
-    const valueIds = source.value_points.map(point => point.stable_id);
     for (const language of new Set([
       normalizeDisplayLanguage(displayLanguage ?? project.display_language),
       normalizeDisplayLanguage(project.display_language),
     ])) {
-      const translated = await this.pool.query<{ status: SnapshotLanguageOverlay["status"]; payload: unknown }>(
-        `SELECT o.status,
-                CASE WHEN o.payload->>'schema_version' = $6
-                  AND jsonb_typeof(o.payload->'language') = 'string'
-                  AND jsonb_typeof(o.payload->'components') = 'array'
-                  AND jsonb_typeof(o.payload->'layers') = 'array'
-                  AND jsonb_typeof(o.payload->'relations') = 'array'
-                  AND jsonb_typeof(o.payload->'value_points') = 'array'
-                THEN jsonb_build_object(
-                  'schema_version', o.payload->'schema_version',
-                  'language', o.payload->'language',
-                  'generated_at', o.payload->'generated_at',
-                  'components', COALESCE((SELECT jsonb_agg(item ORDER BY ordinal)
-                    FROM jsonb_array_elements(o.payload->'components') WITH ORDINALITY AS component(item, ordinal)
-                    WHERE item->>'id' = ANY($3::text[])), '[]'::jsonb),
-                  'layers', COALESCE((SELECT jsonb_agg(item ORDER BY ordinal)
-                    FROM jsonb_array_elements(o.payload->'layers') WITH ORDINALITY AS layer(item, ordinal)
-                    WHERE item->>'id' = ANY($4::text[])), '[]'::jsonb),
-                  'relations', '[]'::jsonb,
-                  'value_points', COALESCE((SELECT jsonb_agg(item ORDER BY ordinal)
-                    FROM jsonb_array_elements(o.payload->'value_points') WITH ORDINALITY AS value(item, ordinal)
-                    WHERE item->>'stable_id' = ANY($5::text[])), '[]'::jsonb))
-                ELSE NULL END AS payload
+      const translated = await this.pool.query<{ status: SnapshotLanguageOverlay["status"]; summary_payload: unknown }>(
+        `SELECT o.status, o.conversation_summary_payload AS summary_payload
          FROM public_snapshot_language_overlays AS o
-         WHERE o.public_snapshot_key = $1 AND o.language = $2`,
-        [publicKey, language.toLowerCase(), componentIds, layerIds, valueIds, SNAPSHOT_LANGUAGE_OVERLAY_VERSION],
+         WHERE o.public_snapshot_key = $1 AND o.language = $2
+           AND o.schema_version = $3 AND o.object_key IS NOT NULL
+           AND o.object_sha256 IS NOT NULL AND o.object_bytes > 0`,
+        [publicKey, language.toLowerCase(), SNAPSHOT_LANGUAGE_OVERLAY_VERSION],
       );
       const overlay = translated.rows[0];
-      const payload = asSnapshotLanguageOverlayPayload(overlay?.payload);
-      if (payload && (overlay.status === "ready" || overlay.status === "degraded")) {
-        return conversationSummaryFromSource(source, payload);
-      }
+      if (!overlay?.summary_payload || !["ready", "degraded"].includes(overlay.status)) continue;
+      const summary = jsonObject<ConversationSummary>(overlay.summary_payload);
+      if (summary.snapshot_id !== snapshotId) throw new Error("snapshot_not_bound");
+      return summary;
     }
     return null;
   }
@@ -1164,8 +1084,6 @@ export class PostgresStore extends FileStore {
       logical_bytes: string;
       created_at: Date | string;
       last_used_at: Date | string | null;
-      view_payload: T | null;
-      analysis_payload: Record<string, unknown> | null;
       view_storage_key: string | null;
       analysis_storage_key: string | null;
       manifest_storage_key: string | null;
@@ -1185,7 +1103,6 @@ export class PostgresStore extends FileStore {
     }>(
       `SELECT repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,
         source_storage_key,reuse_count,logical_bytes,created_at,last_used_at,
-        ${wantView ? 'view_payload' : 'NULL AS view_payload'}, ${wantAnalysis ? 'analysis_payload' : 'NULL AS analysis_payload'},
         view_storage_key,analysis_storage_key,manifest_storage_key,manifest_sha256,manifest_bytes,view_sha256,view_bytes,
         analysis_sha256,analysis_bytes,source_manifest_sha256,source_manifest_bytes,source_file_count,language_overlay_version,
         retired_at,purge_after,payload_purged_at FROM canonical_public_repository_snapshots WHERE public_snapshot_key = $1`,
@@ -1194,74 +1111,30 @@ export class PostgresStore extends FileStore {
     const row = result.rows[0];
     if (!row) return null;
     if (row.payload_purged_at) return null;
-    let externalView: T | null = null;
-    let externalAnalysis: Record<string, unknown> | null = null;
-    if ((wantView && row.view_payload === null) || (wantAnalysis && row.analysis_payload === null)) {
-      const manifestFields = [
-        row.manifest_storage_key,
-        row.manifest_sha256,
-        row.manifest_bytes,
-        row.view_sha256,
-        row.view_bytes,
-        row.analysis_sha256,
-        row.analysis_bytes,
-      ];
-      const hasManifest = manifestFields.some((value) => value !== null);
-      if (hasManifest && manifestFields.some((value) => value === null)) {
-        throw new Error("public_snapshot_manifest_metadata_invalid");
-      }
-      if (hasManifest) {
-        const manifestBody = await this.snapshotObjects.get(row.manifest_storage_key as string);
-        verifySnapshotObject<Record<string, unknown>>(manifestBody, {
-          bytes: Number(row.manifest_bytes),
-          sha256: row.manifest_sha256 as string,
-        });
-        const manifest = parseSnapshotManifest(manifestBody, {
-          publicKey,
-          snapshotId: row.analysis_snapshot_id,
-        });
-        const viewDescriptor = manifest.objects.find((item) => item.kind === "view");
-        const analysisDescriptor = manifest.objects.find((item) => item.kind === "analysis");
-        if (!viewDescriptor || !analysisDescriptor
-          || viewDescriptor.key !== row.view_storage_key
-          || viewDescriptor.sha256 !== row.view_sha256
-          || viewDescriptor.bytes !== Number(row.view_bytes)
-          || analysisDescriptor.key !== row.analysis_storage_key
-          || analysisDescriptor.sha256 !== row.analysis_sha256
-          || analysisDescriptor.bytes !== Number(row.analysis_bytes)) {
-          throw new Error("public_snapshot_manifest_metadata_mismatch");
-        }
-        if (wantView && row.view_payload === null) {
-          externalView = verifySnapshotObject<T>(
-            await this.snapshotObjects.get(viewDescriptor.key),
-            viewDescriptor,
-          );
-        }
-        if (wantAnalysis && row.analysis_payload === null) {
-          externalAnalysis = verifySnapshotObject<Record<string, unknown>>(
-            await this.snapshotObjects.get(analysisDescriptor.key),
-            analysisDescriptor,
-          );
-        }
-      } else {
-        if (wantView && row.view_payload === null) {
-          externalView = parseJsonObject<T>(await this.snapshotObjects.get(
-            row.view_storage_key ?? `public-repository-snapshots/${publicKey}/view.json`,
-          ));
-        }
-        if (wantAnalysis && row.analysis_payload === null) {
-          externalAnalysis = parseJsonObject<Record<string, unknown>>(await this.snapshotObjects.get(
-            row.analysis_storage_key ?? `public-repository-snapshots/${publicKey}/analysis.json`,
-          ));
-        }
-      }
+    const manifestFields = [row.manifest_storage_key, row.manifest_sha256, row.manifest_bytes,
+      row.view_storage_key, row.view_sha256, row.view_bytes,
+      row.analysis_storage_key, row.analysis_sha256, row.analysis_bytes];
+    if (manifestFields.some(value => value === null || value === undefined)) {
+      throw new Error("public_snapshot_manifest_metadata_invalid");
     }
-    if ((wantView && row.view_payload === null && !externalView) || (wantAnalysis && row.analysis_payload === null && !externalAnalysis)) {
-      throw new Error("public_snapshot_payload_missing");
+    const manifestBody = await this.snapshotObjects.get(row.manifest_storage_key as string);
+    verifySnapshotObject<Record<string, unknown>>(manifestBody, {
+      bytes: Number(row.manifest_bytes), sha256: row.manifest_sha256 as string,
+    });
+    const manifest = parseSnapshotManifest(manifestBody, { publicKey, snapshotId: row.analysis_snapshot_id });
+    const viewDescriptor = manifest.objects.find(item => item.kind === "view");
+    const analysisDescriptor = manifest.objects.find(item => item.kind === "analysis");
+    if (!viewDescriptor || !analysisDescriptor
+      || viewDescriptor.key !== row.view_storage_key || viewDescriptor.sha256 !== row.view_sha256
+      || viewDescriptor.bytes !== Number(row.view_bytes)
+      || analysisDescriptor.key !== row.analysis_storage_key || analysisDescriptor.sha256 !== row.analysis_sha256
+      || analysisDescriptor.bytes !== Number(row.analysis_bytes)) {
+      throw new Error("public_snapshot_manifest_metadata_mismatch");
     }
-    const storedAnalysis = !wantAnalysis ? null : row.analysis_payload === null
-      ? externalAnalysis
-      : jsonObject<Record<string, unknown>>(row.analysis_payload);
+    const externalView = wantView
+      ? verifySnapshotObject<T>(await this.snapshotObjects.get(viewDescriptor.key), viewDescriptor) : null;
+    const storedAnalysis = wantAnalysis
+      ? verifySnapshotObject<Record<string, unknown>>(await this.snapshotObjects.get(analysisDescriptor.key), analysisDescriptor) : null;
     const analysis = storedAnalysis === null
       ? null
       : hydrateAnalysis ? await assembleAnalysisPayload(storedAnalysis, (key) => this.snapshotObjects.get(key)) : storedAnalysis;
@@ -1301,7 +1174,7 @@ export class PostgresStore extends FileStore {
         created_at: iso(row.created_at),
         last_used_at: iso(row.last_used_at),
       },
-      view: !wantView ? null : row.view_payload === null ? externalView as T : jsonObject<T>(row.view_payload),
+      view: externalView,
       analysis: analysis as Record<string, unknown> | null,
     };
   }
@@ -1352,6 +1225,7 @@ export class PostgresStore extends FileStore {
        WHERE repository_identity = $1
          AND analyzer_bundle_version = $2
          AND analysis_config_digest = $3
+         AND payload_purged_at IS NULL
          AND ($4::text IS NULL OR commit_sha <> $4)
        ORDER BY created_at DESC
        LIMIT 1`,
@@ -1444,9 +1318,6 @@ export class PostgresStore extends FileStore {
     type PreparedSnapshotObjects = {
       viewKey: string;
       analysisKey: string;
-      viewBody: Uint8Array;
-      analysisBody: Uint8Array;
-      analysisChunked: boolean;
       viewObject: Awaited<ReturnType<SnapshotObjectStore["put"]>>;
       analysisObject: Awaited<ReturnType<SnapshotObjectStore["put"]>>;
       analysisChunks: Awaited<ReturnType<typeof prepareStoredAnalysisPayload>>["chunks"];
@@ -1549,9 +1420,6 @@ export class PostgresStore extends FileStore {
       const prepared: PreparedSnapshotObjects = {
         viewKey,
         analysisKey,
-        viewBody,
-        analysisBody,
-        analysisChunked: preparedAnalysis.envelope !== null,
         viewObject,
         analysisObject,
         analysisChunks: preparedAnalysis.chunks,
@@ -1570,34 +1438,25 @@ export class PostgresStore extends FileStore {
         const sourceStorageKey = sourceSnapshot.manifestObject.key;
         const viewStorageKey = prepared.viewKey;
         const analysisStorageKey = prepared.analysisKey;
-        // PostgreSQL jsonb has a much larger nominal value limit, but a single array
-        // element cannot exceed 256 MiB. Keep a wide safety margin for dense graphs.
-        const viewPayload = shouldInlinePublicSnapshotPayload(viewObject.bytes)
-          ? Buffer.from(prepared.viewBody.buffer, prepared.viewBody.byteOffset, prepared.viewBody.byteLength - 1).toString("utf8")
-          : null;
-        const analysisPayload = !prepared.analysisChunked
-          && shouldInlinePublicSnapshotPayload(analysisObject.bytes)
-          ? Buffer.from(prepared.analysisBody.buffer, prepared.analysisBody.byteOffset, prepared.analysisBody.byteLength - 1).toString("utf8")
-          : null;
+        const summaryPayload = conversationSummarySource(input.view);
         await client.query(
           `INSERT INTO canonical_public_repository_snapshots(
            public_snapshot_key, repository_identity, commit_sha,
            analyzer_bundle_version, analysis_config_digest, analysis_snapshot_id,
-           view_payload, analysis_payload, source_storage_key,
+           conversation_summary_payload, source_storage_key,
            view_storage_key, analysis_storage_key, manifest_storage_key,
            manifest_sha256, manifest_bytes, view_sha256, view_bytes,
            analysis_sha256, analysis_bytes, logical_bytes,
            source_manifest_sha256, source_manifest_bytes, source_file_count,
            reuse_count, created_at, last_used_at, language_overlay_version
          ) VALUES (
-           $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9,
-           $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-           $20, $21, $22, 0, now(), now(), $23
+           $1, $2, $3, $4, $5, $6, $7::jsonb, $8,
+           $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+           $19, $20, $21, 0, now(), now(), $22
          )
          ON CONFLICT(public_snapshot_key) DO UPDATE SET
            analysis_snapshot_id = EXCLUDED.analysis_snapshot_id,
-           view_payload = EXCLUDED.view_payload,
-           analysis_payload = EXCLUDED.analysis_payload,
+           conversation_summary_payload = EXCLUDED.conversation_summary_payload,
            source_storage_key = EXCLUDED.source_storage_key,
            view_storage_key = EXCLUDED.view_storage_key,
            analysis_storage_key = EXCLUDED.analysis_storage_key,
@@ -1624,8 +1483,7 @@ export class PostgresStore extends FileStore {
             input.analyzerBundleVersion ?? "typescript-0.1.0",
             input.analysisConfigDigest ?? "tree-sitter-nine-language-v1",
             input.snapshotId,
-            viewPayload,
-            analysisPayload,
+            summaryPayload ? JSON.stringify(summaryPayload) : null,
             sourceStorageKey,
             viewStorageKey,
             analysisStorageKey,
@@ -1652,8 +1510,8 @@ export class PostgresStore extends FileStore {
         leaseChecks.set(db, performance.now());
       } : undefined;
       const directoryId = await measure('directory_write_ms', () => stageSnapshotQueryDirectory(
-        this.pool, client, directory, { parallelism: this.directoryParallelism, beforeBatch, timings }));
-      if (this.directoryParallelism > 0) committedDirectoryId = directoryId;
+        this.pool, client, directory, { objectStore: this.snapshotObjects, parallelism: this.directoryParallelism, beforeBatch, timings }));
+      committedDirectoryId = directoryId;
       const finalizeStarted = performance.now();
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`snapshot-publication:${input.publicKey}`]);
       let fencedProjectId: string | undefined;
@@ -1662,6 +1520,12 @@ export class PostgresStore extends FileStore {
       if (input.fence) await this.assertAnalysisLeaseWithDb(client, input.fence, fencedProjectId);
       await persist(client, prepared);
       await measure('directory_bind_ms', () => bindSnapshotQueryDirectory(client, directory, directoryId));
+      await client.query(`UPDATE canonical_public_repository_snapshots SET logical_bytes=logical_bytes
+        + COALESCE((SELECT sum((chunk->>'bytes')::bigint) FROM snapshot_directory_generations g,
+            LATERAL jsonb_each(g.object_manifest->'sections') section,
+            LATERAL jsonb_array_elements(section.value) chunk WHERE g.directory_id=$2),0)
+        + COALESCE((SELECT sum(object_bytes) FROM public_snapshot_language_overlays WHERE public_snapshot_key=$1),0)
+        WHERE public_snapshot_key=$1`, [input.publicKey, directoryId]);
       if (input.fence) await this.assertAnalysisLeaseWithDb(client, input.fence, fencedProjectId);
       await client.query('COMMIT');
       timings.publication_fence_ms = performance.now() - fenceStarted;
@@ -1683,24 +1547,15 @@ export class PostgresStore extends FileStore {
   override async readPublicSnapshotEvidence(input: SnapshotEvidenceRequest) {
     const ids = boundedEvidenceIds(input.evidenceIds);
     if (!ids.length) return [];
-    // One statement keeps directory identity and evidence consistent without hydrating object data.
-    const result = await this.pool.query<SnapshotQueryEvidenceRow>(
-      `SELECT e.* FROM snapshot_query_evidence e
-       JOIN snapshot_query_directories d ON d.public_snapshot_key=e.public_snapshot_key AND d.snapshot_id=e.snapshot_id
-       WHERE e.public_snapshot_key=$1 AND e.snapshot_id=$2 AND e.evidence_id=ANY($3::text[])`,
-      [input.publicKey, input.snapshotId, ids],
-    );
-    const byId = new Map(result.rows.map(row => [row.evidence_id, row]));
+    const rows = await readDirectoryEvidence(this.pool, { ...input, evidenceIds: ids }, this.snapshotObjects);
+    const byId = new Map(rows.map(row => [row.evidence_id, row]));
     return ids.flatMap(id => { const row = byId.get(id); return row ? [snapshotEvidence(row)] : []; });
   }
 
   override async queryPublicSnapshot(input: { publicKey: string; snapshotId: string; query: SnapshotQueryInput; signal?: AbortSignal }): Promise<SnapshotQueryResult> {
-    const result = await readSnapshotQuery(this.pool, input);
+    const result = await readSnapshotQuery(this.pool, input, this.snapshotObjects);
     if (result) return result;
-    // Legacy snapshots without a materialized directory still retain their complete object data.
-    const bundle = await this.loadPublicSnapshot(input.publicKey);
-    if (!bundle || String(bundle.metadata.analysis_snapshot_id ?? '') !== input.snapshotId) throw new Error('snapshot_query_not_found');
-    return querySnapshotQueryDirectory(buildSnapshotQueryDirectory(input.publicKey, input.snapshotId, bundle.view, bundle.analysis), input.query);
+    throw serviceError('snapshot_directory_reanalysis_required', 'snapshot_directory_reanalysis_required', 409);
   }
 
   override async loadRepositoryHead(input: RepositoryIdentityInput): Promise<RepositoryHead | null> {
@@ -2459,10 +2314,11 @@ export class PostgresStore extends FileStore {
         const overlayKey = snapshotLanguageOverlayKey(input.publicKey, projectLanguage);
         await client.query(
           `INSERT INTO public_snapshot_language_overlays(
-             public_snapshot_key, language, status, payload, generated_at, error, updated_at
-           ) VALUES ($1, $2, 'pending', NULL, NULL, NULL, now())
+             public_snapshot_key, language, status, generated_at, error, updated_at
+           ) VALUES ($1, $2, 'pending', NULL, NULL, now())
            ON CONFLICT(public_snapshot_key, language) DO UPDATE SET
-             status = 'pending', payload = NULL, generated_at = NULL,
+             status = 'pending', object_key = NULL, object_sha256 = NULL, object_bytes = NULL,
+             schema_version = NULL, conversation_summary_payload = NULL, generated_at = NULL,
              error = NULL, updated_at = now()
            WHERE public_snapshot_language_overlays.status NOT IN ('ready', 'degraded')`,
           [input.publicKey, projectLanguage],
@@ -2628,79 +2484,108 @@ export class PostgresStore extends FileStore {
   }
 
   override async loadSnapshotLanguageOverlay(publicKey: string, language: string): Promise<SnapshotLanguageOverlay | null> {
-    const result = await this.pool.query<{
-      public_snapshot_key: string;
-      language: string;
-      status: SnapshotLanguageOverlay["status"];
-      payload: Record<string, unknown> | null;
-      generated_at: Date | string | null;
-      error: string | null;
-    }>(
-      `SELECT public_snapshot_key, language, status, payload, generated_at, error
+    const result = await this.pool.query(
+      `SELECT public_snapshot_key, language, status, object_key, object_sha256, object_bytes,
+              schema_version, generated_at, error
        FROM public_snapshot_language_overlays
        WHERE public_snapshot_key = $1 AND language = $2`,
-      [publicKey, language.toLowerCase()],
+      [publicKey, normalizeDisplayLanguage(language).toLowerCase()],
     );
     const row = result.rows[0];
-    return row ? {
-      public_snapshot_key: row.public_snapshot_key,
-      language: row.language,
-      status: row.status,
-      payload: row.payload ? jsonObject<Record<string, unknown>>(row.payload) : null,
-      generated_at: iso(row.generated_at),
-      error: row.error,
-    } : null;
+    if (!row) return null;
+    let payload: SnapshotLanguageOverlayPayload | null = null;
+    if (row.status === "ready" || row.status === "degraded") {
+      if (!row.object_key || !row.object_sha256 || !Number.isSafeInteger(Number(row.object_bytes))
+        || Number(row.object_bytes) <= 0 || row.schema_version !== SNAPSHOT_LANGUAGE_OVERLAY_VERSION
+        || row.object_key !== `public-repository-snapshots/${publicKey}/language-overlays/${encodeURIComponent(row.language)}-${row.object_sha256}.json`) {
+        throw new Error("language_overlay_object_metadata_invalid");
+      }
+      const raw = verifySnapshotObject<unknown>(await this.snapshotObjects.get(String(row.object_key)), {
+        bytes: Number(row.object_bytes), sha256: String(row.object_sha256),
+      });
+      payload = asSnapshotLanguageOverlayPayload(raw);
+      if (!payload || normalizeDisplayLanguage(payload.language).toLowerCase() !== row.language) {
+        throw new Error("language_overlay_object_invalid");
+      }
+    }
+    return {
+      public_snapshot_key: String(row.public_snapshot_key), language: String(row.language),
+      status: row.status, payload: payload as unknown as Record<string, unknown> | null,
+      generated_at: iso(row.generated_at), error: row.error,
+    };
   }
 
   override async listSnapshotLanguageOverlays(publicKey: string): Promise<SnapshotLanguageOverlay[]> {
-    const result = await this.pool.query(
-      `SELECT public_snapshot_key, language, status, payload, generated_at, error
-       FROM public_snapshot_language_overlays
-       WHERE public_snapshot_key = $1 ORDER BY language`,
-      [publicKey],
-    );
-    return result.rows.map((row) => ({
-      public_snapshot_key: String(row.public_snapshot_key),
-      language: String(row.language),
-      status: String(row.status) as SnapshotLanguageOverlay["status"],
-      payload: row.payload ? jsonObject<Record<string, unknown>>(row.payload) : null,
-      generated_at: iso(row.generated_at),
-      error: row.error === null ? null : String(row.error),
-    }));
+    const result = await this.pool.query<{ language: string }>(
+      `SELECT language FROM public_snapshot_language_overlays WHERE public_snapshot_key = $1 ORDER BY language`, [publicKey]);
+    const overlays: SnapshotLanguageOverlay[] = [];
+    for (const row of result.rows) {
+      const overlay = await this.loadSnapshotLanguageOverlay(publicKey, row.language);
+      if (overlay) overlays.push(overlay);
+    }
+    return overlays;
+  }
+
+  /** Call only inside the caller's publication transaction and lease fence. */
+  private async writeSnapshotLanguageOverlay(client: Db, input: {
+    publicKey: string; language: string; status: SnapshotLanguageOverlay["status"];
+    payload: SnapshotLanguageOverlayPayload | null; error?: string | null;
+  }): Promise<void> {
+    const language = normalizeDisplayLanguage(input.language).toLowerCase();
+    let object: { key: string; sha256: string; bytes: number } | null = null;
+    let summary: ConversationSummary | null = null;
+    if (input.status === "ready" || input.status === "degraded") {
+      const payload = asSnapshotLanguageOverlayPayload(input.payload);
+      if (!payload || normalizeDisplayLanguage(payload.language).toLowerCase() !== language) {
+        throw new Error("language_overlay_payload_invalid");
+      }
+      const canonical = await client.query<{ conversation_summary_payload: unknown }>(
+        `SELECT conversation_summary_payload FROM canonical_public_repository_snapshots
+         WHERE public_snapshot_key = $1 AND payload_purged_at IS NULL FOR UPDATE`, [input.publicKey]);
+      const source = canonical.rows[0]?.conversation_summary_payload;
+      summary = conversationSummaryFromSource(source ? jsonObject<ConversationSummarySource>(source) : null, payload);
+      if (!summary) throw new Error("language_overlay_snapshot_unavailable");
+      const body = jsonBytes(payload);
+      const key = `public-repository-snapshots/${input.publicKey}/language-overlays/${encodeURIComponent(language)}-${snapshotObjectDigest(body)}.json`;
+      object = await this.snapshotObjects.put(key, body, "application/json");
+      if (object.key !== key || object.bytes !== body.byteLength || object.sha256 !== snapshotObjectDigest(body)) {
+        throw new Error("language_overlay_object_write_mismatch");
+      }
+    }
+    await client.query(
+      `INSERT INTO public_snapshot_language_overlays(
+         public_snapshot_key, language, status, object_key, object_sha256, object_bytes,
+         schema_version, conversation_summary_payload, generated_at, error, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,now())
+       ON CONFLICT(public_snapshot_key, language) DO UPDATE SET
+         status=EXCLUDED.status, object_key=EXCLUDED.object_key, object_sha256=EXCLUDED.object_sha256,
+         object_bytes=EXCLUDED.object_bytes, schema_version=EXCLUDED.schema_version,
+         conversation_summary_payload=EXCLUDED.conversation_summary_payload,
+         generated_at=EXCLUDED.generated_at, error=EXCLUDED.error, updated_at=now()`,
+      [input.publicKey, language, input.status, object?.key ?? null, object?.sha256 ?? null, object?.bytes ?? null,
+        object ? SNAPSHOT_LANGUAGE_OVERLAY_VERSION : null, summary ? JSON.stringify(summary) : null,
+        object ? input.payload?.generated_at : null, input.error ?? null]);
   }
 
   override async saveSnapshotLanguageOverlay(input: {
-    publicKey: string;
-    language: string;
-    status: SnapshotLanguageOverlay["status"];
-    payload: SnapshotLanguageOverlayPayload | null;
-    error?: string | null;
-    fence?: AnalysisLeaseFence;
+    publicKey: string; language: string; status: SnapshotLanguageOverlay["status"];
+    payload: SnapshotLanguageOverlayPayload | null; error?: string | null; fence?: AnalysisLeaseFence;
   }): Promise<void> {
-    const write = (client: Db): Promise<unknown> => client.query(
-      `INSERT INTO public_snapshot_language_overlays(
-         public_snapshot_key, language, status, payload, generated_at, error, updated_at
-       ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, now())
-       ON CONFLICT(public_snapshot_key, language) DO UPDATE SET
-         status = EXCLUDED.status, payload = EXCLUDED.payload,
-         generated_at = EXCLUDED.generated_at, error = EXCLUDED.error,
-         updated_at = now()`,
-      [
-        input.publicKey,
-        input.language.toLowerCase(),
-        input.status,
-        input.payload ? JSON.stringify(input.payload) : null,
-        input.payload ? input.payload.generated_at : null,
-        input.error ?? null,
-      ],
-    );
     if (input.fence) {
-      await this.withAnalysisLeaseTransaction(input.fence, async (client) => {
-        await write(client);
-      });
+      await this.withAnalysisLeaseTransaction(input.fence, client => this.writeSnapshotLanguageOverlay(client, input),
+        async client => { await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('repository-payload-use',0))"); });
       return;
     }
-    await write(this.pool);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('repository-payload-use',0))");
+      await this.writeSnapshotLanguageOverlay(client, input);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
   }
 
   override async createOrJoinSnapshotLanguageOverlay(input: {
@@ -2747,10 +2632,11 @@ export class PostgresStore extends FileStore {
       if (!ready) {
         await client.query(
           `INSERT INTO public_snapshot_language_overlays(
-             public_snapshot_key, language, status, payload, generated_at, error, updated_at
-           ) VALUES ($1, $2, 'pending', NULL, NULL, NULL, now())
+             public_snapshot_key, language, status, generated_at, error, updated_at
+           ) VALUES ($1, $2, 'pending', NULL, NULL, now())
            ON CONFLICT(public_snapshot_key, language) DO UPDATE SET
-             status = 'pending', payload = NULL, generated_at = NULL,
+             status = 'pending', object_key = NULL, object_sha256 = NULL, object_bytes = NULL,
+             schema_version = NULL, conversation_summary_payload = NULL, generated_at = NULL,
              error = NULL, updated_at = now()
            WHERE public_snapshot_language_overlays.status NOT IN ('ready', 'degraded')`,
           [input.publicKey, language],
@@ -2784,6 +2670,7 @@ export class PostgresStore extends FileStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('repository-payload-use',0))");
       const fencedProjectId = input.fence
         ? await this.resolveAnalysisProjectId(client, input.fence)
         : undefined;
@@ -2794,16 +2681,7 @@ export class PostgresStore extends FileStore {
         fencedProjectId ? [fencedProjectId] : [],
       );
       if (input.fence) await this.assertAnalysisLeaseWithDb(client, input.fence, fencedProjectId);
-      await client.query(
-        `INSERT INTO public_snapshot_language_overlays(
-           public_snapshot_key, language, status, payload, generated_at, error, updated_at
-         ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, now())
-         ON CONFLICT(public_snapshot_key, language) DO UPDATE SET
-           status = EXCLUDED.status, payload = EXCLUDED.payload,
-           generated_at = EXCLUDED.generated_at, error = EXCLUDED.error,
-           updated_at = now()`,
-        [input.publicKey, language, input.status, JSON.stringify(input.payload), input.payload.generated_at, input.error ?? null],
-      );
+      await this.writeSnapshotLanguageOverlay(client, input);
       const jobs = await client.query(
         `SELECT * FROM analysis_jobs
          WHERE language_overlay_key = $1 AND status IN ('queued', 'running')
@@ -2868,10 +2746,11 @@ export class PostgresStore extends FileStore {
       const timestamp = nowIso();
       await client.query(
         `INSERT INTO public_snapshot_language_overlays(
-           public_snapshot_key, language, status, payload, generated_at, error, updated_at
-         ) VALUES ($1, $2, 'failed', NULL, NULL, $3, now())
+           public_snapshot_key, language, status, generated_at, error, updated_at
+         ) VALUES ($1, $2, 'failed', NULL, $3, now())
          ON CONFLICT(public_snapshot_key, language) DO UPDATE SET
-           status = 'failed', payload = NULL, generated_at = NULL,
+           status = 'failed', object_key = NULL, object_sha256 = NULL, object_bytes = NULL,
+             schema_version = NULL, conversation_summary_payload = NULL, generated_at = NULL,
            error = EXCLUDED.error, updated_at = now()`,
         [publicKey, language, error],
       );
@@ -3229,6 +3108,21 @@ export class PostgresStore extends FileStore {
       }
       // Retire the whole directory generation with the pointer. Row cleanup is
       // done by the bounded background reclaimer after commit.
+      const directoryObjects = await client.query<{ object_manifest: unknown }>(
+        'SELECT object_manifest FROM snapshot_directory_generations WHERE public_snapshot_key=$1', [publicKey]);
+      for (const generation of directoryObjects.rows) {
+        if (!generation.object_manifest) continue;
+        const manifest = parseDirectoryManifest(generation.object_manifest);
+        objectKeys.push(...Object.values(manifest.sections).flat().map(chunk => chunk.key));
+      }
+      const directoryIntents = await client.query<{ object_key: string }>(
+        `SELECT intent.object_key FROM snapshot_directory_object_intents intent
+         JOIN snapshot_directory_generations generation USING(directory_id)
+         WHERE generation.public_snapshot_key=$1`, [publicKey]);
+      objectKeys.push(...directoryIntents.rows.map(intent => intent.object_key));
+      const overlayObjects = await client.query<{ object_key: string }>(
+        'SELECT object_key FROM public_snapshot_language_overlays WHERE public_snapshot_key=$1 AND object_key IS NOT NULL', [publicKey]);
+      objectKeys.push(...overlayObjects.rows.map(overlay => overlay.object_key));
       await client.query(`INSERT INTO snapshot_directory_reclamation(directory_id)
         SELECT directory_id FROM snapshot_directory_generations WHERE public_snapshot_key=$1
         ON CONFLICT(directory_id) DO NOTHING`, [publicKey]);
@@ -3243,7 +3137,7 @@ export class PostgresStore extends FileStore {
       )`,[row.analysis_snapshot_id,row.repository_identity]);
       await client.query(
         `UPDATE canonical_public_repository_snapshots SET
-           view_payload = NULL, analysis_payload = NULL,
+           conversation_summary_payload = NULL,
            source_storage_key = NULL, view_storage_key = NULL, analysis_storage_key = NULL,
            manifest_storage_key = NULL, manifest_sha256 = NULL, manifest_bytes = NULL,
            view_sha256 = NULL, view_bytes = NULL,
@@ -3350,7 +3244,9 @@ export class PostgresStore extends FileStore {
     const pending = await this.pool.query<{ pending: string }>(
       `SELECT count(*)::text AS pending FROM snapshot_payload_deletions WHERE deleted_at IS NULL`,
     );
-    return { ...result, pending: Number(pending.rows[0]?.pending ?? 0) };
+    const directory = await deleteDirectoryObjectsBatch(this.pool, this.snapshotObjects, limit);
+    return { deleted: result.deleted + directory.deleted, failed: result.failed + directory.failed,
+      pending: Number(pending.rows[0]?.pending ?? 0) + directory.pending };
   }
 
   /** Deletes 16 objects at a time and records each outcome in the ledger. */
@@ -3657,7 +3553,8 @@ export class PostgresStore extends FileStore {
           if (publicKey && language) {
             await client.query(
               `UPDATE public_snapshot_language_overlays SET
-                 status = 'failed', payload = NULL, generated_at = NULL,
+                 status = 'failed', object_key = NULL, object_sha256 = NULL, object_bytes = NULL,
+             schema_version = NULL, conversation_summary_payload = NULL, generated_at = NULL,
                  error = $3, updated_at = $2
                WHERE public_snapshot_key = $1 AND language = $4
                  AND status NOT IN ('ready', 'degraded')`,

@@ -1,5 +1,8 @@
 # Source snapshot storage
 
+For the overall database/object split, cache limits and format upgrade boundary,
+see [object-backed repository analysis](object-storage.md).
+
 Published source snapshots use an immutable file index and bounded object packs.
 This reduces object-storage request overhead for repositories containing many
 small files while preserving independent file access.

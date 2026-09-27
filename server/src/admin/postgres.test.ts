@@ -155,7 +155,7 @@ test(
         })));
         assert.equal(maxAdmissions, 1, 'capacity admission serializes without nested pool acquisition');
         const key='b'.repeat(64);
-        await pool.query(`INSERT INTO canonical_public_repository_snapshots(public_snapshot_key,repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,view_payload,analysis_payload,source_storage_key,purge_after) VALUES($1,'example/fixture','commit','test','test','isolated','{}','{}','',clock_timestamp()-interval '1 day')`,[key]);
+        await pool.query(`INSERT INTO canonical_public_repository_snapshots(public_snapshot_key,repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,source_storage_key,purge_after) VALUES($1,'example/fixture','commit','test','test','isolated','',clock_timestamp()-interval '1 day')`,[key]);
         const now=new Date().toISOString();
         assert.equal(await store.purgePublicSnapshotPayload(key,now),false,'A snapshot that was never retired is not cleaned');
         await pool.query(`UPDATE canonical_public_repository_snapshots SET retired_at=clock_timestamp()-interval '2 days' WHERE public_snapshot_key=$1`,[key]);

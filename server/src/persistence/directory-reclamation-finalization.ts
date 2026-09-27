@@ -30,6 +30,7 @@ export async function prepareDirectoryFinalization(client: PoolClient, tables: r
   }
   const expected = [...tables.map(name => 'snapshot_directory_' + name),
     'snapshot_query_directories', 'snapshot_directory_reclamation',
+    'snapshot_directory_object_intents',
     ...inherited.rows.map(row => row.name)];
   // A planner preference cannot manufacture an index. Fail closed if schema
   // drift adds an unreviewed cascade or removes a leading directory-ID index.

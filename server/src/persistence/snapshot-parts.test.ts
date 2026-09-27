@@ -23,17 +23,17 @@ test('view/analysis readers avoid the other payload while preserving requested-o
     manifest_storage_key:'manifest',manifest_sha256:snapshotObjectDigest(manifest),manifest_bytes:String(manifest.byteLength),
     view_sha256:objects[0].sha256,view_bytes:String(objects[0].bytes),analysis_sha256:objects[1].sha256,analysis_bytes:String(objects[1].bytes),
     source_manifest_sha256:null,source_manifest_bytes:null,source_file_count:0,language_overlay_version:null,retired_at:null,purge_after:null,payload_purged_at:null};
-  const store=new PostgresStore({databaseUrl:'postgresql://unused',objectAdmissionStore:new LocalPermitStore(),root:tmpdir(),migrationsRoot:tmpdir(),encryptionSecret:'parts-test-only-secret',objectStore:storage});
+  const store=new PostgresStore({databaseUrl:'postgresql://unused',objectAdmissionStore:new LocalPermitStore(),objectCacheBytes:0,root:tmpdir(),migrationsRoot:tmpdir(),encryptionSecret:'parts-test-only-secret',objectStore:storage});
   const pool=store.pool;Object.assign(store,{pool:{query:async(sql:string)=>{sqls.push(sql);return{rows:sql.includes('FROM project_public_snapshot_bindings')?[{public_snapshot_key:key}]:[row]};}}});
   store.loadProject=async()=>createProject('guest:test','https://github.com/test/parts','parts');
   try {
     assert.deepEqual(await store.loadSnapshot('project'),view);
     assert.deepEqual(reads,['manifest','view']);
-    assert.ok(sqls.some(sql=>sql.includes('NULL AS analysis_payload')));
+    assert.ok(sqls.every(sql=>!sql.includes('analysis_payload')));
     const offset=reads.length;
     assert.deepEqual(await store.loadAnalysisResult('project'),analysis);
     assert.deepEqual(reads.slice(offset),['manifest','analysis']);
-    assert.ok(sqls.some(sql=>sql.includes('NULL AS view_payload')));
+    assert.ok(sqls.every(sql=>!sql.includes('view_payload')));
     const full=await store.loadPublicSnapshot(key);
     assert.deepEqual(full?.view,view);
     assert.deepEqual(full?.analysis,analysis);
@@ -56,6 +56,10 @@ test('view/analysis readers avoid the other payload while preserving requested-o
     await assert.rejects(store.loadSnapshot('project'), /public_snapshot_manifest_metadata_mismatch/);
     row.view_sha256 = objects[0].sha256;
     assert.deepEqual(await store.loadSnapshot('project'), view);
+    row.view_payload = view;
+    row.manifest_storage_key = null as unknown as string;
+    await assert.rejects(store.loadSnapshot('project'), /public_snapshot_manifest_metadata_invalid/,
+      'an old inline copy cannot bypass missing object descriptors');
 
   } finally {await pool.end();}
 });
@@ -66,6 +70,16 @@ test('PostgreSQL static-file reads hydrate only the indexed block and require th
   const prepared=prepareAnalysisPayload({static_analysis:{files},fact_graph:{nodes:Array(3000).fill({id:'irrelevant'})}},
     (path,index,digest)=>`analysis-chunks/${path}-${index}-${digest}.json`);
   const bodies=new Map(prepared.chunks.map(chunk=>[chunk.descriptor.key,chunk.body]));
+  const viewBody = jsonBytes({ snapshot_id: snapshotId });
+  const analysisBody = jsonBytes(prepared.value);
+  bodies.set('view', viewBody); bodies.set('analysis', analysisBody);
+  const objects = [ ['view', viewBody], ['analysis', analysisBody] ]
+    .map(([kind, body]) => ({ kind: kind as string, key: kind as string,
+      bytes: (body as Uint8Array).byteLength, sha256: snapshotObjectDigest(body as Uint8Array) }));
+  const manifest = jsonBytes({ schema_version: 1, public_snapshot_key: key, snapshot_id: snapshotId,
+    objects, query_directory: { digest: '0'.repeat(64), nodes: 0, edges: 0, evidence: 0, layers: 0, value_points: 0 },
+    created_at: '2026-09-27T00:00:00Z' });
+  bodies.set('manifest', manifest);
   const reads:string[]=[];
   const storage:SnapshotObjectStore={kind:'local',get:async key=>{reads.push(key);return bodies.get(key)??null;},put:async()=>{throw Error('unexpected write');},delete:async()=>{throw Error('unexpected delete');}};
   const store=new PostgresStore({databaseUrl:'postgresql://unused',objectAdmissionStore:new LocalPermitStore(),root:tmpdir(),migrationsRoot:tmpdir(),encryptionSecret:'static-parts-test',objectStore:storage});
@@ -73,12 +87,18 @@ test('PostgreSQL static-file reads hydrate only the indexed block and require th
   const project=createProject('guest:test','https://github.com/test/parts','parts');
   project.analysis.snapshot_id=snapshotId;project.analysis.canonical_snapshot_key=key;
   store.loadProject=async()=>project;
-  Object.assign(store,{pool:{query:async()=>({rows:[{analysis_snapshot_id:snapshotId,analysis_payload:prepared.value,view_payload:null}]})}});
+  Object.assign(store,{pool:{query:async()=>({rows:[{analysis_snapshot_id:snapshotId,
+    view_storage_key: 'view', analysis_storage_key: 'analysis', manifest_storage_key: 'manifest',
+    manifest_sha256: snapshotObjectDigest(manifest), manifest_bytes: manifest.byteLength,
+    view_sha256: objects[0]!.sha256, view_bytes: viewBody.byteLength,
+    analysis_sha256: objects[1]!.sha256, analysis_bytes: analysisBody.byteLength,
+  }]})}});
   try {
     assert.deepEqual(await store.readStaticFile(project.project_id,snapshotId,'src/64.ts'),files[64]);
-    assert.equal(reads.length,1);
-    assert.match(reads[0]!,/static_analysis.files/);
+    assert.deepEqual(reads.slice(0,2), ['manifest', 'analysis']);
+    assert.equal(reads.length,3);
+    assert.match(reads[2]!,/static_analysis.files/);
     await assert.rejects(store.readStaticFile(project.project_id,'wrong','src/64.ts'),/snapshot_not_bound/);
-    assert.equal(reads.length,1);
+    assert.equal(reads.length,3);
   } finally {await pool.end();}
 });

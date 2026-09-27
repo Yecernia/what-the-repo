@@ -20,8 +20,8 @@ test('storage accounting publication, rollback, reconciliation and expired-owner
     try {
       await store.init();
       await store.pool.query(`INSERT INTO canonical_public_repository_snapshots(public_snapshot_key,repository_identity,
-        commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,view_payload,analysis_payload,
-        source_storage_key) VALUES($1,$2,'commit','fixture','fixture','accounting-snapshot','{}','{}','')`, [key,repository]);
+        commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,
+        source_storage_key) VALUES($1,$2,'commit','fixture','fixture','accounting-snapshot','')`, [key,repository]);
       const createGeneration = async () => String((await store.pool.query(`INSERT INTO snapshot_directory_generations(
         public_snapshot_key,snapshot_id,staging_expires_at) VALUES($1,'accounting-snapshot',clock_timestamp()+interval '1 hour')
         RETURNING directory_id`, [key])).rows[0].directory_id);
@@ -29,7 +29,7 @@ test('storage accounting publication, rollback, reconciliation and expired-owner
       const bind = async (id: string, nodes: number) => store.pool.query(`INSERT INTO snapshot_query_directories(
         public_snapshot_key,snapshot_id,schema_version,directory_digest,node_count,edge_count,evidence_count,
         layer_count,value_point_count,ready_at,directory_id)
-        VALUES($1,'accounting-snapshot',2,'digest',$3,3,4,5,6,clock_timestamp(),$2)
+        VALUES($1,'accounting-snapshot',3,'digest',$3,3,4,5,6,clock_timestamp(),$2)
         ON CONFLICT(public_snapshot_key) DO UPDATE SET directory_id=EXCLUDED.directory_id,node_count=EXCLUDED.node_count`,
       [key,id,nodes]);
       const revision = async () => (await store.pool.query(

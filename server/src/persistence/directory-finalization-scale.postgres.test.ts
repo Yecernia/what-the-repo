@@ -9,7 +9,7 @@ import { PostgresStore } from './postgres-store.js';
 import { LocalPermitStore } from '../scheduling/permits.js';
 import { reclaimSnapshotDirectoryBatch } from './directory-reclamation.js';
 
-const databaseUrl = process.env.WTR_RECLAMATION_SCALE_TEST_DATABASE_URL;
+const databaseUrl = process.env.WTR_RECLAMATION_SCALE_TEST_DATABASE_URL ?? process.env.WTR_ADMIN_TEST_DATABASE_URL;
 type Plan = Record<string, any>;
 function scans(plan: Plan): Plan[] {
   return [plan, ...(plan.Plans ?? []).flatMap((child: Plan) => scans(child))]
@@ -48,13 +48,17 @@ test('million-row stale statistics and cached FK plans cannot stall retired-gene
     for (const publicKey of keys) await store.savePublicSnapshot({...base,publicKey,repository:base.repository+'-'+publicKey});
     [oldId,liveId] = await Promise.all(keys.map(async key => String((await store.pool.query(
       'SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id)));
+    // Exercise the bounded parent-row path rather than dropping a generation
+    // child. Both old children are empty because the published fixture is empty.
+    assert.match(oldId,/^[1-9][0-9]*$/);
+    await store.pool.query(`DROP TABLE snapshot_directory_evidence_links_g${oldId},snapshot_directory_evidence_g${oldId}`);
     await store.pool.query('ALTER TABLE snapshot_directory_evidence SET (autovacuum_enabled=false)');
     // Interleave the once-large retired generation with a million unrelated rows.
     // This creates genuine MCV selectivity and low physical correlation; no pg_statistic editing.
     await store.pool.query(`INSERT INTO snapshot_directory_evidence
-      (directory_id,evidence_id,label,path,start_line,end_line,kind,payload)
+      (directory_id,row_no,evidence_id)
       SELECT CASE WHEN i%6=0 THEN $1::bigint ELSE $2::bigint END,
-        'proof:'||lpad(i::text,8,'0'),repeat(md5(i::text),16),'src/test.ts',1,1,'line','{}'::jsonb
+        i-1,'proof:'||lpad(i::text,8,'0')
       FROM generate_series(1,1200000) AS i`,[oldId,liveId]);
     await store.pool.query('ANALYZE snapshot_directory_evidence');
     const statsSql=`SELECT n_distinct,most_common_vals::text,most_common_freqs FROM pg_stats

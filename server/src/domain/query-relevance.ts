@@ -1,3 +1,4 @@
+import { nodeSearchText, edgeSearchText } from './snapshot-query.js';
 import type { SnapshotQueryEdgeRow, SnapshotQueryNodeRow, SnapshotQueryInput } from "./snapshot-query.js";
 
 export interface RelevanceScore {
@@ -16,7 +17,7 @@ function hits(text: string, queryTerms: string[]): number {
 
 export function scoreNode(row: SnapshotQueryNodeRow, input: SnapshotQueryInput): RelevanceScore {
   const tokens = queryTerms(input.text);
-  const content = [row.node_id, row.name, row.label, row.responsibility, row.path ?? "", JSON.stringify(row.payload)].join(" ").toLowerCase();
+  const content = nodeSearchText(row);
   const matched = hits(content, tokens);
   const personalized = input.personalized_entity_ids?.includes(row.node_id) ? 1.5 : 0;
   const depth = Number.isFinite(row.depth) ? row.depth : 0;
@@ -31,7 +32,7 @@ export function scoreNode(row: SnapshotQueryNodeRow, input: SnapshotQueryInput):
 
 export function scoreEdge(row: SnapshotQueryEdgeRow, input: SnapshotQueryInput): RelevanceScore {
   const tokens = queryTerms(input.text);
-  const content = [row.edge_id, row.relation_kind, row.label, row.description, row.source_node_key, row.target_node_key].join(" ").toLowerCase();
+  const content = edgeSearchText(row);
   const matched = hits(content, tokens);
   return {
     score: matched * 10 + row.weight,

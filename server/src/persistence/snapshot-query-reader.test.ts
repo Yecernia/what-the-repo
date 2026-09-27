@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { PostgresStore } from './postgres-store.js';
 import { asEvidenceSnapshot } from '../domain/snapshot.js';
 import { buildSnapshotQueryDirectory, querySnapshotQueryDirectory, type SnapshotQueryInput, type SnapshotQueryResult } from '../domain/snapshot-query.js';
@@ -139,34 +139,60 @@ test('PostgreSQL ranked pages match the in-memory contract for filters, scopes, 
     }
     const oneHop=await store.queryPublicSnapshot({publicKey:key,snapshotId,query:{entity_ids:['A'],expand_hops:1,limit:100}});
     assert.deepEqual(new Set(oneHop.nodes.map(n=>n.node_id)),new Set(['A','B']),'one hop cannot cascade through an edge chain');
-    await assert.rejects(store.queryPublicSnapshot({publicKey:key,snapshotId:'wrong-snapshot',query:{}}),/snapshot_query_not_found/);
+    await assert.rejects(store.queryPublicSnapshot({publicKey:key,snapshotId:'wrong-snapshot',query:{}}),/snapshot_directory_reanalysis_required/);
     assert.ok(pages>30);
     console.log(JSON.stringify({ queryContractCases: cases.length, pages }));
   });
 });
 
-test('PostgreSQL search-column migration preserves values and indexes', {skip:!url}, async () => {
-  await withQueryFixture(async (store,key) => {
-    // Exercise backfill on existing rows, not only new publications. The legacy
-    // views must keep their shape and public results must not leak search data.
-    const before=(await store.pool.query('SELECT * FROM snapshot_query_nodes WHERE public_snapshot_key=$1 ORDER BY node_key',[key])).rows;
-    await store.pool.query(await readFile(join(process.cwd(),'migrations/0024_snapshot_text_search.down.sql'),'utf8'));
-    await store.pool.query(await readFile(join(process.cwd(),'migrations/0024_snapshot_text_search.sql'),'utf8'));
-    assert.deepEqual((await store.pool.query('SELECT * FROM snapshot_query_nodes WHERE public_snapshot_key=$1 ORDER BY node_key',[key])).rows,before);
-    const normalized=await store.pool.query(`SELECT bool_and(n.search_text=lower(concat_ws(' ',NULLIF(n.node_key,''),NULLIF(n.node_id,''),NULLIF(n.name,''),NULLIF(n.label,''),NULLIF(n.responsibility,''),NULLIF(n.path,''),NULLIF(n.payload::text,'')))) AS same
-      FROM snapshot_directory_nodes n JOIN snapshot_query_directories d USING(directory_id) WHERE d.public_snapshot_key=$1`,[key]);
-    assert.equal(normalized.rows[0].same,true);
+test('compact indexes contain no response JSON and retain indexed human text search', {skip:!url}, async()=>{
+  await withQueryFixture(async(store,key,snapshotId)=>{
+    const columns=(await store.pool.query(`SELECT table_name,column_name FROM information_schema.columns
+      WHERE table_name IN ('snapshot_directory_nodes','snapshot_directory_edges','snapshot_directory_evidence','snapshot_directory_evidence_links')`)).rows;
+    assert.ok(!columns.some(row=>['payload','responsibility','description','label','node_id','source_node_key','target_node_key','owner_key'].includes(row.column_name)));
+    const meta=(await store.pool.query(`SELECT g.object_manifest FROM snapshot_directory_generations g JOIN snapshot_query_directories d USING(directory_id)
+      WHERE d.public_snapshot_key=$1`,[key])).rows[0];
+    assert.equal(meta.object_manifest.version,1);assert.ok(meta.object_manifest.sections.nodes.length);
+    const query=await store.queryPublicSnapshot({publicKey:key,snapshotId,query:{text:'session',include_metadata:false}});
+    assert.equal(query.nodes[0]?.node_id,'A');assert.match(JSON.stringify(query.nodes[0]?.payload),/entry_tag/);
+    assert.equal((await store.queryPublicSnapshot({publicKey:key,snapshotId,query:{text:'entry_tag'}})).nodes.length,0,'arbitrary attributes are not search documents');
     const db=await store.pool.connect();
-    try {
+    try{
       await db.query('BEGIN');await db.query('SET LOCAL enable_seqscan=off');
-      for(const table of ['nodes','edges']) {
+      for(const table of ['nodes','edges']){
         const plan=await db.query(`EXPLAIN (FORMAT JSON) SELECT 1 FROM snapshot_directory_${table} WHERE search_text LIKE $1`,['%session%']);
-        assert.match(JSON.stringify(plan.rows),new RegExp(`snapshot_directory_${table}_text_idx`));
+        assert.match(JSON.stringify(plan.rows),new RegExp(`snapshot_directory_${table}_g[0-9]+_text_idx`));
       }
-    } finally {await db.query('ROLLBACK');db.release();}
+    }finally{await db.query('ROLLBACK');db.release();}
   });
 });
 
+test('large display attributes stay in objects while cold page reads touch only covering chunks', {skip:!url,timeout:60000},async()=>{
+  await withQueryFixture(async(store,key,snapshotId,view,analysis)=>{
+    const template=view.graph.nodes[0]!;
+    view.graph.nodes=Array.from({length:1500},(_,i)=>({...template,id:`bulk:${String(i).padStart(5,'0')}`,
+      name:`Module ${i}`,label:`Module ${i}`,responsibility:'Display storage fixture',parent_entity_id:null,depth:0,
+      evidence:[],members:[],attributes:{path:`src/${i}.ts`,language:'typescript',detail:randomBytes(3072).toString('base64')}}));
+    view.graph.edges=[];
+    await store.savePublicSnapshot({publicKey:key,repository:'test/query-'+key.slice(0,8),commitSha:'a'.repeat(40),snapshotId,view,analysis});
+    const directory=buildSnapshotQueryDirectory(key,snapshotId,view,analysis);
+    const responseBytes=Buffer.byteLength(JSON.stringify(directory.nodes));
+    const generation=(await store.pool.query('SELECT directory_id FROM snapshot_query_directories WHERE public_snapshot_key=$1',[key])).rows[0].directory_id;
+    const physical=Number((await store.pool.query(`SELECT sum(pg_total_relation_size(oid))::text bytes FROM pg_class
+      WHERE relkind='r' AND relname=ANY($1::text[])`,[['nodes','edges','evidence','evidence_links'].map(kind=>`snapshot_directory_${kind}_g${generation}`)])).rows[0].bytes);
+    assert.ok(physical<responseBytes/2,`compact PostgreSQL bytes ${physical} must be much smaller than full response bytes ${responseBytes}`);
+    const reads:string[]=[],original=store.snapshotObjects.get.bind(store.snapshotObjects);
+    store.snapshotObjects.get=async objectKey=>{reads.push(objectKey);return original(objectKey);};
+    try{
+      const query={include_metadata:false,limit:3};
+      const result=await store.queryPublicSnapshot({publicKey:key,snapshotId,query});
+      assert.deepEqual(canonical(result),canonical(querySnapshotQueryDirectory(directory,query)));
+      assert.ok(reads.length>0&&reads.length<=2,`one three-row page fetched ${reads.length} objects`);
+      assert.ok(reads.every(objectKey=>objectKey.includes(`/directory/${generation}/nodes/`)),'no canonical payload or unrelated section reads');
+      console.log(JSON.stringify({compactDirectoryNodes:1500,responseBytes,postgresTableAndIndexBytes:physical,pageObjectReads:reads.length}));
+    }finally{store.snapshotObjects.get=original;}
+  });
+});
 test('Agent evidence hydration caps distinct IDs and retains their role links', {skip:!url},async()=>{
   await withQueryFixture(async(store,key,snapshotId,view,analysis)=>{
     const refs=Array.from({length:30},(_,i)=>({stable_id:'many:'+String(i).padStart(3,'0'),label:'proof',path:'src/A.ts',start_line:i+1,end_line:i+1,kind:'symbol'}));
@@ -186,6 +212,37 @@ test('Agent evidence hydration caps distinct IDs and retains their role links', 
     assert.equal(new Set(actual.evidence_links.filter(link=>link.owner_kind==='node').map(link=>link.evidence_id)).size,8);
     const full=await store.queryPublicSnapshot({publicKey:key,snapshotId,query:{entity_ids:['A'],limit:8}});
     assert.equal(full.evidence.length,30,'full public queries still return all references');
+  });
+});
+
+test('query evidence is stable by identity before API and Agent display limits', {skip:!url},async()=>{
+  await withQueryFixture(async(store,key,snapshotId,view,analysis)=>{
+    const refs=Array.from({length:18},(_,index)=>({stable_id:'proof:'+String(index).padStart(2,'0'),
+      label:'proof',path:'src/A.ts',start_line:index+1,end_line:index+1,kind:'symbol'}));
+    // Payload insertion order and owner rank differ from evidence identity order.
+    view.graph.nodes[0]!.evidence=[...refs].reverse();view.graph.nodes[0]!.members=[...refs].reverse();
+    view.graph.nodes[1]!.evidence=[refs[17]!,refs[0]!];
+    view.graph.edges[0]!.evidence=[refs[15]!,refs[1]!,refs[0]!];
+    await store.savePublicSnapshot({publicKey:key,repository:'test/query-'+key.slice(0,8),commitSha:'a'.repeat(40),snapshotId,view,analysis});
+    const byteOrder=(a:string,b:string)=>Buffer.compare(Buffer.from(a),Buffer.from(b));
+    for(const limits of [undefined,{node:8,edge:4}]){
+      const query:SnapshotQueryInput={entity_ids:['A','B'],include_metadata:false,limit:20,
+        ...(limits?{evidence_per_owner:limits}:{})};
+      const first=await store.queryPublicSnapshot({publicKey:key,snapshotId,query});
+      const evidenceIds=first.evidence.map(row=>row.evidence_id);
+      assert.deepEqual(evidenceIds,[...evidenceIds].sort(byteOrder));
+      for(const node of first.nodes){
+        const links=first.evidence_links.filter(link=>link.owner_kind==='node'&&link.owner_key===node.node_key);
+        const ordered=links.map(link=>`${link.evidence_id}\0${link.role}`);
+        assert.deepEqual(ordered,[...ordered].sort(byteOrder),'per-owner links must be ordered before callers slice their visible evidence');
+      }
+      const links=first.evidence_links.filter(link=>link.owner_kind==='node'&&link.owner_key==='component:A');
+      assert.deepEqual([...new Set(links.map(link=>link.evidence_id))],refs.slice(0,limits?8:18).map(ref=>ref.stable_id));
+      assert.deepEqual(links.slice(0,12).map(link=>link.evidence_id),refs.slice(0,6).flatMap(ref=>[ref.stable_id,ref.stable_id]),
+        'full API first twelve references retain stable evidence/member roles');
+      const repeated=await Promise.all(Array.from({length:3},()=>store.queryPublicSnapshot({publicKey:key,snapshotId,query})));
+      for(const result of repeated)assert.deepEqual(result,first,'response ordering must be stable, not only set-equivalent');
+    }
   });
 });
 
@@ -209,14 +266,14 @@ test('evidence-heavy owners scan their links once and keep distinct-ID role sema
       }};
     }} as unknown as Pool;
     const request={publicKey:key,snapshotId,query};
-    const actual=await readSnapshotQuery(observed,request);assert.ok(actual);
+    const actual=await readSnapshotQuery(observed,request,store.snapshotObjects);assert.ok(actual);
     assert.deepEqual(canonical(actual),canonical(querySnapshotQueryDirectory(directory,query)));
     assert.equal(actual.evidence_truncated,true);
     assert.ok(actual.evidence_links.filter(link=>link.owner_key==='component:A'&&link.evidence_id===refs[0]!.stable_id).length>=2,
       'one distinct evidence ID must retain its separate member and evidence roles');
     let visited=0;
     const visit=(plan:Record<string,any>)=>{
-      if(plan['Relation Name']==='snapshot_directory_evidence_links')
+      if(/^snapshot_directory_evidence_links(?:_g[0-9]+)?$/.test(plan['Relation Name']??''))
         visited+=(plan['Actual Rows']+(plan['Rows Removed by Filter']??0)) * plan['Actual Loops'];
       for(const child of plan.Plans??[])visit(child);
     };
@@ -227,7 +284,7 @@ test('evidence-heavy owners scan their links once and keep distinct-ID role sema
     }
     assert.ok(visited<=directory.evidence_links.length*2,
       `link visits ${visited} must stay linear in owner links ${directory.evidence_links.length}`);
-    for(const result of await Promise.all(Array.from({length:5},()=>readSnapshotQuery(store.pool,request))))
+    for(const result of await Promise.all(Array.from({length:5},()=>readSnapshotQuery(store.pool,request,store.snapshotObjects))))
       assert.deepEqual(canonical(result!),canonical(actual));
     console.log(JSON.stringify({evidenceHeavyLinks:directory.evidence_links.length,visited,returnedEvidence:actual.evidence.length}));
   });

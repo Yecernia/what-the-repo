@@ -588,6 +588,7 @@ export const englishMessages: Record<string, string> = {
   '请求过于频繁，请稍后再试。': 'Too many requests. Please try again later.',
   '项目不存在': 'Project not found',
   "仓库分析结果尚未生成": "Repository analysis is not ready yet",
+  "此仓库的分析资料需要重新生成，请重新分析后继续。": "This repository's analysis needs to be regenerated. Analyze it again to continue.",
   'GitHub 登录服务暂时不可用，请稍后重试。': 'GitHub sign-in is unavailable. Please try again later.',
   'GitHub 登录已取消。': 'GitHub sign-in was cancelled.',
   'GitHub 登录状态已失效，请重新登录。': 'Your GitHub sign-in session expired. Please sign in again.',

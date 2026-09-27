@@ -74,18 +74,18 @@ try {
       const repository = 'perf/r' + i.toString().padStart(2, '0');
       await store.pool.query(`INSERT INTO canonical_public_repository_snapshots
         (public_snapshot_key,repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,
-         analysis_snapshot_id,view_payload,analysis_payload,source_storage_key)
-        VALUES($1,$2,'commit','perf','perf',$3,'{}','{}','')`, [key, repository, 'perf-' + i]);
+         analysis_snapshot_id,source_storage_key)
+        VALUES($1,$2,'commit','perf','perf',$3,'')`, [key, repository, 'perf-' + i]);
       const generation = await store.pool.query(`INSERT INTO snapshot_directory_generations
         (public_snapshot_key,snapshot_id) VALUES($1,$2) RETURNING directory_id`, [key, 'perf-' + i]);
       const count = Math.floor(rows / 25) + (i < rows % 25 ? 1 : 0);
       await store.pool.query(`INSERT INTO snapshot_directory_nodes
-        (directory_id,node_key,node_id,node_kind,label,name,responsibility,path,certainty,lifecycle_status)
-        SELECT $1,'n'||n,'n'||n,'file','Node '||n,'Node '||n,'fixture','src/'||n||'.ts','certain','active'
+        (directory_id,row_no,node_key,entity_kind,depth,path,search_text,projection_kinds)
+        SELECT $1,n-1,'fact:n'||n,'file',0,'src/'||n||'.ts','node '||n,ARRAY[]::text[]
         FROM generate_series(1,$2::int) n`, [generation.rows[0].directory_id, count]);
       await store.pool.query(`INSERT INTO snapshot_query_directories
-        (public_snapshot_key,snapshot_id,directory_id,directory_digest,node_count,edge_count,evidence_count,layer_count,value_point_count)
-        VALUES($1,$2,$3,'perf',$4,0,0,0,0)`, [key, 'perf-' + i, generation.rows[0].directory_id, count]);
+        (public_snapshot_key,snapshot_id,directory_id,schema_version,directory_digest,node_count,edge_count,evidence_count,layer_count,value_point_count)
+        VALUES($1,$2,$3,3,'perf',$4,0,0,0,0)`, [key, 'perf-' + i, generation.rows[0].directory_id, count]);
       const project = createProject('github:perf', 'https://github.com/' + repository, 'Fixture');
       project.analysis.canonical_snapshot_key = key;
       project.analysis.snapshot_id = 'perf-' + i;

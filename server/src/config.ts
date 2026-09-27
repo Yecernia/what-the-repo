@@ -77,6 +77,9 @@ export interface ServerConfig extends ConcurrencyConfig {
   databaseIdleTimeoutMs?: number;
   databaseConnectionTimeoutMs?: number;
   analysisChunkCompression?: boolean;
+  /** Per-process immutable object read cache; 0 disables retained bodies. */
+  objectCacheBytes?: number;
+  objectCacheEntryBytes?: number;
   /** Per-project admission limits; an answer already in progress is retained. */
   chatMaxRounds?: number;
   chatMaxContentBytes?: number;
@@ -287,6 +290,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     databaseIdleTimeoutMs: positiveInt(env.WHAT_THE_REPO_DB_IDLE_TIMEOUT_MS, 30_000),
     databaseConnectionTimeoutMs: positiveInt(env.WHAT_THE_REPO_DB_CONNECTION_TIMEOUT_MS, 10_000),
     analysisChunkCompression: booleanValue(env.WHAT_THE_REPO_ANALYSIS_CHUNK_COMPRESSION, true),
+    objectCacheBytes: integerSetting(env, 'OBJECT_CACHE_BYTES', 64 * 1024 * 1024, 0, 1024 * 1024 * 1024),
+    objectCacheEntryBytes: integerSetting(env, 'OBJECT_CACHE_ENTRY_BYTES', 8 * 1024 * 1024, 0, 64 * 1024 * 1024),
     chatMaxRounds: positiveInt(env.WHAT_THE_REPO_CHAT_MAX_ROUNDS, 10_000),
     chatMaxContentBytes: positiveInt(env.WHAT_THE_REPO_CHAT_MAX_CONTENT_BYTES, 100 * 1024 * 1024),
     cosBucket: optionalSecret(env.WHAT_THE_REPO_COS_BUCKET),

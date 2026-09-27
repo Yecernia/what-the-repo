@@ -123,9 +123,9 @@ test('PostgreSQL parses and executes the availability query against isolated tra
       await client.query('CREATE TEMP TABLE project_public_snapshot_bindings (project_id text, public_snapshot_key text) ON COMMIT DROP');
       await client.query(`CREATE TEMP TABLE canonical_public_repository_snapshots (
         public_snapshot_key text, analysis_snapshot_id text, payload_purged_at timestamptz,
-        view_storage_key text, view_payload jsonb, language_overlay_version text) ON COMMIT DROP`);
+        view_storage_key text, manifest_storage_key text, manifest_sha256 text, view_sha256 text, language_overlay_version text) ON COMMIT DROP`);
       await client.query(`CREATE TEMP TABLE public_snapshot_language_overlays (
-        public_snapshot_key text, language text, status text, payload jsonb) ON COMMIT DROP`);
+        public_snapshot_key text, language text, status text, schema_version text, object_key text, object_sha256 text, object_bytes bigint) ON COMMIT DROP`);
       await client.query(`CREATE TEMP TABLE project_snapshots (
         project_id text, analysis_snapshot_id text, view_payload jsonb) ON COMMIT DROP`);
       Object.assign(store, { pool: { query: (sql: string, args?: unknown[]) => client.query(sql, args) } });
@@ -139,17 +139,17 @@ test('PostgreSQL parses and executes the availability query against isolated tra
       project.analysis.canonical_snapshot_key = key;
       assert.equal(await store.snapshotAvailable(project), false, 'removed binding');
       await client.query('INSERT INTO project_public_snapshot_bindings VALUES ($1,$2)', [project.project_id, key]);
-      await client.query('INSERT INTO canonical_public_repository_snapshots VALUES ($1,$2,NULL,$3,NULL,$4)',
+      await client.query("INSERT INTO canonical_public_repository_snapshots VALUES ($1,$2,NULL,$3,'manifest.json','digest','digest',$4)",
         [key, snapshotId, 'snapshot-objects/view.json', SNAPSHOT_LANGUAGE_OVERLAY_VERSION]);
       assert.equal(await store.snapshotAvailable(project), false, 'missing overlay');
-      await client.query('INSERT INTO public_snapshot_language_overlays VALUES ($1,$2,$3,$4::jsonb)',
-        [key, 'zh-cn', 'degraded', JSON.stringify(extractSnapshotLanguageOverlay(view, 'zh-CN'))]);
+      await client.query("INSERT INTO public_snapshot_language_overlays VALUES ($1,$2,$3,$4,'overlay.json','digest',1)",
+        [key, 'zh-cn', 'degraded', SNAPSHOT_LANGUAGE_OVERLAY_VERSION]);
       assert.equal(await store.snapshotAvailable(project, 'en'), true, 'fallback overlay');
-      await client.query('UPDATE public_snapshot_language_overlays SET payload=$2::jsonb WHERE public_snapshot_key=$1',
-        [key, JSON.stringify({})]);
+      await client.query('UPDATE public_snapshot_language_overlays SET schema_version=$2 WHERE public_snapshot_key=$1',
+        [key, "unsupported-overlay-schema"]);
       assert.equal(await store.snapshotAvailable(project), false, 'malformed ready overlay');
-      await client.query('UPDATE public_snapshot_language_overlays SET payload=$2::jsonb WHERE public_snapshot_key=$1',
-        [key, JSON.stringify(extractSnapshotLanguageOverlay(view, 'zh-CN'))]);
+      await client.query('UPDATE public_snapshot_language_overlays SET schema_version=$2 WHERE public_snapshot_key=$1',
+        [key, SNAPSHOT_LANGUAGE_OVERLAY_VERSION]);
       project.analysis.snapshot_id = 'stale-id';
       assert.equal(await store.snapshotAvailable(project), false, 'stale project snapshot id');
       project.analysis.snapshot_id = snapshotId;

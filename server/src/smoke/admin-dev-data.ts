@@ -101,8 +101,8 @@ export async function seedDevelopmentRepositories(store:PostgresStore) {
     const prefix='public-repository-snapshots/'+key;
     // Create the referenced snapshot before saveProject creates its binding.
     if(status==='completed') {
-    await store.pool.query(`INSERT INTO canonical_public_repository_snapshots(public_snapshot_key,repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,view_payload,analysis_payload,source_storage_key,created_at)
-      VALUES($1,$2,$3,'development','development',$4,$5,$6,$7,$8) ON CONFLICT(public_snapshot_key) DO NOTHING`,[key,repository,'d'.repeat(40),'dev-snapshot-'+i,{development:true,repository},{development:true,repository},prefix+'/source.ts',finished]);
+    await store.pool.query(`INSERT INTO canonical_public_repository_snapshots(public_snapshot_key,repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,source_storage_key,created_at)
+      VALUES($1,$2,$3,'development','development',$4,$5,$6) ON CONFLICT(public_snapshot_key) DO NOTHING`,[key,repository,'d'.repeat(40),'dev-snapshot-'+i,prefix+'/source.ts',finished]);
     }
     const ids:string[]=[];
     const count=i%3===0?6:i%3===1?3:1;

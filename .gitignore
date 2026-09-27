@@ -146,6 +146,7 @@ Thumbs.db
 !/docs/runtime-capacity.md
 !/docs/static-analysis.md
 !/docs/source-snapshots.md
+!/docs/object-storage.md
 !/docs/deployment.md
 !/docs/deployment.zh-CN.md
 !/docs/provider-keys.md

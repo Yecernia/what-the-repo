@@ -102,6 +102,7 @@ function publicErrorMessage(status: number, code: string | undefined, detail: un
 export function conversationErrorMessage(code: string): string | null {
   const labels: Record<string, string> = {
     site_project_chat_round_limit: '此项目已达到聊天上限',
+    snapshot_directory_reanalysis_required: '此仓库的分析资料需要重新生成，请重新分析后继续。',
     chat_owner_busy: '你已有多轮对话正在进行，请等待一轮结束或取消后再试。',
     chat_queue_full: '服务器繁忙，请稍后重试。',
     chat_wait_timeout: '等待处理超时，请稍后重试。',

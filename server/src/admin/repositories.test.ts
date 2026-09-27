@@ -25,8 +25,8 @@ test('repository directory, shared participants, accounting and destructive clea
     for(let i=0;i<5;i++)await store.saveUser('github:repo-case-'+i,{login:'repo-user-'+i,display_name:'Repository user '+i});
     for(let i=0;i<29;i++){
       const key=createHash('sha256').update('repository-test-'+i).digest('hex');keys.push(key);
-      await store.pool.query(`INSERT INTO canonical_public_repository_snapshots(public_snapshot_key,repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,view_payload,analysis_payload,source_storage_key,created_at)
-        VALUES($1,$2,'commit','case','case',$3,'{}','{}','',clock_timestamp()-$4::int*interval '1 minute')`,[key,'repo-case/r'+i,'snapshot-case-'+i,i]);
+      await store.pool.query(`INSERT INTO canonical_public_repository_snapshots(public_snapshot_key,repository_identity,commit_sha,analyzer_bundle_version,analysis_config_digest,analysis_snapshot_id,source_storage_key,created_at)
+        VALUES($1,$2,'commit','case','case',$3,'',clock_timestamp()-$4::int*interval '1 minute')`,[key,'repo-case/r'+i,'snapshot-case-'+i,i]);
       for(let u=0;u<(i===0?4:1);u++){
         const p=createProject('github:repo-case-'+u,'https://github.com/repo-case/r'+i,'Do not use this conversation title');
         p.analysis.stage='done';p.analysis.canonical_snapshot_key=key;p.analysis.snapshot_id='snapshot-case-'+i;

@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { prepareDirectoryFinalization } from './directory-reclamation-finalization.js';
 import { enqueueExpiredDirectoryStaging } from './snapshot-directory-publication.js';
+import { parseDirectoryManifest } from './directory-objects.js';
 
 export const RECLAMATION_TABLES = [
   'evidence_links', 'projection_edges', 'projection_nodes', 'overlay_memberships',
@@ -13,12 +14,12 @@ export interface ReclamationResult {
   errorCode?: string;
 }
 const PRIMARY_KEYS: Record<(typeof RECLAMATION_TABLES)[number], readonly string[]> = {
-  evidence_links: ['evidence_id','owner_kind','owner_key','role'],
+  evidence_links: ['owner_kind','owner_no','evidence_no','role'],
   projection_edges: ['projection_kind','projection_edge_id'], projection_nodes: ['projection_kind','projection_node_id'],
   overlay_memberships: ['overlay_id','entity_id','relation_id','role'],
-  edges: ['edge_key'], nodes: ['node_key'], layers: ['layer_id'], value_points: ['value_point_id'], evidence: ['evidence_id'],
+  edges: ['row_no'], nodes: ['row_no'], layers: ['layer_id'], value_points: ['value_point_id'], evidence: ['row_no'],
 };
-interface WorkItem { directory_id: string; public_snapshot_key: string; table_index: number; attempts: number; cursor_values: string[] | null }
+interface WorkItem { directory_id: string; public_snapshot_key: string; table_index: number; attempts: number; cursor_values: string[] | null; object_manifest?: unknown }
 const limit = (value: number | undefined, fallback: number, max: number) =>
   Number.isFinite(value) ? Math.max(1, Math.min(max, Math.floor(value!))) : fallback;
 const errorCode = (value: unknown) => {
@@ -43,7 +44,7 @@ export async function reclaimSnapshotDirectoryBatch(pool: Pick<Pool,'connect'>,
     }
     // Publications that stopped before binding leave an expired staging generation.
     await enqueueExpiredDirectoryStaging(client);
-    const selected = await client.query<WorkItem>(`SELECT q.directory_id,g.public_snapshot_key,q.table_index,q.attempts,q.cursor_values
+    const selected = await client.query<WorkItem>(`SELECT q.directory_id,g.public_snapshot_key,q.table_index,q.attempts,q.cursor_values,g.object_manifest
       FROM snapshot_directory_reclamation q JOIN snapshot_directory_generations g USING(directory_id)
       WHERE q.available_at<=clock_timestamp() ORDER BY q.available_at,q.directory_id
       LIMIT 1 FOR UPDATE OF q SKIP LOCKED`);
@@ -99,8 +100,9 @@ export async function reclaimSnapshotDirectoryBatch(pool: Pick<Pool,'connect'>,
         if (work.cursor_values && (work.cursor_values.length !== columns.length || work.cursor_values.some(v => typeof v !== 'string'))) {
           throw new Error('directory_cleanup_cursor_invalid');
         }
+        const numeric = ['nodes','edges','evidence','evidence_links'].includes(table);
         const after = work.cursor_values
-          ? ' AND ROW(' + order + ')>ROW(' + columns.map((_name,i) => '($3::text[])[' + (i+1) + ']').join(',') + ')' : '';
+          ? ' AND ROW(' + order + ')>ROW(' + columns.map((_name,i) => '($3::text[])[' + (i+1) + ']' + (numeric ? '::integer' : '')).join(',') + ')' : '';
         const args: unknown[] = [work.directory_id,batchRows];
         if (work.cursor_values) args.push(work.cursor_values);
         // Persist primary keys, never physical tuple addresses. Locked rows cause
@@ -113,7 +115,7 @@ export async function reclaimSnapshotDirectoryBatch(pool: Pick<Pool,'connect'>,
           WHERE target.directory_id=$1 AND target.ctid=picked.ctid RETURNING 1
         ) SELECT (SELECT count(*)::int FROM picked) AS picked,
           (SELECT count(*)::int FROM removed) AS deleted,
-          (SELECT ARRAY[${order}] FROM picked ORDER BY ${columns.map(name => name + ' DESC').join(',')} LIMIT 1) AS cursor`, args);
+          (SELECT ARRAY[${columns.map(name => name+'::text').join(',')}] FROM picked ORDER BY ${columns.map(name => name + ' DESC').join(',')} LIMIT 1) AS cursor`, args);
         const batch = removed.rows[0]; deletedRows = batch.deleted;
         if (batch.picked !== deletedRows) throw new Error('directory_cleanup_incomplete');
         const complete = deletedRows < batchRows;
@@ -128,6 +130,27 @@ export async function reclaimSnapshotDirectoryBatch(pool: Pick<Pool,'connect'>,
         if (remaining.rows[0]?.remaining) {
           await client.query('UPDATE snapshot_directory_reclamation SET table_index=0,cursor_values=NULL,available_at=clock_timestamp() WHERE directory_id=$1', [work.directory_id]);
         } else {
+          const intents = await client.query<{ object_key: string }>(
+            'SELECT object_key FROM snapshot_directory_object_intents WHERE directory_id=$1', [work.directory_id]);
+          const keys = intents.rows.map(intent => intent.object_key);
+          if (work.object_manifest) keys.push(...Object.values(parseDirectoryManifest(work.object_manifest).sections).flat().map(chunk => chunk.key));
+          if (keys.length) {
+            // COS has no MVCC. An old transaction must finish before its full
+            // rows can be deleted, including generations without child tables.
+            const observed = await client.query(`UPDATE snapshot_directory_reclamation
+              SET cleanup_observed_at=clock_timestamp() WHERE directory_id=$1
+                AND cleanup_observed_at IS NULL RETURNING directory_id`, [work.directory_id]);
+            if (observed.rowCount) { await client.query('COMMIT'); return { status: 'progress', deletedRows: 0, directoryId: work.directory_id }; }
+            const readers = await client.query(`SELECT 1 FROM pg_stat_activity a
+              WHERE a.datid=(SELECT oid FROM pg_database WHERE datname=current_database()) AND a.pid<>pg_backend_pid()
+                AND a.xact_start<=(SELECT cleanup_observed_at FROM snapshot_directory_reclamation WHERE directory_id=$1) LIMIT 1`, [work.directory_id]);
+            if (readers.rowCount) { await client.query('COMMIT'); return { status: 'busy', deletedRows: 0, directoryId: work.directory_id }; }
+            const prefix = `public-repository-snapshots/${work.public_snapshot_key}/directory/${work.directory_id}/`;
+            if (keys.some(key => !key.startsWith(prefix) || key.includes('..'))) throw new Error('directory_cleanup_unscoped_object');
+            await client.query(`INSERT INTO directory_object_deletions(object_key)
+              SELECT unnest($1::text[]) ON CONFLICT(object_key) DO NOTHING`, [keys]);
+          }
+          await client.query('DELETE FROM snapshot_directory_object_intents WHERE directory_id=$1', [work.directory_id]);
           const removed = await client.query(`DELETE FROM snapshot_directory_generations g WHERE directory_id=$1
             AND NOT EXISTS(SELECT 1 FROM snapshot_query_directories d WHERE d.directory_id=g.directory_id)`, [work.directory_id]);
           if (!removed.rowCount) throw new Error('directory_cleanup_incomplete');

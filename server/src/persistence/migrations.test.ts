@@ -2,10 +2,6 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  MAX_INLINE_PUBLIC_SNAPSHOT_BYTES,
-  shouldInlinePublicSnapshotPayload,
-} from "./postgres-store.js";
 
 test("every forward migration records its own schema version", async () => {
   const root = join(process.cwd(), "migrations");
@@ -22,7 +18,11 @@ test("every forward migration records its own schema version", async () => {
   }
 });
 
-test("large public snapshot payloads stay outside PostgreSQL jsonb", () => {
-  assert.equal(shouldInlinePublicSnapshotPayload(MAX_INLINE_PUBLIC_SNAPSHOT_BYTES), true);
-  assert.equal(shouldInlinePublicSnapshotPayload(MAX_INLINE_PUBLIC_SNAPSHOT_BYTES + 1), false);
+test("canonical payload migration removes persistent inline bodies and bounds chat context", async () => {
+  const sql = await readFile(join(process.cwd(), "migrations", "0039_canonical_object_payloads.sql"), "utf8");
+  assert.match(sql, /DROP COLUMN view_payload/);
+  assert.match(sql, /DROP COLUMN analysis_payload/);
+  assert.match(sql, /octet_length\(conversation_summary_payload::text\) <= 32768/);
+  assert.match(sql, /storage_format_reset_required/);
+  assert.doesNotMatch(sql, /UPDATE canonical_public_repository_snapshots/);
 });

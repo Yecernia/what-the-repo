@@ -9,6 +9,16 @@ afterEach(() => {
 });
 
 describe('streamed messages', () => {
+  it('explains required repository reanalysis in both interface languages',async()=>{
+    setUiLanguage('zh-CN');
+    expect(conversationErrorMessage('snapshot_directory_reanalysis_required')).toBe('此仓库的分析资料需要重新生成，请重新分析后继续。');
+    setUiLanguage('en');
+    expect(conversationErrorMessage('snapshot_directory_reanalysis_required')).toContain('Analyze it again');
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({code:'snapshot_directory_reanalysis_required',detail:'unsafe-path-sentinel'}),{status:409})));
+    await expect(apiClient.sendMessage('project-1','hello',[])).rejects.toMatchObject({
+      code:'snapshot_directory_reanalysis_required',status:409,message:"This repository's analysis needs to be regenerated. Analyze it again to continue.",
+    });
+  });
   it('project history limits preserve readable history and do not retry the stream', async () => {
     expect(conversationErrorMessage('site_project_chat_round_limit')).toBe('此项目已达到聊天上限');
     expect(conversationErrorMessage('site_project_chat_size_limit')).toBe('此项目已达到聊天上限');

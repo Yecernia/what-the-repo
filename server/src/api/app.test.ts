@@ -2248,3 +2248,18 @@ test('SSE preserves local failure categories without cancellation or unsafe erro
     }
   } finally {await app.close();await rm(root,{recursive:true,force:true});}
 });
+
+test('snapshot reanalysis errors keep their actionable public code without exposing internal details',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'wtr-snapshot-reanalysis-'));
+  const store=new FileStore(root);await store.init();
+  const app=buildApp({config:config(root),store,sessions:new PiSessionStore(join(root,'sessions')),memories:new PiMemoryStore(join(root,'memory'))});
+  try{
+    const guest=await browserInject(app,{method:'POST',url:'/api/auth/guest'});
+    const cookie=cookieValue(guest.headers['set-cookie'],'what_the_repo_identity');
+    const project=createProject(guest.json().owner_id,'https://github.com/example/reanalysis','Example');await store.saveProject(project);
+    store.loadSnapshot=async()=>{throw serviceError('snapshot_directory_reanalysis_required','unsafe-storage-path-sentinel',409);};
+    const response=await app.inject({method:'GET',url:`/api/projects/${project.project_id}/snapshot`,headers:{cookie:`what_the_repo_identity=${cookie}`}});
+    assert.equal(response.statusCode,409);assert.equal(response.json().code,'snapshot_directory_reanalysis_required');
+    assert.match(response.body,/重新分析/);assert.doesNotMatch(response.body,/unsafe-storage-path-sentinel/);
+  }finally{await app.close();await rm(root,{recursive:true,force:true});}
+});

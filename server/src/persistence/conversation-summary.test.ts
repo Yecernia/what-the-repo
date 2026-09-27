@@ -4,9 +4,9 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProject } from "../domain/conversation.js";
-import { conversationSummaryFromSource } from "../domain/conversation-summary.js";
+import { conversationSummaryFromSource, conversationSummarySource } from "../domain/conversation-summary.js";
 import { asEvidenceSnapshot } from "../domain/snapshot.js";
-import { applySnapshotLanguageOverlay, extractSnapshotLanguageOverlay, SNAPSHOT_LANGUAGE_OVERLAY_VERSION } from "../domain/snapshot-language.js";
+import { extractSnapshotLanguageOverlay, SNAPSHOT_LANGUAGE_OVERLAY_VERSION } from "../domain/snapshot-language.js";
 import { FileStore } from "./file-store.js";
 import { PostgresStore } from "./postgres-store.js";
 
@@ -88,9 +88,7 @@ test("PostgreSQL conversation summary queries only bounded JSON and refuses chan
   project.analysis.snapshot_id = snapshotId;
   project.analysis.canonical_snapshot_key = key;
   project.display_language = "zh-CN";
-  const source = { snapshot_id: view.snapshot_id, summary: view.summary, languages: view.languages,
-    static_analysis: view.static_analysis, graph: { semantic_mode: view.graph.semantic_mode, nodes: view.graph.nodes },
-    value_points: view.value_points };
+  const source = conversationSummarySource(view);
   const bound: { current_snapshot_id: string; current_public_key: string;
     public_snapshot_key: string | null; analysis_snapshot_id: string | null; payload_purged_at: Date | null;
     view_storage_key: string | null; inline_view: boolean; language_overlay_version: string | null;
@@ -100,13 +98,15 @@ test("PostgreSQL conversation summary queries only bounded JSON and refuses chan
     view_storage_key: null, inline_view: true, language_overlay_version: SNAPSHOT_LANGUAGE_OVERLAY_VERSION,
     summary_payload: source };
   const queries: Array<{ sql: string; args: unknown[] }> = [];
+  let readableHistory = false;
   Object.assign(store, { pool: { query: async (sql: string, args: unknown[]) => {
     queries.push({ sql, args });
     // No readable older version of the repository matches: a changed binding is refused.
-    if (sql.includes("AS pinned")) return { rows: [] };
+    if (sql.includes("AS pinned")) return { rows: readableHistory ? [{ public_snapshot_key: key }] : [] };
     if (sql.includes("FROM projects AS p")) return { rows: [bound] };
+    if (sql.includes("FROM canonical_public_repository_snapshots WHERE")) return { rows: [bound] };
     if (sql.includes("FROM public_snapshot_language_overlays AS o")) return { rows: args[1] === "zh-cn"
-      ? [{ status: "ready", payload: overlay() }] : [] };
+      ? [{ status: "ready", summary_payload: conversationSummaryFromSource(view, overlay()) }] : [] };
     throw new Error(`unexpected summary query: ${sql}`);
   } } });
   try {
@@ -115,10 +115,8 @@ test("PostgreSQL conversation summary queries only bounded JSON and refuses chan
     assert.equal(summary?.value_points[0]?.evidence.length, 6);
     assert.equal(queries.length, 3, "requested language is tried before project fallback");
     assert.deepEqual(queries.slice(1).map(query => query.args[1]), ["en", "zh-cn"]);
-    assert.match(queries[0]!.sql, /WITH ORDINALITY/);
-    assert.match(queries[0]!.sql, /LIMIT 20/);
-    assert.match(queries[0]!.sql, /point\.ordinal <= 8/);
-    assert.match(queries[0]!.sql, /ev\.ordinal <= 6/);
+    assert.match(queries[0]!.sql, /s\.conversation_summary_payload AS summary_payload/);
+    assert.doesNotMatch(queries[0]!.sql, /jsonb_array_elements|view_payload/);
     assert.doesNotMatch(queries[0]!.sql, /SELECT\s+(?:s\.)?view_payload\s*(?:,|FROM)/i);
     bound.analysis_snapshot_id = null;
     assert.equal(await store.loadConversationSummary(project), null, "missing canonical metadata is unavailable");
@@ -126,23 +124,19 @@ test("PostgreSQL conversation summary queries only bounded JSON and refuses chan
     bound.public_snapshot_key = null;
     assert.equal(await store.loadConversationSummary(project), null, "missing binding cannot use a local checkpoint");
     bound.public_snapshot_key = key;
-    bound.inline_view = false;
-    bound.view_storage_key = "snapshot-objects/view.json";
     bound.summary_payload = null;
-    let fallbackReads = 0;
-    Object.assign(store, { loadSnapshot: async () => { fallbackReads++;
-      return applySnapshotLanguageOverlay(view, overlay()); } });
-    assert.equal((await store.loadConversationSummary(project))?.components[0]?.name, "中文 component:0",
-      "COS-only views explicitly use the existing full-read fallback");
-    bound.inline_view = true;
-    bound.view_storage_key = null;
-    assert.equal((await store.loadConversationSummary(project))?.components[0]?.name, "中文 component:0",
-      "older inline schemas also use the full-read fallback");
-    assert.equal(fallbackReads, 2);
-    Object.assign(store, { loadSnapshot: async () => ({ ...view, snapshot_id: "replaced" }) });
+    Object.assign(store, { loadSnapshot: async () => { throw new Error("unexpected_full_view_download"); } });
+    assert.equal(await store.loadConversationSummary(project), null,
+      "missing bounded summary must not download the full COS view");
+    bound.summary_payload = { ...source, snapshot_id: "replaced" };
     await assert.rejects(store.loadConversationSummary(project), /snapshot_not_bound/);
+    bound.summary_payload = source;
     bound.current_snapshot_id = "changed";
     await assert.rejects(store.loadConversationSummary(project), /snapshot_not_bound/);
+    readableHistory = true;
+    assert.equal((await store.loadConversationSummary(project))?.components[0]?.name, "中文 component:0",
+      "a pinned older conversation reads its bounded summary and language overlay without downloading a view");
+    readableHistory = false;
     bound.current_snapshot_id = snapshotId;
     bound.payload_purged_at = new Date();
     await assert.rejects(store.loadConversationSummary(project), /snapshot_not_bound/);
@@ -170,15 +164,16 @@ test("PostgreSQL conversation summary SQL runs against isolated temporary tables
       await client.query("CREATE TEMP TABLE project_public_snapshot_bindings (project_id text, public_snapshot_key text) ON COMMIT DROP");
       await client.query(`CREATE TEMP TABLE canonical_public_repository_snapshots (
         public_snapshot_key text, analysis_snapshot_id text, payload_purged_at timestamptz,
-        view_storage_key text, view_payload jsonb, language_overlay_version text) ON COMMIT DROP`);
+        view_storage_key text, conversation_summary_payload jsonb, language_overlay_version text) ON COMMIT DROP`);
       await client.query(`CREATE TEMP TABLE public_snapshot_language_overlays (
-        public_snapshot_key text, language text, status text, payload jsonb) ON COMMIT DROP`);
+        public_snapshot_key text, language text, status text, conversation_summary_payload jsonb,
+        schema_version text, object_key text, object_sha256 text, object_bytes bigint) ON COMMIT DROP`);
       await client.query("INSERT INTO projects VALUES ($1,$2::jsonb)", [project.project_id, JSON.stringify(project)]);
       await client.query("INSERT INTO project_public_snapshot_bindings VALUES ($1,$2)", [project.project_id, key]);
       await client.query("INSERT INTO canonical_public_repository_snapshots VALUES ($1,$2,NULL,NULL,$3::jsonb,$4)",
-        [key, snapshotId, JSON.stringify(view), SNAPSHOT_LANGUAGE_OVERLAY_VERSION]);
-      await client.query("INSERT INTO public_snapshot_language_overlays VALUES ($1,$2,'ready',$3::jsonb)",
-        [key, "zh-cn", JSON.stringify(overlay())]);
+        [key, snapshotId, JSON.stringify(conversationSummarySource(view)), SNAPSHOT_LANGUAGE_OVERLAY_VERSION]);
+      await client.query("INSERT INTO public_snapshot_language_overlays VALUES ($1,$2,'ready',$3::jsonb,$4,'overlay.json','digest',1)",
+        [key, "zh-cn", JSON.stringify(conversationSummaryFromSource(view, overlay())), SNAPSHOT_LANGUAGE_OVERLAY_VERSION]);
       Object.assign(store, { pool: { query: (sql: string, args?: unknown[]) => client.query(sql, args) } });
       const summary = await store.loadConversationSummary(project, "en");
       assert.equal(summary?.components.length, 20);

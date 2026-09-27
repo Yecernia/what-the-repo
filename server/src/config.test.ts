@@ -5,6 +5,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { assertApiSessionSecret, loadConfig } from "./config.js";
 
+test("object cache has explicit per-process byte bounds and supports disabling retention", () => {
+  const config = loadConfig({ WHAT_THE_REPO_LOAD_LOCAL_ENV: "0" });
+  assert.equal(config.objectCacheBytes, 64 * 1024 * 1024);
+  assert.equal(config.objectCacheEntryBytes, 8 * 1024 * 1024);
+  const disabled = loadConfig({ WHAT_THE_REPO_LOAD_LOCAL_ENV: "0", WHAT_THE_REPO_OBJECT_CACHE_BYTES: "0" });
+  assert.equal(disabled.objectCacheBytes, 0);
+  assert.throws(() => loadConfig({ WHAT_THE_REPO_LOAD_LOCAL_ENV: "0", WHAT_THE_REPO_OBJECT_CACHE_BYTES: "-1" }));
+});
+
 test("production API configuration requires a sufficiently strong Session Secret", () => {
   assert.throws(
     () => assertApiSessionSecret({ nodeEnv: "production", sessionSecret: "" }),

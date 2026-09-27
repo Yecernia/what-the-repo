@@ -71,6 +71,7 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
   };
   const store = new PostgresStore({
     databaseUrl: 'postgresql://unused', objectAdmissionStore: new LocalPermitStore(),
+    objectCacheBytes: 0,
     root,
     migrationsRoot: join(root, "migrations"),
     encryptionSecret: "snapshot-test-secret",
@@ -79,8 +80,9 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
     objectStore: objects,
   });
   const originalPool = store.pool;
-  (store as unknown as { pool: { connect(): Promise<typeof client> } }).pool = {
+  (store as unknown as { pool: { connect(): Promise<typeof client>; query: typeof client.query } }).pool = {
     async connect() { return client; },
+    query: client.query.bind(client),
   };
   try {
     const publicKey = "f".repeat(64);
@@ -124,34 +126,36 @@ test("PostgreSQL publishes snapshot metadata and query directory in one transact
     assert.deepEqual(sourceManifest.files.map((file) => file.path), ["README.md"]);
     assert.ok(sourceManifest.files.every((item) => objects.values.has(item.key)));
     const insertValues = queries[snapshotInsert]?.values ?? [];
-    assert.equal(insertValues[11], manifestEntry[0]);
-    assert.equal(insertValues[8], sourceManifestEntry[0]);
-    assert.ok(Number(insertValues[18]) > Buffer.byteLength("source\n", "utf8"));
+    assert.equal(insertValues[10], manifestEntry[0]);
+    assert.doesNotMatch(sql[snapshotInsert]!, /view_payload|analysis_payload/);
+    assert.equal(JSON.parse(String(insertValues[6])).snapshot_id, snapshotId);
+    assert.equal(insertValues[7], sourceManifestEntry[0]);
+    assert.ok(Number(insertValues[17]) > Buffer.byteLength("source\n", "utf8"));
     const snapshotRow = {
       repository_identity: "example/atomic",
       commit_sha: "a".repeat(40),
       analyzer_bundle_version: "typescript-0.1.0",
       analysis_config_digest: "tree-sitter-nine-language-v1",
       analysis_snapshot_id: snapshotId,
-      source_storage_key: insertValues[8],
+      source_storage_key: insertValues[7],
       reuse_count: "0",
-      logical_bytes: String(insertValues[18]),
+      logical_bytes: String(insertValues[17]),
       created_at: "2026-08-24T00:00:00.000Z",
       last_used_at: "2026-08-24T00:00:00.000Z",
       view_payload: null,
       analysis_payload: null,
-      view_storage_key: insertValues[9],
-      analysis_storage_key: insertValues[10],
-      manifest_storage_key: insertValues[11],
-      manifest_sha256: insertValues[12],
-      manifest_bytes: String(insertValues[13]),
-      view_sha256: insertValues[14],
-      view_bytes: String(insertValues[15]),
-      analysis_sha256: insertValues[16],
-      analysis_bytes: String(insertValues[17]),
-      source_manifest_sha256: insertValues[19],
-      source_manifest_bytes: String(insertValues[20]),
-      source_file_count: insertValues[21],
+      view_storage_key: insertValues[8],
+      analysis_storage_key: insertValues[9],
+      manifest_storage_key: insertValues[10],
+      manifest_sha256: insertValues[11],
+      manifest_bytes: String(insertValues[12]),
+      view_sha256: insertValues[13],
+      view_bytes: String(insertValues[14]),
+      analysis_sha256: insertValues[15],
+      analysis_bytes: String(insertValues[16]),
+      source_manifest_sha256: insertValues[18],
+      source_manifest_bytes: String(insertValues[19]),
+      source_file_count: insertValues[20],
       language_overlay_version: null,
       retired_at: null,
       purge_after: null as string | null,
@@ -276,8 +280,9 @@ test("PostgreSQL stores and reloads large analysis payload chunks", async () => 
     objectStore: objects,
   });
   const originalPool = store.pool;
-  (store as unknown as { pool: { connect(): Promise<typeof client> } }).pool = {
+  (store as unknown as { pool: { connect(): Promise<typeof client>; query: typeof client.query } }).pool = {
     async connect() { return client; },
+    query: client.query.bind(client),
   };
   try {
     const publicKey = "d".repeat(64);
@@ -323,11 +328,12 @@ test("PostgreSQL stores and reloads large analysis payload chunks", async () => 
     const snapshotInsert = queries.find((item) => item.sql.startsWith("INSERT INTO canonical_public_repository_snapshots"));
     assert.ok(snapshotInsert);
     const values = snapshotInsert.values;
-    assert.equal(values[7], null, "chunked analysis must not be duplicated in PostgreSQL jsonb");
-    const analysisKey = String(values[10]);
+    assert.equal(JSON.parse(String(values[6])).snapshot_id, snapshotId);
+    assert.doesNotMatch(snapshotInsert.sql, /view_payload|analysis_payload/);
+    const analysisKey = String(values[9]);
     const chunkKeys = [...objects.values.keys()].filter((key) => key.includes("/analysis-chunks/"));
     assert.ok(chunkKeys.length >= 2);
-    assert.ok(Number(values[18]) > Number(values[17]));
+    assert.ok(Number(values[17]) > Number(values[16]));
 
     const row = {
       repository_identity: "example/large-pg-analysis",
@@ -335,25 +341,25 @@ test("PostgreSQL stores and reloads large analysis payload chunks", async () => 
       analyzer_bundle_version: "typescript-0.1.0",
       analysis_config_digest: "tree-sitter-nine-language-v1",
       analysis_snapshot_id: snapshotId,
-      source_storage_key: values[8],
+      source_storage_key: values[7],
       reuse_count: "0",
-      logical_bytes: String(values[18]),
+      logical_bytes: String(values[17]),
       created_at: "2026-08-24T00:00:00.000Z",
       last_used_at: "2026-08-24T00:00:00.000Z",
       view_payload: view(snapshotId),
       analysis_payload: null,
-      view_storage_key: values[9],
+      view_storage_key: values[8],
       analysis_storage_key: analysisKey,
-      manifest_storage_key: values[11],
-      manifest_sha256: values[12],
-      manifest_bytes: String(values[13]),
-      view_sha256: values[14],
-      view_bytes: String(values[15]),
-      analysis_sha256: values[16],
-      analysis_bytes: String(values[17]),
-      source_manifest_sha256: values[19],
-      source_manifest_bytes: String(values[20]),
-      source_file_count: values[21],
+      manifest_storage_key: values[10],
+      manifest_sha256: values[11],
+      manifest_bytes: String(values[12]),
+      view_sha256: values[13],
+      view_bytes: String(values[14]),
+      analysis_sha256: values[15],
+      analysis_bytes: String(values[16]),
+      source_manifest_sha256: values[18],
+      source_manifest_bytes: String(values[19]),
+      source_file_count: values[20],
       language_overlay_version: null,
       retired_at: null,
       purge_after: null,
@@ -400,8 +406,9 @@ test("PostgreSQL rolls back snapshot metadata when query directory publication f
     objectStore: objects,
   });
   const originalPool = store.pool;
-  (store as unknown as { pool: { connect(): Promise<typeof client> } }).pool = {
+  (store as unknown as { pool: { connect(): Promise<typeof client>; query: typeof client.query } }).pool = {
     async connect() { return client; },
+    query: client.query.bind(client),
   };
   try {
     const publicKey = "e".repeat(64);
