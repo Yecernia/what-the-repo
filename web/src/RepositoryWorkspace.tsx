@@ -645,9 +645,9 @@ function ArchitectureView({
     layerId: string | null;
     expandedScopeId: string | null;
     activeComponentId: string | null;
-    expandedExternalScopeId: string | null;
+    expandedRelatedScopeId: string | null;
     focusComponentId: string | null;
-  }>({ layerId: null, expandedScopeId: null, activeComponentId: null, expandedExternalScopeId: null, focusComponentId: null });
+  }>({ layerId: null, expandedScopeId: null, activeComponentId: null, expandedRelatedScopeId: null, focusComponentId: null });
   const previousSnapshotId = useRef(snapshot.snapshot_id);
   useEffect(() => {
     if (previousSnapshotId.current === snapshot.snapshot_id) return;
@@ -655,13 +655,13 @@ function ArchitectureView({
     setOverviewSelection(null);
     setOverviewHover(null);
     setShowAllOverviewEdges(false);
-    setNavigation({ layerId: null, expandedScopeId: null, activeComponentId: null, expandedExternalScopeId: null, focusComponentId: null });
+    setNavigation({ layerId: null, expandedScopeId: null, activeComponentId: null, expandedRelatedScopeId: null, focusComponentId: null });
   }, [snapshot.snapshot_id]);
   const collapseScope = useCallback((scopeId: string) => {
     setNavigation(current => ({
       ...current,
       expandedScopeId: current.expandedScopeId === scopeId ? null : current.expandedScopeId,
-      expandedExternalScopeId: null,
+      expandedRelatedScopeId: null,
       focusComponentId: null,
     }));
   }, []);
@@ -676,7 +676,7 @@ function ArchitectureView({
         : node),
     };
   }, [navigation, snapshot, collapseScope, uiLanguage]);
-  const layoutKey = JSON.stringify([snapshot.snapshot_id, navigation.layerId, navigation.expandedScopeId, navigation.activeComponentId, navigation.expandedExternalScopeId]);
+  const layoutKey = JSON.stringify([snapshot.snapshot_id, navigation.layerId, navigation.expandedScopeId, navigation.activeComponentId, navigation.expandedRelatedScopeId]);
   const previousLayoutKey = useRef(layoutKey);
   const [nodes, setNodes] = useNodesState<ArchitectureFlowNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
@@ -780,28 +780,28 @@ function ArchitectureView({
       const data = node.data as LayerNodeData;
       if (data.rangeKind === 'scope') {
         const scopeId = data.targetScopeId ?? data.layer.id;
-        setNavigation(current => data.portal ? {
-          ...current, expandedExternalScopeId: scopeId, focusComponentId: null,
+        setNavigation(current => current.expandedScopeId || current.activeComponentId ? {
+          ...current, expandedRelatedScopeId: scopeId, focusComponentId: null,
         } : {
-          ...current, expandedScopeId: scopeId, activeComponentId: null, expandedExternalScopeId: null, focusComponentId: null,
+          ...current, expandedScopeId: scopeId, activeComponentId: null, expandedRelatedScopeId: null, focusComponentId: null,
         });
       } else {
         setNavigation({
           layerId: data.targetLayerId ?? data.layer.id,
-          expandedScopeId: null, activeComponentId: null, expandedExternalScopeId: null, focusComponentId: null,
+          expandedScopeId: null, activeComponentId: null, expandedRelatedScopeId: null, focusComponentId: null,
         });
       }
       return;
     }
     const data = node.data as ComponentNodeData;
     setNavigation(current => {
-      // Direct local cards can be the subject without a frame. Members of an
-      // expanded frame and external cards remain focus-only interactions.
-      if (!data.external && !data.scopeId && current.activeComponentId !== data.component.id) {
+      // Choose a subject at the layer level. Once expanded, related cards only
+      // change the selection; choosing another subject requires going back.
+      if (!data.external && !data.scopeId && !current.expandedScopeId && !current.activeComponentId) {
         return {
           layerId: data.targetLayerId ?? current.layerId,
           activeComponentId: data.component.id, expandedScopeId: null,
-          expandedExternalScopeId: null, focusComponentId: null,
+          expandedRelatedScopeId: null, focusComponentId: null,
         };
       }
       return { ...current, focusComponentId: data.component.id };
@@ -899,7 +899,7 @@ function ArchitectureView({
               <button
                 type="button"
                 onClick={() => setNavigation({
-                  layerId: null, expandedScopeId: null, activeComponentId: null, expandedExternalScopeId: null, focusComponentId: null,
+                  layerId: null, expandedScopeId: null, activeComponentId: null, expandedRelatedScopeId: null, focusComponentId: null,
                 })}
               >
                 <ChevronLeft size={14} /> {t(" 架构总览")}</button>
@@ -912,7 +912,7 @@ function ArchitectureView({
                   onClick={() => setNavigation(current => ({
                     layerId: activeLayer?.component_ids.length === 1 ? null : current.layerId,
                     expandedScopeId: null, activeComponentId: null,
-                    expandedExternalScopeId: null, focusComponentId: null,
+                    expandedRelatedScopeId: null, focusComponentId: null,
                   }))}
                 >
                   {t("收起相关组件")}</button>

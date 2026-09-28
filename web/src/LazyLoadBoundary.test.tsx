@@ -18,6 +18,8 @@ it('isolates a failed import, retains a sibling draft and honors reload cancella
   expect(screen.getByText('loading')).toBeVisible();
   reject(new Error('private module URL must not be echoed'));
   await waitFor(() => expect(screen.getByRole('alert')).toBeVisible());
+  expect(screen.getByRole('alert')).toHaveTextContent('请重新加载页面后重试。');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('网络');
   expect(screen.queryByText('private module URL must not be echoed')).toBeNull();
   expect(screen.getByRole('textbox', { name: 'draft' })).toHaveValue('unsent');
   fireEvent.click(screen.getByRole('button', { name: '重新加载页面' }));

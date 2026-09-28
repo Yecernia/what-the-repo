@@ -643,7 +643,7 @@ describe('component graph contract', () => {
     for (const target of ['component:entry', 'component:domain']) {
       graph.graph.edges.push({ ...snapshot.graph.edges[0], id: `relation:single-${target}`, source: single.id, target });
     }
-    const expansion = { activeComponentId: single.id, expandedExternalScopeId: 'domain:entry-scope' };
+    const expansion = { activeComponentId: single.id, expandedRelatedScopeId: 'domain:entry-scope' };
     const both = buildLayerScopeFlow(graph, 'layer:single', expansion);
     expect(both.nodes.filter(node => node.type === 'group').map(node => node.id)).toEqual(['frame:domain:entry-scope']);
     expect(both.nodes.find(node => node.id === single.id)?.type).toBe('component');
@@ -675,7 +675,7 @@ describe('component graph contract', () => {
     expect(screen.getByRole('button', { name: 'node:入口请求职责' })).toBeInTheDocument();
   });
 
-  it('switches between a direct local component and sibling scopes without retaining the old external frame', () => {
+  it('keeps a direct component as subject when opening related local or external scopes', () => {
     const graph = makeTwoFrameSnapshot();
     const single = { ...snapshot.graph.nodes[0], id: 'component:direct', name: '直接组件',
       entity_kind: 'component' as const, parent_entity_id: 'layer:entry' };
@@ -692,14 +692,21 @@ describe('component graph contract', () => {
     expect(screen.queryAllByTestId('scope-frame')).toHaveLength(1);
     clickNode('入口请求职责');
     expect(screen.getByTestId('scope-frame')).toHaveAttribute('data-node-id', 'frame:domain:entry-scope');
-    expect(screen.queryByRole('button', { name: "收起相关组件" })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: "收起相关组件" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '收起分组：入口请求职责' }));
+    expect(screen.queryAllByTestId('scope-frame')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: "收起相关组件" })).toBeInTheDocument();
     clickNode('领域规则职责');
     clickNode('直接组件');
-    expect(screen.queryAllByTestId('scope-frame')).toHaveLength(0);
+    expect(screen.getByTestId('scope-frame')).toHaveAttribute('data-node-id', 'frame:domain:domain-scope');
     expect(container.querySelector('.architecture-breadcrumb')).toHaveTextContent('入口层');
     fireEvent.click(screen.getByRole('button', { name: "收起相关组件" }));
     expect(screen.queryByRole('button', { name: 'node:领域规则职责' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'node:直接组件' })).toBeInTheDocument();
+    clickNode('入口请求职责');
+    clickNode('直接组件');
+    expect(screen.getByTestId('scope-frame')).toHaveAttribute('data-node-id', 'frame:domain:entry-scope');
+    expect(screen.queryByRole('button', { name: "收起相关组件" })).not.toBeInTheDocument();
   });
 
   it('gives many external cards enough columns even when the main layer has one scope', () => {
@@ -724,7 +731,7 @@ describe('component graph contract', () => {
     expect(new Set(externalCards.map(node => node.position.y)).size).toBe(3);
 
     const expanded = buildLayerScopeFlow(graph, 'layer:entry', {
-      expandedScopeId: 'domain:entry-scope', expandedExternalScopeId: 'domain:domain-scope',
+      expandedScopeId: 'domain:entry-scope', expandedRelatedScopeId: 'domain:domain-scope',
     });
     for (const id of ['frame:domain:entry-scope', 'component:entry', 'component:entry-helper']) {
       expect(expanded.nodes.find(node => node.id === id)?.position)
@@ -742,7 +749,7 @@ describe('component graph contract', () => {
     expect(primary.nodes.some(node => node.id === 'portal:domain:audit')).toBe(false);
     expect(relationIds(primary)).not.toContain('relation:external-between');
 
-    const both = buildLayerScopeFlow(graph, 'layer:entry', { ...expansion, expandedExternalScopeId: 'domain:domain-scope' });
+    const both = buildLayerScopeFlow(graph, 'layer:entry', { ...expansion, expandedRelatedScopeId: 'domain:domain-scope' });
     expect(both.nodes.filter(node => node.type === 'group')).toHaveLength(2);
     const mainFrame = both.nodes.find(node => node.id === 'frame:domain:entry-scope')!;
     const externalFrame = both.nodes.find(node => node.id === 'frame:domain:domain-scope')!;
@@ -760,7 +767,7 @@ describe('component graph contract', () => {
     }));
     for (const focusComponentId of ['component:entry', 'component:domain', 'component:domain-helper']) {
       const focused = buildLayerScopeFlow(graph, 'layer:entry', {
-        ...expansion, expandedExternalScopeId: 'domain:domain-scope', focusComponentId,
+        ...expansion, expandedRelatedScopeId: 'domain:domain-scope', focusComponentId,
       });
       expect(geometry(focused)).toEqual(geometry(both));
       expect(relationIds(focused).sort()).toEqual(relationIds(both).sort());
@@ -793,7 +800,7 @@ describe('component graph contract', () => {
   it('separates focused component links from other relationships sharing the same frame endpoints', () => {
     const graph = makeTwoFrameSnapshot();
     graph.graph.edges.push({ ...graph.graph.edges[0], id: 'relation:other-cross-frame', source: 'component:entry-helper', target: 'component:domain-helper' });
-    const expansion = { expandedScopeId: 'domain:entry-scope', expandedExternalScopeId: 'domain:domain-scope' };
+    const expansion = { expandedScopeId: 'domain:entry-scope', expandedRelatedScopeId: 'domain:domain-scope' };
     const overview = buildLayerScopeFlow(graph, 'layer:entry', expansion);
     const focused = buildLayerScopeFlow(graph, 'layer:entry', { ...expansion, focusComponentId: 'component:entry' });
     const incidentIds = graph.graph.edges.filter(relation => relation.source === 'component:entry' || relation.target === 'component:entry').map(relation => relation.id).sort();
@@ -852,12 +859,47 @@ describe('component graph contract', () => {
     expect(frameIds()).toEqual(['frame:domain:entry-scope']);
     clickNode('领域规则职责');
     clickNode('请求记录职责');
-    expect(frameIds()).toEqual(['frame:domain:sibling']);
-    expect(screen.queryByRole('button', { name: 'node:领域规则职责' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'node:入口请求职责' })).toBeInTheDocument();
+    expect(frameIds()).toEqual(['frame:domain:entry-scope', 'frame:domain:sibling']);
+    expect(screen.getByRole('button', { name: 'node:领域规则职责' })).toBeInTheDocument();
+    const beforeLocalFocus = positions();
+    clickNode('请求记录职责组件0');
+    expect(frameIds()).toEqual(['frame:domain:entry-scope', 'frame:domain:sibling']);
+    expect(positions()).toEqual(beforeLocalFocus);
     fireEvent.click(screen.getByRole('button', { name: '收起分组：请求记录职责' }));
+    expect(frameIds()).toEqual(['frame:domain:entry-scope']);
+    fireEvent.click(screen.getByRole('button', { name: '收起分组：入口请求职责' }));
     expect(frameIds()).toHaveLength(0);
     expect(screen.getByRole('button', { name: 'node:请求记录职责' })).toBeInTheDocument();
+    clickNode('请求记录职责');
+    expect(frameIds()).toEqual(['frame:domain:sibling']);
+  });
+
+  it('places an internal comparison beside the unchanged subject regardless of scope order', () => {
+    const graph = makeTwoFrameSnapshot();
+    for (const [main, related] of [['domain:entry-scope', 'domain:sibling'], ['domain:sibling', 'domain:entry-scope']]) {
+      const initial = buildLayerScopeFlow(graph, 'layer:entry', { expandedScopeId: main });
+      const paired = buildLayerScopeFlow(graph, 'layer:entry', {
+        expandedScopeId: main, expandedRelatedScopeId: related,
+      });
+      const subject = paired.nodes.find(node => node.id === `frame:${main}`)!;
+      const comparison = paired.nodes.find(node => node.id === `frame:${related}`)!;
+      expect(subject.position).toEqual(initial.nodes.find(node => node.id === subject.id)?.position);
+      expect(comparison.data.external).toBe(false);
+      expect(comparison.position.y).toBe(subject.position.y);
+      expect(comparison.position.x).toBeGreaterThan(subject.position.x + subject.width!);
+      expect(new Set(paired.nodes.map(node => node.id)).size).toBe(paired.nodes.length);
+      expect(paired.edges.find(edge => (edge.data?.relationIds as string[])?.includes('relation:main-sibling')))
+        .toMatchObject({ source: 'frame:domain:entry-scope', target: 'frame:domain:sibling' });
+      for (const id of ['component:sibling', 'component:sibling-helper', 'component:entry', 'component:entry-helper']) {
+        expect(paired.nodes.some(node => node.id === id)).toBe(true);
+      }
+      const focused = buildLayerScopeFlow(graph, 'layer:entry', {
+        expandedScopeId: main, expandedRelatedScopeId: related, focusComponentId: 'component:sibling',
+      });
+      expect(focused.nodes.map(node => [node.id, node.position])).toEqual(paired.nodes.map(node => [node.id, node.position]));
+      expect(focused.edges.find(edge => (edge.data?.relationIds as string[])?.includes('relation:main-sibling')))
+        .toMatchObject({ source: 'component:entry', target: 'component:sibling' });
+    }
   });
 
   it('bounds dense responsibility-scope edges while preserving the full graph in the snapshot', () => {
@@ -969,7 +1011,7 @@ describe('component graph contract', () => {
     const enteredExternalScope = buildLayerScopeFlow(
       canonicalSnapshot,
       'layer:entry',
-      { expandedScopeId: entryScope.id, expandedExternalScopeId: domainScope.id, focusComponentId: 'component:domain' },
+      { expandedScopeId: entryScope.id, expandedRelatedScopeId: domainScope.id, focusComponentId: 'component:domain' },
     );
     expect(enteredExternalScope.nodes.find(node => node.id === 'component:domain')?.data)
       .toMatchObject({ external: true, focused: true });

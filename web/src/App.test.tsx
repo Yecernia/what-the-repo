@@ -19,6 +19,68 @@ import type {
 } from './types';
 import { clearSnapshotCache } from './snapshot-cache';
 import { getUiLanguage, setUiLanguage, UI_LANGUAGE_STORAGE_KEY } from './ui-language';
+import hljs from 'highlight.js/lib/common';
+import * as sourceHighlighting from './source-highlighting';
+
+describe('source preview resilience', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ['packages/markitdown-mcp/Dockerfile', 'FROM python:3.12'],
+    ['build.ps1', 'Write-Host "hello"'],
+  ])('opens %s without losing the chat draft', async (path, source) => {
+    vi.mocked(apiClient.getSource).mockResolvedValue({ snapshot_id: 'snapshot-1', path,
+      start_line: 1, end_line: 1, lines: [source], truncated: false });
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    const composer = screen.getByPlaceholderText('尽情提问');
+    fireEvent.change(composer, { target: { value: 'unsent draft' } });
+    await openRepositoryPanel();
+    await userEvent.click(await screen.findByRole('button', { name: '打开源码证据' }));
+    const code = await screen.findByRole('region', { name: '源码内容' });
+    expect(code).toHaveTextContent(source);
+    expect(code.querySelector('.hljs-keyword, .hljs-built_in')).not.toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '关闭源码预览' }));
+    expect(composer).toHaveValue('unsent draft');
+    expect(screen.queryByText('界面加载失败')).toBeNull();
+  });
+
+  it('renders escaped source text when highlighting fails', async () => {
+    const source = '<img src=x onerror=alert(1)> & <script>bad()</script>';
+    vi.spyOn(hljs, 'highlight').mockImplementation(() => { throw new Error('highlighter failed'); });
+    vi.mocked(apiClient.getSource).mockResolvedValue({ snapshot_id: 'snapshot-1', path: 'Dockerfile',
+      start_line: 1, end_line: 1, lines: [source], truncated: false });
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await openRepositoryPanel();
+    await userEvent.click(await screen.findByRole('button', { name: '打开源码证据' }));
+    const code = await screen.findByRole('region', { name: '源码内容' });
+    expect(code).toHaveTextContent(source);
+    expect(code.querySelector('img, script')).toBeNull();
+    expect(screen.queryByText('界面加载失败')).toBeNull();
+  });
+
+  it('isolates an unexpected preview error and allows reopening without reloading the chat', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fail = vi.spyOn(sourceHighlighting, 'sourceLanguage').mockImplementation(() => { throw new Error('private failure'); });
+    vi.mocked(apiClient.getSource).mockResolvedValue({ snapshot_id: 'snapshot-1', path: 'Dockerfile',
+      start_line: 1, end_line: 1, lines: ['FROM python:3.12'], truncated: false });
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    const composer = screen.getByPlaceholderText('尽情提问');
+    fireEvent.change(composer, { target: { value: 'unsent draft' } });
+    await openRepositoryPanel();
+    await userEvent.click(await screen.findByRole('button', { name: '打开源码证据' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('源码预览失败，请关闭后重试。');
+    expect(screen.queryByText('private failure')).toBeNull();
+    expect(composer).toHaveValue('unsent draft');
+    await userEvent.click(screen.getByRole('button', { name: '关闭源码预览' }));
+    fail.mockRestore();
+    await userEvent.click(screen.getByRole('button', { name: '打开源码证据' }));
+    expect(await screen.findByRole('region', { name: '源码内容' })).toHaveTextContent('FROM python:3.12');
+    expect(composer).toHaveValue('unsent draft');
+  });
+});
 
 describe('project chat capacity', () => {
   const lastUser: Message = { message_id: 'capacity-user', role: 'user', content: '原问题',

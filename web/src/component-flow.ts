@@ -47,7 +47,7 @@ export interface GroupNodeData extends Record<string, unknown> {
 export interface LayerExpansion {
   expandedScopeId?: string | null;
   activeComponentId?: string | null;
-  expandedExternalScopeId?: string | null;
+  expandedRelatedScopeId?: string | null;
   focusComponentId?: string | null;
 }
 
@@ -287,7 +287,7 @@ function directLayerComponents(
     .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 }
 
-/** Keep the layer's cards on screen, with at most one main and one external frame. */
+/** Keep the layer's cards on screen, with at most one main and one related frame. */
 export function buildLayerScopeFlow(
   snapshot: Snapshot,
   activeLayerId: string,
@@ -305,10 +305,10 @@ export function buildLayerScopeFlow(
   const directComponents = directLayerComponents(snapshot, layer, layerScopes);
   const mainComponent = !mainScope ? directComponents.find(component => component.id === expansion.activeComponentId) : undefined;
   const hasSubject = Boolean(mainScope || mainComponent);
-  const externalScope = hasSubject ? scopes.find(scope => (
-    scope.id === expansion.expandedExternalScopeId && scope.layer_id !== activeLayerId
+  const comparisonScope = hasSubject ? scopes.find(scope => (
+    scope.id === expansion.expandedRelatedScopeId && scope.id !== mainScope?.id
   )) : undefined;
-  const openScopes = [mainScope, externalScope].filter((scope): scope is ArchitectureScope => Boolean(scope));
+  const openScopes = [mainScope, comparisonScope].filter((scope): scope is ArchitectureScope => Boolean(scope));
   const openIds = new Set([
     ...openScopes.flatMap(scope => scope.component_ids),
     ...(mainComponent ? [mainComponent.id] : []),
@@ -321,7 +321,7 @@ export function buildLayerScopeFlow(
   ));
   const relatedIds = new Set(relations.flatMap(relation => [relation.source, relation.target]));
   const foreignScopes = scopes.filter(scope => scope.layer_id !== activeLayerId
-    && (scope.id === externalScope?.id || scope.component_ids.some(id => relatedIds.has(id))));
+    && (scope.id === comparisonScope?.id || scope.component_ids.some(id => relatedIds.has(id))));
   const foreignSingles = components.filter(component => relatedIds.has(component.id)
     && !layerComponentIds.has(component.id) && !scopeByComponent.has(component.id));
   const colors = layerIndex(snapshot);
@@ -331,7 +331,7 @@ export function buildLayerScopeFlow(
   type FlowItem = { node: ArchitectureFlowNode; children: ComponentFlowNode[] };
   const scopeItem = (scope: ArchitectureScope): FlowItem => {
     const external = scope.layer_id !== activeLayerId;
-    const expanded = scope.id === mainScope?.id || scope.id === externalScope?.id;
+    const expanded = scope.id === mainScope?.id || scope.id === comparisonScope?.id;
     const id = expanded ? 'frame:' + scope.id : external ? 'portal:' + scope.id : scope.id;
     membersByNode.set(id, scope.component_ids);
     scope.component_ids.forEach(componentId => displayByComponent.set(componentId, id));
@@ -398,7 +398,7 @@ export function buildLayerScopeFlow(
     });
     nodes.push(item.node, ...item.children);
   };
-  // Keep the subject anchored, and reserve an adjacent slot for the external
+  // Keep the subject anchored, and reserve an adjacent slot for the related
   // frame. Related cards must not separate the two frames being compared.
   const placeItems = (items: FlowItem[], startY: number): number => {
     // Size each region for its own cards. A small main layer can still have many
@@ -426,14 +426,14 @@ export function buildLayerScopeFlow(
     }
     return y + rowHeight;
   };
-  const subject = localItems.find(item => item.node.type === 'group' || item.node.id === mainComponent?.id);
-  const comparison = foreignItems.find(item => item.node.type === 'group');
+  const subject = localItems.find(item => item.node.id === (mainScope ? 'frame:' + mainScope.id : mainComponent?.id));
+  const comparison = [...localItems, ...foreignItems].find(item => item.node.id === 'frame:' + comparisonScope?.id);
   if (subject) {
     placeItem(subject, 0, 0);
     if (comparison) placeItem(comparison, (subject.node.width ?? NODE_WIDTH) + 160, 0);
     const bottom = Math.max(subject.node.height ?? NODE_HEIGHT, comparison?.node.height ?? 0);
     placeItems([
-      ...localItems.filter(item => item !== subject),
+      ...localItems.filter(item => item !== subject && item !== comparison),
       ...foreignItems.filter(item => item !== comparison),
     ], bottom + 100);
     // Reuse the compact grid, but assign its slots by actual connections to

@@ -16,6 +16,7 @@ import { useMediaQuery } from './useMediaQuery';
 import { LastMessageActions, ConversationErrorNotice } from './ConversationFeedback';
 import { createPortal } from 'react-dom';
 import hljs from 'highlight.js/lib/common';
+import { sourceLanguage, highlightedSourceLine } from './source-highlighting';
 import ReactMarkdown, { type Components as MarkdownComponents } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import LogIn from '@sketchyicons/react/icons/log-in';
@@ -283,24 +284,6 @@ function ComplianceFooter() {
       </a>}
     </footer>
   );
-}
-
-const SOURCE_LANGUAGE_BY_EXTENSION: Record<string, string> = {
-  bash: 'bash', c: 'c', cc: 'cpp', cpp: 'cpp', cs: 'csharp', css: 'css',
-  docker: 'dockerfile', dockerfile: 'dockerfile', go: 'go', h: 'c', hpp: 'cpp', html: 'xml',
-  java: 'java', js: 'javascript', cjs: 'javascript', mjs: 'javascript', json: 'json', jsx: 'javascript',
-  md: 'markdown', mdx: 'markdown', php: 'php', py: 'python', rb: 'ruby', rs: 'rust', sh: 'bash', zsh: 'bash', fish: 'bash', sql: 'sql',
-  ts: 'typescript', tsx: 'typescript', xml: 'xml', yaml: 'yaml', yml: 'yaml', jl: 'julia', erl: 'erlang', hrl: 'erlang', ex: 'elixir', exs: 'elixir', hs: 'haskell', lhs: 'haskell', vb: 'vbscript', vbs: 'vbscript',
-  conf: 'ini', ini: 'ini', toml: 'ini', env: 'ini', ps1: 'powershell',
-};
-
-function sourceLanguage(path: string): string {
-  const extension = languageFromPath(path);
-  return SOURCE_LANGUAGE_BY_EXTENSION[extension] ?? 'plaintext';
-}
-
-function highlightedSourceLine(value: string, language: string): string {
-  return hljs.highlight(value || ' ', { language, ignoreIllegals: true }).value;
 }
 
 const MARKDOWN_LANGUAGE_ALIASES: Record<string, string> = {
@@ -1678,11 +1661,12 @@ function SourceModal({ projectId, snapshotId, path, line, stableId, onClose }: {
             <div ref={sourceRef} className="source-code" role="region" aria-label={t("源码内容")} tabIndex={0}>
               {data.lines.map((l, i) => {
                 const ln = (data.start_line || 1) + i;
+                const html = highlightedSourceLine(l, language);
                 return (
                   <div key={i} ref={ln === line ? targetLineRef : undefined} data-line={ln} className={ln === line ? 'source-code-line highlighted' : 'source-code-line'}>
                     <span className="source-code-number">{ln}</span>
                     <code className={`hljs language-${language}`}
-                      dangerouslySetInnerHTML={{ __html: highlightedSourceLine(l, language) }} />
+                      {...(html === null ? { children: l || ' ' } : { dangerouslySetInnerHTML: { __html: html } })} />
                   </div>
                 );
               })}
@@ -4059,10 +4043,18 @@ export default function App() {
       {sourceModal
         && sourceModal.projectId === activeId
         && sourceModal.projectEpoch === projectEpochRef.current && (
-        <SourceModal key={`${sourceModal.projectId}:${sourceModal.snapshotId}:${sourceModal.path}:${sourceModal.line}:${sourceModal.stableId ?? ''}`}
-          projectId={sourceModal.projectId} snapshotId={sourceModal.snapshotId}
-          path={sourceModal.path} line={sourceModal.line} stableId={sourceModal.stableId}
-          onClose={() => setSourceModal(null)} />
+        <LazyLoadBoundary key={`${sourceModal.projectId}:${sourceModal.snapshotId}:${sourceModal.path}:${sourceModal.line}:${sourceModal.stableId ?? ''}`}
+          fallback={<div className="settings-panel">
+            <div className="settings-dialog source-dialog" role="dialog" aria-modal="true" aria-label={t("源码预览失败")}>
+              <p role="alert">{t("源码预览失败，请关闭后重试。")}</p>
+              <button type="button" className="btn" onClick={() => setSourceModal(null)}>{t("关闭源码预览")}</button>
+            </div>
+          </div>}>
+          <SourceModal
+            projectId={sourceModal.projectId} snapshotId={sourceModal.snapshotId}
+            path={sourceModal.path} line={sourceModal.line} stableId={sourceModal.stableId}
+            onClose={() => setSourceModal(null)} />
+        </LazyLoadBoundary>
       )}
     </div>
   );

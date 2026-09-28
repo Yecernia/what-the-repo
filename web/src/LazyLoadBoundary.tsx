@@ -4,6 +4,7 @@ import { t } from './ui-language';
 interface Props {
   children: ReactNode;
   beforeReload?: () => boolean;
+  fallback?: ReactNode;
 }
 
 /** A failed feature import must not unmount its sibling chat or silently reload drafts. */
@@ -15,9 +16,10 @@ export class LazyLoadBoundary extends Component<Props, { failed: boolean }> {
   }
   render() {
     if (!this.state.failed) return this.props.children;
+    if (this.props.fallback !== undefined) return this.props.fallback;
     return <div className="workspace-error" role="alert">
       <strong>{t('界面加载失败')}</strong>
-      <span>{t('请检查网络连接后重新加载页面。')}</span>
+      <span>{t('请重新加载页面后重试。')}</span>
       <button type="button" className="btn" onClick={() => {
         // Browsers can cache a rejected ES module. Recreating React.lazy is not a reliable retry.
         if (this.props.beforeReload?.() === false) return;
