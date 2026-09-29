@@ -2,6 +2,12 @@
 import { detailedAnalysisStages } from './analysis-stage-catalog';
 
 export const englishMessages: Record<string, string> = {
+  '无法访问这个 GitHub 仓库。请先检查地址是否拼写正确，组织名和仓库名有无缺字、多字或其他错误，并确认这是公开仓库。': 'Cannot access this GitHub repository. First check the URL for spelling mistakes, missing or extra characters in the organization and repository names. Also confirm that the repository is public.',
+  'GitHub 拒绝了仓库访问请求，请联系管理员检查 GitHub 连接权限。': 'GitHub denied access to the repository. Ask the administrator to check the GitHub connection permissions.',
+  'GitHub 暂时不可用，请稍后重试。': 'GitHub is temporarily unavailable. Please try again later.',
+  '分析配置已更新，请重新分析。': 'The analysis configuration has changed. Please analyze again.',
+  '检查仓库地址': 'Check repository URL',
+  '使用其他仓库地址': 'Use another repository URL',
   '当前页面版本已过期': 'This view has expired',
   '当前页面版本已过期，请切换到新版本。': 'This view has expired. Switch to the new version.',
   '旧版本已超过保留期，请切换到当前版本。': 'This older version is past its retention period. Switch to the current version.',

@@ -1,4 +1,5 @@
 import { acquireRepositoryReadLease } from '../persistence/repository-read-lease.js';
+import { analysisFailureCode, failureMessage } from '../agent/provider-error.js';
 import { createHash, randomUUID } from "node:crypto";
 import {
   createProject,
@@ -229,11 +230,16 @@ export class RepositoryService {
           this.options.githubClientSecret,
           this.options.githubGateway,
         );
-      } catch {
+      } catch (error) {
+        const code = analysisFailureCode(error instanceof Error ? error.message : '');
+        if (code === 'github_repository_unavailable' || code === 'github_access_denied') {
+          // A worker cannot repair a missing/private repository or rejected access.
+          throw serviceError(code, failureMessage(code), code === 'github_repository_unavailable' ? 400 : 502);
+        }
         upstream = null;
       }
     }
-    if (!hasReadableSnapshot) recordAnalysisProgress(project.analysis, "confirming_upstream", "completed");
+    if (!hasReadableSnapshot) recordAnalysisProgress(project.analysis, "confirming_upstream", upstream ? "completed" : "failed");
     if (upstream) {
       if (!hasReadableSnapshot) recordAnalysisProgress(project.analysis, "comparing_versions", "running");
       if (sameIdentity && head?.current_commit_sha === upstream.commitSha && head.current_public_snapshot_key) {
@@ -389,7 +395,8 @@ export class RepositoryService {
       job_attempt: job?.attempt ?? null,
       job_max_attempts: job?.max_attempts ?? null,
       heartbeat_at: job?.heartbeat_at ?? null,
-      retryable: !job || job.status === "failed" || job.status === "cancelled",
+      retryable: (!job || job.status === "failed" || job.status === "cancelled")
+        && !['github_repository_unavailable', 'github_access_denied'].includes(analysisFailureCode(project.analysis.error ?? job?.error ?? '')),
     };
   }
 

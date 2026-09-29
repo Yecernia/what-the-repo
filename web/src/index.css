@@ -1367,10 +1367,11 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   color: var(--accent); opacity: .72; transform: translate(-50%, -49%) rotate(-2deg);
 }
 .chat-analysis-error {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 12px; border: 1.5px dashed var(--err); border-radius: var(--radius-sketch-sm);
   color: var(--err); background: var(--err-soft); font-size: 12px;
 }
+.chat-analysis-error > span { flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; }
 .workspace-loading, .workspace-error {
   height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 10px; color: var(--fg-muted); padding: 28px; text-align: center;

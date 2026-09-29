@@ -2242,6 +2242,23 @@ describe('App project state synchronization', () => {
     expect(firstProjectLoads).toBe(2);
   });
 
+  it('guides missing repository users to check or replace the URL instead of retrying it', async () => {
+    const source = 'https://github.com/example/missing';
+    const error = '无法访问这个 GitHub 仓库。请先检查地址是否拼写正确，组织名和仓库名有无缺字、多字或其他错误，并确认这是公开仓库。';
+    const failed = project({ source: { kind: 'github', value: source, display_name: 'example/missing', commit_sha: null },
+      analysis: { ...project().analysis, stage: 'failed', snapshot_id: null, error } });
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(failed,
+      { ...job('failed'), error, error_code: 'github_repository_unavailable' }, false));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByText(error)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /重新分析/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '检查仓库地址' })).toHaveAttribute('href', source);
+    await userEvent.click(screen.getByRole('button', { name: '使用其他仓库地址' }));
+    expect(screen.getByLabelText('公开 GitHub 仓库地址')).toHaveValue(source);
+    expect(apiClient.requestRepositoryUpdate).not.toHaveBeenCalled();
+  });
+
   it('ignores a late reanalysis response after the user switches projects', async () => {
     const otherSummary: ProjectSummary = {
       ...summary,

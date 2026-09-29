@@ -5,6 +5,40 @@ import type { PublicSnapshotMetadata } from "../domain/lifecycle.js";
 import type { ProductStore } from "../persistence/store.js";
 import { RepositoryService } from "./repository-service.js";
 
+test('inaccessible repositories fail before project creation or admission, including retries', async () => {
+  for (const raw of ['github_api_404', 'github_api_401', 'github_api_403']) {
+    for (const existing of [false, true]) {
+      const project = createProject('guest:missing', 'https://github.com/example/missing', 'Missing');
+      project.analysis.stage = 'failed';
+      const before = structuredClone(project);
+      const store = {
+        loadProject: async () => project,
+        latestJob: async () => null,
+        loadRepositoryHead: async () => null,
+        createOrJoinRepositoryUpdate: async () => assert.fail('must not create a queued job'),
+      } as unknown as ProductStore;
+      const service = new RepositoryService(store, {
+        resolveGithubHead: async () => { throw new Error(raw); },
+        admitWork: async () => assert.fail('must not occupy capacity'),
+      });
+      await assert.rejects(service.startAnalysis({ owner: { owner_id: project.owner_id, kind: 'guest' },
+        ...(existing ? { projectId: project.project_id } : { kind: 'github', value: project.source.value }),
+      }), { code: raw.endsWith('404') ? 'github_repository_unavailable' : 'github_access_denied' });
+      assert.deepEqual(project, before);
+    }
+  }
+});
+
+test('a transient upstream check still admits work but does not claim the check succeeded', async () => {
+  const service = new RepositoryService({
+    loadRepositoryHead: async () => null,
+    createOrJoinRepositoryUpdate: async (input: { job: unknown }) => ({ leader: true, job: input.job }),
+  } as unknown as ProductStore, { resolveGithubHead: async () => { throw new Error('github_api_503'); } });
+  const result = await service.startAnalysis({ owner: { owner_id: 'guest:transient', kind: 'guest' },
+    kind: 'github', value: 'https://github.com/example/repo' });
+  assert.equal(result.project.analysis.progress_events?.find(e => e.kind === 'confirming_upstream')?.status, 'failed');
+});
+
 test('fresh and upstream-confirmed snapshot reuse reads only the published view', async () => {
   for (const fresh of [true, false]) {
     let thinReads = 0;

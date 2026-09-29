@@ -65,6 +65,12 @@ function publicErrorMessage(status: number, code: string | undefined, detail: un
   const failure = code ? conversationErrorMessage(code) : null;
   if (failure) return failure;
   switch (code) {
+    case 'github_repository_unavailable':
+      return t('无法访问这个 GitHub 仓库。请先检查地址是否拼写正确，组织名和仓库名有无缺字、多字或其他错误，并确认这是公开仓库。');
+    case 'github_access_denied':
+      return t('GitHub 拒绝了仓库访问请求，请联系管理员检查 GitHub 连接权限。');
+    case 'github_upstream_unavailable':
+      return t('GitHub 暂时不可用，请稍后重试。');
     case 'no_result':
       return t("服务端错误，请稍后重试。");
     case 'connection_name_duplicate':

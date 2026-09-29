@@ -9,6 +9,16 @@ afterEach(() => {
 });
 
 describe('streamed messages', () => {
+  it('explains repository address errors on creation in both languages', async () => {
+    for (const language of ['zh-CN', 'en'] as const) {
+      setUiLanguage(language);
+      vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+        code: 'github_repository_unavailable', detail: 'unsafe-secret-sentinel',
+      }), { status: 400 })));
+      await expect(apiClient.createProject({ kind: 'github', value: 'https://github.com/example/missing' }))
+        .rejects.toMatchObject({ code: 'github_repository_unavailable', message: expect.stringMatching(language === 'en' ? /public/ : /公开仓库/) });
+    }
+  });
   it('forwards structured skip intent only when supplied by the caller', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
     const intent = { kind: 'skip_current_step' as const, route_revision: 3, step_id: 'step-2', snapshot_id: 'snapshot-1' };

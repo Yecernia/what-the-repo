@@ -327,9 +327,9 @@ function jobResponse(job: AnalysisJob | null): Record<string, unknown> | null {
     error: job.error
       ? failureMessage(analysisFailureCode(job.error))
       : null,
-    error_code: job.error_code
-      ? publicErrorCode(job.status === "failed" ? 500 : 409, job.error_code)
-      : null,
+    error_code: job.status === 'failed' && job.error
+      ? analysisFailureCode(job.error)
+      : job.error_code ? publicErrorCode(409, job.error_code) : null,
   };
 }
 
@@ -1358,7 +1358,9 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       error: typeof status.error === "string" && status.error
         ? status.error === "分析已停止，可重新分析。" ? status.error : failureMessage(analysisFailureCode(status.error))
         : null,
-      error_code: status.error_code ? publicErrorCode(500, status.error_code) : null,
+      error_code: status.stage === 'failed' && typeof status.error === 'string'
+        ? analysisFailureCode(status.error)
+        : status.error_code ? publicErrorCode(500, status.error_code) : null,
     };
   });
 

@@ -21,6 +21,10 @@ export function providerErrorCode(error: unknown, fallback = "provider_request_f
 }
 
 export const FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  github_repository_unavailable: '无法访问这个 GitHub 仓库。请先检查地址是否拼写正确，组织名和仓库名有无缺字、多字或其他错误，并确认这是公开仓库。',
+  github_access_denied: 'GitHub 拒绝了仓库访问请求，请联系管理员检查 GitHub 连接权限。',
+  github_upstream_unavailable: 'GitHub 暂时不可用，请稍后重试。',
+  analysis_configuration_changed: '分析配置已更新，请重新分析。',
   site_budget_busy: '额度暂被正在进行的请求占用，等待超时，请稍后重试。',
   site_budget_insufficient: '平台剩余额度不足以启动这次模型请求，请联系管理员。',
   github_rate_limited: '仓库拉取仍受限，已停止自动重试，请稍后再试。',
@@ -75,6 +79,9 @@ export function failureMessage(code: string): string {
 
 /** Legacy analysis failures may carry a safe stage prefix around the category. */
 export function analysisFailureCode(value: string): string {
+  if (/\bgithub_(?:api|archive)_404\b/u.test(value)) return 'github_repository_unavailable';
+  if (/\bgithub_(?:api|archive)_(?:401|403)\b/u.test(value)) return 'github_access_denied';
+  if (/\bgithub_(?:api|archive)_5\d\d\b|\bgithub_gateway_unavailable\b/u.test(value)) return 'github_upstream_unavailable';
   return Object.keys(FAILURE_MESSAGES).find(code => value.includes(code)) ?? "server_error";
 }
 

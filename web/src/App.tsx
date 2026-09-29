@@ -1530,10 +1530,10 @@ function splitList(value: string): string[] {
   return value.split(/[,，\n]/).map(item => item.trim()).filter(Boolean);
 }
 
-function NewProjectForm({ onCreated, onClose }: { onCreated: (id: string) => void; onClose: () => void }) {
+function NewProjectForm({ onCreated, onClose, initialValue = '' }: { onCreated: (id: string) => void; onClose: () => void; initialValue?: string }) {
   const [projectLanguage, setProjectLanguage] = useState<UiLanguage>(getUiLanguage);
   const t = (message: string, ...values: unknown[]) => translateFor(projectLanguage, message, ...values);
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(initialValue);
   const [title, setTitle] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1585,7 +1585,7 @@ function NewProjectForm({ onCreated, onClose }: { onCreated: (id: string) => voi
   );
 }
 
-function NewProjectDialog({ onCreated, onClose }: { onCreated: (id: string) => void; onClose: () => void }) {
+function NewProjectDialog({ onCreated, onClose, initialValue }: { onCreated: (id: string) => void; onClose: () => void; initialValue?: string }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const previousFocus = document.activeElement;
@@ -1596,7 +1596,7 @@ function NewProjectDialog({ onCreated, onClose }: { onCreated: (id: string) => v
   return createPortal(
     <dialog ref={dialogRef} className="new-project-dialog" aria-labelledby="new-project-title"
       onCancel={onClose} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
-      <NewProjectForm onCreated={onCreated} onClose={onClose} />
+      <NewProjectForm onCreated={onCreated} onClose={onClose} initialValue={initialValue} />
     </dialog>, document.body,
   );
 }
@@ -2203,6 +2203,7 @@ export default function App() {
   const [learningReviewPending, setLearningReviewPending] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const [correctionSource, setCorrectionSource] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const historyUsage = useMemo(() => chatHistoryUsage(project?.messages ?? []), [project?.messages]);
   const newMessageBlocked = chatCapacityReached(historyUsage, project?.chat_limits, input);
@@ -3494,6 +3495,8 @@ export default function App() {
   const analysisJobTerminal = ['succeeded', 'failed', 'cancelled'].includes(analysisJobStatus ?? '');
   const analysisCanRetry = !snapshot && !analysisJobActive
     && (analysisStage === 'failed' || analysisJobStatus === 'failed' || analysisJobStatus === 'cancelled');
+  const analysisNeedsAddressCheck = analysisJobDetails?.error_code === 'github_repository_unavailable';
+  const analysisAccessDenied = analysisJobDetails?.error_code === 'github_access_denied';
   const analysisRetryMessage = analysisJobStatus === 'cancelled'
     ? t("分析已停止，可重新分析。")
     : t(analysisJobDetails?.error ?? project?.analysis.error ?? '服务端错误，请稍后重试。');
@@ -3787,8 +3790,11 @@ export default function App() {
                 {analysisCanRetry && (
                   <div className="chat-analysis-error">
                     <span>{analysisRetryMessage}</span>
-                    <button className="btn" type="button" onClick={reanalyzeProject}>
-                      <RefreshCw size={12} /> {t(" 重新分析")}</button>
+                    {analysisNeedsAddressCheck ? <>
+                      <a className="btn" href={project.source.value} target="_blank" rel="noopener noreferrer">{t('检查仓库地址')}</a>
+                      <button className="btn" type="button" onClick={() => setCorrectionSource(project.source.value)}>{t('使用其他仓库地址')}</button>
+                    </> : !analysisAccessDenied && <button className="btn" type="button" onClick={reanalyzeProject}>
+                      <RefreshCw size={12} /> {t(" 重新分析")}</button>}
                   </div>
                 )}
                 {(visibleRepositoryStatus?.view?.commit_sha ?? project.source.commit_sha) && (
@@ -4029,7 +4035,9 @@ export default function App() {
       </div>
       <TabDoneBadge working={sending || isAnalyzing} />
 
-      {showNew && <NewProjectDialog onCreated={handleProjectCreated} onClose={() => setShowNew(false)} />}
+      {(showNew || correctionSource !== null) && <NewProjectDialog initialValue={correctionSource ?? ''}
+        onCreated={id => { setCorrectionSource(null); void handleProjectCreated(id); }}
+        onClose={() => { setShowNew(false); setCorrectionSource(null); }} />}
       {showSettings && (
         <SettingsDialog
           identity={identity}

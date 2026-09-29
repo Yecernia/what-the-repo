@@ -2274,3 +2274,29 @@ test('snapshot reanalysis errors keep their actionable public code without expos
     assert.match(response.body,/重新分析/);assert.doesNotMatch(response.body,/unsafe-storage-path-sentinel/);
   }finally{await app.close();await rm(root,{recursive:true,force:true});}
 });
+
+test('legacy GitHub failures retain an actionable category in project and analysis responses', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-repository-error-'));
+  const store = new FileStore(root); await store.init();
+  const app = buildApp({ config: config(root), store, sessions: new PiSessionStore(join(root, 'sessions')), memories: new PiMemoryStore(join(root, 'memory')) });
+  try {
+    const guest = await browserInject(app, { method: 'POST', url: '/api/auth/guest' });
+    const cookie = cookieValue(guest.headers['set-cookie'], 'what_the_repo_identity');
+    const project = createProject(guest.json().owner_id, 'https://github.com/example/missing', 'Missing');
+    project.analysis.stage = 'failed';
+    project.analysis.error = 'github_api_404 unsafe-secret-sentinel';
+    const job = { ...newAnalysisJob(project.project_id, 'missing'), status: 'failed' as const,
+      error: project.analysis.error, error_code: 'repository_update_failed' };
+    await store.saveProject(project); await store.saveJob(job);
+    const headers = { cookie: `what_the_repo_identity=${cookie}` };
+    const detail = await app.inject({ method: 'GET', url: `/api/projects/${project.project_id}`, headers });
+    assert.equal(detail.statusCode, 200);
+    assert.equal(detail.json().analysis_job.error_code, 'github_repository_unavailable');
+    assert.match(detail.json().project.analysis.error, /地址.*公开仓库/);
+    const status = await app.inject({ method: 'GET', url: `/api/projects/${project.project_id}/analysis`, headers });
+    assert.equal(status.statusCode, 200);
+    assert.equal(status.json().error_code, 'github_repository_unavailable');
+    assert.equal(status.json().retryable, false);
+    assert.doesNotMatch(detail.body + status.body, /unsafe-secret-sentinel|github_api_404/);
+  } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
+});
