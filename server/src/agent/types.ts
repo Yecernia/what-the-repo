@@ -150,6 +150,8 @@ export interface PiAgentRunOptions {
   /** Visible turn identity; editing rewinds the current Pi branch before this turn. */
   turn?: { messageId: string; replace: boolean; previousMessages: AgentMessage[] };
   beforePrompt?: (signal?: AbortSignal, writeFence?: {permitId:string}) => Promise<void>;
+  /** Final UI text is accepted only after the main agent submits the reply contract. */
+  replyContract?: { read: () => string | null; correction: string };
 }
 
 export interface PersistedPiMessage {

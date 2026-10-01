@@ -6,6 +6,7 @@ import type { EvidenceSnapshot } from "../domain/snapshot.js";
 import type { ProductStore } from "../persistence/store.js";
 import { createConversationTools, type ConversationToolContext } from "./conversation-tools.js";
 import { applyConfirmedLearningAction } from "./learning-actions.js";
+import { restoreDisplayedTeachingQuestion } from './conversation-reply.js';
 
 const evidence = {
   stable_id: "fact:file:entry",
@@ -128,6 +129,7 @@ test("online conversation tools keep explanation in Primary and expose one actio
     "query_code_evidence",
     "read_source_excerpt",
     "register_teaching_question",
+    "submit_conversation_reply",
   ]);
 });
 
@@ -553,4 +555,31 @@ test('legacy broad completion checks cannot be certified by registering a narrow
   await assert.rejects(register.execute('narrow', { prompt: 'Which branch?', target_items: ['Explain both branches and their evidence.'], evidence_ids: [evidence.stable_id] }), /legacy step/);
   await register.execute('full', { prompt: 'Explain both branches and their evidence.', target_items: ['Explain both branches and their evidence.'], evidence_ids: [evidence.stable_id] });
   assert.equal(ctx.project.study.teaching_question?.prompt, 'Explain both branches and their evidence.');
+});
+
+test('canonicalized legacy question text remains recoverable with its original targets and display provenance', async () => {
+  const prompt = 'Explain `entry.ts`?';
+  const ctx = context({ source_message_id: 'ask-canonical', reply: { value: null }, lessonRequired: true });
+  ctx.store.listSourceFiles = async () => [evidence.path];
+  ctx.project.study.phase = 'explaining';
+  ctx.project.study.dynamic_learning_plan = [{ step_id: 'legacy', order: 1, title: 'Entry', objective: 'Entry',
+    component_ids: ['component:entry'], evidence_refs: [evidence.stable_id], completion_check: prompt }];
+  const user = createMessage('user', 'Start current step', { analysis_snapshot_id: 'snapshot:tools' });
+  user.message_id = ctx.source_message_id!;
+  ctx.project.messages = [user];
+  ctx.exposedEvidence.set(evidence.stable_id, evidence);
+  await createConversationTools(ctx).find(tool => tool.name === 'submit_conversation_reply')!.execute('lesson', {
+    kind: 'lesson', text: 'Here is the entry.', question: { prompt, target_items: [prompt], evidence_ids: [evidence.stable_id] },
+  });
+  const question = ctx.reply!.value!.question!;
+  assert.equal(question.prompt, 'Explain `src/entry.ts`?');
+  const displayed = createMessage('assistant', `Here is the entry.\n\n${question.prompt}`, {
+    teaching_context: { snapshot_id: 'snapshot:tools', route_revision: 0, step_id: 'legacy' },
+    teaching_question: structuredClone(question),
+  });
+  ctx.project.messages.push(displayed);
+  ctx.project.study.teaching_question = null;
+  assert.equal(restoreDisplayedTeachingQuestion(ctx.project, ctx.project.messages, 'answer-canonical'), true);
+  assert.equal(ctx.project.study.teaching_question!.prompt, question.prompt);
+  assert.deepEqual(ctx.project.study.teaching_question!.target_items, [prompt]);
 });

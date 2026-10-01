@@ -81,7 +81,7 @@ function publishedSkill(value: {
 const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   "primary-conversational-supervisor": {
     id: "primary-conversational-supervisor",
-    version: "6.0.0",
+    version: "6.1.0",
     allowedTools: [
       "get_project_overview",
       "list_value_points",
@@ -95,11 +95,12 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
       "assess_understanding",
       "propose_learning_action",
       "report_feedback_hint",
+      "submit_conversation_reply",
     ],
     inputSchemaId: "conversation-turn-v1",
-    outputSchemaId: "natural-answer-v1",
-    contextBuilderId: "primary-conversation-context-v4",
-    evalSuite: "conversation-contract-v7",
+    outputSchemaId: "conversation-reply-v2",
+    contextBuilderId: "primary-conversation-context-v5",
+    evalSuite: "conversation-contract-v8",
   },
   "component-explanation": {
     id: "component-explanation",

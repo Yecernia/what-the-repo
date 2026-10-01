@@ -14,7 +14,9 @@ import { MemoryMaintenance } from '../agent/memory-maintenance.js';
 import { FeedbackAnalysisWorker } from '../agent/feedback.js';
 import { createLearningActionProposal, applyCompletedLearningRoute } from '../agent/learning-actions.js';
 import type { PiAgentRunOptions, PiRunFinalization, PiRunResult } from '../agent/types.js';
-import type { generateLearningRoute } from '../agent/teaching-workers.js';
+import { runUnderstandingAssessment, type generateLearningRoute } from '../agent/teaching-workers.js';
+import { createModels, type Api, type Model } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { ConversationService } from './conversation-service.js';
 import { RepositoryService } from './repository-service.js';
 
@@ -30,7 +32,7 @@ const routeResult = (): Awaited<ReturnType<typeof generateLearningRoute>> => ({ 
   trace: { worker_run_id: 'route:mock', skill_id: 'learning-route', skill_version: 'test', stop_reason: 'completed',
     completed: true, usage, evidence_ids: [], state_candidate: true } });
 
-async function fixture(t: TestContext, generateRoute: typeof generateLearningRoute = async () => routeResult()) {
+async function fixture(t: TestContext, generateRoute: typeof generateLearningRoute = async () => routeResult(), assess?: typeof runUnderstandingAssessment) {
   const root = await mkdtemp(join(tmpdir(), 'wtr-teaching-regression-'));
   t.after(async () => { await rm(root, { recursive: true, force: true }); });
   const store = new FileStore(root); await store.init();
@@ -45,7 +47,7 @@ async function fixture(t: TestContext, generateRoute: typeof generateLearningRou
     keyEncryptionSecret: 'test-only', freeProviderBaseUrl: 'https://api.deepseek.com',
     freeProviderModel: 'deepseek-chat', freeProviderApiKey: 'never-used' } as ServerConfig;
   const service = new ConversationService(config, store, new PiSessionStore(join(root, 'sessions')),
-    new PiMemoryStore(join(root, 'memory')), undefined, undefined, undefined, undefined, { generateRoute });
+    new PiMemoryStore(join(root, 'memory')), undefined, undefined, undefined, undefined, { generateRoute, assess });
   const secondService = new ConversationService(config, store, new PiSessionStore(join(root, 'sessions')),
     new PiMemoryStore(join(root, 'memory')), undefined, undefined, undefined, undefined, { generateRoute });
   const base = { owner: { owner_id: project.owner_id, kind: 'guest' as const }, projectId: project.project_id };
@@ -65,6 +67,13 @@ function mockTurn(t: TestContext, propose: boolean, text = '收到。') {
         assert.equal((error as { code?: string }).code, 'tool_request_rejected');
       }
     }
+    // Submit according to the actual tool state, even when the model's draft is contradictory.
+    const action = options.tools.find(tool => tool.name === 'propose_learning_action');
+    let hasAction = false;
+    if (propose || /跳过这一步/.test(options.userMessage)) {
+      try { await action!.execute('read-decision', { action: 'advance_learning_step' }); hasAction = true; } catch { /* rejected proposal */ }
+    }
+    await options.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('reply', { kind: hasAction ? 'action' : 'answer', text });
     return (await finalize({ runId: options.runId!, text, stopReason: 'completed', usage, events: [] })).value;
   });
 }
@@ -77,6 +86,270 @@ test('negative, quoted and conditional requests never advance, even when a model
     assert.equal(result?.assistant_message.learning_action ?? null, null);
     assert.doesNotMatch(result!.assistant_message.content, /你明确选择跳过/);
   }
+});
+
+function scriptedTurn(t: TestContext, body: (options: PiAgentRunOptions) => Promise<void>, text = '模型草稿', stopReason = 'completed') {
+  t.mock.method(PiConversationRuntime.prototype, 'run', async (options: PiAgentRunOptions,
+    finalize: (result: PiRunResult) => Promise<PiRunFinalization<unknown>>) => {
+    await options.beforePrompt?.(options.signal);
+    await body(options);
+    return (await finalize({ runId: options.runId, text, stopReason, usage, events: [] })).value;
+  });
+}
+
+test('a structured skip and the tool share one decision even with a pass awaiting confirmation', async t => {
+  const f = await fixture(t);
+  f.project.study.step_passed = { step_id: 'step:1', snapshot_id: snapshot.snapshot_id, route_revision: 0,
+    mastered_items: ['understood'], evidence_ids: [] };
+  await f.store.saveProject(f.project);
+  scriptedTurn(t, async options => {
+    const tool = options.tools.find(tool => tool.name === 'propose_learning_action')!;
+    const response = await tool.execute('advance', { action: 'advance_learning_step' });
+    const payload = JSON.parse((response.content[0] as { text: string }).text);
+    assert.equal(payload.confirmation_required, false);
+    assert.equal(payload.proposal.skipped_understanding_check, true);
+    await assert.rejects(options.tools.find(tool => tool.name === 'assess_understanding')!.execute('unrequested-grade', { question_id: 'any' }), /not a learner answer/);
+    await options.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('reply', {
+      kind: 'action', text: '请确认，确认前进度不会变化。',
+    });
+  }, '请确认下方卡片，确认后才会进入下一步。');
+  const result = (await f.service.run({ ...f.base, content: '跳过这一步', learningIntent: {
+    kind: 'skip_current_step', route_revision: 0, step_id: 'step:1', snapshot_id: snapshot.snapshot_id,
+  } }))!;
+  const saved = await f.load();
+  assert.equal(saved.study.current_step, 1);
+  assert.deepEqual(saved.study.skipped_steps, ['step:1']);
+  assert.deepEqual(saved.study.mastered, []);
+  assert.equal(result.assistant_message.learning_action?.status, 'executed');
+  assert.doesNotMatch(result.assistant_message.content, /确认|确认前|确认后/);
+  assert.doesNotMatch(result.assistant_message.learning_action!.description, /确认/);
+  assert.deepEqual(result.assistant_message.learning_action!.outcome, { route_revision: 1, next_step_id: 'step:2', next_step_title: 'Step 2' });
+  assert.ok(saved.messages[0]!.learning_action_result);
+});
+
+test('new explicit skips are separate actions and the final receipt ends the route', async t => {
+  const f = await fixture(t); mockTurn(t, true, '等待确认后进入下一步。');
+  for (let i = 0; i < 3; i++) {
+    const result = (await f.service.run({ ...f.base, content: '跳过这一步', learningIntent: {
+      kind: 'skip_current_step', route_revision: i, step_id: `step:${i + 1}`, snapshot_id: snapshot.snapshot_id,
+    } }))!;
+    assert.equal((await f.load()).study.current_step, i + 1);
+    assert.equal(result.assistant_message.learning_action?.status, 'executed');
+    assert.doesNotMatch(result.assistant_message.content, /等待确认|确认后/);
+    if (i === 2) {
+      assert.match(result.assistant_message.content, /路线已结束/);
+      assert.doesNotMatch(result.assistant_message.content, /进入下一步/);
+      assert.equal(result.assistant_message.learning_action!.outcome?.next_step_id, null);
+    }
+  }
+  assert.equal((await f.load()).study.phase, 'completed');
+});
+
+test('cancelled or failed skip turns never publish a success receipt', async t => {
+  const f = await fixture(t);
+  for (const reason of ['cancelled', 'paused', 'provider_request_failed']) {
+    scriptedTurn(t, async options => {
+      await options.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('reply', { kind: 'action', text: '已完成跳过。' });
+    }, '已完成跳过。', reason);
+    const result = (await f.service.run({ ...f.base, content: '跳过这一步', learningIntent: {
+      kind: 'skip_current_step', route_revision: 0, step_id: 'step:1', snapshot_id: snapshot.snapshot_id,
+    } }))!;
+    assert.equal((await f.load()).study.current_step, 0);
+    assert.equal(result.assistant_message.learning_action ?? null, null);
+    assert.doesNotMatch(result.assistant_message.content, /已完成跳过|已记录为主动跳过/);
+    assert.equal(result.user_message.learning_action_result, undefined);
+  }
+  const controller = new AbortController();
+  scriptedTurn(t, async options => {
+    await options.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('reply', { kind: 'action', text: '' });
+    controller.abort('cancelled');
+  });
+  const raced = (await f.service.run({ ...f.base, content: '跳过这一步', signal: controller.signal, learningIntent: {
+    kind: 'skip_current_step', route_revision: 0, step_id: 'step:1', snapshot_id: snapshot.snapshot_id,
+  } }))!;
+  assert.equal(raced.assistant_message.error, 'cancelled');
+  assert.equal(raced.assistant_message.learning_action ?? null, null);
+  assert.equal((await f.load()).study.current_step, 0);
+});
+
+test('confirmed advances update the saved receipt text and scope to the actual next step', async t => {
+  const f = await fixture(t);
+  f.project.study.step_passed = { step_id: 'step:1', snapshot_id: snapshot.snapshot_id, route_revision: 0,
+    mastered_items: ['Input'], evidence_ids: ['evidence:input'] };
+  const action = createLearningActionProposal(f.project, snapshot, { action: 'advance_learning_step', request: 'Continue' });
+  f.project.messages.push(createMessage('assistant', '确认后进入下一步。', { learning_action: action,
+    teaching_context: { snapshot_id: snapshot.snapshot_id, route_revision: 0, step_id: 'step:1' } }));
+  await f.store.saveProject(f.project);
+  const result = await f.service.resolveLearningAction({ ...f.base, actionId: action.action_id, decision: 'confirm' });
+  const receipt = result.project.messages.at(-1)!;
+  assert.equal(result.action.status, 'executed');
+  assert.doesNotMatch(receipt.content, /确认后/);
+  assert.equal(receipt.teaching_context?.step_id, 'step:2');
+  assert.equal(receipt.teaching_context?.route_revision, 1);
+});
+
+test('failed persistence cannot expose or save a promised action card', async t => {
+  const f = await fixture(t);
+  scriptedTurn(t, async options => {
+    await options.tools.find(tool => tool.name === 'propose_learning_action')!.execute('route', {
+      action: 'start_learning_route', target_kind: 'repository',
+    });
+    await options.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('reply', { kind: 'action', text: '已提供确认卡。' });
+  });
+  const originalUpdate = f.store.updateProject.bind(f.store);
+  let writes = 0;
+  t.mock.method(f.store, 'updateProject', async (...args: Parameters<typeof originalUpdate>) => {
+    if (++writes === 2) throw new Error('persistence unavailable');
+    return originalUpdate(...args);
+  });
+  await assert.rejects(f.service.run({ ...f.base, content: '请制定学习路线' }), /persistence unavailable/);
+  const saved = await f.load();
+  assert.equal(saved.messages.length, 1);
+  assert.equal(saved.messages[0]!.role, 'user');
+  assert.equal(saved.study.current_step, 0);
+  assert.equal(saved.messages.some(message => message.learning_action), false);
+});
+
+test('unsubmitted prose cannot display an unregistered check or promise a missing card', async t => {
+  const f = await fixture(t);
+  for (const [content, text] of [
+    ['开始当前步骤', '我的理解检查题：What is the input?'],
+    ['请帮我制定学习路线', '我已提供确认卡，确认即可开始。'],
+  ]) {
+    scriptedTurn(t, async () => {}, text);
+    const result = (await f.service.run({ ...f.base, content }))!;
+    assert.equal(result.assistant_message.error, 'provider_invalid_response');
+    assert.match(result.assistant_message.content, /暂未完成/);
+    assert.doesNotMatch(result.assistant_message.content, /理解检查题|已提供确认卡/);
+    assert.equal(result.assistant_message.learning_action ?? null, null);
+    assert.equal((await f.load()).study.teaching_question ?? null, null);
+  }
+});
+
+async function prepareLesson(t: TestContext, f: Awaited<ReturnType<typeof fixture>>) {
+  const evidence = { stable_id: 'evidence:input', label: 'src/entry.ts', path: 'src/entry.ts', start_line: 1, end_line: 3, kind: 'symbol' };
+  const bound = structuredClone(snapshot);
+  bound.graph.layers.push({ id: 'layer:entry', name: 'Entry', responsibility: 'Input', component_ids: [], certainty: 'verified', evidence: [evidence] });
+  await f.store.saveSnapshot(f.project.project_id, bound);
+  f.project.study.dynamic_learning_plan![0]!.evidence_refs = [evidence.stable_id];
+  await f.store.saveProject(f.project);
+  t.mock.method(f.store, 'readSourceLines', async () => ({ lines: ['export function entry(input) {', '  return input;', '}'], truncated: false }));
+  scriptedTurn(t, async options => {
+    await options.tools.find(tool => tool.name === 'get_learning_context')!.execute('context', {});
+    // Omission of the standalone registration tool is safe: submission registers the exact displayed question.
+    await options.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('reply', {
+      kind: 'lesson', text: '入口接收 input，再返回 input。', question: {
+        prompt: steps[0]!.completion_check, target_items: [steps[0]!.completion_check], evidence_ids: [evidence.stable_id],
+      },
+    });
+  });
+  const lesson = (await f.service.run({ ...f.base, content: '开始当前步骤', learningIntent: {
+    kind: 'start_current_step', route_revision: 0, step_id: 'step:1', snapshot_id: snapshot.snapshot_id,
+  } }))!;
+  assert.ok(lesson.assistant_message.teaching_question);
+  assert.match(lesson.assistant_message.content, /What is the input\?/);
+  assert.equal(lesson.assistant_message.teaching_question!.created_message_id, lesson.user_message.message_id);
+  assert.equal((await f.load()).study.teaching_question?.question_id, lesson.assistant_message.teaching_question!.question_id);
+  return lesson;
+}
+
+test('displayed questions restore from provenance and assess the existing answer, including same-ID retries', async t => {
+  const answers: string[] = [];
+  const earlier: string[][] = [];
+  const faux = fauxProvider({ provider: 'question-recovery-assessment' });
+  const models = createModels(); models.setProvider(faux.provider);
+  const f = await fixture(t, undefined, async input => {
+    answers.push(input.answer); earlier.push(input.earlierAnswers ?? []);
+    faux.setResponses([fauxAssistantMessage(fauxToolCall('submit_result', {
+      answer_relevant: true, verdict: 'mastered', feedback: '回答正确。', mastered_items: ['input'],
+      misconceptions: [], evidence_ids: ['evidence:input'],
+    }))]);
+    return runUnderstandingAssessment({ ...input, modelRuntime: { models, model: faux.getModel() as Model<Api> } });
+  });
+  const lesson = await prepareLesson(t, f);
+  await f.store.updateProject(f.base.projectId, f.base.owner.owner_id, row => { row.study.teaching_question = null; });
+  const questionId = lesson.assistant_message.teaching_question!.question_id;
+  scriptedTurn(t, async options => {
+    const context = await options.tools.find(tool => tool.name === 'get_learning_context')!.execute('context', {});
+    const payload = JSON.parse((context.content[0] as { text: string }).text);
+    assert.equal(payload.study.teaching_question.question_id, questionId);
+    await assert.rejects(options.tools.find(tool => tool.name === 'register_teaching_question')!.execute('retroactive', {
+      prompt: steps[0]!.completion_check, target_items: [steps[0]!.completion_check], evidence_ids: ['evidence:input'],
+    }), /previously displayed question/);
+    await options.tools.find(tool => tool.name === 'assess_understanding')!.execute('grade', { question_id: questionId });
+    await options.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('reply', { kind: 'assessment', text: '请重新发送答案。' });
+  });
+  const answer = '输入是函数参数 input。';
+  const first = (await f.service.run({ ...f.base, content: answer }))!;
+  assert.ok((await f.load()).study.step_passed);
+  assert.equal(first.assistant_message.content, '回答正确。');
+  await f.store.updateProject(f.base.projectId, f.base.owner.owner_id, row => {
+    // Simulate an older answer-turn registration. Retry must restore the earlier display, not grade its own new question.
+    row.study.teaching_question!.created_message_id = first.user_message.message_id;
+  });
+  await f.service.run({ ...f.base, content: answer, replaceMessageId: first.user_message.message_id });
+  assert.deepEqual(answers, [answer, answer]);
+  assert.deepEqual(earlier, [[], []]);
+  assert.equal((await f.load()).study.teaching_question?.answers.length, 1);
+  await f.service.run({ ...f.base, content: answer });
+  assert.deepEqual(answers, [answer, answer, answer]);
+  assert.equal((await f.load()).study.current_step, 0);
+});
+
+test('registration errors, cancelled lessons and stale display records cannot become assessable questions', async t => {
+  const f = await fixture(t);
+  scriptedTurn(t, async options => {
+    const submit = options.tools.find(tool => tool.name === 'submit_conversation_reply')!;
+    await assert.rejects(submit.execute('invalid-question', { kind: 'lesson', text: '检查题：What is the input?',
+      question: { prompt: steps[0]!.completion_check, target_items: [steps[0]!.completion_check], evidence_ids: ['unread'] } }), /Read every/);
+    await submit.execute('unfinished', { kind: 'unavailable', text: '请重发答案。' });
+  });
+  const failed = (await f.service.run({ ...f.base, content: '开始当前步骤' }))!;
+  assert.equal((await f.load()).study.teaching_question ?? null, null);
+  assert.doesNotMatch(failed.assistant_message.content, /检查题|重发答案/);
+  const lesson = await prepareLesson(t, f);
+  await f.store.updateProject(f.base.projectId, f.base.owner.owner_id, row => {
+    row.study.route_revision = 1; row.study.teaching_question = null;
+  });
+  scriptedTurn(t, async options => {
+    await assert.rejects(options.tools.find(tool => tool.name === 'assess_understanding')!.execute('stale', {
+      question_id: lesson.assistant_message.teaching_question!.question_id,
+    }), /registered current question/);
+    await options.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('unfinished', { kind: 'unavailable', text: '' });
+  });
+  await f.service.run({ ...f.base, content: '输入是 input。' });
+  assert.equal((await f.load()).study.teaching_question ?? null, null);
+  assert.equal((await f.load()).study.step_passed ?? null, null);
+});
+
+test('a cancelled question is not displayed or saved, and regenerating its turn still cannot grade itself', async t => {
+  const f = await fixture(t);
+  const original = await prepareLesson(t, f);
+  let cancelledQuestionId = '';
+  scriptedTurn(t, async options => {
+    await options.tools.find(tool => tool.name === 'get_learning_context')!.execute('context', {});
+    const registered = await options.tools.find(tool => tool.name === 'register_teaching_question')!.execute('new', {
+      prompt: steps[0]!.completion_check, target_items: [steps[0]!.completion_check], evidence_ids: ['evidence:input'],
+    });
+    cancelledQuestionId = JSON.parse((registered.content[0] as { text: string }).text).question.question_id;
+  }, '未提交的新检查题', 'cancelled');
+  const cancelled = (await f.service.run({ ...f.base, content: '开始当前步骤' }))!;
+  assert.equal(cancelled.assistant_message.teaching_question, undefined);
+  assert.doesNotMatch(cancelled.assistant_message.content, /新检查题/);
+  assert.equal((await f.load()).study.teaching_question!.question_id, original.assistant_message.teaching_question!.question_id);
+  scriptedTurn(t, async options => {
+    await options.tools.find(tool => tool.name === 'get_learning_context')!.execute('context', {});
+    const registered = await options.tools.find(tool => tool.name === 'register_teaching_question')!.execute('retry-question', {
+      prompt: steps[0]!.completion_check, target_items: [steps[0]!.completion_check], evidence_ids: ['evidence:input'],
+    });
+    const questionId = JSON.parse((registered.content[0] as { text: string }).text).question.question_id;
+    assert.notEqual(questionId, cancelledQuestionId);
+    await assert.rejects(options.tools.find(tool => tool.name === 'assess_understanding')!.execute('self-grade', { question_id: questionId }), /not a learner answer/);
+    await options.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('lesson', { kind: 'lesson', text: '入口接收 input。', question_id: questionId });
+  });
+  const retry = (await f.service.run({ ...f.base, content: '开始当前步骤', replaceMessageId: cancelled.user_message.message_id }))!;
+  assert.equal(retry.assistant_message.teaching_question!.created_message_id, cancelled.user_message.message_id);
+  assert.equal((await f.load()).study.step_passed ?? null, null);
 });
 
 test('natural language never manufactures an action, while an explicit button binds its original step', async t => {

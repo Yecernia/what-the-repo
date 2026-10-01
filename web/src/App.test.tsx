@@ -833,6 +833,68 @@ describe('public compliance', () => {
 });
 
 describe('App project state synchronization', () => {
+  it('separates an executed skip receipt from the new step controls and binds start to that step', async () => {
+    const steps = ['第一课', '第二课'].map((title, index) => ({ step_id: `step-${index + 1}`, order: index + 1,
+      title, objective: 'Input', evidence_refs: [], component_ids: [], completion_check: 'Input?' }));
+    const action = learningAction({ action: 'advance_learning_step', status: 'executed', title: '已跳过第一课',
+      description: '确认后才会跳过第一课。', skip_understanding_check: true, route_revision: 0,
+      outcome: { route_revision: 1, next_step_id: 'step-2', next_step_title: '第二课' } });
+    const assistant: Message = { message_id: 'skip-receipt', role: 'assistant', content: '已记录为主动跳过。',
+      created_at: '2026-10-01T00:00:00Z', evidence: [], model: 'test-model', usage: null,
+      latency_ms: 12, error: null, placeholder: false, learning_action: action,
+      teaching_context: { route_revision: 1, step_id: 'step-2', snapshot_id: 'snapshot-1' } };
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [assistant], study: {
+      ...project().study, phase: 'explaining', current_step: 1, total_steps: 2, route_revision: 1, dynamic_learning_plan: steps,
+    } }), null, true));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    const card = (await screen.findByText('已跳过第一课')).closest('.learning-action-card')!;
+    expect(card).not.toHaveTextContent('确认后');
+    const current = screen.getByLabelText('当前学习步骤');
+    const start = within(current).getByRole('button', { name: /开始当前步骤 · 第二课/ });
+    expect(card.contains(start)).toBe(false);
+    expect(within(current).getByRole('button', { name: /跳过当前步骤 第二课/ })).toBeVisible();
+    await userEvent.click(start);
+    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[8]).toEqual({
+      kind: 'start_current_step', route_revision: 1, step_id: 'step-2', snapshot_id: 'snapshot-1',
+    });
+  });
+
+  it.each(['stale', 'completed'])('does not offer current-step controls for %s receipts', async state => {
+    const action = learningAction({ action: 'advance_learning_step', status: 'executed', title: '已跳过第一课',
+      description: '确认后进入下一步。', skip_understanding_check: true,
+      outcome: { route_revision: 1, next_step_id: 'step-2', next_step_title: '第二课' } });
+    const assistant: Message = { message_id: 'old-receipt', role: 'assistant', content: '已记录为主动跳过。',
+      created_at: '2026-10-01T00:00:00Z', evidence: [], model: 'test-model', usage: null,
+      latency_ms: 12, error: null, placeholder: false, learning_action: action };
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [assistant], study: {
+      ...project().study, phase: state === 'completed' ? 'completed' : 'explaining', current_step: 0, total_steps: 1,
+      route_revision: 2, dynamic_learning_plan: [{ step_id: 'new-route', title: '新路线', order: 1,
+        objective: 'Input', component_ids: [], evidence_refs: [], completion_check: 'Input?' }],
+    } }), null, true));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByText('已跳过第一课')).toBeVisible();
+    expect(screen.queryByLabelText('当前学习步骤')).not.toBeInTheDocument();
+    expect(screen.queryByText('确认后进入下一步。')).not.toBeInTheDocument();
+  });
+
+  it('retains a start entry when an executed skip message is regenerated without its old card', async () => {
+    const assistant: Message = { message_id: 'skip-replay', role: 'assistant',
+      content: '本次仅重新生成回答，学习进度没有再次改变。', created_at: '2026-10-01T00:00:00Z',
+      evidence: [], model: 'test-model', usage: null, latency_ms: 12, error: null, placeholder: false,
+      teaching_context: { snapshot_id: 'snapshot-1', route_revision: 1, step_id: 'second' } };
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [assistant], study: {
+      ...project().study, phase: 'explaining', current_step: 0, total_steps: 1, route_revision: 1,
+      dynamic_learning_plan: [{ step_id: 'second', title: '第二课', order: 2, objective: 'Input',
+        component_ids: [], evidence_refs: [], completion_check: 'Input?' }],
+    } }), null, true));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByRole('button', { name: /开始当前步骤 · 第二课/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /跳过当前步骤 第二课/ })).toBeVisible();
+  });
+
   it.each([
     { status: 'reviewed' as const, supported: true, label: '已核对引用源码' },
     { status: 'not_applicable' as const, supported: false, label: '本轮无需核对源码' },
@@ -958,7 +1020,9 @@ describe('App project state synchronization', () => {
     expect(screen.queryByRole('button', { name: '确认' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /开始当前步骤/ }));
     expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[1]).toBe('开始当前步骤');
-    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[8]).toBeUndefined();
+    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[8]).toEqual({
+      kind: 'start_current_step', route_revision: 0, step_id: 'first', snapshot_id: 'snapshot-1',
+    });
   });
 
   it.each([
@@ -1636,7 +1700,7 @@ describe('App project state synchronization', () => {
     render(<App />);
     await userEvent.click(await screen.findByText('python-edge-cases'));
     await userEvent.type(screen.getByPlaceholderText('尽情提问'), '还没写完的问题');
-    await userEvent.click(await screen.findByRole('button', { name: /跳过这一步/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /跳过当前步骤/ }));
 
     await waitFor(() => expect(apiClient.sendMessage).toHaveBeenCalledWith(
       'project-1', '跳过这一步的理解检查，直接进入下一步。', [], false,

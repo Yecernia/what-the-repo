@@ -21,6 +21,10 @@ import type { ServerConfig } from "../config.js";
 import type { PiAgentRunOptions, PiModelRuntime, PiRunFinalization, PiRunResult } from "./types.js";
 import { providerErrorCode } from "./provider-error.js";
 
+function reply(text: string) {
+  return fauxAssistantMessage(fauxToolCall('submit_conversation_reply', { kind: 'answer', text }));
+}
+
 test('chat history admission preserves the last answer and rejects new work before model calls', async t => {
   const root = await mkdtemp(join(tmpdir(), 'wtr-chat-capacity-'));
   try {
@@ -43,14 +47,14 @@ test('chat history admission preserves the last answer and rejects new work befo
       chatMaxRounds: 10, chatMaxContentBytes: 128 } as ServerConfig;
     const service = new ConversationService(config, store, sessions, new PiMemoryStore(join(root, 'memory')));
     const base = { owner: { owner_id: context.project.owner_id, kind: 'guest' as const }, projectId: context.project.project_id };
-    faux.setResponses([fauxAssistantMessage('x'.repeat(100))]);
+    faux.setResponses([reply('x'.repeat(100))]);
     const first = (await service.run({ ...base, content: 'a' }))!;
     faux.setResponses([async () => {
       await store.updateProject(base.projectId, base.owner.owner_id, row => {
         row.title = 'Changed during generation';
         row.messages.find(m => m.message_id === first.assistant_message.message_id)!.feedback = { vote: 'up', updated_at: '2026-01-01T00:00:00Z' };
       });
-      return fauxAssistantMessage('y'.repeat(100));
+      return reply('y'.repeat(100));
     }]);
     const second = (await service.run({ ...base, content: 'b' }))!;
     const full = (await store.loadProject(base.projectId))!;
@@ -60,12 +64,12 @@ test('chat history admission preserves the last answer and rejects new work befo
     await assert.rejects(service.run({ ...base, content: 'blocked' }), { code: 'site_project_chat_size_limit' });
     assert.equal(runs, 2, 'rejected request never starts the runtime');
     assert.deepEqual((await store.loadProject(base.projectId))!.messages, full.messages);
-    faux.setResponses([fauxAssistantMessage('short')]);
+    faux.setResponses([reply('short')]);
     await service.run({ ...base, content: 'b', replaceMessageId: second.user_message.message_id });
     assert.equal((await store.loadProject(base.projectId))!.messages.length, 4);
     config.chatMaxRounds = 2;
     await assert.rejects(service.run({ ...base, content: 'third' }), { code: 'site_project_chat_round_limit' });
-    faux.setResponses([fauxAssistantMessage('retry')]);
+    faux.setResponses([reply('retry')]);
     const current = (await store.loadProject(base.projectId))!;
     await service.run({ ...base, content: 'b', retryRunId: current.messages.at(-1)!.trace_id! });
     assert.equal((await store.loadProject(base.projectId))!.messages.length, 4);
@@ -93,7 +97,7 @@ test("last turn editing replaces Pi context, including a later compaction, and s
     const service = new ConversationService(config, store, sessions, new PiMemoryStore(join(root, "memory")));
     const owner = { owner_id: context.project.owner_id, kind: "guest" as const };
     const base = { owner, projectId: context.project.project_id };
-    faux.setResponses([fauxAssistantMessage("先前回答"), fauxAssistantMessage("打错字的旧回答")]);
+    faux.setResponses([reply("先前回答"), reply("打错字的旧回答")]);
     const first = (await service.run({ ...base, content: "先前问题" }))!;
     const old = (await service.run({ ...base, content: "打错的问题" }))!;
     const identity = { sessionId: projectSessionId(owner.owner_id, base.projectId, context.project.analysis.snapshot_id),
@@ -112,13 +116,13 @@ test("last turn editing replaces Pi context, including a later compaction, and s
     }]);
     const failed = (await service.run({ ...base, content: "正确问题", replaceMessageId: old.user_message.message_id }))!;
     assert.equal(failed.error?.code, "provider_rate_limited");
-    assert.equal(failed.assistant_message.content, "");
+    assert.match(failed.assistant_message.content, /回答暂未完成/);
     assert.equal(failed.assistant_message.thinking_summary?.at(-1)?.status, "failed");
     assert.match(failed.assistant_message.thinking_summary?.at(-1)?.label ?? "", /上游请求过多/);
     faux.setResponses([(request) => {
-      assert.equal(request.messages.filter(message => message.role === "user").length, 2);
+      assert.equal(request.messages.filter(message => message.role === "user" && !JSON.stringify(message.content).includes('Application display record')).length, 2);
       assert.doesNotMatch(JSON.stringify(request.messages), /打错|rate_limit|上游请求/);
-      return fauxAssistantMessage("正确的新回答");
+      return reply("正确的新回答");
     }]);
     const successful = (await service.run({ ...base, content: "正确问题", retryRunId: failed.assistant_message.trace_id! }))!;
     assert.equal(successful.error, undefined);
@@ -136,7 +140,7 @@ test("last turn editing replaces Pi context, including a later compaction, and s
     faux.setResponses([fauxAssistantMessage("取消前的部分内容")]);
     const cancelled = (await service.run({ ...base, content: "将被取消的问题", signal: controller.signal, onEvent: event => {
       if (event.type === "run_started") concurrent = assert.rejects(service.run({ ...base, content: "并发编辑" }), /上一轮仍在处理/);
-      if (event.type === "assistant_delta" && event.delta) controller.abort();
+      if (event.type === "model_started") controller.abort();
     } }))!;
     await concurrent;
     assert.equal(cancelled.error?.code, "cancelled");
@@ -144,7 +148,7 @@ test("last turn editing replaces Pi context, including a later compaction, and s
     assert.ok(cancelled.assistant_message.content.length > 0);
     faux.setResponses([(request) => {
       assert.doesNotMatch(JSON.stringify(request.messages), /将被取消|取消前的部分/);
-      return fauxAssistantMessage("修改后正常回答");
+      return reply("修改后正常回答");
     }]);
     await service.run({ ...base, content: "取消后修改的问题", replaceMessageId: cancelled.user_message.message_id });
     const afterCancel = (await store.loadProject(base.projectId, owner.owner_id))!;
@@ -156,7 +160,7 @@ test("last turn editing replaces Pi context, including a later compaction, and s
     faux.setResponses([(request) => {
       assert.match(JSON.stringify(request.messages), /先前问题|正确的新回答/);
       assert.doesNotMatch(JSON.stringify(request.messages), /取消后修改的问题|修改后正常回答/);
-      return fauxAssistantMessage("旧会话也能编辑");
+      return reply("旧会话也能编辑");
     }]);
     await legacyService.run({ ...base, content: "修改旧会话", replaceMessageId: afterCancel.messages.at(-2)!.message_id });
     assert.equal((await store.loadProject(base.projectId, owner.owner_id))!.messages.length, 6);
@@ -210,7 +214,7 @@ test("a turn pinned to a retired version completes against that version after a 
     const service = new ConversationService(config, store, sessions, new PiMemoryStore(join(root, "memory")));
     faux.setResponses([
       fauxAssistantMessage([fauxToolCall("read_source_excerpt", { path: "src/entry.ts" })], { stopReason: "toolUse" }),
-      fauxAssistantMessage("入口在 `src/entry.ts:2`。"),
+      reply("入口在 `src/entry.ts:2`。"),
     ]);
     const result = (await service.run({ owner: { owner_id: context.project.owner_id, kind: "guest" },
       projectId: context.project.project_id, content: "入口在哪", viewSnapshotId: oldId }))!;
@@ -401,6 +405,7 @@ test("online tool catalog contains no shell database or arbitrary file capabilit
       "query_code_evidence",
       "read_source_excerpt",
       "register_teaching_question",
+      "submit_conversation_reply",
     ]);
     assert.equal(names.some((name) => /shell|bash|sql|database|write|execute/.test(name)), false);
   } finally {
@@ -583,11 +588,11 @@ test("conversation service preserves model replies and appends visible citation 
     let visible = "";
     const originalAnswer = "这个文件可能是 `missing.ts`，尚未核实。";
     faux.setResponses([
-      fauxAssistantMessage(originalAnswer),
+      reply(originalAnswer),
       (input) => {
-        const original = input.messages.at(-3);
+        const original = [...input.messages].reverse().find(message => message.role === 'assistant');
         assert.equal(original?.role, "assistant");
-        assert.equal(original?.role === "assistant" ? original.content.filter(b => b.type === "text").map(b => b.text).join("") : "", originalAnswer);
+        assert.equal(original?.role === "assistant" ? original.content.find(b => b.type === 'toolCall')?.arguments.text : '', originalAnswer);
         assert.notEqual(originalAnswer, visible);
         assert.match(visible, /引用未核实/);
         const correction = input.messages.at(-2);
@@ -602,13 +607,13 @@ test("conversation service preserves model replies and appends visible citation 
         assert.equal(current.content.length, 2);
         assert.match(current.content[0]?.type === "text" ? current.content[0].text : "", /Interface language fallback: English/);
         assert.equal(current.content[1]?.type === "text" ? current.content[1].text : "", "午饭吃什么");
-        return fauxAssistantMessage("午饭可以吃面。");
+        return reply("午饭可以吃面。");
       },
       (input) => {
         assert.equal(input.messages.at(-1)?.role, "user");
         const answers = input.messages.filter(message => message.role === "assistant");
         assert.equal(answers.length, 2);
-        return fauxAssistantMessage("你好！");
+        return reply("你好！");
       },
     ]);
     const first = await service.run({ owner, projectId: context.project.project_id, content: "讲一个简单文件", displayLanguage: "en" });
@@ -628,10 +633,12 @@ test("conversation service preserves model replies and appends visible citation 
       ownerId: owner.owner_id, projectId: context.project.project_id, snapshotId: context.project.analysis.snapshot_id,
       skillId: "primary-conversational-supervisor", skillVersion: "test" };
     const history = await sessions.snapshot(identity);
-    assert.deepEqual(history.messages.map(message => message.role), ["user", "assistant", "user", "user", "assistant", "user", "assistant"]);
+    assert.deepEqual(history.messages.map(message => message.role), [
+      'user', 'assistant', 'toolResult', 'user', 'user', 'assistant', 'toolResult', 'user', 'assistant', 'toolResult',
+    ]);
     const original = history.messages[1];
-    assert.equal(original?.role === "assistant" ? original.content.filter(b => b.type === "text").map(b => b.text).join("") : "", originalAnswer);
-    const correction = history.messages[2];
+    assert.equal(original?.role === "assistant" ? original.content.find(b => b.type === 'toolCall')?.arguments.text : '', originalAnswer);
+    const correction = history.messages[3];
     assert.ok(correction?.role === "user");
     assert.ok(Array.isArray(correction.content));
     assert.ok(correction.content.filter(b => b.type === "text").map(b => b.text).join("").endsWith(visible));
@@ -665,7 +672,7 @@ test('a real chat turn serves parallel overview and value tools with one summary
         fauxToolCall('get_project_overview', {}, { id: 'parallel-overview' }),
         fauxToolCall('list_value_points', { limit: 8 }, { id: 'parallel-values' }),
       ]),
-      fauxAssistantMessage('项目概览已读取。'),
+      reply('项目概览已读取。'),
     ]);
     const service = new ConversationService(config, store, new PiSessionStore(join(root, 'sessions')),
       new PiMemoryStore(join(root, 'memory')));

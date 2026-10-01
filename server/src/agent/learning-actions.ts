@@ -22,6 +22,7 @@ export interface LearningActionProposalInput {
   targetId?: string;
   request: string;
   skipUnderstandingCheck?: boolean;
+  executionPolicy?: "confirm" | "after_turn";
   progress?: LearningActionProgress | null;
 }
 
@@ -35,12 +36,16 @@ export function createLearningActionProposal(
   }
   const target = resolveTarget(project, snapshot, input.action, input.targetKind, input.targetId);
   const copy = proposalCopy(input.action, target, project, Boolean(input.skipUnderstandingCheck));
+  const executionPolicy = input.executionPolicy ?? "confirm";
   return {
     action_id: `learning-action:${randomUUID().replaceAll("-", "")}`,
     action: input.action,
+    execution_policy: executionPolicy,
     target,
     title: copy.title,
-    description: copy.description,
+    description: executionPolicy === "after_turn"
+      ? "本轮成功完成后会记录为主动跳过，不计入已掌握；之后仍可回看本步。"
+      : copy.description,
     request: input.request.trim().slice(0, 2_000),
     snapshot_id: snapshot.snapshot_id,
     route_revision: project.study.route_revision ?? 0,
@@ -178,6 +183,35 @@ function resetCurrentCheck(project: Project): void {
 
 export function isRouteAction(action: LearningActionCard): boolean {
   return action.action === "start_learning_route" || action.action === "switch_learning_target";
+}
+
+/** Render the receipt from committed state, never from the model's forecast. */
+export function completeLearningAction(project: Project, action: LearningActionCard): void {
+  const timestamp = new Date().toISOString();
+  action.status = "executed";
+  action.resolved_at ??= timestamp;
+  action.executed_at = timestamp;
+  action.run_expires_at = null;
+  action.error = null;
+  const next = currentLearningStep(project);
+  action.outcome = { route_revision: project.study.route_revision ?? 0,
+    next_step_id: next?.step_id ?? null, next_step_title: next?.title ?? null };
+  const label = action.target?.label ?? "当前步骤";
+  if (action.action === "advance_learning_step") {
+    action.title = action.skip_understanding_check ? `已跳过“${label}”` : `已完成“${label}”`;
+    action.description = (action.skip_understanding_check
+      ? "已记录为主动跳过，不计入已掌握；之后仍可回看本步。"
+      : "本步进度已记录。") + (next ? `当前步骤是“${next.title}”，可以开始学习。` : "本条学习路线已结束。");
+  } else if (isRouteAction(action)) {
+    action.description = next ? `学习路线已生成，当前步骤是“${next.title}”。` : "学习路线已生成。";
+  } else action.description = "已退出当前学习路线，可以继续自由提问。";
+  const message = project.messages.find(message => message.learning_action?.action_id === action.action_id);
+  if (message) {
+    message.content = action.description;
+    message.teaching_question = null;
+    message.teaching_context = next ? { snapshot_id: action.snapshot_id,
+      route_revision: project.study.route_revision ?? 0, step_id: next.step_id } : undefined;
+  }
 }
 
 function resolveTarget(

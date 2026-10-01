@@ -303,12 +303,14 @@ export class PiConversationRuntime {
         pauseRequested: pendingControl === "pause",
         cancelRequested: pendingControl === "cancel",
       };
+      let submissionFailures = 0;
       const agent = new Agent({
         sessionId: options.identity.sessionId,
         streamFn,
         getApiKey: () => options.modelRuntime.apiKey,
         toolExecution: "parallel",
-        shouldStopAfterTurn: async () => active.pauseRequested,
+        shouldStopAfterTurn: async () => active.pauseRequested || Boolean(options.replyContract?.read())
+          || (Boolean(options.replyContract) && submissionFailures >= 3),
         transformContext,
         initialState: {
           systemPrompt: options.systemPrompt,
@@ -337,6 +339,7 @@ export class PiConversationRuntime {
         }
         else if (event.type === "message_update") {
           if (event.assistantMessageEvent.type === "text_delta") {
+            if (options.replyContract) return; // Draft prose is not a displayed lesson or an operation receipt.
             if (!answerStarted) {
               answerStarted = true;
               emit("answer_started", "正在生成回答");
@@ -364,6 +367,7 @@ export class PiConversationRuntime {
             toolName: event.toolName,
           });
         } else if (event.type === "tool_execution_end") {
+          if (options.replyContract && event.toolName === 'submit_conversation_reply' && event.isError) submissionFailures++;
           if (isInternalTool(event.toolName)) return;
           emit("tool_result_received", event.isError
             ? "工具未完成，正在调整查询"
@@ -375,10 +379,13 @@ export class PiConversationRuntime {
         } else if (event.type === "turn_end") {
           emit("turn_completed", event.toolResults.length
             ? "已收到工具结果"
-            : "当前步骤已完成");
+            : options.replyContract ? "回答草稿待核对" : "当前步骤已完成", options.replyContract ? {
+              display: { kind: 'summary', stage: 'answer', label: '正在核对回答', status: 'running', visible: true },
+            } : {});
         } else if (event.type === "message_end" && event.message.role === "assistant") {
           const assistant = event.message as AssistantMessage;
           assistant.content.forEach((block, index) => {
+            if (options.replyContract) return;
             if (!isCommentaryTextBlock(block) || commentaryIndexes.has(index)) return;
             commentaryIndexes.add(index);
             emit("assistant_commentary", "中间说明", {
@@ -443,6 +450,15 @@ export class PiConversationRuntime {
           };
         } else {
           await agent.prompt(userMessage);
+          // Repair an omitted or rejected submission within this same turn; the learner's original
+          // answer and application message identity are never replaced by these program instructions.
+          for (let repair = 0; options.replyContract && !options.replyContract.read() && repair < 2
+            && submissionFailures < 3
+            && !runSignal.aborted && !active.cancelRequested && !active.pauseRequested
+            && (agent.state.messages.at(-1) as AssistantMessage)?.stopReason !== 'error'; repair++) {
+            await agent.prompt({ role: 'user', content: [{ type: 'text', text: options.replyContract.correction }], timestamp: Date.now() });
+          }
+          if (options.replyContract) text = options.replyContract.read() ?? '';
           if (runSignal.aborted || active.cancelRequested) {
             emit(abortCode() === "cancelled" ? "run_cancelled" : "run_failed", failureMessage(abortCode()), {errorCode:abortCode()});
             result = { runId: options.runId, text, stopReason: abortCode(), usage, events };
@@ -471,7 +487,7 @@ export class PiConversationRuntime {
               emit("run_paused", "已暂停，可继续提问", { text, usage });
               result = { runId: options.runId, text, stopReason: "paused", usage, events };
             } else {
-              emit("run_completed", "已完成", { text, usage });
+              emit("run_completed", "已完成", { ...(options.replyContract ? {} : { text }), usage });
               result = { runId: options.runId, text, stopReason: "completed", usage, events };
             }
             }
@@ -536,7 +552,13 @@ export class PiConversationRuntime {
     if (mode === "discard") return;
     if (visibleText) {
       const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
-      if (visibleText !== assistantText(lastAssistant)) {
+      const submitted = lastAssistant?.role === 'assistant'
+        ? lastAssistant.content.find(block => block.type === 'toolCall' && block.name === 'submit_conversation_reply') : null;
+      // A plain submitted answer already appears verbatim in protocol history. Record only
+      // presentation changes, assessments, questions and actual action results, avoiding a second copy of ordinary chat.
+      const originalText = submitted?.type === 'toolCall' && submitted.arguments.kind === 'answer'
+        && typeof submitted.arguments.text === 'string' ? submitted.arguments.text.trim() : assistantText(lastAssistant);
+      if (visibleText !== originalText) {
         messages = [...messages, {
           role: "user",
           content: [{ type: "text", text: "Application display record (context only, not a new user request): the preceding assistant output was displayed with the following corrections or presentation changes. Treat this as the actual visible answer, including its uncertainty notices.\n" + visibleText }],

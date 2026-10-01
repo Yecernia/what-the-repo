@@ -346,6 +346,8 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
 .project-menu-button { opacity: 0; color: var(--fg-muted); }
 /* A one-tap option under the latest tutor reply while a learning route is running. */
 .learning-skip-option { display: flex; margin-top: 10px; }
+.learning-current-step { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.learning-current-step > p { margin: 0; font-size: 12px; color: var(--fg-muted); }
 .learning-skip-button {
   display: inline-flex; align-items: baseline; gap: 8px; max-width: 100%; padding: 7px 12px 7px 14px;
   border: 1.2px dashed var(--border-strong); border-radius: var(--radius-sketch-sm); background: transparent;

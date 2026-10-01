@@ -1808,6 +1808,12 @@ function MsgBubble({
     action?.action === 'start_learning_route'
     || action?.action === 'switch_learning_target'
   );
+  const actionDescription = action?.status === 'executed'
+    ? action.action === 'advance_learning_step'
+      ? (action.skip_understanding_check ? t('本步已记录为主动跳过，不计入已掌握。') : t('本步进度已记录。'))
+        + (action.outcome?.next_step_id === null ? t('本条学习路线已结束。') : t('可从当前学习步骤继续。'))
+      : isRoute ? t('学习路线已生成，可以开始当前步骤。') : t('已退出当前学习路线，可以继续自由提问。')
+    : action?.description;
   const [actionClock, setActionClock] = useState(Date.now);
   useEffect(() => {
     if (action?.status !== 'confirmed' || !action.run_expires_at) return;
@@ -1894,7 +1900,7 @@ function MsgBubble({
                     action.status === 'failed' ? t("暂未完成") :
                     action.status === 'expired' ? t("已失效") : t("已处理")}</>}</span>
               </div>
-              <p>{isRoute && actionPending ? t('确认学习目标后生成路线，具体步骤将在生成后展示。') : action.description}</p>
+              <p>{isRoute && actionPending ? t('确认学习目标后生成路线，具体步骤将在生成后展示。') : actionDescription}</p>
               {action.error && <p className="learning-action-error">{t("这项学习操作暂时未完成，请稍后重试。")}</p>}
               {(actionPending || actionRetryable) && !actionResolving && (
                 <div className="learning-action-controls">
@@ -1919,18 +1925,21 @@ function MsgBubble({
                 onClick={() => onCancelLearningAction(action.action_id)}>{t('取消生成')}</button>}
             </div>
           )}
+          {(startStep || skipStep) && <div className="learning-current-step" aria-label={t('当前学习步骤')}>
+          <p>{t('当前学习步骤')} · {startStep?.title ?? skipStep?.title}</p>
           {startStep && <div className="learning-action-controls"><button type="button" className="btn btn-primary"
             onClick={startStep.onStart}>{t('开始当前步骤')} · {startStep.title}</button></div>}
           {skipStep && (
             <div className="learning-skip-option">
               <button type="button" className="learning-skip-button" onClick={skipStep.onSkip}
                 title={t("跳过“{0}”的理解检查，直接进入下一步", skipStep.title)}>
-                <span>{t("跳过这一步")}</span>
+                <span>{t("跳过当前步骤")}</span>
                 <small>{skipStep.title}</small>
                 <ChevronRight size={15} />
               </button>
             </div>
           )}
+          </div>}
           {feedbackEnabled && msg.role === 'assistant' && !msg.error && !msg.placeholder && (
             <div className="message-feedback" aria-label={t("评价这条回答")}>
               {msg.model && <div className="message-model-name">{msg.model}</div>}
@@ -3828,7 +3837,13 @@ export default function App() {
                   const routeStep = ['explaining', 'assessing', 'remediating'].includes(project.study.phase)
                     ? project.study.dynamic_learning_plan?.[project.study.current_step] : undefined;
                   const offerSkip = Boolean(routeStep) && !sending && index === project.messages.length - 1
-                    && msg.role === 'assistant' && !msg.error && !msg.placeholder && msg.learning_action?.status !== 'pending';
+                    && msg.role === 'assistant' && !msg.error && !msg.placeholder && msg.learning_action?.status !== 'pending'
+                    && (!msg.teaching_context || (msg.teaching_context.snapshot_id === project.analysis.snapshot_id
+                      && msg.teaching_context.route_revision === (project.study.route_revision ?? 0)
+                      && msg.teaching_context.step_id === routeStep?.step_id))
+                    && (!msg.learning_action?.outcome || (msg.learning_action.snapshot_id === project.analysis.snapshot_id
+                      && msg.learning_action.outcome.route_revision === (project.study.route_revision ?? 0)
+                      && msg.learning_action.outcome.next_step_id === routeStep?.step_id));
                   const previousModel = [...project.messages.slice(0, index)]
                     .reverse()
                     .find(message => message.role === 'assistant' && message.model)?.model ?? null;
@@ -3871,10 +3886,11 @@ export default function App() {
                         }}
                         feedbackPending={Boolean(feedbackPending[msg.message_id])}
                         learningActionPending={Boolean(learningActionPending[msg.learning_action?.action_id ?? ''])}
-                        startStep={offerSkip && routeStep && msg.learning_action?.status === 'executed'
-                          && ['start_learning_route', 'switch_learning_target'].includes(msg.learning_action.action) ? {
+                        startStep={offerSkip && routeStep ? {
                             title: routeStep.title,
-                            onStart: () => { void sendMessage({ content: t('开始当前步骤') }); },
+                            onStart: () => { void sendMessage({ content: t('开始当前步骤'),
+                              learningIntent: { kind: 'start_current_step', route_revision: project.study.route_revision ?? 0,
+                                step_id: routeStep.step_id, snapshot_id: project.analysis.snapshot_id! } }); },
                           } : undefined}
                         skipStep={offerSkip && routeStep ? {
                           title: routeStep.title,

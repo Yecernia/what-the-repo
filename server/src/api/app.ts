@@ -1748,7 +1748,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const content = textField(body, "content", 20_000, true);
     const selections = parseUiSelections(body);
     const intent = body.learning_intent as Record<string, unknown> | undefined;
-    if (intent !== undefined && (!intent || intent.kind !== "skip_current_step"
+    if (intent !== undefined && (!intent || typeof intent.kind !== 'string' || !['skip_current_step', 'start_current_step'].includes(intent.kind)
       || !Number.isSafeInteger(intent.route_revision) || Number(intent.route_revision) < 0
       || typeof intent.step_id !== "string" || intent.step_id.length > 200
       || typeof intent.snapshot_id !== "string" || intent.snapshot_id.length > 200)) {
@@ -1785,7 +1785,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       retryRunId: typeof body.retry_run_id === "string" ? body.retry_run_id.slice(0, 128) : undefined,
       selections,
       reviewEvidence: body.review_evidence === true,
-      learningIntent: intent as { kind: "skip_current_step"; route_revision: number; step_id: string; snapshot_id: string } | undefined,
+      learningIntent: intent as { kind: "skip_current_step" | "start_current_step"; route_revision: number; step_id: string; snapshot_id: string } | undefined,
       runId,
       signal: controller.signal,
       onEvent: (event) => {

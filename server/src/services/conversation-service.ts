@@ -40,21 +40,23 @@ import { createConversationTools } from "../agent/conversation-tools.js";
 import { createFeedbackHintTool } from "../agent/conversation-tools.js";
 import type { FeedbackHint } from "../agent/feedback-hint.js";
 import type { TeachingWorkerTrace } from "../agent/teaching-workers.js";
-import { generateLearningRoute } from "../agent/teaching-workers.js";
+import { generateLearningRoute, runUnderstandingAssessment } from "../agent/teaching-workers.js";
 import {
   applyCompletedLearningRoute,
   applyConfirmedLearningAction,
   assertLearningActionStillCurrent,
   createLearningActionProposal,
+  completeLearningAction,
+  currentLearningStep,
   isRouteAction,
 } from "../agent/learning-actions.js";
 import {
   primarySystemPrompt,
   primaryTurnContext,
   PRIMARY_SKILL_ID,
-  isExplicitAdvanceRequest,
   type UiSelection,
 } from "../agent/prompts.js";
+import { restoreDisplayedTeachingQuestion, learningActionReply, type ConversationReply } from '../agent/conversation-reply.js';
 import { validateAnswerCitations, withCitationNotice, withEvidenceReviewNotice } from "../agent/citations.js";
 import { MemoryMaintenance } from "../agent/memory-maintenance.js";
 import { readLearner } from './learner-context.js';
@@ -92,7 +94,7 @@ export interface ConversationResult {
 }
 
 export interface ConversationRunInput {
-  learningIntent?: { kind: "skip_current_step"; route_revision: number; step_id: string; snapshot_id: string };
+  learningIntent?: { kind: "skip_current_step" | "start_current_step"; route_revision: number; step_id: string; snapshot_id: string };
   owner: ConversationOwner;
   projectId: string;
   content: string;
@@ -133,6 +135,7 @@ export class ConversationService {
     private readonly providerBudget?: ProviderUsageBudget,
     private readonly learningWorkers: {
       generateRoute?: typeof generateLearningRoute;
+      assess?: typeof runUnderstandingAssessment;
       reviewEvidence?: typeof reviewAnswerEvidence;
     } = {},
   ) {
@@ -343,10 +346,7 @@ export class ConversationService {
           action.error = "当前路线、步骤或理解检查已经变化，请重新检查后继续。";
           return;
         }
-        const timestamp = nowIso();
-        action.status = "executed";
-        action.resolved_at = timestamp;
-        action.executed_at = timestamp;
+        completeLearningAction(row, action);
         recordLearningActionResult(row, action);
       });
       const action = completed ? findLearningAction(completed, input.actionId) : null;
@@ -444,11 +444,7 @@ export class ConversationService {
       }
       assertLearningActionStillCurrent(row, snapshot, action);
       applyCompletedLearningRoute(row, action, route.steps);
-      const timestamp = nowIso();
-      action.status = "executed";
-      action.executed_at = timestamp;
-      action.error = null;
-      action.run_expires_at = null;
+      completeLearningAction(row, action);
       recordLearningActionResult(row, action);
     });
     const action = completed ? findLearningAction(completed, input.actionId) : null;
@@ -583,6 +579,7 @@ export class ConversationService {
       };
     }
     project.messages = [...beforeTurn, userMessage];
+    const questionRestored = restoreDisplayedTeachingQuestion(project, beforeTurn, userMessage.message_id);
 
     const startedAt = Date.now();
     let turnStarted = false;
@@ -592,22 +589,22 @@ export class ConversationService {
     const workerRuns: TeachingWorkerTrace[] = [];
     let stateChanged = false;
     const pendingLearningAction = { value: null as LearningActionCard | null };
-    let structuredSkip: LearningActionCard | null = null;
+    const reply = { value: null as ConversationReply | null };
     if (input.learningIntent && !userMessage.learning_action_result) {
       const intent = input.learningIntent;
-      if (intent.kind !== "skip_current_step" || intent.route_revision !== (project.study.route_revision ?? 0)
+      if (!['skip_current_step', 'start_current_step'].includes(intent.kind) || intent.route_revision !== (project.study.route_revision ?? 0)
         || intent.snapshot_id !== capturedSnapshotId
         || intent.step_id !== project.study.dynamic_learning_plan?.[project.study.current_step]?.step_id) {
         throw serviceError("learning_action_no_longer_current", "当前学习步骤已经变化，请刷新后重试。", 409);
       }
       const snapshot = await getSnapshot();
       if (!snapshot) throw serviceError("snapshot_unavailable", "项目图谱尚未完成", 404);
-      structuredSkip = createLearningActionProposal(project, snapshot, {
+      if (intent.kind === 'skip_current_step') pendingLearningAction.value = createLearningActionProposal(project, snapshot, {
         action: "advance_learning_step", targetKind: "learning_step", targetId: intent.step_id,
-        request: content, skipUnderstandingCheck: true,
+        request: content, skipUnderstandingCheck: true, executionPolicy: "after_turn",
       });
     }
-    const assessment = { value: null as null | { verdict: string; masteredItems: string[]; evidenceIds: string[] } };
+    const assessment = { value: null as null | { verdict: string; masteredItems: string[]; evidenceIds: string[]; feedback?: string } };
     const feedbackHint: { value: FeedbackHint | null } = { value: null };
     const tools = [
       ...createConversationTools({
@@ -627,19 +624,22 @@ export class ConversationService {
       exposedPaths,
       toolsUsed,
       pendingLearningAction,
+      reply,
+      lessonRequired: input.learningIntent?.kind === 'start_current_step' || /^(?:开始当前步骤|start (?:the )?current step)[。.!！\s]*$/iu.test(content),
       assessment,
       currentUserMessage: content,
       source_message_id: userMessage.message_id,
       modelRuntime,
       workerRuns,
+      workerServices: { assess: this.learningWorkers.assess },
       }),
       createFeedbackHintTool(feedbackHint),
     ];
     assertProductSkillRun(primarySkill, {
       toolNames: tools.map((tool) => tool.name),
       inputSchemaId: "conversation-turn-v1",
-      outputSchemaId: "natural-answer-v1",
-      contextBuilderId: "primary-conversation-context-v4",
+      outputSchemaId: "conversation-reply-v2",
+      contextBuilderId: "primary-conversation-context-v5",
     });
 
     const finalize = async (result: PiRunResult, runSignal?: AbortSignal, writeFence?: {permitId:string}) => {
@@ -650,25 +650,24 @@ export class ConversationService {
       checkExecution();
       if (input.signal?.aborted && /lease_lost|maintenance_connection_lost/.test(String(input.signal.reason))) input.signal.throwIfAborted();
       if (!turnStarted) throw serviceError(result.stopReason, failureMessage(result.stopReason), result.stopReason === "cancelled" ? 409 : 503);
-      if (result.stopReason !== "completed") project.study = structuredClone(originalStudy);
-      const explicitAdvance = Boolean(structuredSkip) || isExplicitAdvanceRequest(content);
-      // A text hint must never manufacture an action the tutor did not propose.
-      if (structuredSkip) pendingLearningAction.value = structuredSkip;
-      if (userMessage.learning_action_result) pendingLearningAction.value = null;
+      if (result.stopReason === 'completed' && (input.signal?.aborted || runSignal?.aborted)) {
+        result = { ...result, stopReason: runAbortCode(input.signal?.aborted ? input.signal.reason : runSignal?.reason) };
+      }
+      if (result.stopReason === 'completed' && !reply.value) {
+        result = { ...result, text: '', stopReason: 'provider_invalid_response' };
+      }
+      if (result.stopReason !== "completed" || reply.value?.kind === 'unavailable') project.study = structuredClone(originalStudy);
+      if (userMessage.learning_action_result || result.stopReason !== 'completed') pendingLearningAction.value = null;
       if (pendingLearningAction.value) pendingLearningAction.value.source_message_id = userMessage.message_id;
       const action = pendingLearningAction.value?.action === "advance_learning_step"
-        && pendingLearningAction.value.skip_understanding_check
+        && pendingLearningAction.value.execution_policy === 'after_turn'
         ? pendingLearningAction.value
         : null;
       let directSkipApplied = false;
-      if (action && explicitAdvance && result.stopReason === "completed" && !input.signal?.aborted && !runSignal?.aborted) {
+      if (action && result.stopReason === "completed" && !input.signal?.aborted && !runSignal?.aborted) {
         try {
           applyConfirmedLearningAction(project, action);
-          const timestamp = nowIso();
-          action.status = "executed";
-          action.resolved_at = timestamp;
-          action.executed_at = timestamp;
-          action.error = null;
+          completeLearningAction(project, action);
           recordLearningActionResult(project, action);
           directSkipApplied = true;
           stateChanged = true;
@@ -677,24 +676,18 @@ export class ConversationService {
           action.error = "当前步骤或学习路线已经变化。";
         }
       }
-      const refusal = /不能跳过|按研学协议|只有本轮理解|需要先回答|只有掌握才/u.test(result.text);
-      // Only a learner who asked to skip is told they chose to; the tool refuses model-initiated skips.
-      const skipNotice = userMessage.learning_action_result && !directSkipApplied
-        ? "这条消息的学习操作已经执行过。本次仅重新生成回答，学习进度没有再次改变。"
-        : action && explicitAdvance
-        ? directSkipApplied
-          ? `你明确选择跳过“${action.target?.label ?? "当前步骤"}”的理解检查。已记录为主动跳过（不计入已掌握），现在进入下一步；之后仍可回看本步。`
-          : `你明确选择跳过“${action.target?.label ?? "当前步骤"}”的理解检查。${action.description} 请确认卡片后继续。`
-        : "";
-      let visibleText = action && refusal
-        ? skipNotice
-        : [result.stopReason === "paused"
-        ? [result.text.trim(), "已暂停本轮处理。已经完成的查询结果会保留，你可以直接继续提问。"]
-          .filter(Boolean).join("\n\n")
-        : result.text, skipNotice].filter(Boolean).join("\n\n");
-      const question = project.study.teaching_question;
-      if (result.stopReason === "completed" && question?.created_message_id === userMessage.message_id
-        && !visibleText.includes(question.prompt)) visibleText += `\n\n${question.prompt}`;
+      // Operation prose is generated from the one validated decision and its actual result.
+      // Free model text cannot contradict a receipt, promise a missing card, or display an unregistered check.
+      let visibleText = result.stopReason !== 'completed'
+        ? result.stopReason === 'paused' ? '已暂停本轮处理，学习进度没有改变。'
+          : '本轮回答暂未完成，学习进度没有改变。可以重试这条消息。'
+        : learningActionReply(Boolean(userMessage.learning_action_result && !directSkipApplied))
+          ?? (pendingLearningAction.value
+            ? pendingLearningAction.value.status === 'expired' ? '当前步骤已经变化，这项学习操作未执行。'
+              : [action ? null : assessment.value?.feedback, pendingLearningAction.value.description].filter(Boolean).join('\n\n')
+            : reply.value!.text);
+      const question = result.stopReason === 'completed' ? reply.value?.question : null;
+      if (question && !visibleText.includes(question.prompt)) visibleText += `\n\n${question.prompt}`;
       const validation = await validateAnswerCitations({
         text: visibleText,
         snapshot: null,
@@ -705,6 +698,7 @@ export class ConversationService {
         store: this.store,
       });
       const validationErrors = [...validation.errors];
+      if (reply.value?.kind === 'unavailable') validationErrors.push('conversation_reply_unavailable');
       let acceptedEvidence = validation.evidence;
       let reviewStatus: Record<string, unknown> | null = null;
       let reviewUsage = combinedUsage();
@@ -766,6 +760,11 @@ export class ConversationService {
         messageThinkingSummary(result.events),
       );
       assistantMessage.evidence = acceptedEvidence;
+      const step = currentLearningStep(project);
+      if (result.stopReason === 'completed' && step) assistantMessage.teaching_context = {
+        snapshot_id: capturedSnapshotId!, route_revision: project.study.route_revision ?? 0, step_id: step.step_id,
+      };
+      if (question) assistantMessage.teaching_question = structuredClone(question);
       assistantMessage.evidence_review = evidenceReview;
       assistantMessage.unresolved_references = validation.unresolved;
       assistantMessage.context_eligible = result.stopReason === "completed" && validationErrors.length === 0;
@@ -834,6 +833,15 @@ export class ConversationService {
         evidence_ids: acceptedEvidence.map((row) => row.stable_id),
         validation_errors: validationErrors,
         review_requested: input.reviewEvidence === true,
+        reply_kind: reply.value?.kind ?? null,
+        question_id: question?.question_id ?? project.study.teaching_question?.question_id ?? null,
+        question_created_message_id: question?.created_message_id ?? project.study.teaching_question?.created_message_id ?? null,
+        question_restored: questionRestored,
+        question_step_id: question?.step_id ?? project.study.teaching_question?.step_id ?? null,
+        question_route_revision: question?.route_revision ?? project.study.teaching_question?.route_revision ?? null,
+        source_message_id: userMessage.message_id,
+        route_revision: project.study.route_revision ?? 0,
+        learning_action_policy: pendingLearningAction.value?.execution_policy ?? null,
         review: reviewStatus,
         state_changed: stateChanged,
         learning_action_id: assistantMessage.learning_action?.action_id ?? null,
@@ -914,8 +922,13 @@ export class ConversationService {
         selections,
         currentUserMessage: content,
         displayLanguage: input.displayLanguage,
+        learningAction: pendingLearningAction.value,
       }),
       userMessage: content,
+      replyContract: {
+        read: () => reply.value ? reply.value.text || reply.value.question?.prompt || null : null,
+        correction: 'The answer is not yet submitted. Finish with submit_conversation_reply. A lesson must include its exact registered question, targets and evidence; an action must have a successful proposal. Tool errors do not count as success. Use the original user message and existing saved question; never ask the learner to resend their answer to repair registration.',
+      },
       turn: {
         messageId: userMessage.message_id,
         replace: Boolean(input.replaceMessageId),

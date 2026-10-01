@@ -31,6 +31,8 @@ export type LearningTargetKind = 'repository' | 'value_point' | 'component' | 'l
 export type LearningActionStatus = 'pending' | 'confirmed' | 'declined' | 'executed' | 'expired' | 'failed';
 
 export interface LearningActionCard {
+  execution_policy?: 'confirm' | 'after_turn';
+  outcome?: { route_revision: number; next_step_id: string | null; next_step_title: string | null };
   route_revision?: number;
   expected_step_id?: string | null;
   run_expires_at?: string | null;
@@ -58,7 +60,7 @@ export interface LearningActionCard {
 }
 
 export interface LearningIntent {
-  kind: 'skip_current_step';
+  kind: 'skip_current_step' | 'start_current_step';
   route_revision: number;
   step_id: string;
   snapshot_id: string;
@@ -121,6 +123,7 @@ export interface MessageThinkingSummaryEvent {
 }
 
 export interface Message {
+  teaching_context?: { snapshot_id: string; route_revision: number; step_id: string };
   evidence_review?: {
     status: 'reviewed' | 'not_applicable' | 'unverified';
     supported: boolean;

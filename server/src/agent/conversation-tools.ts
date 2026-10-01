@@ -31,6 +31,8 @@ import { createLearningActionProposal, currentLearningStep } from "./learning-ac
 import { isExplicitAdvanceRequest, learningStatusText } from "./prompts.js";
 import { readSourcePage } from "./source-read.js";
 import { STATIC_FILE_INPUT, staticFilePage } from "./static-file-facts.js";
+import { questionIsCurrent, type ConversationReply } from './conversation-reply.js';
+import { validateAnswerCitations } from './citations.js';
 
 const EMPTY_INPUT = Type.Object({});
 const VALUE_POINT_INPUT = Type.Object({
@@ -74,6 +76,12 @@ const QUESTION_INPUT = Type.Object({
 const ASSESSMENT_INPUT = Type.Object({
   question_id: Type.String({ minLength: 1, maxLength: 256 }),
   evidence_ids: Type.Optional(Type.Array(Type.String({ maxLength: 256 }), { maxItems: 10 })),
+});
+const REPLY_INPUT = Type.Object({
+  kind: Type.Union(['answer', 'lesson', 'assessment', 'action', 'unavailable'].map(value => Type.Literal(value))),
+  text: Type.String({ maxLength: 20_000 }),
+  question: Type.Optional(QUESTION_INPUT),
+  question_id: Type.Optional(Type.String({ maxLength: 256 })),
 });
 const LEARNING_ACTION_INPUT = Type.Object({
   action: Type.Union([
@@ -119,11 +127,14 @@ export interface ConversationToolContext {
   exposedPaths: Set<string>;
   toolsUsed: string[];
   pendingLearningAction: { value: LearningActionCard | null };
+  reply?: { value: ConversationReply | null };
+  lessonRequired?: boolean;
   assessment: {
     value: null | {
       verdict: string;
       masteredItems: string[];
       evidenceIds: string[];
+      feedback?: string;
     };
   };
   currentUserMessage: string;
@@ -340,6 +351,7 @@ export function createConversationTools(
     parameters,
     executionMode,
     async (id, params, signal) => {
+      if (context.reply?.value) return errorResult(name, 'The reply is already submitted; no further tool changes are allowed.');
       if (!context.toolsUsed.includes(name)) context.toolsUsed.push(name);
       try {
         return await fn(id, params, signal);
@@ -728,13 +740,22 @@ export function createConversationTools(
   const registerQuestion = call(
     'register_teaching_question',
     '正在记录本次理解检查问题',
-    'Before asking a check question, register its exact text, target_items copied from current_step.learning_targets (legacy: completion_check), and exposed evidence. Relay that exact question to the learner. This never evaluates the current message. Register a new question when changing scope.',
+    'Optionally prepare a formal check question before submit_conversation_reply(kind=lesson). Use its exact text, current learning_targets (legacy: exact completion_check), and exposed evidence. This never evaluates the current message. A saved displayed question is recovered by the program; never register a retroactive question to grade an answer or ask for a resend.',
     QUESTION_INPUT,
     async (_id, params) => {
       const snapshot = await fullSnapshot();
       const step = currentLearningStep(context.project);
       if (!snapshot || !step) return errorResult('register_teaching_question', 'No active learning step.');
       const input = params as Static<typeof QUESTION_INPUT>;
+      const previous = context.project.study.teaching_question;
+      if (previous && questionIsCurrent(context.project, previous)
+        && previous.created_message_id !== context.source_message_id && !context.assessment.value && !context.lessonRequired) {
+        return errorResult('register_teaching_question', 'A previously displayed question is still active. Assess the original learner answer with that question_id before replacing it. Do not register a retroactive question or ask for a resend.');
+      }
+      const sourceMessage = context.project.messages.find(message => message.message_id === context.source_message_id);
+      if (sourceMessage?.learning_action_result || context.pendingLearningAction.value) {
+        return errorResult('register_teaching_question', 'This turn changes the route or replays an action. Start the current lesson in a later turn.');
+      }
       const targets = step.learning_targets?.length ? step.learning_targets : [step.completion_check];
       if (!step.learning_targets?.length && input.prompt.trim() !== step.completion_check.trim()) {
         return errorResult('register_teaching_question', 'This legacy step has no independent targets. Ask its exact completion_check, or create a new route with explicit targets; a narrow question cannot certify the whole step.');
@@ -760,6 +781,11 @@ export function createConversationTools(
     "Call only when the learner is answering the current step's check question. The program binds their original answer; the assessment returns a judgment and never advances the course.",
     ASSESSMENT_INPUT,
     async (_id, params, signal) => {
+      const sourceMessage = context.project.messages.find(message => message.message_id === context.source_message_id);
+      if (context.lessonRequired || sourceMessage?.learning_action_result || context.pendingLearningAction.value?.execution_policy === 'after_turn'
+        || isExplicitAdvanceRequest(context.currentUserMessage)) {
+        return errorResult('assess_understanding', 'This turn requests a lesson, skips or replays a learning action, not a learner answer. Do not assess it.');
+      }
       const snapshot = await fullSnapshot();
       if (!snapshot) return errorResult("assess_understanding", "No learning route has been generated yet.");
       if (
@@ -809,6 +835,7 @@ export function createConversationTools(
         verdict: result.verdict,
         masteredItems: result.masteredItems,
         evidenceIds: result.acceptedEvidenceIds,
+        feedback: result.feedback,
       };
       if (result.verdict !== 'unclear') {
         const answerIndex = question.answer_message_ids.indexOf(messageId);
@@ -879,7 +906,11 @@ export function createConversationTools(
     async (_id, params) => {
       const snapshot = await fullSnapshot();
       if (!snapshot) return errorResult("propose_learning_action", "The project analysis has not finished.");
-      if (context.pendingLearningAction.value) {
+      const input = params as Static<typeof LEARNING_ACTION_INPUT>;
+      const existing = context.pendingLearningAction.value;
+      if (existing && (existing.action !== input.action
+        || (input.target_kind && existing.target?.kind !== input.target_kind)
+        || (input.target_id && existing.target?.stable_id !== input.target_id))) {
         return errorResult(
           "propose_learning_action",
           "A learning action was already proposed this turn; only one card per turn.",
@@ -887,11 +918,6 @@ export function createConversationTools(
       }
       const sourceMessage = context.project.messages.find(message => message.message_id === context.source_message_id);
       if (sourceMessage?.learning_action_result) return errorResult('propose_learning_action', 'This message already applied a learning action. Regeneration cannot authorize another state change.');
-      const input = params as {
-        action: "start_learning_route" | "advance_learning_step" | "switch_learning_target" | "stop_guided_learning";
-        target_kind?: "repository" | "value_point" | "component" | "layer" | "learning_step";
-        target_id?: string;
-      };
       const step = currentLearningStep(context.project);
       const stored = context.project.study.step_passed;
       const latest = context.project.study.latest_assessment;
@@ -900,15 +926,17 @@ export function createConversationTools(
         && (!latest || (latest.verdict === 'mastered' && latest.step_completed && latest.sequence === stored.assessment_sequence
           && latest.step_id === step.step_id && latest.snapshot_id === snapshot.snapshot_id && latest.route_revision === stored.route_revision))
         ? stored : null;
-      if (input.action === "advance_learning_step" && !passed && !isExplicitAdvanceRequest(context.currentUserMessage)) {
+      const direct = existing?.execution_policy === 'after_turn' || isExplicitAdvanceRequest(context.currentUserMessage);
+      if (input.action === "advance_learning_step" && !passed && !direct) {
         return errorResult(
           "propose_learning_action",
           "This step's check has not been passed and the learner did not ask to skip it. Assess their answer first, or ask what they want to do.",
         );
       }
-      const skipUnderstandingCheck = input.action === "advance_learning_step" && !passed;
+      // An explicit skip remains skipped even if a pass is awaiting normal confirmation.
+      const skipUnderstandingCheck = input.action === "advance_learning_step" && direct;
       try {
-        context.pendingLearningAction.value = createLearningActionProposal(
+        context.pendingLearningAction.value ??= createLearningActionProposal(
           context.project,
           snapshot,
           {
@@ -917,7 +945,8 @@ export function createConversationTools(
             targetId: input.target_id,
             request: context.currentUserMessage,
             skipUnderstandingCheck,
-            progress: input.action === "advance_learning_step" && passed
+            executionPolicy: skipUnderstandingCheck ? 'after_turn' : 'confirm',
+            progress: input.action === "advance_learning_step" && passed && !skipUnderstandingCheck
               ? { mastered_items: passed.mastered_items, evidence_ids: passed.evidence_ids }
               : null,
           },
@@ -930,8 +959,7 @@ export function createConversationTools(
       }
       // An explicit "go straight to the next step" in this message is applied after the turn without a card
       // confirmation; every other proposal waits for the learner.
-      const appliedAfterTurn = Boolean(context.pendingLearningAction.value.skip_understanding_check)
-        && isExplicitAdvanceRequest(context.currentUserMessage);
+      const appliedAfterTurn = context.pendingLearningAction.value.execution_policy === 'after_turn';
       return textResult(
         "propose_learning_action",
         {
@@ -956,6 +984,55 @@ export function createConversationTools(
     },
   );
 
+  const submitReply = call(
+    'submit_conversation_reply',
+    '正在核对回答与学习状态',
+    'Finish every reply with this tool, not free text. Use answer for ordinary conversation; do not put formal check questions or claims of supplied/executed learning actions in answer text. Use lesson with an exact structured question (it is registered atomically here), or question_id from registration this turn. Use assessment only after assess_understanding. Use action only after a successful action proposal; the program writes its status and controls from the real result, so text is ignored for action. Never ask the learner to resend an answer to repair registration.',
+    REPLY_INPUT,
+    async (_id, params, signal) => {
+      const input = params as { kind: ConversationReply['kind']; text: string; question?: Static<typeof QUESTION_INPUT>; question_id?: string };
+      if (context.reply?.value) return errorResult('submit_conversation_reply', 'The reply was already submitted.');
+      if (context.lessonRequired && !context.pendingLearningAction.value && !['lesson', 'unavailable'].includes(input.kind)) {
+        return errorResult('submit_conversation_reply', 'Starting this step requires a submitted lesson and registered question. If it cannot be prepared, submit unavailable.');
+      }
+      if (context.pendingLearningAction.value && input.kind !== 'action') {
+        return errorResult('submit_conversation_reply', 'An action was proposed. Submit kind=action; the program will describe its actual status.');
+      }
+      if (input.kind === 'action' && !context.pendingLearningAction.value) {
+        return errorResult('submit_conversation_reply', 'No learning action is available. Propose it successfully first, or accurately answer without claiming a card is supplied.');
+      }
+      if (input.kind === 'assessment' && !context.assessment.value) {
+        return errorResult('submit_conversation_reply', 'No reliable assessment is available. Read the saved question and assess the original answer; do not ask for a resend.');
+      }
+      let question = null;
+      let originalPrompt = '';
+      if (input.kind === 'lesson') {
+        if (input.question) await registerQuestion.execute('reply-question', input.question, signal);
+        question = context.project.study.teaching_question ?? null;
+        if (!question || !questionIsCurrent(context.project, question)
+          || question.created_message_id !== context.source_message_id
+          || (input.question_id && input.question_id !== question.question_id)) {
+          return errorResult('submit_conversation_reply', 'A lesson must submit a valid exact check question with current targets and exposed evidence.');
+        }
+        originalPrompt = question.prompt;
+        const checked = await validateAnswerCitations({ text: question.prompt, snapshot: null, getSnapshot: fullSnapshot,
+          snapshotId, exposed: context.exposedEvidence, projectId: context.project.project_id, store: context.store });
+        if (checked.errors.length) return errorResult('submit_conversation_reply', 'The check question contains unverified file references. Correct it using the exposed evidence before displaying it.');
+        question.prompt = checked.text;
+      } else if (input.question || input.question_id) {
+        return errorResult('submit_conversation_reply', 'Only a lesson can display a new formal check question.');
+      }
+      const text = input.kind === 'unavailable' ? '本轮教学或学习操作尚未准备完成，现有学习进度未改变。你可以继续提问。'
+        : input.kind === 'action' ? context.pendingLearningAction.value!.description
+        : input.kind === 'assessment' ? context.assessment.value!.feedback ?? input.text
+          : question && originalPrompt ? input.text.trim().replaceAll(originalPrompt, question.prompt) : input.text.trim();
+      if (!text && !question) return errorResult('submit_conversation_reply', 'A nonempty reply is required.');
+      if (context.reply) context.reply.value = { kind: input.kind, text, question };
+      return textResult('submit_conversation_reply', { ok: true, for_reply: 'The reply is saved as a candidate. Do not produce another final text.' });
+    },
+    'sequential',
+  );
+
   return [
     overview,
     values,
@@ -968,5 +1045,6 @@ export function createConversationTools(
     registerQuestion,
     assessment,
     proposeLearningAction,
+    submitReply,
   ];
 }

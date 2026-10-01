@@ -56,6 +56,53 @@ function options(
   };
 }
 
+test('reply submission repairs an omitted contract without streaming an unregistered draft', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-reply-repair-'));
+  try {
+    const runtime = new PiConversationRuntime(new PiSessionStore(root));
+    const faux = fauxProvider({ provider: 'reply-repair' });
+    const models = createModels(); models.setProvider(faux.provider);
+    let submitted: string | null = null;
+    const submit: AgentTool = { name: 'submit_conversation_reply', label: '核对回答', description: '', parameters: Type.Object({ text: Type.String() }),
+      execute: async (_id, params) => { submitted = (params as { text: string }).text; return { content: [{ type: 'text', text: 'Accepted.' }], details: {} }; } };
+    faux.setResponses([
+      fauxAssistantMessage('检查题已提供，确认卡也已提供。'),
+      context => {
+        assert.ok(JSON.stringify(context.messages).includes('用户已经给出的答案'));
+        return fauxAssistantMessage(fauxToolCall('submit_conversation_reply', { text: '已核对并提交的回答。' }));
+      },
+    ]);
+    const result = await runtime.run({ ...options({ models, model: faux.getModel() as Model<Api> }, '用户已经给出的答案', undefined, [submit]),
+      replyContract: { read: () => submitted, correction: 'Submit the reply contract for the original user message.' } });
+    assert.equal(result.stopReason, 'completed');
+    assert.equal(result.text, submitted);
+    assert.equal(faux.state.callCount, 2);
+    assert.equal(result.events.some(event => event.type === 'assistant_delta'), false);
+    assert.equal(result.events.some(event => JSON.stringify(event.display).includes('检查题已提供')), false);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('omitted and rejected reply contracts have bounded repairs and never become completed answers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-reply-rejected-'));
+  try {
+    const runtime = new PiConversationRuntime(new PiSessionStore(root));
+    const faux = fauxProvider({ provider: 'reply-rejected' });
+    const models = createModels(); models.setProvider(faux.provider);
+    const submit: AgentTool = { name: 'submit_conversation_reply', label: '核对回答', description: '', parameters: Type.Object({ text: Type.String() }),
+      execute: async () => { throw new Error('Registration failed.'); } };
+    for (const response of [fauxAssistantMessage('只有承诺，没有提交。'), fauxAssistantMessage(fauxToolCall('submit_conversation_reply', { text: '无效检查题' }))]) {
+      const callsBefore = faux.state.callCount;
+      faux.setResponses([response, response, response]);
+      const result = await runtime.run({ ...options({ models, model: faux.getModel() as Model<Api> }, '开始当前步骤', undefined, [submit]),
+        replyContract: { read: () => null, correction: 'Submit the reply contract.' } });
+      assert.equal(result.stopReason, 'provider_invalid_response');
+      assert.equal(result.text, '');
+      assert.equal(faux.state.callCount - callsBefore, 3);
+      assert.equal(result.events.some(event => event.type === 'assistant_delta'), false);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("Pi can answer ordinary chat directly without forcing a tool call", async () => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-runtime-direct-"));
   try {

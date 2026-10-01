@@ -42,8 +42,8 @@ test("primary dynamic prompt binds the user's explicit skip choice", () => {
     currentUserMessage: "直接进入下一步",
   });
   assert.match(prompt, /Explicit advance or skip request in the current user message: true/);
-  assert.match(primarySystemPrompt(), /propose_learning_action/);
-  assert.match(primarySystemPrompt(), /records this explicit request as a skipped step/);
+  assert.match(primarySystemPrompt(), /validated direct skip decision/);
+  assert.match(primarySystemPrompt(), /records a skip, not mastery/);
 });
 
 test("primary prompt fixes the user-visible file citation format", () => {

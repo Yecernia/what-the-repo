@@ -52,6 +52,8 @@ export interface LearningActionProgress {
 }
 
 export interface LearningActionCard {
+  execution_policy?: "confirm" | "after_turn";
+  outcome?: { route_revision: number; next_step_id: string | null; next_step_title: string | null };
   route_revision?: number;
   expected_step_id?: string | null;
   source_message_id?: string;
@@ -121,6 +123,9 @@ export interface MessageThinkingSummaryEvent {
 }
 
 export interface Message {
+  /** Scope of the displayed lesson; used to recover a question without inventing a new one. */
+  teaching_context?: { snapshot_id: string; route_revision: number; step_id: string };
+  teaching_question?: TeachingQuestion | null;
   evidence_review?: Pick<CitationReviewResult, "status" | "supported" | "summary" | "issues">;
   original_run_id?: string;
   /** Retained on retry/edit so regenerating prose cannot authorize another state change. */
