@@ -6,6 +6,7 @@ import { runStructuredWorker } from "./structured-worker.js";
 import type { PiModelRuntime, PiUsageSummary } from "./types.js";
 
 const REVIEW_RESULT = Type.Object({
+  repository_claims: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: 20 }),
   supported: Type.Boolean(),
   accepted_evidence_ids: Type.Array(
     Type.String({ maxLength: 256 }),
@@ -67,30 +68,19 @@ export async function reviewAnswerEvidence(input: {
     return { status: "not_applicable", summary: "No repository claim to check.", issues: [], evidenceIncomplete: false,
       completed: true, supported: false, acceptedEvidenceIds: [], unsupportedClaims: [], stopReason: "not_applicable", usage: EMPTY_USAGE };
   }
-  if (!input.evidence.length) {
-    return {
-      status: "unverified", summary: "回答没有可复查的仓库证据。", evidenceIncomplete: true,
-      issues: [{ claim: input.text.slice(0, 500), reason: "回答没有可复查的仓库证据。", kind: "insufficient_evidence" }],
-      completed: false,
-      supported: false,
-      acceptedEvidenceIds: [],
-      unsupportedClaims: ["回答没有可复查的仓库证据。"],
-      stopReason: "no_evidence",
-      usage: EMPTY_USAGE,
-    };
-  }
   const { packets, incomplete } = await loadEvidencePackets(input);
   const result = await runStructuredWorker({
     skillId: "citation-review",
     inputSchemaId: "citation-review-input-v2",
-    outputSchemaId: "citation-review-output-v2",
-    contextBuilderId: "citation-review-context-v4",
+    outputSchemaId: "citation-review-output-v3",
+    contextBuilderId: "citation-review-context-v5",
     modelRuntime: input.modelRuntime,
     thinkingLevel: "medium",
     signal: input.signal,
     schema: REVIEW_RESULT,
     systemPrompt: [
       "The program has already checked paths, line numbers, the snapshot and evidence IDs deterministically and supplies bounded, safe excerpts; this Skill judges semantic support.",
+      "First list repository_claims by copying exact spans from final_answer. Encouragement, small talk, general advice, learner preferences, questions and application learning-action receipts are not repository claims. An empty evidence list does not imply a repository claim. For a mixed answer, check only its repository assertions. If there are none, return repository_claims=[], accepted_evidence_ids=[], unsupported_claims=[], issues=[] and note that no code review applies. Never retrieve unrelated source to fill empty evidence.",
       "Only actual excerpt lines establish support. Incomplete ranges, unavailable source and graph labels cannot establish missing behavior. Missing evidence is not proof a claim is false. Return issues with the exact claim, a specific reason, and kind insufficient_evidence or contradicted. Use contradicted only when the excerpt explicitly disproves the claim.",
       "accepted_evidence_ids must come from the input. Do not retrieve anything or change state. Finish by calling submit_result.",
     ].join("\n"),
@@ -102,6 +92,23 @@ export async function reviewAnswerEvidence(input: {
   if (!result.value || result.validationErrors.length || result.stopReason !== "completed") {
     return { ...unavailableEvidenceReview(result.value ? "invalid_review_result" : result.stopReason),
       evidenceIncomplete: incomplete, usage: result.usage };
+  }
+  const claims = [...new Set(result.value.repository_claims.map(claim => claim.trim()))];
+  if (claims.some(claim => !claim || !input.text.includes(claim))) {
+    return { ...unavailableEvidenceReview('invalid_review_result'), evidenceIncomplete: incomplete, usage: result.usage };
+  }
+  if (!claims.length) {
+    if (result.value.unsupported_claims.length || result.value.issues?.length || result.value.accepted_evidence_ids.length) {
+      return { ...unavailableEvidenceReview('invalid_review_result'), evidenceIncomplete: incomplete, usage: result.usage };
+    }
+    return { status: 'not_applicable', summary: result.value.summary, issues: [], evidenceIncomplete: false,
+      completed: true, supported: false, acceptedEvidenceIds: [], unsupportedClaims: [], stopReason: 'not_applicable', usage: result.usage };
+  }
+  if (!input.evidence.length) {
+    return { status: 'unverified', summary: '回答中的仓库主张没有可复查的证据。', evidenceIncomplete: false,
+      issues: claims.map(claim => ({ claim, reason: '回答没有可复查的仓库证据。', kind: 'insufficient_evidence' })),
+      completed: true, supported: false, acceptedEvidenceIds: [], unsupportedClaims: claims,
+      stopReason: 'no_evidence', usage: result.usage };
   }
   const allowed = new Set(packets.filter(packet => !packet.incomplete).map(packet => packet.evidence_id));
   const acceptedEvidenceIds = result.value.accepted_evidence_ids.filter(id => allowed.has(id));

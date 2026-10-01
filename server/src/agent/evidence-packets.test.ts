@@ -48,7 +48,7 @@ test("a reviewer cannot claim support without accepting a supplied complete evid
   const models = createModels(); models.setProvider(faux.provider);
   for (const ids of [[], ["invented"]]) {
     faux.setResponses([fauxAssistantMessage(fauxToolCall("submit_result", {
-      supported: true, accepted_evidence_ids: ids, unsupported_claims: [], summary: "supported",
+      repository_claims: ['returns double'], supported: true, accepted_evidence_ids: ids, unsupported_claims: [], summary: "supported",
     }))]);
     const result = await reviewAnswerEvidence({ ...input, text: "returns double", modelRuntime: { models, model: faux.getModel() as Model<Api> } });
     assert.equal(result.status, "unverified");
@@ -98,15 +98,20 @@ test("citation review distinguishes no evidence, greetings and explicit contradi
   const faux = fauxProvider({ provider: "citation-evidence-test" });
   const models = createModels(); models.setProvider(faux.provider);
   const modelRuntime = { models, model: faux.getModel() as Model<Api> };
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('submit_result', {
+    repository_claims: ['This repository guarantees no duplicate IDs.'], supported: false,
+    accepted_evidence_ids: [], unsupported_claims: [], summary: 'Missing evidence',
+  }))]);
   const missing = await reviewAnswerEvidence({ ...input, evidence: [], text: "This repository guarantees no duplicate IDs.", modelRuntime });
   assert.equal(missing.status, "unverified");
   assert.equal(missing.issues[0].kind, "insufficient_evidence");
+  assert.equal(missing.evidenceIncomplete, false);
   const greeting = await reviewAnswerEvidence({ ...input, evidence: [], text: "你好！", modelRuntime });
   assert.equal(greeting.status, "not_applicable");
-  assert.equal(faux.state.callCount, 0);
+  assert.equal(faux.state.callCount, 1);
   faux.setResponses([context => {
     assert.match(JSON.stringify(context.messages), /return x \* 2/);
-    return fauxAssistantMessage(fauxToolCall("submit_result", { supported: false, accepted_evidence_ids: ["double"], unsupported_claims: ["returns triple"], summary: "returns double", issues: [{ claim: "returns triple [click](https://bad.invalid)", reason: "The return multiplies by two.", kind: "contradicted" }] }));
+    return fauxAssistantMessage(fauxToolCall("submit_result", { repository_claims: ['returns triple'], supported: false, accepted_evidence_ids: ["double"], unsupported_claims: ["returns triple"], summary: "returns double", issues: [{ claim: "returns triple [click](https://bad.invalid)", reason: "The return multiplies by two.", kind: "contradicted" }] }));
   }]);
   const reviewed = await reviewAnswerEvidence({ ...input, text: "returns triple", modelRuntime });
   assert.equal(reviewed.status, "reviewed");
@@ -115,7 +120,7 @@ test("citation review distinguishes no evidence, greetings and explicit contradi
   assert.match(notice, /multiplies by two/);
   assert.doesNotMatch(notice, /\[click\]\(/);
   faux.setResponses([fauxAssistantMessage(fauxToolCall("submit_result", {
-    supported: true, accepted_evidence_ids: ["double"], unsupported_claims: [], summary: "looks correct",
+    repository_claims: ['returns double'], supported: true, accepted_evidence_ids: ["double"], unsupported_claims: [], summary: "looks correct",
   }))]);
   const unreadable = await reviewAnswerEvidence({ ...input, text: "returns double", modelRuntime,
     store: { readSourceLines: async () => { throw new Error("source missing"); } } as unknown as ProductStore,

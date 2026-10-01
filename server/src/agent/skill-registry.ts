@@ -151,12 +151,12 @@ const SKILL_METADATA: Record<ProductSkillId, Omit<ProductSkill, "skill">> = {
   },
   "citation-review": {
     id: "citation-review",
-    version: "6.0.0",
+    version: "6.1.0",
     allowedTools: ["submit_result"],
     inputSchemaId: "citation-review-input-v2",
-    outputSchemaId: "citation-review-output-v2",
-    contextBuilderId: "citation-review-context-v4",
-    evalSuite: "citation-review-v5",
+    outputSchemaId: "citation-review-output-v3",
+    contextBuilderId: "citation-review-context-v5",
+    evalSuite: "citation-review-v6",
   },
   "memory-maintenance": {
     id: "memory-maintenance",

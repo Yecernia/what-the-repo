@@ -19,6 +19,7 @@ import { createModels, type Api, type Model } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { ConversationService } from './conversation-service.js';
 import { RepositoryService } from './repository-service.js';
+import { reviewAnswerEvidence, unavailableEvidenceReview } from '../agent/citation-review.js';
 
 const usage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
 const snapshot: EvidenceSnapshot = {
@@ -32,7 +33,8 @@ const routeResult = (): Awaited<ReturnType<typeof generateLearningRoute>> => ({ 
   trace: { worker_run_id: 'route:mock', skill_id: 'learning-route', skill_version: 'test', stop_reason: 'completed',
     completed: true, usage, evidence_ids: [], state_candidate: true } });
 
-async function fixture(t: TestContext, generateRoute: typeof generateLearningRoute = async () => routeResult(), assess?: typeof runUnderstandingAssessment) {
+async function fixture(t: TestContext, generateRoute: typeof generateLearningRoute = async () => routeResult(), assess?: typeof runUnderstandingAssessment,
+  reviewEvidence?: typeof reviewAnswerEvidence) {
   const root = await mkdtemp(join(tmpdir(), 'wtr-teaching-regression-'));
   t.after(async () => { await rm(root, { recursive: true, force: true }); });
   const store = new FileStore(root); await store.init();
@@ -47,7 +49,11 @@ async function fixture(t: TestContext, generateRoute: typeof generateLearningRou
     keyEncryptionSecret: 'test-only', freeProviderBaseUrl: 'https://api.deepseek.com',
     freeProviderModel: 'deepseek-chat', freeProviderApiKey: 'never-used' } as ServerConfig;
   const service = new ConversationService(config, store, new PiSessionStore(join(root, 'sessions')),
-    new PiMemoryStore(join(root, 'memory')), undefined, undefined, undefined, undefined, { generateRoute, assess });
+    new PiMemoryStore(join(root, 'memory')), undefined, undefined, undefined, undefined, { generateRoute,
+      reviewEvidence: reviewEvidence ?? (async input => ({ ...unavailableEvidenceReview(), summary: '回答没有可复查的仓库证据。',
+        issues: [{ claim: input.text, reason: '回答没有可复查的仓库证据。', kind: 'insufficient_evidence' }] })),
+      assess,
+    });
   const secondService = new ConversationService(config, store, new PiSessionStore(join(root, 'sessions')),
     new PiMemoryStore(join(root, 'memory')), undefined, undefined, undefined, undefined, { generateRoute });
   const base = { owner: { owner_id: project.owner_id, kind: 'guest' as const }, projectId: project.project_id };
@@ -350,6 +356,24 @@ test('a cancelled question is not displayed or saved, and regenerating its turn 
   const retry = (await f.service.run({ ...f.base, content: '开始当前步骤', replaceMessageId: cancelled.user_message.message_id }))!;
   assert.equal(retry.assistant_message.teaching_question!.created_message_id, cancelled.user_message.message_id);
   assert.equal((await f.load()).study.step_passed ?? null, null);
+});
+
+test('ordinary encouragement passes through the real review pipeline as not applicable without reading source', async t => {
+  const faux = fauxProvider({ provider: 'encouragement-service-review' });
+  const models = createModels(); models.setProvider(faux.provider);
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('submit_result', {
+    repository_claims: [], supported: false, accepted_evidence_ids: [], unsupported_claims: [], issues: [], summary: '本轮没有仓库主张。',
+  }))]);
+  const f = await fixture(t, undefined, undefined, input => reviewAnswerEvidence({ ...input,
+    modelRuntime: { models, model: faux.getModel() as Model<Api> } }));
+  t.mock.method(f.store, 'readSourceLines', async () => { assert.fail('encouragement must not retrieve source'); });
+  const text = '今天已经认真学了一段，休息一下，明天再来就好。';
+  mockTurn(t, false, text);
+  const result = (await f.service.run({ ...f.base, content: '只用一句话鼓励我，不谈代码或推进学习。', reviewEvidence: true }))!;
+  assert.equal(result.assistant_message.evidence_review?.status, 'not_applicable');
+  assert.equal(result.assistant_message.content, text);
+  assert.deepEqual(result.validation_errors, []);
+  assert.equal((await f.load()).study.current_step, 0);
 });
 
 test('natural language never manufactures an action, while an explicit button binds its original step', async t => {

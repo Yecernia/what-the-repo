@@ -729,6 +729,7 @@ export class ConversationService {
           status: review.status,
           issues: review.issues,
           summary: review.summary,
+          evidence_incomplete: review.evidenceIncomplete,
         };
         reviewedText = withEvidenceReviewNotice(validation.text, review);
         evidenceReview = { status: review.status, supported: review.supported, summary: review.summary, issues: review.issues };
