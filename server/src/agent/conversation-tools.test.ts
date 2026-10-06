@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createMessage, createProject, emptyProfile } from "../domain/conversation.js";
 import { conversationSummaryFromSource } from '../domain/conversation-summary.js';
+import { buildSnapshotQueryDirectory, querySnapshotQueryDirectory } from '../domain/snapshot-query.js';
 import type { EvidenceSnapshot } from "../domain/snapshot.js";
 import type { ProductStore } from "../persistence/store.js";
 import { createConversationTools, type ConversationToolContext } from "./conversation-tools.js";
@@ -112,6 +113,142 @@ function recordFixturePass(ctx: ConversationToolContext) {
       teaching_context: { snapshot_id: question.snapshot_id, route_revision: question.route_revision, step_id: question.step_id } }));
   applyTargetAssessment(ctx.project, question, answer.message_id, [answer.content], targets.map(target => ({ target_id: target.target_id,
     outcome: 'proven', reason: 'Controlled prior qualified proof.', answer_spans: [answer.content], evidence_ids: [evidence.stable_id] })));
+}
+
+function graphToolFixture(canonical = false) {
+  const view = snapshot();
+  const template = view.graph.nodes[0]!;
+  view.graph.nodes = ['entry', 'component:entry', 'entity:domain:entry', 'fact:entry']
+    .map(id => ({ ...structuredClone(template), id, name: id }));
+  const edge = (id: string, source: string, target: string) => ({
+    id, source, target, relation_kind: 'calls', label: id, description: id,
+    evidence: [evidence], certainty: 'verified', weight: 1,
+  });
+  view.graph.edges = [edge('shared', 'entry', 'component:entry'),
+    edge('domain-edge', 'component:entry', 'entity:domain:entry'),
+    edge('unknown-edge', 'fact:entry', 'missing')];
+  view.fact_graph = {
+    nodes: ['entry', 'component:entry'].map(id => ({ ...structuredClone(template), id, name: `fact ${id}` })),
+    edges: [edge('shared', 'entry', 'component:entry')],
+  };
+  let bindingChecks = 0;
+  let fullReads = 0;
+  const ctx = context({ snapshot: canonical ? null : view,
+    ...(canonical ? { snapshotId: view.snapshot_id, publicSnapshotKey: 'canonical:tools',
+      getSnapshot: async () => { fullReads++; return view; },
+      assertSnapshotBinding: async () => { bindingChecks++; },
+    } : {}),
+  });
+  ctx.store.queryPublicSnapshot = async request => {
+    assert.equal(request.publicKey, 'canonical:tools');
+    assert.equal(request.snapshotId, view.snapshot_id);
+    return querySnapshotQueryDirectory(buildSnapshotQueryDirectory(request.publicKey, request.snapshotId, view,
+      { fact_graph: view.fact_graph }), request.query);
+  };
+  const tools = createConversationTools(ctx);
+  const run = async (name: string, input: Record<string, unknown>) => {
+    const result = await tools.find(tool => tool.name === name)!.execute(name, input);
+    return JSON.parse((result.content[0] as { text: string }).text);
+  };
+  return { view, ctx, run, reads: () => ({ bindingChecks, fullReads }) };
+}
+
+test('explicit graph selection takes precedence over attachments and invalid choices never fall back', async () => {
+  const { view, ctx, run } = graphToolFixture();
+  const attached = (kind: string, stable_id: string, snapshot_id = view.snapshot_id) => ({
+    snapshot_id, kind, stable_id, label: stable_id,
+  });
+  const before = structuredClone(ctx.project);
+  const cases = [
+    { selected: [attached('component', 'entry')], input: { relation_id: 'shared' }, type: 'relation', id: 'shared' },
+    { selected: [attached('relation', 'domain-edge')], input: { relation_id: 'shared' }, type: 'relation', id: 'shared' },
+    { selected: [attached('relation', 'shared')], input: { component_id: 'component:entry' }, type: 'component', id: 'component:entry' },
+    { selected: [attached('component', 'entry')], input: { node_key: 'component:entity:domain:entry' }, type: 'component', id: 'entity:domain:entry' },
+    { selected: [attached('component', 'entry'), attached('component', 'component:entry')], input: {}, type: 'component', id: 'entry' },
+    { selected: [attached('relation', 'shared'), attached('relation', 'domain-edge')], input: {}, type: 'relation', id: 'shared' },
+    { selected: [attached('relation', 'shared'), attached('component', 'entry')], input: {}, type: 'component', id: 'entry' },
+    { selected: [attached('component', 'entry', 'old'), attached('relation', 'domain-edge')], input: {}, type: 'relation', id: 'domain-edge' },
+  ];
+  for (const row of cases) {
+    ctx.selected = row.selected;
+    const result = await run('get_component_context', row.input);
+    assert.equal(result[row.type]?.id, row.id);
+    assert.equal(result[row.type === 'component' ? 'relation' : 'component'], undefined);
+  }
+  ctx.selected = [attached('component', 'entry'), attached('relation', 'shared')];
+  for (const input of [{ component_id: 'missing' }, { relation_id: 'missing' }, { node_key: 'component:missing' }]) {
+    await assert.rejects(run('get_component_context', input), /No such (component|relation)/);
+  }
+  for (const input of [{ component_id: 'entry', relation_id: 'shared' },
+    { component_id: 'entry', node_key: 'component:entry' }, { node_key: 'component:entry', relation_id: 'shared' }]) {
+    await assert.rejects(run('get_component_context', input), /Provide exactly one/);
+  }
+  ctx.selected = [attached('component', 'entry', 'old')];
+  await assert.rejects(run('get_component_context', {}), /Provide a component/);
+  assert.deepEqual(ctx.project, before);
+  assert.equal(ctx.pendingLearningAction.value, null);
+});
+
+for (const canonical of [false, true]) {
+  test(`graph endpoint keys compose with component reads without conflating facts (${canonical ? 'canonical' : 'local'})`, async () => {
+    const { view, ctx, run, reads } = graphToolFixture(canonical);
+    const before = structuredClone(ctx.project);
+    const result = await run('query_code_evidence', { limit: 12 });
+    assert.equal(result.truncated, false);
+    assert.equal(reads().fullReads, 0, 'indexed queries must not materialize the full snapshot');
+    assert.equal(reads().bindingChecks, canonical ? 1 : 0);
+    const byKey = new Map<string, { id: string; kind: string }>(result.nodes.map((node: any) => [node.node_key, node]));
+    assert.equal(byKey.size, view.graph.nodes.length + view.fact_graph!.nodes.length);
+    assert.equal(byKey.get('component:entry')!.id, 'entry');
+    assert.equal(byKey.get('fact:entry')!.kind, 'fact');
+    assert.equal(byKey.get('component:fact:entry')!.id, 'fact:entry');
+    const seenComponents = new Set<string>();
+    for (const relation of result.relations) {
+      assert.equal(relation.source, undefined, 'endpoint fields must state their key namespace');
+      for (const node_key of [relation.source_node_key, relation.target_node_key]) {
+        const node = byKey.get(node_key);
+        if (relation.kind === 'fact') {
+          assert.equal(node?.kind, 'fact');
+          await assert.rejects(run('get_component_context', { node_key }), /fact node.*not an architecture component/);
+        } else if (node) {
+          assert.equal(node.kind, 'component');
+          const read = await run('get_component_context', { node_key });
+          assert.equal(read.component.id, node.id);
+          assert.equal(read.component.responsibility, view.graph.nodes.find(item => item.id === node.id)!.responsibility);
+          seenComponents.add(read.component.id);
+        } else {
+          await assert.rejects(run('get_component_context', { node_key }), /No such component/);
+        }
+      }
+    }
+    assert.deepEqual([...seenComponents].sort(), view.graph.nodes.map(node => node.id).sort());
+    // An original ID that resembles a fact key is still valid only in the explicit component_id namespace.
+    assert.equal((await run('get_component_context', { component_id: 'fact:entry' })).component.id, 'fact:entry');
+    await assert.rejects(run('get_component_context', { node_key: 'unknown:entry' }), /Unknown node key/);
+    assert.ok(ctx.exposedEvidence.has(evidence.stable_id));
+    const source = await run('read_source_excerpt', { path: evidence.path });
+    assert.equal(source.content, 'export function entry() {}');
+    const pageNodes: string[] = [], pageEdges: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const page = await run('query_code_evidence', { limit: 2, ...(cursor ? { cursor } : {}) });
+      pageNodes.push(...page.nodes.map((node: any) => node.node_key));
+      pageEdges.push(...page.relations.map((edge: any) => `${edge.kind}:${edge.id}`));
+      cursor = page.next_cursor ?? undefined;
+      assert.ok(++pages < 20);
+    } while (cursor);
+    assert.ok(pages > 1);
+    assert.deepEqual(pageNodes.sort(), [...byKey.keys()].sort());
+    assert.deepEqual(pageEdges.sort(), result.relations.map((edge: any) => `${edge.kind}:${edge.id}`).sort());
+    assert.deepEqual(ctx.project, before);
+    if (canonical) {
+      const previousReads = reads().bindingChecks;
+      ctx.assertSnapshotBinding = async () => { throw new Error('snapshot_changed'); };
+      await assert.rejects(run('query_code_evidence', {}), /snapshot_changed/);
+      assert.equal(reads().bindingChecks, previousReads);
+    }
+  });
 }
 
 test('learning context retrieves fact-only references without a full graph and exposes them to source reads', async () => {

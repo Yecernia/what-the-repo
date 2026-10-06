@@ -68,8 +68,9 @@ const EVIDENCE_QUERY_INPUT = Type.Object({
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 12, default: 8 })),
 });
 const COMPONENT_INPUT = Type.Object({
-  component_id: Type.Optional(Type.String({ maxLength: 256 })),
-  relation_id: Type.Optional(Type.String({ maxLength: 256 })),
+  component_id: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: 'Original architecture component ID, not a query node_key. Specify only one selector.' })),
+  relation_id: Type.Optional(Type.String({ minLength: 1, maxLength: 256, description: 'Original architecture relation ID; fact relations are not architecture relations. Specify only one selector.' })),
+  node_key: Type.Optional(Type.String({ minLength: 1, maxLength: 266, description: 'Exact node_key or relation source_node_key/target_node_key from query_code_evidence. Only architecture component keys are supported; fact keys are rejected. Specify only one selector.' })),
 });
 const SOURCE_INPUT = Type.Object({
   path: Type.String({ minLength: 1, maxLength: 400 }),
@@ -555,7 +556,7 @@ export function createConversationTools(
   const query = call(
     "query_code_evidence",
     "正在检索代码证据",
-    "Query the evidence graph by keyword, path, language, component or relation. Call it before stating repository facts.",
+    "Query the evidence graph by keyword, path, language, component or relation. Nodes retain their original id and typed node_key; relation source_node_key/target_node_key refer to those keys, even across pages. Pass an architecture endpoint unchanged as get_component_context({node_key}). Fact nodes and relations are separate from architecture components and relations. Call it before stating repository facts.",
     EVIDENCE_QUERY_INPUT,
     async (_id, params, signal) => {
       const snapshot = publicSnapshotKey && snapshotId ? null : await fullSnapshot();
@@ -604,6 +605,8 @@ export function createConversationTools(
           .map(id => evidenceById.get(id)).filter((row): row is NonNullable<typeof row> => Boolean(row));
         const nodes = result.nodes.map((row) => ({
           id: row.node_id,
+          node_key: row.node_key,
+          kind: row.node_kind,
           name: row.name,
           responsibility: row.responsibility,
           layer: row.layer_name,
@@ -612,8 +615,9 @@ export function createConversationTools(
         }));
         const relations = result.edges.map((row) => ({
           id: row.edge_id,
-          source: row.source_node_key,
-          target: row.target_node_key,
+          kind: row.edge_kind,
+          source_node_key: row.source_node_key,
+          target_node_key: row.target_node_key,
           relation_kind: row.relation_kind,
           label: row.label,
           description: row.description,
@@ -645,20 +649,31 @@ export function createConversationTools(
   const component = call(
     "get_component_context",
     "正在查询组件职责和相邻关系",
-    "Read a component or an exact relation, defaulting to the first one the learner attached. It does not read arbitrary source.",
+    "Read an architecture component or exact relation using exactly one of component_id, relation_id or node_key. Explicit selection overrides attachments. With no selector, use the first attached component, otherwise the first attached relation, in the current snapshot. It does not read fact nodes or arbitrary source.",
     COMPONENT_INPUT,
     async (_id, params) => {
       const snapshot = await fullSnapshot();
       if (!snapshot) return errorResult("get_component_context", "The project analysis has not finished.");
-      const input = params as { component_id?: string; relation_id?: string };
+      const input = params as { component_id?: string; relation_id?: string; node_key?: string };
+      const explicit = [input.component_id, input.relation_id, input.node_key].filter(id => id !== undefined);
+      if (explicit.length > 1) return errorResult("get_component_context", "Provide exactly one of component_id, relation_id or node_key.");
       const selected = context.selected.filter((item) => item.snapshot_id === snapshot.snapshot_id);
-      // Without an explicit id, fall back to the attached component or relation (the first, if several).
+      // Attachments are defaults for the whole selection, never for an unrequested type.
       const componentId = input.component_id
-        ?? selected.find((item) => item.kind === "component")?.stable_id;
+        ?? (explicit.length === 0 ? selected.find((item) => item.kind === "component")?.stable_id : undefined);
       const relationId = input.relation_id
-        ?? selected.find((item) => item.kind === "relation")?.stable_id;
-      if (componentId) {
-        const node = nodeById(snapshot, componentId);
+        ?? (explicit.length === 0 ? selected.find((item) => item.kind === "relation")?.stable_id : undefined);
+      if (input.node_key?.startsWith('fact:')) {
+        return errorResult("get_component_context", "This is a fact node key, not an architecture component. Use its query evidence with read_source_excerpt.");
+      }
+      if (input.node_key !== undefined && !input.node_key.startsWith('component:')) {
+        return errorResult("get_component_context", "Unknown node key namespace. Use the exact node_key returned by query_code_evidence.");
+      }
+      if (componentId !== undefined || input.node_key !== undefined) {
+        // Compare complete typed keys; component IDs may themselves contain any prefix.
+        const node = input.node_key !== undefined
+          ? snapshot.graph.nodes.find(node => `component:${node.id}` === input.node_key)
+          : nodeById(snapshot, componentId!);
         if (!node) return errorResult("get_component_context", "No such component in this snapshot.");
         return textResult(
           "get_component_context",
@@ -666,7 +681,7 @@ export function createConversationTools(
           { evidence_ids: nodeEvidence(node).map((row) => row.stable_id) },
         );
       }
-      if (relationId) {
+      if (relationId !== undefined) {
         const edge = edgeById(snapshot, relationId);
         if (!edge) return errorResult("get_component_context", "No such relation in this snapshot.");
         const source = nodeById(snapshot, edge.source);
@@ -690,7 +705,7 @@ export function createConversationTools(
           { evidence_ids: evidence.map((row) => row.stable_id) },
         );
       }
-      return errorResult("get_component_context", "Provide a component or relation ID, or have the learner attach one.");
+      return errorResult("get_component_context", "Provide a component or relation ID, a query node_key, or have the learner attach one.");
     },
   );
 
