@@ -51,8 +51,8 @@
     },
     {
       "case_id": "unverified_reply_retains_notice",
-      "requirement": "未验证的回答连同引用提示保留在后续会话中，但不提升为可信长期记忆。",
-      "node_test": "conversation service preserves model replies and appends visible citation corrections for subsequent turns"
+      "requirement": "未验证的回答连同引用提示照常展示给用户，但不作为可信内容放回后续会话，也不提升为长期记忆。",
+      "node_test": "conversation service displays unverified replies without reinserting them into trusted subsequent turns"
     },
     {
       "case_id": "cancelled_run_skips_provider",
