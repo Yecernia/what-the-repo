@@ -1,0 +1,616 @@
+{
+  "id": "assessment-context-repair-quality-v1",
+  "kind": "quality-rubric",
+  "purpose": "Evaluator-only R6-3 frozen first failures and paired premise control. Keep assessment owner packets independent from later question packets. Controlled tests verify contract wiring and state gates, never real semantic accuracy.",
+  "source": "Local R6 audit, 2026-10-04; developit/mitt commit 6b41670516ed8e8b738612f60491995470aa63b3. Instance, account, provider and run metadata omitted; reference IDs consistently anonymized.",
+  "real_model_recheck": "not_run",
+  "fixed_acceptance_rows": [
+    "TA08",
+    "TA10",
+    "Q06"
+  ],
+  "cases": [
+    {
+      "id": "correct-off-repair",
+      "registered_question": {
+        "question_id": "fixture-ref:11",
+        "created_message_id": "fixture-ref:21",
+        "prompt": "这道题只看这一串动作：依次调用 on('foo', a)、on('foo', b)（a、b 是两个不同的函数），然后调用 off('foo')，即不传第二个参数。请按三步作答：每一步执行后，all 这个 Map 上 'foo' 键对应的值分别是什么（若是一组处理器，请按顺序写出来）；并说明这一步是改动了键上已有的那个数组，还是在键上写入了新的值。",
+        "target_items": [
+          "能描述 on 在处理器数组已存在与不存在时的两种分支处理",
+          "能解释 off('foo', handler) 只移除第一个匹配项，而 off('foo') 会把该类型置为空数组"
+        ],
+        "target_ids": [
+          "fixture-ref:5",
+          "fixture-ref:8"
+        ]
+      },
+      "original_user_message": "补充两种 off 的区别：在 [a, b] 上调用 off(\"foo\", a)，原数组中只移除第一个与 a 相同的函数，剩 [b]；如果原来同一个 a 注册了两次，一次只删第一份。找不到则不删除。off(\"foo\") 则在这个键上换成新的空数组，键仍保留。请接着为本步剩余目标出一道题，先不要推进。",
+      "prior_target_assessments": [
+        {
+          "results": [
+            {
+              "reason": "学习者明确描述了 on 的两种分支：数组中不存在时写入 [a]，已存在时把 b push 到末尾，与源码 if (handlers) push else set([handler]) 一致。",
+              "outcome": "proven",
+              "target_id": "fixture-ref:5",
+              "answer_spans": [
+                "第一次 foo 没有数组，on 会把 [a] 放进 Map",
+                "第二次取得已有数组，把 b push 到末尾，所以现在是 [a, b]"
+              ],
+              "evidence_ids": [
+                "fixture-ref:6",
+                "fixture-ref:7"
+              ]
+            },
+            {
+              "reason": "学习者明确表示 off 部分还没想好，未描述 off('foo') 会将类型置为空数组，也未说明 off('foo', handler) 只移除第一个匹配项。",
+              "outcome": "unproven",
+              "target_id": "fixture-ref:8",
+              "answer_spans": [],
+              "evidence_ids": []
+            }
+          ],
+          "step_id": "fixture-ref:9",
+          "sequence": 1,
+          "message_id": "fixture-ref:10",
+          "target_ids": [
+            "fixture-ref:5",
+            "fixture-ref:8"
+          ],
+          "question_id": "fixture-ref:11",
+          "snapshot_id": "fixture-ref:12",
+          "answer_parts": [
+            "我先答 on 部分：第一次 foo 没有数组，on 会把 [a] 放进 Map；第二次取得已有数组，把 b push 到末尾，所以现在是 [a, b]。",
+            "off 部分我还没想好。"
+          ],
+          "route_revision": 2,
+          "original_message_id": "fixture-ref:10",
+          "question_message_id": "fixture-ref:13"
+        },
+        {
+          "results": [
+            {
+              "reason": "本次回答只补充 off 部分，未涉及 on 在处理器数组已存在/不存在时的两种分支处理（该目标在上一轮已证明，故不重复扣分）。",
+              "outcome": "not_addressed",
+              "target_id": "fixture-ref:5",
+              "answer_spans": [],
+              "evidence_ids": []
+            },
+            {
+              "reason": "答对了 off('foo') 不传 handler 会把该类型置为新的空数组、键仍保留，但没有说明 off('foo', handler) 只移除第一个匹配项，该对比目标未完整建立。",
+              "outcome": "unproven",
+              "target_id": "fixture-ref:8",
+              "answer_spans": [
+                "补上 off 部分：不传 handler 时，会把 foo 键对应的值换成一个新的空数组，所以 all.get(\"foo\") 是 []，all.has(\"foo\") 仍然为 true，并没有删除键。"
+              ],
+              "evidence_ids": [
+                "fixture-ref:14"
+              ]
+            }
+          ],
+          "step_id": "fixture-ref:9",
+          "sequence": 2,
+          "message_id": "fixture-ref:15",
+          "target_ids": [
+            "fixture-ref:5",
+            "fixture-ref:8"
+          ],
+          "question_id": "fixture-ref:11",
+          "snapshot_id": "fixture-ref:12",
+          "answer_parts": [
+            "补上 off 部分：不传 handler 时，会把 foo 键对应的值换成一个新的空数组，所以 all.get(\"foo\") 是 []，all.has(\"foo\") 仍然为 true，并没有删除键。"
+          ],
+          "route_revision": 2,
+          "original_message_id": "fixture-ref:15",
+          "question_message_id": "fixture-ref:13"
+        }
+      ],
+      "route_targets": [
+        "能说出默认导出是一个函数，调用后返回带 all、on、off、emit 的对象",
+        "能描述 on 在处理器数组已存在与不存在时的两种分支处理",
+        "能解释 off('foo', handler) 只移除第一个匹配项，而 off('foo') 会把该类型置为空数组",
+        "能说明事件名大小写不做归一化，且同一处理器可被重复注册",
+        "能指出 all 这个 Map 是被共享的状态，可在调用工厂时由外部注入"
+      ],
+      "assessment_feedback": "这轮你补上了 off 的两种用法，讲得很准：off('foo', handler) 只删掉数组中第一个匹配的函数（同一个函数注册两次也只删一份，找不到就不动），off('foo') 则把这个键换成一个新的空数组、键本身仍然保留——这正是本题之前还缺的一块。on 的分支（已有数组就往后追加，没有就新建 [handler]）在前面的作答里已经讲清楚，这里不必再重复。合起来看，这道题的两个要点都已覆盖，本题可以算完成了。本步还有另外的目标尚未涉及——默认导出的结构、事件名大小写不做归一化、以及 all 这个 Map 的共享与外部注入——那些属于这道题之外、本步后续要单独推进的内容。",
+      "owner_bound_evidence": [
+        {
+          "stable_id": "fixture-ref:14",
+          "path": "src/index.ts",
+          "start_line": 82,
+          "end_line": 91,
+          "kind": "symbol"
+        },
+        {
+          "stable_id": "fixture-ref:22",
+          "path": "test/index_test.ts",
+          "start_line": 100,
+          "end_line": 159,
+          "kind": "source_excerpt"
+        }
+      ],
+      "owner_packets": [
+        {
+          "evidence_id": "fixture-ref:14",
+          "path": "src/index.ts",
+          "start_line": 82,
+          "end_line": 91,
+          "source": "\t\toff<Key extends keyof Events>(type: Key, handler?: GenericEventHandler) {\n\t\t\tconst handlers: Array<GenericEventHandler> | undefined = all!.get(type);\n\t\t\tif (handlers) {\n\t\t\t\tif (handler) {\n\t\t\t\t\thandlers.splice(handlers.indexOf(handler) >>> 0, 1);\n\t\t\t\t} else {\n\t\t\t\t\tall!.set(type, []);\n\t\t\t\t}\n\t\t\t}\n\t\t},"
+        },
+        {
+          "evidence_id": "fixture-ref:22",
+          "path": "test/index_test.ts",
+          "start_line": 100,
+          "end_line": 159,
+          "source": "\t\tit('should add duplicate listeners', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([foo, foo]);\n\t\t});\n\t});\n\n\tdescribe('off()', () => {\n\t\tit('should be a function', () => {\n\t\t\texpect(inst).to.have.property('off').that.is.a('function');\n\t\t});\n\n\t\tit('should remove handler for type', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.off('foo', foo);\n\n\t\t\texpect(events.get('foo')).to.be.empty;\n\t\t});\n\n\t\tit('should NOT normalize case', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('FOO', foo);\n\t\t\tinst.on('Bar', foo);\n\t\t\tinst.on('baz:bat!', foo);\n\n\t\t\tinst.off('FOO', foo);\n\t\t\tinst.off('Bar', foo);\n\t\t\tinst.off('baz:baT!', foo);\n\n\t\t\texpect(events.get('FOO')).to.be.empty;\n\t\t\texpect(events.has('foo')).to.equal(false);\n\t\t\texpect(events.get('Bar')).to.be.empty;\n\t\t\texpect(events.has('bar')).to.equal(false);\n\t\t\texpect(events.get('baz:bat!')).to.have.lengthOf(1);\n\t\t});\n\n\t\tit('should remove only the first matching listener', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.off('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([foo]);\n\t\t\tinst.off('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([]);\n\t\t});\n\n\t\tit('off(\"type\") should remove all handlers of the given type', () => {\n\t\t\tinst.on('foo', () => {});\n\t\t\tinst.on('foo', () => {});\n\t\t\tinst.on('bar', () => {});\n\t\t\tinst.off('foo');\n\t\t\texpect(events.get('foo')).to.deep.equal([]);\n\t\t\texpect(events.get('bar')).to.have.length(1);\n\t\t\tinst.off('bar');\n\t\t\texpect(events.get('bar')).to.deep.equal([]);\n\t\t});\n\t});\n"
+        }
+      ],
+      "observed_first_review": {
+        "supported": false,
+        "issues": [
+          {
+            "kind": "insufficient_evidence",
+            "claim": "on 的分支（已有数组就往后追加，没有就新建 [handler]）",
+            "reason": "本块的证据只有 off 的实现（src/index.ts 82-91）与测试片段，没有 on 的实现。测试只能体现 on 调用后的可观察结果（'should add duplicate listeners' 得到 [foo, foo]，另一处 on('bar') 一次得到长度 1 的数组），不能证明 on 内部分支\"已有数组就往后追加，没有就新建 [handler]\"这一实现结构；实现层证据缺失，属证据不足。"
+          },
+          {
+            "kind": "insufficient_evidence",
+            "claim": "默认导出的结构",
+            "reason": "供给片段没有 src 的任何导出语句，也没有工厂函数的返回值/导出形态，无法证实默认导出及其结构存在；缺少对应该对象的直接证据。"
+          },
+          {
+            "kind": "insufficient_evidence",
+            "claim": "all 这个 Map 的共享与外部注入",
+            "reason": "off 实现只显示内部用 all!.get/all!.set 读写（形如 Map），但没有 all 的声明、创建位置，也没有把外部 Map 传入工厂的代码，无法证实\"共享与外部注入\"这一说法；该行为在本块中没有证据。"
+          }
+        ]
+      },
+      "observed_first_submission_budget": {
+        "used": 1,
+        "limit": 3
+      },
+      "expected_boundary": "Repair only assessment feedback within these owner packets; preserve old On proof, add Off once, activate the next question once.",
+      "real_model_recheck": "not_run",
+      "current_answer_parts": [
+        "补充两种 off 的区别：在 [a, b] 上调用 off(\"foo\", a)，原数组中只移除第一个与 a 相同的函数，剩 [b]；如果原来同一个 a 注册了两次，一次只删第一份。找不到则不删除。off(\"foo\") 则在这个键上换成新的空数组，键仍保留。"
+      ],
+      "expected_review_after_owner_feedback_repair": {
+        "supported": true,
+        "owner_evidence_must_remain_unchanged": true
+      }
+    },
+    {
+      "id": "two-registrations-vs-three-in-test",
+      "registered_question": {
+        "question_id": "fixture-ref:0",
+        "created_message_id": "fixture-ref:1",
+        "prompt": "这道题分三小问，都围绕入口与状态容器。(1) mitt 的默认导出是什么？调用它之后得到的对象上有哪些成员（请把成员名列出来）？(2) 依次调用 on('FOO', fn) 和 on('Bar', fn) 之后，Map 上会出现哪些键、有没有额外的键被创建出来？如果把这两次换成连续两次 on('foo', fn)（fn 是同一个函数），Map 上 'foo' 的值会变成什么？(3) 调用工厂时可以传入什么？传进去的那个东西与返回对象上的哪个成员是同一个对象？测试里用什么断言确认返回对象上带着它？",
+        "target_items": [
+          "能说出默认导出是一个函数，调用后返回带 all、on、off、emit 的对象",
+          "能说明事件名大小写不做归一化，且同一处理器可被重复注册",
+          "能指出 all 这个 Map 是被共享的状态，可在调用工厂时由外部注入"
+        ],
+        "target_ids": [
+          "fixture-ref:2",
+          "fixture-ref:3",
+          "fixture-ref:4"
+        ]
+      },
+      "original_user_message": "回答这三问：(1) 默认导出是 mitt 工厂函数，调用后得到有 all、on、off、emit 的对象。(2) 会有 FOO 和 Bar 两个键，不会额外创建 foo 或 bar；如果改成两次 on(\"foo\", fn)，值就是 [fn, fn]，没有去重。(3) 可以传入事件到处理器数组的 Map，它与返回对象的 all 是同一个对象；不传才新建 Map。测试用 expect(inst).to.have.property(\"all\").that.is.a(\"map\") 检查 all 属性存在并且是 Map。刚才 off 反馈没被采纳，请另外为这个未记录的目标再出一道题，先不要推进。",
+      "prior_target_assessments": [
+        {
+          "results": [
+            {
+              "reason": "学习者明确描述了 on 的两种分支：数组中不存在时写入 [a]，已存在时把 b push 到末尾，与源码 if (handlers) push else set([handler]) 一致。",
+              "outcome": "proven",
+              "target_id": "fixture-ref:5",
+              "answer_spans": [
+                "第一次 foo 没有数组，on 会把 [a] 放进 Map",
+                "第二次取得已有数组，把 b push 到末尾，所以现在是 [a, b]"
+              ],
+              "evidence_ids": [
+                "fixture-ref:6",
+                "fixture-ref:7"
+              ]
+            },
+            {
+              "reason": "学习者明确表示 off 部分还没想好，未描述 off('foo') 会将类型置为空数组，也未说明 off('foo', handler) 只移除第一个匹配项。",
+              "outcome": "unproven",
+              "target_id": "fixture-ref:8",
+              "answer_spans": [],
+              "evidence_ids": []
+            }
+          ],
+          "step_id": "fixture-ref:9",
+          "sequence": 1,
+          "message_id": "fixture-ref:10",
+          "target_ids": [
+            "fixture-ref:5",
+            "fixture-ref:8"
+          ],
+          "question_id": "fixture-ref:11",
+          "snapshot_id": "fixture-ref:12",
+          "answer_parts": [
+            "我先答 on 部分：第一次 foo 没有数组，on 会把 [a] 放进 Map；第二次取得已有数组，把 b push 到末尾，所以现在是 [a, b]。",
+            "off 部分我还没想好。"
+          ],
+          "route_revision": 2,
+          "original_message_id": "fixture-ref:10",
+          "question_message_id": "fixture-ref:13"
+        },
+        {
+          "results": [
+            {
+              "reason": "本次回答只补充 off 部分，未涉及 on 在处理器数组已存在/不存在时的两种分支处理（该目标在上一轮已证明，故不重复扣分）。",
+              "outcome": "not_addressed",
+              "target_id": "fixture-ref:5",
+              "answer_spans": [],
+              "evidence_ids": []
+            },
+            {
+              "reason": "答对了 off('foo') 不传 handler 会把该类型置为新的空数组、键仍保留，但没有说明 off('foo', handler) 只移除第一个匹配项，该对比目标未完整建立。",
+              "outcome": "unproven",
+              "target_id": "fixture-ref:8",
+              "answer_spans": [
+                "补上 off 部分：不传 handler 时，会把 foo 键对应的值换成一个新的空数组，所以 all.get(\"foo\") 是 []，all.has(\"foo\") 仍然为 true，并没有删除键。"
+              ],
+              "evidence_ids": [
+                "fixture-ref:14"
+              ]
+            }
+          ],
+          "step_id": "fixture-ref:9",
+          "sequence": 2,
+          "message_id": "fixture-ref:15",
+          "target_ids": [
+            "fixture-ref:5",
+            "fixture-ref:8"
+          ],
+          "question_id": "fixture-ref:11",
+          "snapshot_id": "fixture-ref:12",
+          "answer_parts": [
+            "补上 off 部分：不传 handler 时，会把 foo 键对应的值换成一个新的空数组，所以 all.get(\"foo\") 是 []，all.has(\"foo\") 仍然为 true，并没有删除键。"
+          ],
+          "route_revision": 2,
+          "original_message_id": "fixture-ref:15",
+          "question_message_id": "fixture-ref:13"
+        }
+      ],
+      "route_targets": [
+        "能说出默认导出是一个函数，调用后返回带 all、on、off、emit 的对象",
+        "能描述 on 在处理器数组已存在与不存在时的两种分支处理",
+        "能解释 off('foo', handler) 只移除第一个匹配项，而 off('foo') 会把该类型置为空数组",
+        "能说明事件名大小写不做归一化，且同一处理器可被重复注册",
+        "能指出 all 这个 Map 是被共享的状态，可在调用工厂时由外部注入"
+      ],
+      "assessment_feedback": "这三问都答对了。第(1)问正确说出默认导出是 mitt 工厂函数，调用后返回带 all、on、off、emit 四个成员的对象。第(2)问正确指出大小写不归一化——只出现 FOO、Bar 两个键，没有额外的 foo、bar；并说明同一处理器可被重复注册，两次 on('foo', fn) 后值是 [fn, fn]，不做去重。第(3)问正确说明调用工厂时可传入一个 Map，它与返回对象上的 all 是同一个对象，不传才新建，并点出测试用断言确认 all 存在且是 map。就本问题而言，三项目标已全部覆盖，可以算完成。需要区分的是：本步骤里 off 相关的目标（off('foo', handler) 只移除第一个匹配项、off('foo') 置为空数组）仍未被覆盖，那是本问题之外的后续内容，与本回答的质量无关。",
+      "owner_bound_evidence": [
+        {
+          "stable_id": "fixture-ref:16",
+          "path": "src/index.ts",
+          "start_line": 23,
+          "end_line": 39,
+          "kind": "symbol"
+        },
+        {
+          "stable_id": "fixture-ref:17",
+          "path": "src/index.ts",
+          "start_line": 44,
+          "end_line": 60,
+          "kind": "source_excerpt"
+        },
+        {
+          "stable_id": "fixture-ref:18",
+          "path": "src/index.ts",
+          "start_line": 46,
+          "end_line": 123,
+          "kind": "symbol"
+        },
+        {
+          "stable_id": "fixture-ref:6",
+          "path": "src/index.ts",
+          "start_line": 66,
+          "end_line": 73,
+          "kind": "symbol"
+        },
+        {
+          "stable_id": "fixture-ref:19",
+          "path": "test/index_test.ts",
+          "start_line": 1,
+          "end_line": null,
+          "kind": "file"
+        },
+        {
+          "stable_id": "fixture-ref:20",
+          "path": "test/index_test.ts",
+          "start_line": 80,
+          "end_line": 115,
+          "kind": "source_excerpt"
+        }
+      ],
+      "owner_packets": [
+        {
+          "evidence_id": "fixture-ref:16",
+          "path": "src/index.ts",
+          "start_line": 23,
+          "end_line": 39,
+          "source": "export interface Emitter<Events extends Record<EventType, unknown>> {\n\tall: EventHandlerMap<Events>;\n\n\ton<Key extends keyof Events>(type: Key, handler: Handler<Events[Key]>): void;\n\ton(type: '*', handler: WildcardHandler<Events>): void;\n\n\toff<Key extends keyof Events>(\n\t\ttype: Key,\n\t\thandler?: Handler<Events[Key]>\n\t): void;\n\toff(type: '*', handler: WildcardHandler<Events>): void;\n\n\temit<Key extends keyof Events>(type: Key, event: Events[Key]): void;\n\temit<Key extends keyof Events>(\n\t\ttype: undefined extends Events[Key] ? Key : never\n\t): void;\n}"
+        },
+        {
+          "evidence_id": "fixture-ref:17",
+          "path": "src/index.ts",
+          "start_line": 44,
+          "end_line": 60,
+          "source": " * @returns {Mitt}\n */\nexport default function mitt<Events extends Record<EventType, unknown>>(\n\tall?: EventHandlerMap<Events>\n): Emitter<Events> {\n\ttype GenericEventHandler =\n\t\t| Handler<Events[keyof Events]>\n\t\t| WildcardHandler<Events>;\n\tall = all || new Map();\n\n\treturn {\n\t\t/**\n\t\t * A Map of event names to registered handler functions.\n\t\t */\n\t\tall,\n\n\t\t/**"
+        },
+        {
+          "evidence_id": "fixture-ref:18",
+          "path": "src/index.ts",
+          "start_line": 46,
+          "end_line": 123,
+          "source": "export default function mitt<Events extends Record<EventType, unknown>>(\n\tall?: EventHandlerMap<Events>\n): Emitter<Events> {\n\ttype GenericEventHandler =\n\t\t| Handler<Events[keyof Events]>\n\t\t| WildcardHandler<Events>;\n\tall = all || new Map();\n\n\treturn {\n\t\t/**\n\t\t * A Map of event names to registered handler functions.\n\t\t */\n\t\tall,\n\n\t\t/**\n\t\t * Register an event handler for the given type.\n\t\t * @param {string|symbol} type Type of event to listen for, or `'*'` for all events\n\t\t * @param {Function} handler Function to call in response to given event\n\t\t * @memberOf mitt\n\t\t */\n\t\ton<Key extends keyof Events>(type: Key, handler: GenericEventHandler) {\n\t\t\tconst handlers: Array<GenericEventHandler> | undefined = all!.get(type);\n\t\t\tif (handlers) {\n\t\t\t\thandlers.push(handler);\n\t\t\t} else {\n\t\t\t\tall!.set(type, [handler] as EventHandlerList<Events[keyof Events]>);\n\t\t\t}\n\t\t},\n\n\t\t/**\n\t\t * Remove an event handler for the given type.\n\t\t * If `handler` is omitted, all handlers of the given type are removed.\n\t\t * @param {string|symbol} type Type of event to unregister `handler` from (`'*'` to remove a wildcard handler)\n\t\t * @param {Function} [handler] Handler function to remove\n\t\t * @memberOf mitt\n\t\t */\n\t\toff<Key extends keyof Events>(type: Key, handler?: GenericEventHandler) {\n\t\t\tconst handlers: Array<GenericEventHandler> | undefined = all!.get(type);\n\t\t\tif (handlers) {\n\t\t\t\tif (handler) {\n\t\t\t\t\thandlers.splice(handlers.indexOf(handler) >>> 0, 1);\n\t\t\t\t} else {\n\t\t\t\t\tall!.set(type, []);\n\t\t\t\t}\n\t\t\t}\n\t\t},\n\n\t\t/**\n\t\t * Invoke all handlers for the given type.\n\t\t * If present, `'*'` handlers are invoked after type-matched handlers.\n\t\t *\n\t\t * Note: Manually firing '*' handlers is not supported.\n\t\t *\n\t\t * @param {string|symbol} type The event type to invoke\n\t\t * @param {Any} [evt] Any value (object is recommended and powerful), passed to each handler\n\t\t * @memberOf mitt\n\t\t */\n\t\temit<Key extends keyof Events>(type: Key, evt?: Events[Key]) {\n\t\t\tlet handlers = all!.get(type);\n\t\t\tif (handlers) {\n\t\t\t\t(handlers as EventHandlerList<Events[keyof Events]>)\n\t\t\t\t\t.slice()\n\t\t\t\t\t.map((handler) => {\n\t\t\t\t\t\thandler(evt!);\n\t\t\t\t\t});\n\t\t\t}\n\n\t\t\thandlers = all!.get('*');\n\t\t\tif (handlers) {\n\t\t\t\t(handlers as WildCardEventHandlerList<Events>)\n\t\t\t\t\t.slice()\n\t\t\t\t\t.map((handler) => {\n\t\t\t\t\t\thandler(type, evt!);\n\t\t\t\t\t});\n\t\t\t}\n\t\t}\n\t};\n}"
+        },
+        {
+          "evidence_id": "fixture-ref:6",
+          "path": "src/index.ts",
+          "start_line": 66,
+          "end_line": 73,
+          "source": "\t\ton<Key extends keyof Events>(type: Key, handler: GenericEventHandler) {\n\t\t\tconst handlers: Array<GenericEventHandler> | undefined = all!.get(type);\n\t\t\tif (handlers) {\n\t\t\t\thandlers.push(handler);\n\t\t\t} else {\n\t\t\t\tall!.set(type, [handler] as EventHandlerList<Events[keyof Events]>);\n\t\t\t}\n\t\t},"
+        },
+        {
+          "evidence_id": "fixture-ref:19",
+          "path": "test/index_test.ts",
+          "start_line": 1,
+          "end_line": null,
+          "source": "import mitt, { Emitter, EventHandlerMap } from '..';\nimport chai, { expect } from 'chai';\nimport { spy } from 'sinon';\nimport sinonChai from 'sinon-chai';\nchai.use(sinonChai);\n\ndescribe('mitt', () => {\n\tit('should default export be a function', () => {\n\t\texpect(mitt).to.be.a('function');\n\t});\n\n\tit('should accept an optional event handler map', () => {\n\t\texpect(() => mitt(new Map())).not.to.throw;\n\t\tconst map = new Map();\n\t\tconst a = spy();\n\t\tconst b = spy();\n\t\tmap.set('foo', [a, b]);\n\t\tconst events = mitt<{ foo: undefined }>(map);\n\t\tevents.emit('foo');\n\t\texpect(a).to.have.been.calledOnce;\n\t\texpect(b).to.have.been.calledOnce;\n\t});\n});\n\ndescribe('mitt#', () => {\n\tconst eventType = Symbol('eventType');\n\ttype Events = {\n\t\tfoo: unknown;\n\t\tconstructor: unknown;\n\t\tFOO: unknown;\n\t\tbar: unknown;\n\t\tBar: unknown;\n\t\t'baz:bat!': unknown;\n\t\t'baz:baT!': unknown;\n\t\tFoo: unknown;\n\t\t[eventType]: unknown;\n\t};\n\tlet events: EventHandlerMap<Events>, inst: Emitter<Events>;\n\n\tbeforeEach(() => {\n\t\tevents = new Map();\n\t\tinst = mitt(events);\n\t});\n\n\tdescribe('properties', () => {\n\t\tit('should expose the event handler map', () => {\n\t\t\texpect(inst).to.have.property('all').that.is.a('map');\n\t\t});\n\t});\n\n\tdescribe('on()', () => {\n\t\tit('should be a function', () => {\n\t\t\texpect(inst).to.have.property('on').that.is.a('function');\n\t\t});\n\n\t\tit('should register handler for new type', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\n\t\t\texpect(events.get('foo')).to.deep.equal([foo]);\n\t\t});\n\n\t\tit('should register handlers for any type strings', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('constructor', foo);\n\n\t\t\texpect(events.get('constructor')).to.deep.equal([foo]);\n\t\t});\n\n\t\tit('should append handler for existing type', () => {\n\t\t\tconst foo = () => {};\n\t\t\tconst bar = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', bar);\n\n\t\t\texpect(events.get('foo')).to.deep.equal([foo, bar]);\n\t\t});\n\n\t\tit('should NOT normalize case', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('FOO', foo);\n\t\t\tinst.on('Bar', foo);\n\t\t\tinst.on('baz:baT!', foo);\n\n\t\t\texpect(events.get('FOO')).to.deep.equal([foo]);\n\t\t\texpect(events.has('foo')).to.equal(false);\n\t\t\texpect(events.get('Bar')).to.deep.equal([foo]);\n\t\t\texpect(events.has('bar')).to.equal(false);\n\t\t\texpect(events.get('baz:baT!')).to.deep.equal([foo]);\n\t\t});\n\n\t\tit('can take symbols for event types', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on(eventType, foo);\n\t\t\texpect(events.get(eventType)).to.deep.equal([foo]);\n\t\t});\n\n\t\t// Adding the same listener multiple times should register it multiple times.\n\t\t// See https://nodejs.org/api/events.html#events_emitter_on_eventname_listener\n\t\tit('should add duplicate listeners', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([foo, foo]);\n\t\t});\n\t});\n\n\tdescribe('off()', () => {\n\t\tit('should be a function', () => {\n\t\t\texpect(inst).to.have.property('off').that.is.a('function');\n\t\t});\n\n\t\tit('should remove handler for type', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.off('foo', foo);\n\n\t\t\texpect(events.get('foo')).to.be.empty;\n\t\t});\n\n\t\tit('should NOT normalize case', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('FOO', foo);\n\t\t\tinst.on('Bar', foo);\n\t\t\tinst.on('baz:bat!', foo);\n\n\t\t\tinst.off('FOO', foo);\n\t\t\tinst.off('Bar', foo);\n\t\t\tinst.off('baz:baT!', foo);\n\n\t\t\texpect(events.get('FOO')).to.be.empty;\n\t\t\texpect(events.has('foo')).to.equal(false);\n\t\t\texpect(events.get('Bar')).to.be.empty;\n\t\t\texpect(events.has('bar')).to.equal(false);\n\t\t\texpect(events.get('baz:bat!')).to.have.lengthOf(1);\n\t\t});\n\n\t\tit('should remove only the first matching listener', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.off('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([foo]);\n\t\t\tinst.off('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([]);\n\t\t});\n\n\t\tit('off(\"type\") should remove all handlers of the given type', () => {\n\t\t\tinst.on('foo', () => {});\n\t\t\tinst.on('foo', () => {});\n\t\t\tinst.on('bar', () => {});\n\t\t\tinst.off('foo');\n\t\t\texpect(events.get('foo')).to.deep.equal([]);\n\t\t\texpect(events.get('bar')).to.have.length(1);\n\t\t\tinst.off('bar');\n\t\t\texpect(events.get('bar')).to.deep.equal([]);\n\t\t});\n\t});\n\n\tdescribe('emit()', () => {\n\t\tit('should be a function', () => {\n\t\t\texpect(inst).to.have.property('emit').that.is.a('function');\n\t\t});\n\n\t\tit('should invoke handler for type', () => {\n\t\t\tconst event = { a: 'b' };\n\n\t\t\tinst.on('foo', (one, two?: unknown) => {\n\t\t\t\texpect(one).to.deep.equal(event);\n\t\t\t\texpect(two).to.be.an('undefined');\n\t\t\t});\n\n\t\t\tinst.emit('foo', event);\n\t\t});\n\n\t\tit('should NOT ignore case', () => {\n\t\t\tconst onFoo = spy(),\n\t\t\t\tonFOO = spy();\n\t\t\tevents.set('Foo', [onFoo]);\n\t\t\tevents.set('FOO', [onFOO]);\n\n\t\t\tinst.emit('Foo', 'Foo arg');\n\t\t\tinst.emit('FOO', 'FOO arg');\n\n\t\t\texpect(onFoo).to.have.been.calledOnce.and.calledWith('Foo arg');\n\t\t\texpect(onFOO).to.have.been.calledOnce.and.calledWith('FOO arg');\n\t\t});\n\n\t\tit('should invoke * handlers', () => {\n\t\t\tconst star = spy(),\n\t\t\t\tea = { a: 'a' },\n\t\t\t\teb = { b: 'b' };\n\n\t\t\tevents.set('*', [star]);\n\n\t\t\tinst.emit('foo', ea);\n\t\t\texpect(star).to.have.been.calledOnce.and.calledWith('foo', ea);\n\t\t\tstar.resetHistory();\n\n\t\t\tinst.emit('bar', eb);\n\t\t\texpect(star).to.have.been.calledOnce.and.calledWith('bar', eb);\n\t\t});\n\t});\n});\n"
+        },
+        {
+          "evidence_id": "fixture-ref:20",
+          "path": "test/index_test.ts",
+          "start_line": 80,
+          "end_line": 115,
+          "source": "\t\t\tconst foo = () => {};\n\t\t\tinst.on('FOO', foo);\n\t\t\tinst.on('Bar', foo);\n\t\t\tinst.on('baz:baT!', foo);\n\n\t\t\texpect(events.get('FOO')).to.deep.equal([foo]);\n\t\t\texpect(events.has('foo')).to.equal(false);\n\t\t\texpect(events.get('Bar')).to.deep.equal([foo]);\n\t\t\texpect(events.has('bar')).to.equal(false);\n\t\t\texpect(events.get('baz:baT!')).to.deep.equal([foo]);\n\t\t});\n\n\t\tit('can take symbols for event types', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on(eventType, foo);\n\t\t\texpect(events.get(eventType)).to.deep.equal([foo]);\n\t\t});\n\n\t\t// Adding the same listener multiple times should register it multiple times.\n\t\t// See https://nodejs.org/api/events.html#events_emitter_on_eventname_listener\n\t\tit('should add duplicate listeners', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([foo, foo]);\n\t\t});\n\t});\n\n\tdescribe('off()', () => {\n\t\tit('should be a function', () => {\n\t\t\texpect(inst).to.have.property('off').that.is.a('function');\n\t\t});\n\n\t\tit('should remove handler for type', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);"
+        }
+      ],
+      "observed_first_review": {
+        "supported": false,
+        "issues": [
+          {
+            "kind": "contradicted",
+            "claim": "大小写不归一化——只出现 FOO、Bar 两个键，没有额外的 foo、bar",
+            "reason": "测试 test/index_test.ts:80-115 的 on() 不归一化用例分别注册了 'FOO'、'Bar'、'baz:baT!' 三个键，并断言 events.get('baz:baT!') 等于 [foo]；因此“只出现 FOO、Bar 两个键”这一键集合量词描述与证据不符。"
+          }
+        ]
+      },
+      "observed_first_submission_budget": {
+        "used": 1,
+        "limit": 3
+      },
+      "expected_boundary": "Only the two registrations specified by the saved question count; the third registration in the test is not this scenario.",
+      "real_model_recheck": "not_run",
+      "current_answer_parts": [
+        "回答这三问：(1) 默认导出是 mitt 工厂函数，调用后得到有 all、on、off、emit 的对象。(2) 会有 FOO 和 Bar 两个键，不会额外创建 foo 或 bar；如果改成两次 on(\"foo\", fn)，值就是 [fn, fn]，没有去重。(3) 可以传入事件到处理器数组的 Map，它与返回对象的 all 是同一个对象；不传才新建 Map。测试用 expect(inst).to.have.property(\"all\").that.is.a(\"map\") 检查 all 属性存在并且是 Map。"
+      ],
+      "expected_review_with_registered_question_context": {
+        "supported": true,
+        "issues": []
+      }
+    },
+    {
+      "id": "actual-three-registrations-but-two-key-answer",
+      "registered_question": {
+        "question_id": "fixture-ref:0",
+        "created_message_id": "fixture-ref:1",
+        "prompt": "这道题分三小问，都围绕入口与状态容器。(1) mitt 的默认导出是什么？调用它之后得到的对象上有哪些成员（请把成员名列出来）？(2) 依次调用 on('FOO', fn)、on('Bar', fn) 和 on('baz:baT!', fn) 之后，Map 上会出现哪些键、有没有额外的键被创建出来？如果把这些调用换成连续两次 on('foo', fn)（fn 是同一个函数），Map 上 'foo' 的值会变成什么？(3) 调用工厂时可以传入什么？传进去的那个东西与返回对象上的哪个成员是同一个对象？测试里用什么断言确认返回对象上带着它？",
+        "target_items": [
+          "能说出默认导出是一个函数，调用后返回带 all、on、off、emit 的对象",
+          "能说明事件名大小写不做归一化，且同一处理器可被重复注册",
+          "能指出 all 这个 Map 是被共享的状态，可在调用工厂时由外部注入"
+        ],
+        "target_ids": [
+          "fixture-ref:2",
+          "fixture-ref:3",
+          "fixture-ref:4"
+        ]
+      },
+      "original_user_message": "回答这三问：(1) 默认导出是 mitt 工厂函数，调用后得到有 all、on、off、emit 的对象。(2) 会有 FOO 和 Bar 两个键，不会额外创建 foo 或 bar；如果改成两次 on(\"foo\", fn)，值就是 [fn, fn]，没有去重。(3) 可以传入事件到处理器数组的 Map，它与返回对象的 all 是同一个对象；不传才新建 Map。测试用 expect(inst).to.have.property(\"all\").that.is.a(\"map\") 检查 all 属性存在并且是 Map。刚才 off 反馈没被采纳，请另外为这个未记录的目标再出一道题，先不要推进。",
+      "prior_target_assessments": [
+        {
+          "results": [
+            {
+              "reason": "学习者明确描述了 on 的两种分支：数组中不存在时写入 [a]，已存在时把 b push 到末尾，与源码 if (handlers) push else set([handler]) 一致。",
+              "outcome": "proven",
+              "target_id": "fixture-ref:5",
+              "answer_spans": [
+                "第一次 foo 没有数组，on 会把 [a] 放进 Map",
+                "第二次取得已有数组，把 b push 到末尾，所以现在是 [a, b]"
+              ],
+              "evidence_ids": [
+                "fixture-ref:6",
+                "fixture-ref:7"
+              ]
+            },
+            {
+              "reason": "学习者明确表示 off 部分还没想好，未描述 off('foo') 会将类型置为空数组，也未说明 off('foo', handler) 只移除第一个匹配项。",
+              "outcome": "unproven",
+              "target_id": "fixture-ref:8",
+              "answer_spans": [],
+              "evidence_ids": []
+            }
+          ],
+          "step_id": "fixture-ref:9",
+          "sequence": 1,
+          "message_id": "fixture-ref:10",
+          "target_ids": [
+            "fixture-ref:5",
+            "fixture-ref:8"
+          ],
+          "question_id": "fixture-ref:11",
+          "snapshot_id": "fixture-ref:12",
+          "answer_parts": [
+            "我先答 on 部分：第一次 foo 没有数组，on 会把 [a] 放进 Map；第二次取得已有数组，把 b push 到末尾，所以现在是 [a, b]。",
+            "off 部分我还没想好。"
+          ],
+          "route_revision": 2,
+          "original_message_id": "fixture-ref:10",
+          "question_message_id": "fixture-ref:13"
+        },
+        {
+          "results": [
+            {
+              "reason": "本次回答只补充 off 部分，未涉及 on 在处理器数组已存在/不存在时的两种分支处理（该目标在上一轮已证明，故不重复扣分）。",
+              "outcome": "not_addressed",
+              "target_id": "fixture-ref:5",
+              "answer_spans": [],
+              "evidence_ids": []
+            },
+            {
+              "reason": "答对了 off('foo') 不传 handler 会把该类型置为新的空数组、键仍保留，但没有说明 off('foo', handler) 只移除第一个匹配项，该对比目标未完整建立。",
+              "outcome": "unproven",
+              "target_id": "fixture-ref:8",
+              "answer_spans": [
+                "补上 off 部分：不传 handler 时，会把 foo 键对应的值换成一个新的空数组，所以 all.get(\"foo\") 是 []，all.has(\"foo\") 仍然为 true，并没有删除键。"
+              ],
+              "evidence_ids": [
+                "fixture-ref:14"
+              ]
+            }
+          ],
+          "step_id": "fixture-ref:9",
+          "sequence": 2,
+          "message_id": "fixture-ref:15",
+          "target_ids": [
+            "fixture-ref:5",
+            "fixture-ref:8"
+          ],
+          "question_id": "fixture-ref:11",
+          "snapshot_id": "fixture-ref:12",
+          "answer_parts": [
+            "补上 off 部分：不传 handler 时，会把 foo 键对应的值换成一个新的空数组，所以 all.get(\"foo\") 是 []，all.has(\"foo\") 仍然为 true，并没有删除键。"
+          ],
+          "route_revision": 2,
+          "original_message_id": "fixture-ref:15",
+          "question_message_id": "fixture-ref:13"
+        }
+      ],
+      "route_targets": [
+        "能说出默认导出是一个函数，调用后返回带 all、on、off、emit 的对象",
+        "能描述 on 在处理器数组已存在与不存在时的两种分支处理",
+        "能解释 off('foo', handler) 只移除第一个匹配项，而 off('foo') 会把该类型置为空数组",
+        "能说明事件名大小写不做归一化，且同一处理器可被重复注册",
+        "能指出 all 这个 Map 是被共享的状态，可在调用工厂时由外部注入"
+      ],
+      "assessment_feedback": "这三问都答对了。第(1)问正确说出默认导出是 mitt 工厂函数，调用后返回带 all、on、off、emit 四个成员的对象。第(2)问正确指出大小写不归一化——只出现 FOO、Bar 两个键，没有额外的 foo、bar；并说明同一处理器可被重复注册，两次 on('foo', fn) 后值是 [fn, fn]，不做去重。第(3)问正确说明调用工厂时可传入一个 Map，它与返回对象上的 all 是同一个对象，不传才新建，并点出测试用断言确认 all 存在且是 map。就本问题而言，三项目标已全部覆盖，可以算完成。需要区分的是：本步骤里 off 相关的目标（off('foo', handler) 只移除第一个匹配项、off('foo') 置为空数组）仍未被覆盖，那是本问题之外的后续内容，与本回答的质量无关。",
+      "owner_bound_evidence": [
+        {
+          "stable_id": "fixture-ref:16",
+          "path": "src/index.ts",
+          "start_line": 23,
+          "end_line": 39,
+          "kind": "symbol"
+        },
+        {
+          "stable_id": "fixture-ref:17",
+          "path": "src/index.ts",
+          "start_line": 44,
+          "end_line": 60,
+          "kind": "source_excerpt"
+        },
+        {
+          "stable_id": "fixture-ref:18",
+          "path": "src/index.ts",
+          "start_line": 46,
+          "end_line": 123,
+          "kind": "symbol"
+        },
+        {
+          "stable_id": "fixture-ref:6",
+          "path": "src/index.ts",
+          "start_line": 66,
+          "end_line": 73,
+          "kind": "symbol"
+        },
+        {
+          "stable_id": "fixture-ref:19",
+          "path": "test/index_test.ts",
+          "start_line": 1,
+          "end_line": null,
+          "kind": "file"
+        },
+        {
+          "stable_id": "fixture-ref:20",
+          "path": "test/index_test.ts",
+          "start_line": 80,
+          "end_line": 115,
+          "kind": "source_excerpt"
+        }
+      ],
+      "owner_packets": [
+        {
+          "evidence_id": "fixture-ref:16",
+          "path": "src/index.ts",
+          "start_line": 23,
+          "end_line": 39,
+          "source": "export interface Emitter<Events extends Record<EventType, unknown>> {\n\tall: EventHandlerMap<Events>;\n\n\ton<Key extends keyof Events>(type: Key, handler: Handler<Events[Key]>): void;\n\ton(type: '*', handler: WildcardHandler<Events>): void;\n\n\toff<Key extends keyof Events>(\n\t\ttype: Key,\n\t\thandler?: Handler<Events[Key]>\n\t): void;\n\toff(type: '*', handler: WildcardHandler<Events>): void;\n\n\temit<Key extends keyof Events>(type: Key, event: Events[Key]): void;\n\temit<Key extends keyof Events>(\n\t\ttype: undefined extends Events[Key] ? Key : never\n\t): void;\n}"
+        },
+        {
+          "evidence_id": "fixture-ref:17",
+          "path": "src/index.ts",
+          "start_line": 44,
+          "end_line": 60,
+          "source": " * @returns {Mitt}\n */\nexport default function mitt<Events extends Record<EventType, unknown>>(\n\tall?: EventHandlerMap<Events>\n): Emitter<Events> {\n\ttype GenericEventHandler =\n\t\t| Handler<Events[keyof Events]>\n\t\t| WildcardHandler<Events>;\n\tall = all || new Map();\n\n\treturn {\n\t\t/**\n\t\t * A Map of event names to registered handler functions.\n\t\t */\n\t\tall,\n\n\t\t/**"
+        },
+        {
+          "evidence_id": "fixture-ref:18",
+          "path": "src/index.ts",
+          "start_line": 46,
+          "end_line": 123,
+          "source": "export default function mitt<Events extends Record<EventType, unknown>>(\n\tall?: EventHandlerMap<Events>\n): Emitter<Events> {\n\ttype GenericEventHandler =\n\t\t| Handler<Events[keyof Events]>\n\t\t| WildcardHandler<Events>;\n\tall = all || new Map();\n\n\treturn {\n\t\t/**\n\t\t * A Map of event names to registered handler functions.\n\t\t */\n\t\tall,\n\n\t\t/**\n\t\t * Register an event handler for the given type.\n\t\t * @param {string|symbol} type Type of event to listen for, or `'*'` for all events\n\t\t * @param {Function} handler Function to call in response to given event\n\t\t * @memberOf mitt\n\t\t */\n\t\ton<Key extends keyof Events>(type: Key, handler: GenericEventHandler) {\n\t\t\tconst handlers: Array<GenericEventHandler> | undefined = all!.get(type);\n\t\t\tif (handlers) {\n\t\t\t\thandlers.push(handler);\n\t\t\t} else {\n\t\t\t\tall!.set(type, [handler] as EventHandlerList<Events[keyof Events]>);\n\t\t\t}\n\t\t},\n\n\t\t/**\n\t\t * Remove an event handler for the given type.\n\t\t * If `handler` is omitted, all handlers of the given type are removed.\n\t\t * @param {string|symbol} type Type of event to unregister `handler` from (`'*'` to remove a wildcard handler)\n\t\t * @param {Function} [handler] Handler function to remove\n\t\t * @memberOf mitt\n\t\t */\n\t\toff<Key extends keyof Events>(type: Key, handler?: GenericEventHandler) {\n\t\t\tconst handlers: Array<GenericEventHandler> | undefined = all!.get(type);\n\t\t\tif (handlers) {\n\t\t\t\tif (handler) {\n\t\t\t\t\thandlers.splice(handlers.indexOf(handler) >>> 0, 1);\n\t\t\t\t} else {\n\t\t\t\t\tall!.set(type, []);\n\t\t\t\t}\n\t\t\t}\n\t\t},\n\n\t\t/**\n\t\t * Invoke all handlers for the given type.\n\t\t * If present, `'*'` handlers are invoked after type-matched handlers.\n\t\t *\n\t\t * Note: Manually firing '*' handlers is not supported.\n\t\t *\n\t\t * @param {string|symbol} type The event type to invoke\n\t\t * @param {Any} [evt] Any value (object is recommended and powerful), passed to each handler\n\t\t * @memberOf mitt\n\t\t */\n\t\temit<Key extends keyof Events>(type: Key, evt?: Events[Key]) {\n\t\t\tlet handlers = all!.get(type);\n\t\t\tif (handlers) {\n\t\t\t\t(handlers as EventHandlerList<Events[keyof Events]>)\n\t\t\t\t\t.slice()\n\t\t\t\t\t.map((handler) => {\n\t\t\t\t\t\thandler(evt!);\n\t\t\t\t\t});\n\t\t\t}\n\n\t\t\thandlers = all!.get('*');\n\t\t\tif (handlers) {\n\t\t\t\t(handlers as WildCardEventHandlerList<Events>)\n\t\t\t\t\t.slice()\n\t\t\t\t\t.map((handler) => {\n\t\t\t\t\t\thandler(type, evt!);\n\t\t\t\t\t});\n\t\t\t}\n\t\t}\n\t};\n}"
+        },
+        {
+          "evidence_id": "fixture-ref:6",
+          "path": "src/index.ts",
+          "start_line": 66,
+          "end_line": 73,
+          "source": "\t\ton<Key extends keyof Events>(type: Key, handler: GenericEventHandler) {\n\t\t\tconst handlers: Array<GenericEventHandler> | undefined = all!.get(type);\n\t\t\tif (handlers) {\n\t\t\t\thandlers.push(handler);\n\t\t\t} else {\n\t\t\t\tall!.set(type, [handler] as EventHandlerList<Events[keyof Events]>);\n\t\t\t}\n\t\t},"
+        },
+        {
+          "evidence_id": "fixture-ref:19",
+          "path": "test/index_test.ts",
+          "start_line": 1,
+          "end_line": null,
+          "source": "import mitt, { Emitter, EventHandlerMap } from '..';\nimport chai, { expect } from 'chai';\nimport { spy } from 'sinon';\nimport sinonChai from 'sinon-chai';\nchai.use(sinonChai);\n\ndescribe('mitt', () => {\n\tit('should default export be a function', () => {\n\t\texpect(mitt).to.be.a('function');\n\t});\n\n\tit('should accept an optional event handler map', () => {\n\t\texpect(() => mitt(new Map())).not.to.throw;\n\t\tconst map = new Map();\n\t\tconst a = spy();\n\t\tconst b = spy();\n\t\tmap.set('foo', [a, b]);\n\t\tconst events = mitt<{ foo: undefined }>(map);\n\t\tevents.emit('foo');\n\t\texpect(a).to.have.been.calledOnce;\n\t\texpect(b).to.have.been.calledOnce;\n\t});\n});\n\ndescribe('mitt#', () => {\n\tconst eventType = Symbol('eventType');\n\ttype Events = {\n\t\tfoo: unknown;\n\t\tconstructor: unknown;\n\t\tFOO: unknown;\n\t\tbar: unknown;\n\t\tBar: unknown;\n\t\t'baz:bat!': unknown;\n\t\t'baz:baT!': unknown;\n\t\tFoo: unknown;\n\t\t[eventType]: unknown;\n\t};\n\tlet events: EventHandlerMap<Events>, inst: Emitter<Events>;\n\n\tbeforeEach(() => {\n\t\tevents = new Map();\n\t\tinst = mitt(events);\n\t});\n\n\tdescribe('properties', () => {\n\t\tit('should expose the event handler map', () => {\n\t\t\texpect(inst).to.have.property('all').that.is.a('map');\n\t\t});\n\t});\n\n\tdescribe('on()', () => {\n\t\tit('should be a function', () => {\n\t\t\texpect(inst).to.have.property('on').that.is.a('function');\n\t\t});\n\n\t\tit('should register handler for new type', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\n\t\t\texpect(events.get('foo')).to.deep.equal([foo]);\n\t\t});\n\n\t\tit('should register handlers for any type strings', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('constructor', foo);\n\n\t\t\texpect(events.get('constructor')).to.deep.equal([foo]);\n\t\t});\n\n\t\tit('should append handler for existing type', () => {\n\t\t\tconst foo = () => {};\n\t\t\tconst bar = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', bar);\n\n\t\t\texpect(events.get('foo')).to.deep.equal([foo, bar]);\n\t\t});\n\n\t\tit('should NOT normalize case', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('FOO', foo);\n\t\t\tinst.on('Bar', foo);\n\t\t\tinst.on('baz:baT!', foo);\n\n\t\t\texpect(events.get('FOO')).to.deep.equal([foo]);\n\t\t\texpect(events.has('foo')).to.equal(false);\n\t\t\texpect(events.get('Bar')).to.deep.equal([foo]);\n\t\t\texpect(events.has('bar')).to.equal(false);\n\t\t\texpect(events.get('baz:baT!')).to.deep.equal([foo]);\n\t\t});\n\n\t\tit('can take symbols for event types', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on(eventType, foo);\n\t\t\texpect(events.get(eventType)).to.deep.equal([foo]);\n\t\t});\n\n\t\t// Adding the same listener multiple times should register it multiple times.\n\t\t// See https://nodejs.org/api/events.html#events_emitter_on_eventname_listener\n\t\tit('should add duplicate listeners', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([foo, foo]);\n\t\t});\n\t});\n\n\tdescribe('off()', () => {\n\t\tit('should be a function', () => {\n\t\t\texpect(inst).to.have.property('off').that.is.a('function');\n\t\t});\n\n\t\tit('should remove handler for type', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.off('foo', foo);\n\n\t\t\texpect(events.get('foo')).to.be.empty;\n\t\t});\n\n\t\tit('should NOT normalize case', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('FOO', foo);\n\t\t\tinst.on('Bar', foo);\n\t\t\tinst.on('baz:bat!', foo);\n\n\t\t\tinst.off('FOO', foo);\n\t\t\tinst.off('Bar', foo);\n\t\t\tinst.off('baz:baT!', foo);\n\n\t\t\texpect(events.get('FOO')).to.be.empty;\n\t\t\texpect(events.has('foo')).to.equal(false);\n\t\t\texpect(events.get('Bar')).to.be.empty;\n\t\t\texpect(events.has('bar')).to.equal(false);\n\t\t\texpect(events.get('baz:bat!')).to.have.lengthOf(1);\n\t\t});\n\n\t\tit('should remove only the first matching listener', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.off('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([foo]);\n\t\t\tinst.off('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([]);\n\t\t});\n\n\t\tit('off(\"type\") should remove all handlers of the given type', () => {\n\t\t\tinst.on('foo', () => {});\n\t\t\tinst.on('foo', () => {});\n\t\t\tinst.on('bar', () => {});\n\t\t\tinst.off('foo');\n\t\t\texpect(events.get('foo')).to.deep.equal([]);\n\t\t\texpect(events.get('bar')).to.have.length(1);\n\t\t\tinst.off('bar');\n\t\t\texpect(events.get('bar')).to.deep.equal([]);\n\t\t});\n\t});\n\n\tdescribe('emit()', () => {\n\t\tit('should be a function', () => {\n\t\t\texpect(inst).to.have.property('emit').that.is.a('function');\n\t\t});\n\n\t\tit('should invoke handler for type', () => {\n\t\t\tconst event = { a: 'b' };\n\n\t\t\tinst.on('foo', (one, two?: unknown) => {\n\t\t\t\texpect(one).to.deep.equal(event);\n\t\t\t\texpect(two).to.be.an('undefined');\n\t\t\t});\n\n\t\t\tinst.emit('foo', event);\n\t\t});\n\n\t\tit('should NOT ignore case', () => {\n\t\t\tconst onFoo = spy(),\n\t\t\t\tonFOO = spy();\n\t\t\tevents.set('Foo', [onFoo]);\n\t\t\tevents.set('FOO', [onFOO]);\n\n\t\t\tinst.emit('Foo', 'Foo arg');\n\t\t\tinst.emit('FOO', 'FOO arg');\n\n\t\t\texpect(onFoo).to.have.been.calledOnce.and.calledWith('Foo arg');\n\t\t\texpect(onFOO).to.have.been.calledOnce.and.calledWith('FOO arg');\n\t\t});\n\n\t\tit('should invoke * handlers', () => {\n\t\t\tconst star = spy(),\n\t\t\t\tea = { a: 'a' },\n\t\t\t\teb = { b: 'b' };\n\n\t\t\tevents.set('*', [star]);\n\n\t\t\tinst.emit('foo', ea);\n\t\t\texpect(star).to.have.been.calledOnce.and.calledWith('foo', ea);\n\t\t\tstar.resetHistory();\n\n\t\t\tinst.emit('bar', eb);\n\t\t\texpect(star).to.have.been.calledOnce.and.calledWith('bar', eb);\n\t\t});\n\t});\n});\n"
+        },
+        {
+          "evidence_id": "fixture-ref:20",
+          "path": "test/index_test.ts",
+          "start_line": 80,
+          "end_line": 115,
+          "source": "\t\t\tconst foo = () => {};\n\t\t\tinst.on('FOO', foo);\n\t\t\tinst.on('Bar', foo);\n\t\t\tinst.on('baz:baT!', foo);\n\n\t\t\texpect(events.get('FOO')).to.deep.equal([foo]);\n\t\t\texpect(events.has('foo')).to.equal(false);\n\t\t\texpect(events.get('Bar')).to.deep.equal([foo]);\n\t\t\texpect(events.has('bar')).to.equal(false);\n\t\t\texpect(events.get('baz:baT!')).to.deep.equal([foo]);\n\t\t});\n\n\t\tit('can take symbols for event types', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on(eventType, foo);\n\t\t\texpect(events.get(eventType)).to.deep.equal([foo]);\n\t\t});\n\n\t\t// Adding the same listener multiple times should register it multiple times.\n\t\t// See https://nodejs.org/api/events.html#events_emitter_on_eventname_listener\n\t\tit('should add duplicate listeners', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);\n\t\t\tinst.on('foo', foo);\n\t\t\texpect(events.get('foo')).to.deep.equal([foo, foo]);\n\t\t});\n\t});\n\n\tdescribe('off()', () => {\n\t\tit('should be a function', () => {\n\t\t\texpect(inst).to.have.property('off').that.is.a('function');\n\t\t});\n\n\t\tit('should remove handler for type', () => {\n\t\t\tconst foo = () => {};\n\t\t\tinst.on('foo', foo);"
+        }
+      ],
+      "expected_boundary": "The premise really includes the third registration; the unchanged two-key answer/feedback must be rejected. This is an evaluator-derived negative control, not another observed first failure.",
+      "real_model_recheck": "not_run",
+      "current_answer_parts": [
+        "回答这三问：(1) 默认导出是 mitt 工厂函数，调用后得到有 all、on、off、emit 的对象。(2) 会有 FOO 和 Bar 两个键，不会额外创建 foo 或 bar；如果改成两次 on(\"foo\", fn)，值就是 [fn, fn]，没有去重。(3) 可以传入事件到处理器数组的 Map，它与返回对象的 all 是同一个对象；不传才新建 Map。测试用 expect(inst).to.have.property(\"all\").that.is.a(\"map\") 检查 all 属性存在并且是 Map。"
+      ],
+      "expected_review_with_registered_question_context": {
+        "supported": false,
+        "issue_kind": "contradicted",
+        "issue_must_concern": "two-key assertion under the actual three-registration premise"
+      }
+    }
+  ],
+  "scope_prerequisites": [
+    "The exact original narrow question asks on then off without handler. Its cumulative completion is distinct from mastery of the compound Off learning target.",
+    "Retain historical failed outputs separately from new runs. No retry overwrites a first result.",
+    "Positive two-registration and negative actual-three-registration reviews must use these exact premises, current answer spans and owner packet sets."
+  ],
+  "narrow_question_history": {
+    "registered_prompt": "这道题只看这一串动作：依次调用 on('foo', a)、on('foo', b)（a、b 是两个不同的函数），然后调用 off('foo')，即不传第二个参数。请按三步作答：每一步执行后，all 这个 Map 上 'foo' 键对应的值分别是什么（若是一组处理器，请按顺序写出来）；并说明这一步是改动了键上已有的那个数组，还是在键上写入了新的值。",
+    "first_original_answer": "我先答 on 部分：第一次 foo 没有数组，on 会把 [a] 放进 Map；第二次取得已有数组，把 b push 到末尾，所以现在是 [a, b]。off 部分我还没想好。另外请解释为什么空数组也能进入 if (handlers) 分支，先不要进入下一步。",
+    "second_original_answer": "补上 off 部分：不传 handler 时，会把 foo 键对应的值换成一个新的空数组，所以 all.get(\"foo\") 是 []，all.has(\"foo\") 仍然为 true，并没有删除键。先留在这一步。",
+    "observed_first_incorrect_scope_feedback": "这一步你把 off('foo') 不传第二个参数时的行为说对了：它把 'foo' 对应的值换成一个新的空数组，所以 get('foo') 是 []，而 has('foo') 仍为 true，键并没有被删掉——属于在键上写入新值，而不是改动键上原有的那个数组。这一点完全正确。on 的两个分支（没有数组时新建、已有数组时 push）你在上一轮已经答对并记下了，这里不用再重复。不过这道题的目标还包括对比的另一半：当 off('foo', a) 真的传入了 handler 时，只会移除数组里第一个匹配的处理器，数组不会被清空。你这次只讲了不传 handler 的情况，没有交代传入 handler 后数组会变成什么。请补一句：如果改为 off('foo', a)，foo 对应的数组会剩什么？",
+    "real_model_recheck": "not_run"
+  }
+}

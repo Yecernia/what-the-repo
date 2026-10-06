@@ -9,6 +9,8 @@ import type {
 } from "../domain/conversation.js";
 import type { EvidenceSnapshot, SnapshotLearningStep } from "../domain/snapshot.js";
 
+import { hasValidTargetPass } from './target-coverage.js';
+
 const ROUTE_TARGET_KINDS = new Set<LearningTargetKind>([
   "repository",
   "value_point",
@@ -22,7 +24,6 @@ export interface LearningActionProposalInput {
   targetId?: string;
   request: string;
   skipUnderstandingCheck?: boolean;
-  executionPolicy?: "confirm" | "after_turn";
   progress?: LearningActionProgress | null;
 }
 
@@ -36,16 +37,13 @@ export function createLearningActionProposal(
   }
   const target = resolveTarget(project, snapshot, input.action, input.targetKind, input.targetId);
   const copy = proposalCopy(input.action, target, project, Boolean(input.skipUnderstandingCheck));
-  const executionPolicy = input.executionPolicy ?? "confirm";
   return {
     action_id: `learning-action:${randomUUID().replaceAll("-", "")}`,
     action: input.action,
-    execution_policy: executionPolicy,
+    execution_policy: "confirm",
     target,
     title: copy.title,
-    description: executionPolicy === "after_turn"
-      ? "本轮成功完成后会记录为主动跳过，不计入已掌握；之后仍可回看本步。"
-      : copy.description,
+    description: copy.description,
     request: input.request.trim().slice(0, 2_000),
     snapshot_id: snapshot.snapshot_id,
     route_revision: project.study.route_revision ?? 0,
@@ -55,6 +53,7 @@ export function createLearningActionProposal(
     progress: input.progress ? {
       mastered_items: unique(input.progress.mastered_items, 12),
       evidence_ids: unique(input.progress.evidence_ids, 20),
+      qualification_sequence: input.progress.qualification_sequence ?? project.study.step_passed?.assessment_sequence,
     } : null,
     created_at: new Date().toISOString(),
     resolved_at: null,
@@ -65,6 +64,23 @@ export function createLearningActionProposal(
 
 export function currentLearningStep(project: Project): SnapshotLearningStep | null {
   return project.study.dynamic_learning_plan?.[project.study.current_step] ?? null;
+}
+
+/** A later proof cannot revive a card authorized by an earlier assessment. */
+export function expireSupersededAdvanceCards(project: Project): void {
+  const step = currentLearningStep(project);
+  for (const message of project.messages) {
+    const action = message.learning_action;
+    if (!action || action.action !== 'advance_learning_step' || action.skip_understanding_check
+      || !['pending', 'confirmed', 'failed'].includes(action.status)) continue;
+    if (step && action.expected_step_id === step.step_id && action.snapshot_id === project.analysis.snapshot_id
+      && action.route_revision === (project.study.route_revision ?? 0) && hasValidTargetPass(project, step)
+      && action.progress?.qualification_sequence === project.study.step_passed?.assessment_sequence) continue;
+    action.status = 'expired';
+    action.resolved_at = new Date().toISOString();
+    action.error = '当前理解检查的证明已变化，请根据最新学习状态重新选择。';
+    refreshLearningActionMessage(project, action);
+  }
 }
 
 export function assertLearningActionStillCurrent(
@@ -140,12 +156,8 @@ export function applyConfirmedLearningAction(project: Project, action: LearningA
     ], 100);
   } else {
     const passed = project.study.step_passed;
-    const latest = project.study.latest_assessment;
-    if (!passed || passed.step_id !== step.step_id
-      || passed.snapshot_id !== project.analysis.snapshot_id
-      || passed.route_revision !== (project.study.route_revision ?? 0)
-      || (latest?.step_id === step.step_id && (!latest.step_completed
-        || latest.verdict !== "mastered" || latest.sequence !== passed.assessment_sequence))) {
+    if (!passed || !hasValidTargetPass(project, step)
+      || action.progress?.qualification_sequence !== passed.assessment_sequence) {
       throw new Error("learning_step_not_passed");
     }
     project.study.mastered = unique([
@@ -187,6 +199,7 @@ export function isRouteAction(action: LearningActionCard): boolean {
 
 /** Render the receipt from committed state, never from the model's forecast. */
 export function completeLearningAction(project: Project, action: LearningActionCard): void {
+  const previousReceipt = action.description;
   const timestamp = new Date().toISOString();
   action.status = "executed";
   action.resolved_at ??= timestamp;
@@ -205,12 +218,40 @@ export function completeLearningAction(project: Project, action: LearningActionC
   } else if (isRouteAction(action)) {
     action.description = next ? `学习路线已生成，当前步骤是“${next.title}”。` : "学习路线已生成。";
   } else action.description = "已退出当前学习路线，可以继续自由提问。";
+  refreshLearningActionMessage(project, action, previousReceipt);
   const message = project.messages.find(message => message.learning_action?.action_id === action.action_id);
-  if (message) {
-    message.content = action.description;
-    message.teaching_question = null;
+  if (message && !message.teaching_question) {
     message.teaching_context = next ? { snapshot_id: action.snapshot_id,
       route_revision: project.study.route_revision ?? 0, step_id: next.step_id } : undefined;
+  }
+}
+
+export function learningActionReceipt(action: LearningActionCard): string {
+  switch (action.status) {
+    case 'declined': return '已取消这项学习操作，学习进度没有改变。';
+    case 'expired': return '这项学习操作已经失效，没有执行；请根据当前步骤重新选择。';
+    case 'failed': return '这项学习操作未完成，学习进度没有改变，可以重试。';
+    case 'confirmed': return '正在生成学习路线，完成后才会更新学习进度。';
+    default: return action.description;
+  }
+}
+
+/** Only the receipt changes when a card resolves. Older records can be split
+ * using their exact known receipt, never by guessing which prose is feedback. */
+export function refreshLearningActionMessage(project: Project, action: LearningActionCard, previousReceipt = action.description): void {
+  const message = project.messages.find(message => message.learning_action?.action_id === action.action_id);
+  if (!message) return;
+  let body = message.content_parts?.body;
+  if (body === undefined) {
+    body = message.content.split('\n\n').filter(block => block !== previousReceipt).join('\n\n');
+  }
+  const receipt = learningActionReceipt(action);
+  message.content_parts = { ...message.content_parts, body, action_receipt: receipt };
+  message.content = [body, receipt].filter(Boolean).join('\n\n');
+  if (!body) {
+    message.evidence = [];
+    message.evidence_review = undefined;
+    message.unresolved_references = [];
   }
 }
 

@@ -2,12 +2,14 @@ import type { EvidenceRef } from "../domain/conversation.js";
 import type { EvidenceSnapshot, SnapshotEvidence } from "../domain/snapshot.js";
 import type { ProductStore } from "../persistence/store.js";
 import type { CitationReviewResult } from "./citation-review.js";
+import { canonicalEvidence, evidenceIdentity, type CitationCoverage } from './evidence-packets.js';
 
 export interface CitationValidation {
   text: string;
   unresolved: string[];
   evidence: EvidenceRef[];
   errors: string[];
+  coverage: CitationCoverage;
 }
 
 interface ReferencedPathToken {
@@ -85,7 +87,7 @@ function allEvidence(snapshot: EvidenceSnapshot): SnapshotEvidence[] {
   ];
   const byId = new Map<string, SnapshotEvidence>();
   for (const row of rows) {
-    if (row?.stable_id && !byId.has(row.stable_id)) byId.set(row.stable_id, row);
+    if (row?.stable_id) byId.set(JSON.stringify([row.path, row.start_line, row.end_line, row.stable_id]), row);
   }
   return [...byId.values()];
 }
@@ -126,10 +128,6 @@ function parseReferencedPath(value: string, knownPaths: Set<string>): Referenced
   if (!path || !isLikelyFilePath(path, knownPaths)) return null;
   const line = suffix ? Number(suffix[1] ?? suffix[3]) : null;
   const endLine = suffix ? Number(suffix[2] ?? suffix[4] ?? line) : null;
-  if (
-    line !== null
-    && (!Number.isInteger(line) || line < 1 || endLine === null || !Number.isInteger(endLine) || endLine < line)
-  ) return null;
   return { path, line, endLine };
 }
 
@@ -195,7 +193,7 @@ function exposedFallback(exposed: Map<string, SnapshotEvidence>): SnapshotEviden
   const inspected = rows.filter(row => row.kind === "source_excerpt");
   const inspectedPaths = new Set(inspected.map(row => normalizeReferencePath(row.path)));
   // Prefer ranges the answering agent actually inspected over earlier graph anchors.
-  return [...inspected, ...rows.filter(row => row.kind !== "source_excerpt" && !inspectedPaths.has(normalizeReferencePath(row.path)))].slice(0, 6);
+  return [...inspected, ...rows.filter(row => row.kind !== "source_excerpt" && !inspectedPaths.has(normalizeReferencePath(row.path)))];
 }
 
 export async function validateAnswerCitations(input: {
@@ -206,29 +204,51 @@ export async function validateAnswerCitations(input: {
   exposed: Map<string, SnapshotEvidence>;
   projectId: string;
   store: ProductStore;
+  /** Bound teaching blocks carry their own provenance; do not inherit other blocks' reads. */
+  fallbackEvidence?: boolean;
+  /** Bare paths in a block may use only its supplied ranges, never snapshot graph anchors from another block. */
+  isolateBareReferences?: boolean;
 }): Promise<CitationValidation> {
   if (input.getSnapshot && input.snapshotId && !hasPotentialCitation(input.text)) {
-    return { text: input.text, unresolved: [], errors: [], evidence: exposedFallback(input.exposed)
-      .map((row) => toMessageEvidence(row, input.snapshotId!)) };
+    return { text: input.text, unresolved: [], errors: [], evidence: canonicalEvidence((input.fallbackEvidence === false ? [] : exposedFallback(input.exposed))
+      .map((row) => toMessageEvidence(row, input.snapshotId!))), coverage: { parsed: 0, resolved: 0, references: [] } };
   }
   const snapshot = input.getSnapshot ? await input.getSnapshot() : input.snapshot;
-  if (!snapshot) return { text: input.text, unresolved: [], evidence: [], errors: [] };
-  const rows = [...allEvidence(snapshot), ...input.exposed.values()];
+  if (!snapshot) {
+    const references = referencedPathTokens(input.text, new Set()).map(token => ({ reference: token.path + (token.line === null ? '' : `:${token.line}${token.endLine !== token.line ? `-${token.endLine}` : ''}`),
+      resolved: false, evidence: [], reason: 'invalid_reference' as const, explicit: token.line !== null }));
+    return { text: input.text, unresolved: references.map(row => row.reference), evidence: [], errors: references.map(row => `unknown_path:${row.reference}`),
+      coverage: { parsed: references.length, resolved: 0, references } };
+  }
+  const rows = [...allEvidence(snapshot), ...input.exposed.values()].sort((a, b) => {
+    const left = evidenceIdentity(toMessageEvidence(a, snapshot.snapshot_id)), right = evidenceIdentity(toMessageEvidence(b, snapshot.snapshot_id));
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
   const byPath = new Map<string, SnapshotEvidence[]>();
   for (const row of rows) {
     const path = normalizeReferencePath(row.path);
     if (!path) continue;
     const existing = byPath.get(path) ?? [];
-    if (!existing.some((candidate) => candidate.stable_id === row.stable_id)) existing.push(row);
+    if (!existing.some((candidate) => candidate.stable_id === row.stable_id && candidate.start_line === row.start_line && candidate.end_line === row.end_line)) existing.push(row);
     byPath.set(path, existing);
   }
   if (!referencedPathTokens(input.text, new Set(byPath.keys())).length) {
-    return { text: input.text, unresolved: [], errors: [], evidence: exposedFallback(input.exposed)
-      .map((row) => toMessageEvidence(row, snapshot.snapshot_id)) };
+    return { text: input.text, unresolved: [], errors: [], evidence: canonicalEvidence((input.fallbackEvidence === false ? [] : exposedFallback(input.exposed))
+      .map((row) => toMessageEvidence(row, snapshot.snapshot_id))), coverage: { parsed: 0, resolved: 0, references: [] } };
   }
   // The source manifest includes files that were not selected as graph evidence.
   // PostgreSQL caches this manifest; no source content is read for name lookup.
-  const files = await input.store.listSourceFiles(input.projectId, snapshot.snapshot_id);
+  let files: string[];
+  try {
+    files = await input.store.listSourceFiles(input.projectId, snapshot.snapshot_id);
+  } catch {
+    const references = referencedPathTokens(input.text, new Set(byPath.keys())).map(token => ({
+      reference: token.path + (token.line === null ? '' : `:${token.line}${token.endLine !== token.line ? `-${token.endLine}` : ''}`),
+      resolved: false, evidence: [], reason: 'read_failed' as const, explicit: token.line !== null,
+    }));
+    return { text: input.text, unresolved: references.map(row => row.reference), evidence: [],
+      errors: references.map(row => `read_failed:${row.reference}`), coverage: { parsed: references.length, resolved: 0, references } };
+  }
   const knownPaths = new Set(files.map(normalizeReferencePath).filter((path): path is string => Boolean(path)));
   const byName = new Map<string, string[]>();
   for (const path of knownPaths) {
@@ -236,13 +256,20 @@ export async function validateAnswerCitations(input: {
     byName.set(name, [...(byName.get(name) ?? []), path]);
   }
   const accepted = new Map<string, SnapshotEvidence>();
-  const acceptedPaths = new Map<string, string>();
+  const coverage: CitationCoverage = { parsed: 0, resolved: 0, references: [] };
   const errors: string[] = [];
   const unresolved: string[] = [];
   const replacements: Array<{ offset: number; length: number; text: string }> = [];
   const tokens = referencedPathTokens(input.text, knownPaths);
+  coverage.parsed = tokens.length;
   for (const token of tokens) {
     const reference = token.path + (token.line === null ? "" : `:${token.line}${token.endLine !== token.line ? `-${token.endLine}` : ""}`);
+    const entry: CitationCoverage['references'][number] = { reference, resolved: false, evidence: [], reason: 'invalid_reference', explicit: token.line !== null };
+    coverage.references.push(entry);
+    if (token.line !== null && (!Number.isInteger(token.line) || token.line < 1 || token.endLine === null
+      || !Number.isInteger(token.endLine) || token.endLine < token.line)) {
+      unresolved.push(reference); errors.push('invalid_line:' + reference); continue;
+    }
     const contextualPath = token.directory && !token.path.includes("/") ? `${token.directory}/${token.path}` : null;
     const exactPath = contextualPath && knownPaths.has(contextualPath)
       ? [contextualPath]
@@ -278,7 +305,8 @@ export async function validateAnswerCitations(input: {
         }
       } catch {
         unresolved.push(reference);
-        errors.push("invalid_line:" + reference);
+        errors.push("read_failed:" + reference);
+        entry.reason = 'read_failed';
         continue;
       }
       const exact = pathCandidates.find((row) =>
@@ -291,23 +319,40 @@ export async function validateAnswerCitations(input: {
         ?? pathCandidates.find((row) => row.kind === "file")
         ?? pathCandidates[0];
       if (!selected) continue;
-      accepted.set(`${selected.stable_id}:${token.line}:${token.endLine}`, {
-        ...selected, start_line: token.line, end_line: token.endLine,
-      });
-      acceptedPaths.set(selected.stable_id, canonicalPath);
+      const row = { ...selected, path: canonicalPath, start_line: token.line, end_line: token.endLine };
+      entry.evidence.push(toMessageEvidence(row, snapshot.snapshot_id));
+      accepted.set(evidenceIdentity(entry.evidence[0]), row);
     } else {
-      const inspected = [...input.exposed.values()].filter(row => row.kind === "source_excerpt"
+      const inspected = [...input.exposed.values()].filter(row => (input.isolateBareReferences || row.kind === "source_excerpt")
         && normalizeReferencePath(row.path) === canonicalPath);
-      const selected = inspected.length ? inspected : [pathCandidates.find((row) => row.kind === "file") ?? pathCandidates[0]].filter((row): row is SnapshotEvidence => Boolean(row));
+      const selected = inspected.length ? inspected : input.isolateBareReferences ? [{
+        stable_id: `source-file:${canonicalPath}`, label: canonicalPath, path: canonicalPath,
+        start_line: 1, end_line: null, kind: 'source_file',
+      }] : [pathCandidates.find((row) => row.kind === "file") ?? pathCandidates[0]].filter((row): row is SnapshotEvidence => Boolean(row));
       if (!selected.length) continue;
       for (const row of selected) {
-        accepted.set(row.stable_id, row);
-        acceptedPaths.set(row.stable_id, canonicalPath);
+        const resolved = { ...row, path: canonicalPath };
+        const evidence = toMessageEvidence(resolved, snapshot.snapshot_id);
+        entry.evidence.push(evidence);
+        accepted.set(evidenceIdentity(evidence), resolved);
       }
     }
+    entry.resolved = true; entry.reason = null; coverage.resolved++;
+    entry.evidence = canonicalEvidence(entry.evidence);
     if (token.offset !== undefined && token.length !== undefined && canonicalPath !== token.path) {
       const line = token.line === null ? "" : `:${token.line}${token.endLine !== token.line ? `-${token.endLine}` : ""}`;
       replacements.push({ offset: token.offset, length: token.length, text: canonicalPath + line });
+    }
+  }
+  const explicit = canonicalEvidence(coverage.references.filter(entry => entry.explicit && entry.resolved).flatMap(entry => entry.evidence));
+  const explicitKeys = new Set(explicit.map(evidenceIdentity));
+  for (const entry of coverage.references.filter(entry => !entry.explicit && entry.resolved)) {
+    const covered = entry.evidence.map(row => explicit.find(anchor => anchor.snapshot_id === row.snapshot_id && anchor.path === row.path
+      && row.start_line !== null && row.end_line !== null && anchor.start_line !== null && anchor.end_line !== null
+      && anchor.start_line <= row.start_line && anchor.end_line >= row.end_line));
+    if (covered.every(Boolean)) {
+      entry.covered_by = canonicalEvidence(covered.filter((row): row is EvidenceRef => Boolean(row)));
+      for (const row of entry.evidence) if (!explicitKeys.has(evidenceIdentity(row))) accepted.delete(evidenceIdentity(row));
     }
   }
   return {
@@ -316,9 +361,9 @@ export async function validateAnswerCitations(input: {
       (text, replacement) => text.slice(0, replacement.offset) + replacement.text + text.slice(replacement.offset + replacement.length),
       input.text,
     ),
-    evidence: [...accepted.values()].slice(0, 12)
-      .map((row) => toMessageEvidence(row, snapshot.snapshot_id, acceptedPaths.get(row.stable_id) ?? row.path)),
+    evidence: canonicalEvidence([...accepted.values()].map((row) => toMessageEvidence(row, snapshot.snapshot_id))),
     errors,
+    coverage,
   };
 }
 
@@ -340,6 +385,9 @@ export function withEvidenceReviewNotice(text: string, review: CitationReviewRes
   if (review.status === "not_applicable" || (review.status === "reviewed" && review.supported)) return text;
   const chinese = /[\u4e00-\u9fff]/u.test(text);
   const safe = (value: string) => value.replace(/[\r\n\u0000-\u001f\u007f]/gu, " ").replace(/[<>&`\[\]()*_#!\\]/gu, "").slice(0, 350);
+  if (!review.completed && !review.evidenceIncomplete) return `${text}\n\n> ${chinese
+    ? '未能完成证据核对，请将相关说明视为尚未核实。'
+    : 'Evidence review could not be completed; treat the related claims as unverified.'}`;
   const rows = review.issues.slice(0, 4).map(issue => {
     const label = issue.kind === "contradicted"
       ? chinese ? "与已读取源码矛盾" : "Contradicted by inspected source"

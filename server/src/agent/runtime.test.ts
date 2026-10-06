@@ -21,6 +21,42 @@ const identity: PiSessionIdentity = {
   skillVersion: "test",
 };
 
+test('final review commits only approved history and completion follows persistence even when the observer disconnects', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'what-the-repo-final-review-history-'));
+  try {
+    const sessions = new PiSessionStore(root);
+    const runtime = new PiConversationRuntime(sessions);
+    const faux = fauxProvider({ provider: 'final-review-history' });
+    const models = createModels(); models.setProvider(faux.provider);
+    const modelRuntime: PiModelRuntime = { models, model: faux.getModel() as Model<Api> };
+    faux.setResponses([fauxAssistantMessage('Valid assessment. UNSUPPORTED SUPPLEMENT')]);
+    let committed = false;
+    let completedEvents = 0;
+    const input = options(modelRuntime, 'My answer and follow-up');
+    input.onEvent = event => {
+      if (event.type === 'run_completed') {
+        assert.equal(committed, true);
+        completedEvents++;
+        throw new Error('observer disconnected after commit');
+      }
+    };
+    const result = await runtime.run(input, async result => {
+      assert.equal(completedEvents, 0);
+      committed = true;
+      return { value: 'saved', sessionCommit: 'accepted', assistantText: 'Valid assessment.',
+        trustedMessages: [
+          { role: 'user', content: input.userMessage, timestamp: Date.now() },
+          { ...fauxAssistantMessage('Valid assessment.'), role: 'assistant' } as AgentMessage,
+        ] };
+    });
+    assert.equal(result, 'saved');
+    assert.equal(completedEvents, 1);
+    const stored = await sessions.snapshot(identity);
+    assert.equal(JSON.stringify(stored.messages).includes('UNSUPPORTED SUPPLEMENT'), false);
+    assert.ok(JSON.stringify(stored.messages).includes('Valid assessment.'));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 function messageText(message: AgentMessage): string {
   if (message.role === "user") {
     if (typeof message.content === "string") return message.content;
@@ -95,11 +131,70 @@ test('omitted and rejected reply contracts have bounded repairs and never become
       faux.setResponses([response, response, response]);
       const result = await runtime.run({ ...options({ models, model: faux.getModel() as Model<Api> }, '开始当前步骤', undefined, [submit]),
         replyContract: { read: () => null, correction: 'Submit the reply contract.' } });
-      assert.equal(result.stopReason, 'provider_invalid_response');
+      assert.equal(result.stopReason, 'conversation_reply_invalid');
       assert.equal(result.text, '');
       assert.equal(faux.state.callCount - callsBefore, 3);
       assert.equal(result.events.some(event => event.type === 'assistant_delta'), false);
     }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('schema-rejected submissions record fields without the SDK received-arguments dump', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-reply-schema-'));
+  try {
+    const runtime = new PiConversationRuntime(new PiSessionStore(root));
+    const faux = fauxProvider({ provider: 'reply-schema' });
+    const models = createModels(); models.setProvider(faux.provider);
+    const rejected: string[][] = [];
+    const submit: AgentTool = { name: 'submit_conversation_reply', label: '核对回答', description: '',
+      parameters: Type.Object({ text: Type.String() }),
+      execute: async () => { assert.fail('invalid schema must not reach execution'); } };
+    const response = fauxAssistantMessage(fauxToolCall('submit_conversation_reply', { text: { secret: 'PRIVATE-MARKER' } }));
+    faux.setResponses([response, response, response]);
+    const result = await runtime.run({ ...options({ models, model: faux.getModel() as Model<Api> }, 'schema failure', undefined, [submit]),
+      replyContract: { read: () => null, correction: 'Submit a valid reply.', onSchemaRejection: fields => rejected.push(fields) } });
+    assert.equal(result.stopReason, 'conversation_reply_invalid');
+    assert.equal(rejected.length, 3);
+    assert.match(JSON.stringify(rejected), /text/);
+    assert.doesNotMatch(JSON.stringify(rejected), /PRIVATE-MARKER|Received arguments/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a shared submission budget stops a same-batch fourth schema refusal and every trailing worker', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-reply-batch-budget-'));
+  try {
+    const runtime = new PiConversationRuntime(new PiSessionStore(root));
+    const faux = fauxProvider({ provider: 'reply-batch-budget' });
+    const models = createModels(); models.setProvider(faux.provider);
+    const budget = { used: 0 };
+    const rejected: string[][] = [];
+    let workerCalls = 0;
+    const submit: AgentTool = { name: 'submit_conversation_reply', label: '核对回答', description: '',
+      parameters: Type.Object({ text: Type.String() }),
+      execute: async () => { assert.fail('invalid schema must not reach execution or review'); } };
+    const assess: AgentTool = { name: 'assess_understanding', label: '评估理解', description: '',
+      parameters: Type.Object({}), execute: async () => {
+        workerCalls++;
+        return { content: [{ type: 'text', text: 'worker must not run' }], details: {} };
+      } };
+    const marker = 'PRIVATE_FOURTH_SCHEMA_ARGUMENT';
+    faux.setResponses([fauxAssistantMessage([
+      ...[1, 2, 3, 4].map(index => fauxToolCall('submit_conversation_reply', {
+        text: { secret: index === 4 ? marker : 'PRIVATE_SCHEMA_ARGUMENT_' + index },
+      }, { id: 'invalid-submit-' + index })),
+      fauxToolCall('assess_understanding', {}, { id: 'trailing-worker' }),
+    ])]);
+    const result = await runtime.run({ ...options({ models, model: faux.getModel() as Model<Api> }, 'bounded batch', undefined, [submit, assess]),
+      replyContract: { read: () => null, correction: 'Submit a valid reply.', budget,
+        onSchemaRejection: fields => rejected.push(fields) } });
+    assert.equal(result.stopReason, 'conversation_reply_invalid');
+    assert.equal(result.text, '');
+    assert.equal(budget.used, 3, 'SDK validation and execution share a capped turn-wide allowance');
+    assert.equal(rejected.length, 3, 'the fourth malformed call is not recorded as a fourth attempt');
+    assert.equal(workerCalls, 0, 'no assessment or review can run after the third refusal in the same batch');
+    assert.equal(faux.state.callCount, 1, 'exhaustion cannot initiate another model request');
+    const safeDiagnostics = JSON.stringify({ rejected, events: result.events });
+    assert.doesNotMatch(safeDiagnostics, /PRIVATE_SCHEMA_ARGUMENT_|PRIVATE_FOURTH_SCHEMA_ARGUMENT|Received arguments|4\/3/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

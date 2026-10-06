@@ -49,7 +49,8 @@ export interface WorkerDiagnostics {
   toolCount: number;
   submitAttempts: number;
   rejectedSubmissions: number;
-  submissions: Array<{ attempt: number; bytes: number; errorCategories: string[]; requestSequence?: number }>;
+  submissions: Array<{ attempt: number; bytes: number; errorCategories: string[]; requestSequence?: number;
+    safeErrors?: Array<{ code: string; field: string }> }>;
   requests: ProviderRequestDiagnostic[];
   tools: Array<{
     sequence: number; name: string; argumentDigest: string; durationMs: number;
@@ -104,6 +105,67 @@ export function diagnoseToolSchema(schema: TSchema, args: unknown): Array<{ keyw
 }
 
 const TOOL_ERROR_CODES = new Set(["source_path_not_exposed", "invalid_source_path", "source_path_outside_snapshot", "source_path_outside_component", "source_offset_out_of_range", "entity_id_required", "entity_ids_required", "entity_outside_worker_scope", "component_outside_worker_scope", "component_not_found", "repository_tool_cancelled"]);
+
+// Fixed validator messages only. Do not retain dynamic IDs, submitted values or provider text.
+const SUBMISSION_ERROR_FIELDS = [
+  ['target_results: cover each bound question target exactly once', 'target_binding_incomplete', 'target_results'],
+  ['target_results: unknown or out-of-question target ', 'target_binding_unknown', 'target_results.target_id'],
+  ['target_results: answer_spans must be exact nonempty spans of the current answer parts', 'target_answer_span_mismatch', 'target_results.answer_spans'],
+  ['target_results: evidence must come from a complete question packet', 'target_evidence_scope_mismatch', 'target_results.evidence_ids'],
+  ['target_results: proven/contradicted requires current answer spans and complete evidence', 'target_proof_source_missing', 'target_results'],
+  ['target_results: prior proof must be a qualified unretracted source for this target', 'target_prior_source_invalid', 'target_results.prior_answer_message_ids'],
+  ['target_results: contradiction must use only current answer', 'target_contradiction_source_invalid', 'target_results.prior_answer_message_ids'],
+  ['question_result: prompt_span must quote exact saved question', 'question_prompt_span_mismatch', 'question_requirements.prompt_span'],
+  ['question_result: current answer spans must be exact', 'question_answer_span_mismatch', 'question_requirements.answer_spans'],
+  ['question_result: prior answer must be qualified same-question proof', 'question_prior_source_invalid', 'question_requirements.prior_answer_message_ids'],
+  ['question_result: satisfaction requires current spans or qualified prior proof and current packet evidence', 'question_satisfaction_source_missing', 'question_requirements'],
+  ['question_result: explicit contradicted constituent must contradict its whole bound target', 'question_target_contradiction_mismatch', 'question_requirements.outcome'],
+  ['question_result: completeness must match selected actual requirements', 'question_completeness_mismatch', 'question_result.complete'],
+] as const;
+
+export function safeSubmissionErrors(errors: readonly string[]): Array<{ code: string; field: string }> {
+  return errors.slice(0, 32).map(error => {
+    const known = SUBMISSION_ERROR_FIELDS.find(([message]) => error === message
+      || (message.endsWith(' ') && error.startsWith(message)));
+    if (known) return { code: known[1], field: known[2] };
+    // Only a syntactically fixed code can cross this boundary, never the message after it.
+    const code = /^[a-z][a-z_]{1,79}(?=:|$)/u.exec(error)?.[0] ?? 'validation';
+    return { code, field: code.startsWith('target_') ? 'target_results'
+      : code.startsWith('question_') ? 'question_requirements' : 'submission' };
+  });
+}
+
+/** Aggregate bounded stages without losing original stage receipts kept by the caller. */
+export function combineWorkerDiagnostics(stages: readonly WorkerDiagnostics[]): WorkerDiagnostics | undefined {
+  if (!stages.length) return undefined;
+  const merged = structuredClone(stages[0]!);
+  merged.runId = randomUUID();
+  merged.requestCount = merged.toolCount = merged.submitAttempts = merged.rejectedSubmissions = 0;
+  merged.toolDispatchCount = merged.toolDispatchErrorCount = merged.droppedRecords = 0;
+  merged.durationMs = 0;
+  merged.requests = []; merged.tools = []; merged.submissions = []; merged.toolDispatches = [];
+  merged.cpuMs = { user: 0, system: 0 };
+  delete merged.textRepair;
+  for (const stage of stages) {
+    const requestOffset = merged.requestCount;
+    merged.requests.push(...stage.requests.map(row => ({ ...structuredClone(row), sequence: row.sequence + requestOffset })));
+    merged.tools.push(...stage.tools.map(row => ({ ...structuredClone(row), sequence: row.sequence + merged.toolCount,
+      ...(row.requestSequence === undefined ? {} : { requestSequence: row.requestSequence + requestOffset }) })));
+    merged.submissions.push(...stage.submissions.map(row => ({ ...structuredClone(row), attempt: row.attempt + merged.submitAttempts,
+      ...(row.requestSequence === undefined ? {} : { requestSequence: row.requestSequence + requestOffset }) })));
+    merged.toolDispatches!.push(...(stage.toolDispatches ?? []).map(row => ({ ...structuredClone(row),
+      sequence: row.sequence + (merged.toolDispatchCount ?? 0), requestSequence: row.requestSequence + requestOffset })));
+    merged.requestCount += stage.requestCount; merged.toolCount += stage.toolCount;
+    merged.submitAttempts += stage.submitAttempts; merged.rejectedSubmissions += stage.rejectedSubmissions;
+    merged.toolDispatchCount! += stage.toolDispatchCount ?? 0;
+    merged.toolDispatchErrorCount! += stage.toolDispatchErrorCount ?? 0;
+    merged.droppedRecords += stage.droppedRecords; merged.durationMs += stage.durationMs;
+    merged.cpuMs.user += stage.cpuMs.user; merged.cpuMs.system += stage.cpuMs.system;
+    for (const key of ['rss', 'heapUsed', 'external', 'arrayBuffers'] as const)
+      merged.peakMemory[key] = Math.max(merged.peakMemory[key], stage.peakMemory[key]);
+  }
+  return merged;
+}
 
 export function createWorkerDiagnostics(identity?: WorkerDiagnosticIdentity) {
   const start = performance.now();
@@ -172,6 +234,7 @@ export function createWorkerDiagnostics(identity?: WorkerDiagnosticIdentity) {
         attempt: data.submitAttempts, bytes: jsonByteLength(value),
         requestSequence: data.requestCount,
         errorCategories: [...new Set(errors.map((error) => /^[a-z_]+(?=:)/u.exec(error)?.[0] ?? "validation"))],
+        safeErrors: safeSubmissionErrors(errors),
       });
     },
     wrapTool(tool: AgentTool): AgentTool {

@@ -1,11 +1,42 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Type } from "typebox";
-import { createWorkerDiagnostics, diagnoseToolSchema } from "./worker-diagnostics.js";
+import { combineWorkerDiagnostics, createWorkerDiagnostics, diagnoseToolSchema, safeSubmissionErrors } from "./worker-diagnostics.js";
 import { LocalProviderUsageBudget } from "./provider-budget.js";
 import { streamWithProviderPermit } from "./model-runtime.js";
 import { createModels, type Api, type Model } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+
+test('submission diagnostics preserve first field failure without source values', () => {
+  const diagnostics = createWorkerDiagnostics();
+  try {
+    diagnostics.submission({ private: 'answer secret' }, ['target_results: answer_spans must be exact nonempty spans of the current answer parts']);
+    diagnostics.submission({ private: 'fixed secret' }, []);
+    assert.deepEqual(diagnostics.data.submissions[0]?.safeErrors,
+      [{ code: 'target_answer_span_mismatch', field: 'target_results.answer_spans' }]);
+    assert.deepEqual(diagnostics.data.submissions[1]?.safeErrors, []);
+    assert.deepEqual(safeSubmissionErrors(['target_results: unknown or out-of-question target private-id']),
+      [{ code: 'target_binding_unknown', field: 'target_results.target_id' }]);
+    assert.doesNotMatch(JSON.stringify(diagnostics.data), /answer secret|fixed secret|private-id/);
+    assert.deepEqual(safeSubmissionErrors(['secret-provider-response with credential']), [{ code: 'validation', field: 'submission' }]);
+  } finally { diagnostics.finish(); }
+});
+
+test('combined stages count every request and keep first rejected submission before recovery', () => {
+  const first = createWorkerDiagnostics(); const second = createWorkerDiagnostics();
+  try {
+    first.request({}); first.submission({}, ['question_result: current answer spans must be exact']);
+    first.request({}); first.submission({}, []);
+    second.request({}); second.submission({}, []);
+    const result = combineWorkerDiagnostics([first.data, second.data])!;
+    assert.equal(result.requestCount, 3); assert.equal(result.submitAttempts, 3); assert.equal(result.rejectedSubmissions, 1);
+    assert.deepEqual(result.requests.map(row => row.sequence), [1, 2, 3]);
+    assert.deepEqual(result.submissions.map(row => [row.attempt, row.requestSequence]), [[1, 1], [2, 2], [3, 3]]);
+    assert.equal(result.submissions[0]?.safeErrors?.[0]?.code, 'question_answer_span_mismatch');
+    assert.equal(second.data.requests[0]?.sequence, 1);
+    assert.equal(combineWorkerDiagnostics([]), undefined);
+  } finally { first.finish(); second.finish(); }
+});
 
 test("schema diagnostics report schema fields and limits without retaining hostile keys or values", () => {
   const schema = Type.Object({ rows: Type.Array(Type.Object({ answer: Type.String({ maxLength: 3 }) }), { maxItems: 1 }), limit: Type.Integer({ maximum: 50 }) });

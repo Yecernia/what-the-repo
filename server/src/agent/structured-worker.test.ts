@@ -10,6 +10,10 @@ import { skillMetadata } from "./skill-registry.js";
 import { TextSubmissionRepair } from "./text-submission-repair.js";
 import { providerFailureReason } from "./worker-failure.js";
 import { workerRequestContext } from "./worker-request-context.js";
+import { generateLearningRoute } from './teaching-workers.js';
+import { createProject, emptyProfile } from '../domain/conversation.js';
+import type { EvidenceSnapshot } from '../domain/snapshot.js';
+import type { ProductStore } from '../persistence/store.js';
 
 test("teaching and review workers stop repeated unknown tool calls at six requests", async () => {
   for (const skillId of ["learning-route", "understanding-assessment", "citation-review"] as const) {
@@ -239,9 +243,9 @@ test("structured worker failure returns a stable reason without provider details
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v2",
-    outputSchemaId: "understanding-assessment-output-v2",
-    contextBuilderId: "understanding-assessment-context-v5",
+    inputSchemaId: "understanding-assessment-input-v7",
+    outputSchemaId: "understanding-assessment-output-v6",
+    contextBuilderId: "understanding-assessment-context-v13",
     systemPrompt: "提交结果。",
     userPrompt: "生成结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -265,9 +269,9 @@ test("structured worker exposes provider request failures separately from missin
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v2",
-    outputSchemaId: "understanding-assessment-output-v2",
-    contextBuilderId: "understanding-assessment-context-v5",
+    inputSchemaId: "understanding-assessment-input-v7",
+    outputSchemaId: "understanding-assessment-output-v6",
+    contextBuilderId: "understanding-assessment-context-v13",
     systemPrompt: "提交结果。",
     userPrompt: "生成结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -291,9 +295,9 @@ test("structured worker returns validation errors to the same agent and accepts 
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v2",
-    outputSchemaId: "understanding-assessment-output-v2",
-    contextBuilderId: "understanding-assessment-context-v5",
+    inputSchemaId: "understanding-assessment-input-v7",
+    outputSchemaId: "understanding-assessment-output-v6",
+    contextBuilderId: "understanding-assessment-context-v13",
     systemPrompt: "提交结果。",
     userPrompt: "生成中文结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -396,6 +400,101 @@ test("value endgame uses its local 40-call limit when a legacy reservation hook 
   assert.equal(faux.getPendingResponseCount(), 1);
 });
 
+test('route endgame uses six actual requests, keeps schemas stable and repairs fifth submission on the sixth', async () => {
+  const faux = fauxProvider({ provider: 'route-six-request-endgame' });
+  const models = createModels(); models.setProvider(faux.provider);
+  const evidence = { stable_id: 'e:route', label: 'entry', path: 'src/entry.ts', start_line: 1, end_line: 3, kind: 'symbol' };
+  const snapshot: EvidenceSnapshot = { snapshot_id: 'snapshot:route-budget', summary: { file_count: 1, symbol_count: 1, call_count: 0, component_count: 1 },
+    graph: { semantic_mode: 'provider_supported', nodes: [{ id: 'c:entry', name: 'Entry', label: 'Entry', responsibility: 'Input',
+      grouping_rationale: 'Input', architecture_layer_id: 'layer:entry', architecture_layer_name: 'Entry', members: [evidence], member_count: 1,
+      evidence: [evidence], certainty: 'verified', review_status: 'reviewed', fan_in: 0, fan_out: 0 }], edges: [], layers: [], unassigned_component_ids: [] },
+    languages: [], value_points: [], learning_plan: { snapshot_id: 'snapshot:route-budget', selected_value_point: null, steps: [] } };
+  const project = createProject('owner:route', 'https://github.com/example/route', 'route', 'free:test');
+  const sourceReads: Array<[number, number]> = [];
+  const store = { readSourceLines: async (_project: string, _snapshot: string, _path: string, start: number, end: number) => {
+    sourceReads.push([start, end]);
+    return { lines: Array.from({ length: Math.min(end, 205) - start + 1 }, (_, i) => `// source line ${start + i}`), truncated: false };
+  } } as unknown as ProductStore;
+  const contexts: Context[] = [];
+  const capture = (context: Context) => { contexts.push(JSON.parse(JSON.stringify(context)) as Context); };
+  const step = { title: 'Read the entry', objective: 'Explain the input flow', completion_check: 'Explain the input', learning_targets: ['Explain the input'],
+    component_ids: ['c:entry'], evidence_ids: ['e:route'] };
+  faux.setResponses([
+    context => { capture(context); return fauxAssistantMessage(fauxToolCall('list_repository_components', {})); },
+    context => { capture(context); return fauxAssistantMessage(fauxToolCall('get_repository_component', { component_id: 'c:entry' })); },
+    context => { capture(context); return fauxAssistantMessage(fauxToolCall('get_repository_evidence', { evidence_ids: ['e:route'] })); },
+    context => { capture(context); return fauxAssistantMessage(fauxToolCall('read_repository_source', { path: 'src/entry.ts', offset: 1, limit: 200 })); },
+    context => { capture(context); assert.match(JSON.stringify(context.messages), /next_offset\\?":201/);
+      return fauxAssistantMessage(fauxToolCall('submit_result', { steps: [{ ...step, component_ids: ['unknown'] }] })); },
+    context => { capture(context); assert.match(JSON.stringify(context.messages), /unknown component/);
+      return fauxAssistantMessage(fauxToolCall('submit_result', { steps: [step] })); },
+  ]);
+  const result = await generateLearningRoute({ project, snapshot, target: { kind: 'repository', stable_id: null, label: 'route' },
+    request: 'Teach the entry flow', profile: emptyProfile(), store, modelRuntime: { models, model: faux.getModel() as Model<Api> } });
+  assert.equal(result.completed, true);
+  assert.equal(result.steps.length, 1);
+  assert.equal(result.trace.diagnostics?.requestCount, 6);
+  assert.equal(result.trace.diagnostics?.submitAttempts, 2);
+  assert.equal(result.trace.diagnostics?.rejectedSubmissions, 1);
+  assert.deepEqual(result.trace.diagnostics?.requests.map(r => [r.phase, r.remaining]),
+    [['explore', 6], ['explore', 5], ['converge', 4], ['converge', 3], ['submit', 2], ['submit', 1]]);
+  assert.deepEqual(sourceReads, [[1, 201]], 'the five-line trailing page is not mechanically read');
+  for (const context of contexts) {
+    assert.deepEqual(context.tools, contexts[0]!.tools);
+    assert.equal(context.systemPrompt, contexts[0]!.systemPrompt);
+  }
+});
+
+test('route endgame blocks every exploration execution in the last two requests, including get evidence', async () => {
+  const faux = fauxProvider({ provider: 'route-no-final-exploration' });
+  const models = createModels(); models.setProvider(faux.provider);
+  const metadata = skillMetadata('learning-route');
+  let executed = 0;
+  const tools = metadata.allowedTools.filter(name => name !== 'submit_result').map(name => ({ name, label: name, description: name,
+    parameters: Type.Object({}), execute: async () => { executed++; return { content: [], details: {} }; } }));
+  const checkedResponse = (response: ReturnType<typeof fauxAssistantMessage>) => (_context: Context, options?: { maxTokens?: number }) => {
+    assert.equal(options?.maxTokens, 256, 'the endgame branch forwards the explicit output-token limit');
+    return response;
+  };
+  faux.setResponses([
+    ...Array.from({ length: 4 }, () => checkedResponse(fauxAssistantMessage(fauxToolCall('get_repository_evidence', {})))),
+    checkedResponse(fauxAssistantMessage(tools.map(tool => fauxToolCall(tool.name, {})))),
+    (context, options) => { assert.equal(options?.maxTokens, 256);
+      assert.match(JSON.stringify(context.messages.at(-1)?.content), /当前探索工具不可用/);
+      return fauxAssistantMessage(fauxToolCall('submit_result', { steps: [] })); },
+  ]);
+  const result = await runStructuredWorker({ skillId: 'learning-route', inputSchemaId: metadata.inputSchemaId,
+    outputSchemaId: metadata.outputSchemaId, contextBuilderId: metadata.contextBuilderId,
+    systemPrompt: 'Form an honest route.', userPrompt: 'Learn the repository.', schema: Type.Object({ steps: Type.Array(Type.String()) }), tools,
+    explorationEndgame: { submitReserve: 2, convergeReserve: 4 }, taskLimits: { maxOutputTokens: 256 },
+    modelRuntime: { models, model: faux.getModel() as Model<Api> } });
+  assert.equal(result.stopReason, 'completed');
+  assert.deepEqual(result.value, { steps: [] }, 'insufficient verified evidence remains an honest empty result');
+  assert.equal(executed, 4, 'no get/read/list/query exploration executes on request five');
+  assert.equal(result.diagnostics?.requestCount, 6);
+  assert.equal(result.diagnostics?.submitAttempts, 1);
+});
+
+test('bounded route allowance is the minimum of its local bound and external batch/job allowances', async () => {
+  for (const limits of [{ maxRequests: 6, batch: 40, job: 100, remaining: 6 }, { maxRequests: 6, batch: 3, job: 100, remaining: 3 },
+    { maxRequests: 6, batch: 40, job: 2, remaining: 2 }, { maxRequests: 2, batch: 40, job: 100, remaining: 2 }]) {
+    const faux = fauxProvider({ provider: `route-allowance-${limits.remaining}-${limits.maxRequests}-${limits.batch}` });
+    const models = createModels(); models.setProvider(faux.provider);
+    const metadata = skillMetadata('learning-route');
+    faux.setResponses([fauxAssistantMessage(fauxToolCall('submit_result', { steps: [] }))]);
+    const result = await runStructuredWorker({ skillId: 'learning-route', inputSchemaId: metadata.inputSchemaId,
+      outputSchemaId: metadata.outputSchemaId, contextBuilderId: metadata.contextBuilderId, systemPrompt: 'Submit.', userPrompt: 'Route.',
+      tools: metadata.allowedTools.filter(name => name !== 'submit_result').map(name => ({ name, label: name, description: name,
+        parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) })),
+      schema: Type.Object({ steps: Type.Array(Type.String()) }), explorationEndgame: { submitReserve: 2, convergeReserve: 4 },
+      taskLimits: { maxRequests: limits.maxRequests }, modelRuntime: { models, model: faux.getModel() as Model<Api>,
+        beforeWorkerRequest: async () => ({ batchRemaining: limits.batch, jobRemaining: limits.job }) } });
+    assert.equal(result.stopReason, 'completed');
+    assert.equal(result.diagnostics?.requests[0]?.remaining, limits.remaining);
+    assert.equal(result.diagnostics?.requests[0]?.phase, limits.remaining <= 2 ? 'submit' : limits.remaining <= 4 ? 'converge' : 'explore');
+  }
+});
+
 test("ordinary structured workers leave a void reservation hook in charge of its own limit", async () => {
   const { faux, options } = textRepairRuntime("ordinary-void-hook");
   let reservations = 0;
@@ -423,9 +522,9 @@ test("structured worker records SDK argument rejection and unknown tools without
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v2",
-    outputSchemaId: "understanding-assessment-output-v2",
-    contextBuilderId: "understanding-assessment-context-v5",
+    inputSchemaId: "understanding-assessment-input-v7",
+    outputSchemaId: "understanding-assessment-output-v6",
+    contextBuilderId: "understanding-assessment-context-v13",
     systemPrompt: "提交结果。", userPrompt: "生成结果。",
     schema: Type.Object({ answer: Type.String() }),
     modelRuntime: { models, model: faux.getModel() as Model<Api> },
@@ -458,9 +557,9 @@ test("structured worker retains the final evidence-backed submission after valid
   ]);
   const result = await runStructuredWorker({
     skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v2",
-    outputSchemaId: "understanding-assessment-output-v2",
-    contextBuilderId: "understanding-assessment-context-v5",
+    inputSchemaId: "understanding-assessment-input-v7",
+    outputSchemaId: "understanding-assessment-output-v6",
+    contextBuilderId: "understanding-assessment-context-v13",
     systemPrompt: "提交结果。",
     userPrompt: "生成中文结果。",
     schema: Type.Object({ answer: Type.String() }),
@@ -470,4 +569,55 @@ test("structured worker retains the final evidence-backed submission after valid
   assert.deepEqual(result.value, { answer: "Second English answer" });
   assert.equal(result.stopReason, "completed_with_validation_errors");
   assert.deepEqual(result.validationErrors, ["answer 没有使用简体中文"]);
+});
+
+
+function boundedReviewOptions(provider: string) {
+  const faux=fauxProvider({provider});const models=createModels();models.setProvider(faux.provider);
+  const metadata=skillMetadata('citation-review');
+  return {faux,options:{skillId:'citation-review' as const,inputSchemaId:metadata.inputSchemaId,outputSchemaId:metadata.outputSchemaId,
+    contextBuilderId:metadata.contextBuilderId,schema:Type.Object({ok:Type.Boolean()}),systemPrompt:'Submit.',userPrompt:'Review.',
+    modelRuntime:{models,model:faux.getModel() as Model<Api>}}};
+}
+
+test('an explicit 360 second worker deadline permits a request beyond the default 120 seconds',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const {faux,options}=boundedReviewOptions('review-extended-deadline');
+  let enter!:()=>void;const entered=new Promise<void>(resolve=>{enter=resolve});
+  let finish!:()=>void;const finished=new Promise<void>(resolve=>{finish=resolve});let aborted=false;
+  faux.setResponses([async(_context,streamOptions)=>{streamOptions?.signal?.addEventListener('abort',()=>{aborted=true;finish()},{once:true});enter();await finished;
+    return fauxAssistantMessage(fauxToolCall('submit_result',{ok:true}));}]);
+  const resultPromise=runStructuredWorker({...options,taskLimits:{maxRequests:1,timeoutMs:360000}});
+  await entered;t.mock.timers.tick(120001);assert.equal(aborted,false);finish();
+  const result=await resultPromise;assert.equal(result.stopReason,'completed');assert.deepEqual(result.value,{ok:true});assert.equal(faux.state.callCount,1);
+});
+
+test('default worker deadline stays 120 seconds and explicit timeouts stay bounded to 600 seconds',async t=>{
+  for(const timeoutMs of [undefined,720000])await t.test(String(timeoutMs??'default'),async t=>{
+    t.mock.timers.enable({apis:['setTimeout']});const {faux,options}=boundedReviewOptions('review-deadline-'+String(timeoutMs));
+    let enter!:()=>void;const entered=new Promise<void>(resolve=>{enter=resolve});let aborted=false;
+    faux.setResponses([async(_context,streamOptions)=>{enter();await new Promise<void>(resolve=>streamOptions?.signal?.addEventListener('abort',()=>{aborted=true;resolve()},{once:true}));
+      return fauxAssistantMessage('',{stopReason:'aborted'});}]);
+    const pending=runStructuredWorker({...options,...timeoutMs===undefined?{}:{taskLimits:{timeoutMs}}});await entered;
+    t.mock.timers.tick((timeoutMs===undefined?120000:600000)-1);assert.equal(aborted,false);
+    t.mock.timers.tick(1);const result=await pending;assert.equal(aborted,true);assert.equal(result.stopReason,'worker_time_limit_exceeded');assert.equal(result.value,null);
+  });
+});
+
+test('external cancellation still aborts an extended worker deadline',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});const {faux,options}=boundedReviewOptions('review-extended-cancel');
+  let enter!:()=>void;const entered=new Promise<void>(resolve=>{enter=resolve});const controller=new AbortController();
+  faux.setResponses([async(_context,streamOptions)=>{enter();await new Promise<void>(resolve=>streamOptions?.signal?.addEventListener('abort',()=>resolve(),{once:true}));return fauxAssistantMessage('',{stopReason:'aborted'});}]);
+  const pending=runStructuredWorker({...options,signal:controller.signal,taskLimits:{timeoutMs:360000}});await entered;controller.abort();
+  const result=await pending;assert.equal(result.stopReason,'cancelled');assert.equal(result.value,null);assert.equal(faux.state.callCount,1);
+});
+
+test('length terminates after one request and never adopts even a complete-looking partial submit',async t=>{
+  for(const content of ['unfinished prose',fauxToolCall('submit_result',{ok:true}),fauxToolCall('submit_result',{})])await t.test(typeof content==='string'?'prose':JSON.stringify(content.arguments),async()=>{
+    const {faux,options}=boundedReviewOptions('review-length');let validated=0;
+    faux.setResponses([fauxAssistantMessage(content,{stopReason:'length'}),fauxAssistantMessage(fauxToolCall('submit_result',{ok:true}))]);
+    const result=await runStructuredWorker({...options,maxSubmitAttempts:1,taskLimits:{maxRequests:1},validateSubmitted:()=>{validated++;return[]}});
+    assert.equal(result.stopReason,'worker_output_limit_exceeded');assert.equal(result.value,null);assert.equal(faux.state.callCount,1);
+    assert.equal(result.diagnostics!.requestCount,1);assert.equal(validated,0);assert.equal(result.diagnostics!.submitAttempts,0);
+  });
 });

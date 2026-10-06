@@ -62,6 +62,7 @@ function safeDetail(detail: unknown): string | null {
 }
 
 function publicErrorMessage(status: number, code: string | undefined, detail: unknown): string {
+  if (code === 'conversation_reply_invalid') return conversationFailureMessage(code, detail);
   const failure = code ? conversationErrorMessage(code) : null;
   if (failure) return failure;
   switch (code) {
@@ -155,8 +156,20 @@ export function conversationErrorMessage(code: string): string | null {
     session_busy: '上一轮仍在处理，请等待它结束或取消后再试。',
     client_network_error: '网络错误，请重试。',
     cancelled: '已取消。',
+    conversation_reply_invalid: '本轮回答未通过内容检查，学习进度没有改变。请检查当前题目后重试。',
   };
   return labels[code] ? t(labels[code]) : null;
+}
+
+/** Only server-authored contract failure copy is allowed through this code. */
+export function conversationFailureMessage(code: string, message?: unknown): string {
+  const allowed = [
+    '本轮回答未通过内容检查，学习进度没有改变。原题仍然有效，可以继续作答或重试换题。',
+    '本轮回答未通过内容检查，学习进度没有改变。当前没有生效的题目，请重试本次请求。',
+    '本轮回答未通过内容检查，学习进度没有改变。本次讲解尚未完成，已确认的进度保留。请重试本次讲解。',
+  ];
+  if (code === 'conversation_reply_invalid' && typeof message === 'string' && allowed.includes(message)) return t(message);
+  return conversationErrorMessage(code) ?? t('服务端错误，请稍后重试。');
 }
 
 /** Convert unknown transport/API errors into copy that is safe to show in the UI. */
@@ -384,24 +397,23 @@ export const apiClient = {
   // messages
   sendMessage: (
     id: string,
-    content: string,
+    content: string | undefined,
     uiContexts: import('./types').ConversationSelection[] = [],
     reviewEvidence = false,
     replaceMessageId?: string,
     retryRunId?: string,
     viewSnapshotId?: string | null,
-    learningIntent?: import('./types').LearningIntent,
+    lesson?: import('./types').LessonRequestOptions,
   ) =>
     api<import('./types').SendMessageResult>(
       `/api/projects/${id}/messages`, {
         method: 'POST',
         body: JSON.stringify({
-          content,
+          ...(lesson ? {} : { content, ui_contexts: uiContexts }),
           display_language: getUiLanguage(),
-          ui_contexts: uiContexts,
           review_evidence: reviewEvidence,
-          ...(learningIntent ? { learning_intent: learningIntent } : {}),
-          ...(replaceMessageId ? { replace_message_id: replaceMessageId } : {}),
+          ...(lesson ? { lesson_action_id: lesson.actionId, ...(lesson.runId ? { run_id: lesson.runId } : {}) } : {}),
+          ...(!lesson && replaceMessageId ? { replace_message_id: replaceMessageId } : {}),
           ...(retryRunId ? { retry_run_id: retryRunId } : {}),
           ...(viewSnapshotId ? { view_snapshot_id: viewSnapshotId } : {}),
         }),
@@ -409,21 +421,23 @@ export const apiClient = {
     ),
   sendMessageStream: async (
     id: string,
-    content: string,
+    content: string | undefined,
     uiContexts: import('./types').ConversationSelection[],
     onProgress: (event: import('./types').RuntimeProgressEvent) => void,
     reviewEvidence = false,
     replaceMessageId?: string,
     retryRunId?: string,
     viewSnapshotId?: string | null,
-    learningIntent?: import('./types').LearningIntent,
+    signal?: AbortSignal,
+    lesson?: import('./types').LessonRequestOptions,
   ): Promise<import('./types').SendMessageResult> => {
-    const requestedRunId = clientRunId();
+    const requestedRunId = lesson?.runId ?? clientRunId();
     onProgress({ run_id: requestedRunId, stage: 'request_created', label: '', kind: 'summary',
       visible: false, status: 'running', elapsed_ms: 0 });
     const state = { runId: requestedRunId, lastSequence: 0, connected: false };
     let reconnectAttempts = 0;
     for (;;) {
+      signal?.throwIfAborted();
       try {
         const stream = await readConversationStream(
           !state.connected
@@ -434,22 +448,23 @@ export const apiClient = {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
                 credentials: 'include',
+                signal,
                 body: JSON.stringify({
                   run_id: requestedRunId,
-                  ...(replaceMessageId ? { replace_message_id: replaceMessageId } : {}),
+                  ...(!lesson && replaceMessageId ? { replace_message_id: replaceMessageId } : {}),
                   ...(retryRunId ? { retry_run_id: retryRunId } : {}),
                   ...(viewSnapshotId ? { view_snapshot_id: viewSnapshotId } : {}),
-                  content,
+                  ...(lesson ? {} : { content, ui_contexts: uiContexts }),
                   display_language: getUiLanguage(),
-                  ui_contexts: uiContexts,
                   review_evidence: reviewEvidence,
-                  ...(learningIntent ? { learning_intent: learningIntent } : {}),
+                  ...(lesson ? { lesson_action_id: lesson.actionId } : {}),
                 }),
               }
             : {
                 method: 'GET',
                 headers: { Accept: 'text/event-stream', 'Last-Event-ID': String(state.lastSequence) },
                 credentials: 'include',
+                signal,
               },
           requestedRunId,
           onProgress,
@@ -461,6 +476,7 @@ export const apiClient = {
         if (stream.terminalError) throw stream.terminalError;
         throw new StreamTransportError('stream_closed_before_result');
       } catch (error) {
+        signal?.throwIfAborted();
         if (!(error instanceof StreamTransportError)) throw error;
         if (reconnectAttempts >= STREAM_RECONNECT_MAX_ATTEMPTS) {
           throw new StreamError(t("网络连接失败，请检查网络。"), 'client_network_error');
@@ -479,6 +495,37 @@ export const apiClient = {
           timestamp: new Date().toISOString(),
         });
         await waitForStreamRetry(STREAM_RECONNECT_DELAYS_MS[reconnectAttempts - 1] ?? 8_000);
+      }
+    }
+  },
+  resumeMessageStream: async (
+    id: string,
+    runId: string,
+    onProgress: (event: import('./types').RuntimeProgressEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<import('./types').SendMessageResult> => {
+    const state = { runId, lastSequence: 0, connected: true };
+    let attempts = 0;
+    for (;;) {
+      signal?.throwIfAborted();
+      try {
+        const stream = await readConversationStream(
+          `${BASE}/api/projects/${id}/runs/${encodeURIComponent(runId)}/stream?after=${state.lastSequence}`,
+          { method: 'GET', headers: { Accept: 'text/event-stream', 'Last-Event-ID': String(state.lastSequence) },
+            credentials: 'include', signal }, runId, onProgress, state,
+        );
+        if (stream.result) return stream.result;
+        if (stream.terminalError) throw stream.terminalError;
+        throw new StreamTransportError('stream_closed_before_result');
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (!(error instanceof StreamTransportError)) throw error;
+        if (attempts >= STREAM_RECONNECT_MAX_ATTEMPTS) throw new StreamError(t('网络连接失败，请检查网络。'), 'client_network_error');
+        attempts += 1;
+        onProgress({ run_id: runId, stage: 'reconnecting', status: 'running', kind: 'summary',
+          label: t('正在重新连接（{0}/{1}）', attempts, STREAM_RECONNECT_MAX_ATTEMPTS), elapsed_ms: 0,
+          visible: true, text: t('网络连接中断，正在恢复本轮回答。') });
+        await waitForStreamRetry(STREAM_RECONNECT_DELAYS_MS[attempts - 1] ?? 8_000);
       }
     }
   },

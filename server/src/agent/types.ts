@@ -106,6 +106,10 @@ export interface PiRunFinalization<T> {
   sessionCommit: PiSessionCommitMode;
   /** Canonical answer shown to the user, including citation uncertainty. */
   assistantText?: string;
+  /** Application-approved replacement history when only part of a reply is trusted. */
+  trustedMessages?: AgentMessage[];
+  /** Final validation may cancel a turn after the model has finished. */
+  stopReason?: string;
 }
 
 export interface PiModelRuntime {
@@ -151,7 +155,9 @@ export interface PiAgentRunOptions {
   turn?: { messageId: string; replace: boolean; previousMessages: AgentMessage[] };
   beforePrompt?: (signal?: AbortSignal, writeFence?: {permitId:string}) => Promise<void>;
   /** Final UI text is accepted only after the main agent submits the reply contract. */
-  replyContract?: { read: () => string | null; correction: string };
+  replyContract?: { read: () => string | null; correction: string;
+    budget?: import('./conversation-reply.js').ReplySubmissionBudget;
+    onSchemaRejection?: (fields: string[]) => void };
 }
 
 export interface PersistedPiMessage {

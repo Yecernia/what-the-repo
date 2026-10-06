@@ -1,3 +1,5 @@
+import { assessmentTestReviewContext } from './assessment-test-context.js';
+import type { runUnderstandingAssessment } from './teaching-workers.js';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMessage, createProject, emptyProfile } from "../domain/conversation.js";
@@ -7,6 +9,10 @@ import type { ProductStore } from "../persistence/store.js";
 import { createConversationTools, type ConversationToolContext } from "./conversation-tools.js";
 import { applyConfirmedLearningAction } from "./learning-actions.js";
 import { restoreDisplayedTeachingQuestion } from './conversation-reply.js';
+import { applyTargetAssessment, targetsForStep } from './target-coverage.js';
+import type { TeachingQuestion } from './teaching-question.js';
+import { CONFIRMED_LESSON_TASK, confirmedLessonSourceId } from '../domain/confirmed-lesson.js';
+import { createLearningActionProposal, completeLearningAction } from './learning-actions.js';
 
 const evidence = {
   stable_id: "fact:file:entry",
@@ -85,11 +91,27 @@ function context(overrides: Partial<ConversationToolContext> = {}): Conversation
     toolsUsed: [],
     pendingLearningAction: { value: null },
     assessment: { value: null },
+    candidates: { project: null },
     currentUserMessage: "我想学习这个仓库",
     modelRuntime: null as never,
     workerRuns: [],
     ...overrides,
   };
+}
+
+function recordFixturePass(ctx: ConversationToolContext) {
+  const step = ctx.project.study.dynamic_learning_plan![ctx.project.study.current_step]!;
+  const targets = targetsForStep(step);
+  const answer = createMessage('user', '入口职责', { message_id: 'proof-answer' });
+  ctx.project.messages.push(answer);
+  const question: TeachingQuestion = { question_id: 'proof-question', snapshot_id: 'snapshot:tools', route_revision: 0,
+    step_id: step.step_id, prompt: step.completion_check, target_items: targets.map(target => target.label), target_ids: targets.map(target => target.target_id),
+    evidence: [evidence], answers: [], answer_message_ids: [], created_message_id: 'proof-lesson', assessment_sequence: 0 };
+  ctx.project.messages.unshift(createMessage('user', 'Start', { message_id: question.created_message_id, analysis_snapshot_id: question.snapshot_id }),
+    createMessage('assistant', question.prompt, { analysis_snapshot_id: question.snapshot_id, teaching_question: structuredClone(question),
+      teaching_context: { snapshot_id: question.snapshot_id, route_revision: question.route_revision, step_id: question.step_id } }));
+  applyTargetAssessment(ctx.project, question, answer.message_id, [answer.content], targets.map(target => ({ target_id: target.target_id,
+    outcome: 'proven', reason: 'Controlled prior qualified proof.', answer_spans: [answer.content], evidence_ids: [evidence.stable_id] })));
 }
 
 test('learning context retrieves fact-only references without a full graph and exposes them to source reads', async () => {
@@ -124,6 +146,7 @@ test("online conversation tools keep explanation in Primary and expose one actio
     "get_learning_context",
     "get_project_overview",
     "get_static_file_facts",
+    "interpret_teaching_turn",
     "list_value_points",
     "propose_learning_action",
     "query_code_evidence",
@@ -350,7 +373,9 @@ test('missing or failed summaries never silently widen overview to the full view
 test("propose_learning_action creates a pending card without changing study state", async () => {
   const ctx = context();
   const before = structuredClone(ctx.project.study);
-  const tool = createConversationTools(ctx).find((item) => item.name === "propose_learning_action");
+  const tools = createConversationTools(ctx);
+  await tools.find(item => item.name === "interpret_teaching_turn")!.execute("interpret", { parts: [{ kind: "control", text: ctx.currentUserMessage }] });
+  const tool = tools.find((item) => item.name === "propose_learning_action");
   assert.ok(tool);
   const result = await tool.execute("proposal", {
     action: "start_learning_route",
@@ -363,13 +388,15 @@ test("propose_learning_action creates a pending card without changing study stat
   assert.equal(ctx.pendingLearningAction.value?.status, "pending");
   assert.deepEqual(ctx.project.study, before);
   // The interface renders the card; the tutor only learns what to say about it, never the card ID.
-  assert.match(payload.for_reply, /confirmation card under your reply/);
+  assert.match(payload.for_reply, /program receipt supplies/);
   assert.doesNotMatch(text, /action_id|learning-action:/);
 });
 
 test("learning action proposal rejects fabricated targets", async () => {
   const ctx = context();
-  const tool = createConversationTools(ctx).find((item) => item.name === "propose_learning_action");
+  const tools = createConversationTools(ctx);
+  await tools.find(item => item.name === "interpret_teaching_turn")!.execute("interpret", { parts: [{ kind: "control", text: ctx.currentUserMessage }] });
+  const tool = tools.find((item) => item.name === "propose_learning_action");
   assert.ok(tool);
   await assert.rejects(
     tool.execute("proposal", {
@@ -404,12 +431,16 @@ test("explicit advance can create a skip card without an assessment", async () =
     evidence_refs: [evidence.stable_id],
     completion_check: "能说明返回路径。",
   }];
-  const tool = createConversationTools(ctx).find((item) => item.name === "propose_learning_action");
+  const tools = createConversationTools(ctx);
+  await tools.find(item => item.name === "interpret_teaching_turn")!.execute("interpret", { parts: [{ kind: "control", text: ctx.currentUserMessage }] });
+  const tool = tools.find((item) => item.name === "propose_learning_action");
   assert.ok(tool);
+  await assert.rejects(tool.execute("missing-mode", { action: "advance_learning_step" }), /Specify advance_mode/);
   const result = await tool.execute("proposal", {
     action: "advance_learning_step",
     target_kind: "learning_step",
     target_id: "learning:first",
+    advance_mode: "skip",
   });
   const text = String((result.content[0] as { text: string }).text);
   const payload = JSON.parse(text) as {
@@ -417,14 +448,17 @@ test("explicit advance can create a skip card without an assessment", async () =
     for_reply: string;
     proposal: { skipped_understanding_check: boolean };
   };
-  // The explicit request in this message is applied after the turn, so no card confirmation is needed.
-  assert.equal(payload.confirmation_required, false);
-  assert.match(payload.for_reply, /recorded as skipped \(not mastered\)/);
+  // The model selects a skip, but only the learner confirming this card can apply it.
+  assert.equal(payload.confirmation_required, true);
+  assert.equal(ctx.project.study.current_step, 0);
+  assert.equal(ctx.pendingLearningAction.value?.execution_policy, "confirm");
+  assert.match(payload.for_reply, /program receipt supplies/);
   assert.equal(payload.proposal.skipped_understanding_check, true);
   // The tutor never receives the card ID, so it cannot repeat it to the learner.
   assert.doesNotMatch(text, /action_id|learning-action:/);
   assert.match(ctx.pendingLearningAction.value?.description ?? "", /主动跳过/);
   assert.equal(ctx.pendingLearningAction.value?.skip_understanding_check, true);
+  await assert.rejects(tool.execute("change-mode", { action: "advance_learning_step", advance_mode: "complete" }), /only one card per turn/);
   assert.deepEqual(ctx.project.study.mastered, []);
 
   applyConfirmedLearningAction(ctx.project, ctx.pendingLearningAction.value!);
@@ -434,15 +468,7 @@ test("explicit advance can create a skip card without an assessment", async () =
 });
 
 test("mastered advance keeps the existing mastered progress behavior", async () => {
-  const ctx = context({
-    assessment: {
-      value: {
-        verdict: "mastered",
-        masteredItems: ["入口职责"],
-        evidenceIds: [evidence.stable_id],
-      },
-    },
-  });
+  const ctx = context();
   ctx.project.study.phase = "explaining";
   ctx.project.study.total_steps = 1;
   ctx.project.study.dynamic_learning_plan = [{
@@ -454,24 +480,27 @@ test("mastered advance keeps the existing mastered progress behavior", async () 
     evidence_refs: [evidence.stable_id],
     completion_check: "能说明入口职责。",
   }];
-  ctx.project.study.step_passed = { step_id: 'learning:mastered', snapshot_id: 'snapshot:tools', route_revision: 0, mastered_items: ['入口职责'], evidence_ids: [evidence.stable_id] };
-  const tool = createConversationTools(ctx).find((item) => item.name === "propose_learning_action");
+  recordFixturePass(ctx);
+  const tools = createConversationTools(ctx);
+  await tools.find(item => item.name === "interpret_teaching_turn")!.execute("interpret", { parts: [{ kind: "control", text: ctx.currentUserMessage }] });
+  const tool = tools.find((item) => item.name === "propose_learning_action");
   assert.ok(tool);
   await tool.execute("proposal", {
     action: "advance_learning_step",
     target_kind: "learning_step",
     target_id: "learning:mastered",
+    advance_mode: "complete",
   });
   const action = ctx.pendingLearningAction.value;
   assert.ok(action);
   assert.equal(action.skip_understanding_check, false);
   applyConfirmedLearningAction(ctx.project, action);
-  assert.deepEqual(ctx.project.study.mastered, ["入口职责"]);
+  assert.deepEqual(ctx.project.study.mastered, ["能说明入口职责。"]);
   assert.deepEqual(ctx.project.study.skipped_steps, []);
   assert.equal(ctx.project.study.phase, "completed");
 });
 
-test("a pass from an earlier turn still offers the advance as mastered, and the tutor cannot skip for the learner", async () => {
+test("normal completion needs a current pass and remains distinct from the model selecting a skip", async () => {
   const ctx = context();
   ctx.currentUserMessage = "我没有看到确认卡片";
   ctx.project.study.phase = "explaining";
@@ -485,66 +514,108 @@ test("a pass from an earlier turn still offers the advance as mastered, and the 
     evidence_refs: [evidence.stable_id],
     completion_check: "能说明入口职责。",
   }];
-  const tool = createConversationTools(ctx).find((item) => item.name === "propose_learning_action");
+  const tools = createConversationTools(ctx);
+  await tools.find(item => item.name === "interpret_teaching_turn")!.execute("interpret", { parts: [{ kind: "control", text: ctx.currentUserMessage }] });
+  const tool = tools.find((item) => item.name === "propose_learning_action");
   assert.ok(tool);
-  const advance = { action: "advance_learning_step", target_kind: "learning_step", target_id: "learning:passed" };
-  // Without a pass and without the learner asking to skip, the tutor may not offer a skip on their behalf.
-  await assert.rejects(tool.execute("proposal", advance), /has not been passed and the learner did not ask to skip/);
+  const advance = { action: "advance_learning_step", advance_mode: "complete", target_kind: "learning_step", target_id: "learning:passed" };
+  // Completion cannot borrow skip authority or infer it from the original message.
+  await assert.rejects(tool.execute("proposal", advance), /Normal completion requires verified mastery/);
   assert.ok(!ctx.pendingLearningAction.value, "no card is created");
 
   // The pass recorded in an earlier turn is remembered for this step.
-  ctx.project.study.step_passed = { step_id: "learning:passed", snapshot_id: "snapshot:tools", route_revision: 0, mastered_items: ["入口职责"], evidence_ids: [evidence.stable_id] };
-  await tool.execute("proposal", advance);
+  recordFixturePass(ctx);
+  const refreshed = createConversationTools(ctx);
+  await refreshed.find(item => item.name === "interpret_teaching_turn")!.execute("interpret-prior-pass", { parts: [{ kind: "control", text: ctx.currentUserMessage }] });
+  await refreshed.find(item => item.name === "propose_learning_action")!.execute("proposal", advance);
   // Read through a fresh reference: the assertion above narrowed the earlier one to empty.
   const pending: ConversationToolContext["pendingLearningAction"] = ctx.pendingLearningAction;
   const action = pending.value;
   assert.ok(action);
   assert.equal(action.skip_understanding_check, false);
   applyConfirmedLearningAction(ctx.project, action);
-  assert.deepEqual(ctx.project.study.mastered, ["入口职责"]);
+  assert.deepEqual(ctx.project.study.mastered, ["能说明入口职责。"]);
   assert.equal(ctx.project.study.phase, "completed");
   assert.equal(ctx.project.study.step_passed, null, "the next step is assessed afresh");
 });
 
 test("registered questions accumulate only their own answers and distinguish question correctness from step completion", async () => {
-  const inputs: Array<{ earlierAnswers?: string[] }> = [];
+  const inputs: Array<Parameters<typeof runUnderstandingAssessment>[0]> = [];
   let verdict = 'mastered';
-  const ctx = context({ source_message_id: 'ask', workerServices: { assess: (async (input: { earlierAnswers?: string[] }) => {
-    inputs.push(input); return { completed: true, feedback: 'feedback', verdict, masteredItems: ['target'], misconceptions: verdict === 'misconception' ? ['wrong direction'] : [], acceptedEvidenceIds: [evidence.stable_id], trace: { usage: null, evidence_ids: [] } };
+  const ctx = context({ source_message_id: 'ask', workerServices: { assess: (async (input: Parameters<typeof runUnderstandingAssessment>[0]) => {
+    inputs.push(input); const result = { completed: true, feedback: 'feedback', verdict, masteredItems: ['target'], misconceptions: verdict === 'misconception' ? ['wrong direction'] : [], acceptedEvidenceIds: [evidence.stable_id],
+      targetResults: input.question.target_ids!.map(target_id => ({ target_id, outcome: verdict === 'mastered' ? 'proven' : verdict === 'misconception' ? 'contradicted' : 'not_addressed',
+        reason: verdict === 'misconception' ? 'wrong direction' : 'Controlled current answer.', answer_spans: verdict === 'unclear' ? [] : [input.answer], evidence_ids: verdict === 'unclear' ? [] : [evidence.stable_id] })), trace: { usage: null, evidence_ids: [] } };
+    return { ...result, reviewContext: assessmentTestReviewContext(input, result as never) };
   }) as never } });
   ctx.project.study.dynamic_learning_plan = [{ step_id: 'step', order: 1, title: 'Entry', objective: 'Entry', component_ids: ['component:entry'], evidence_refs: [evidence.stable_id], completion_check: 'Both', learning_targets: ['first', 'second'] }];
   ctx.project.study.phase = 'explaining';
   ctx.exposedEvidence.set(evidence.stable_id, evidence);
-  const tools = createConversationTools(ctx);
-  const register = tools.find(tool => tool.name === 'register_teaching_question')!;
-  const assess = tools.find(tool => tool.name === 'assess_understanding')!;
+  let tools = createConversationTools(ctx);
+  let register = tools.find(tool => tool.name === 'register_teaching_question')!;
+  let assess = tools.find(tool => tool.name === 'assess_understanding')!;
+  function commitPreview() { ctx.project.study = structuredClone(ctx.candidates!.project!.study); }
+  async function answerTurn() {
+    const prior = ctx.project.messages.find(message => message.message_id === ctx.source_message_id);
+    if (prior) prior.content = ctx.currentUserMessage!;
+    else ctx.project.messages.push(createMessage('user', ctx.currentUserMessage!, { message_id: ctx.source_message_id }));
+    ctx.assessment.value = null; tools = createConversationTools(ctx);
+    register = tools.find(tool => tool.name === 'register_teaching_question')!;
+    assess = tools.find(tool => tool.name === 'assess_understanding')!;
+    await tools.find(tool => tool.name === 'interpret_teaching_turn')!.execute('interpret', { parts: [{ kind: 'answer', text: ctx.currentUserMessage }] });
+  }
   await assert.rejects(assess.execute('unregistered', { question_id: 'none' }), /registered current question/);
-  await register.execute('q1', { prompt: 'First?', target_items: ['first'], evidence_ids: [evidence.stable_id] });
-  const q1 = ctx.project.study.teaching_question!;
+  const registration = await register.execute('q1', { prompt: 'First?', target_items: ['first'], evidence_ids: [evidence.stable_id] });
+  const q1 = JSON.parse((registration.content[0] as { text: string }).text).question;
+  assert.equal(ctx.project.study.teaching_question, undefined, 'registration is only a candidate');
+  // Simulate the service's atomic save of a displayed lesson before the next turn.
+  function display(question: typeof q1) {
+    ctx.project.study.teaching_question = question;
+    ctx.project.messages.push(createMessage('user', 'teach', { message_id: question.created_message_id, analysis_snapshot_id: question.snapshot_id }),
+      createMessage('assistant', question.prompt, { teaching_question: structuredClone(question),
+        teaching_context: { snapshot_id: question.snapshot_id, route_revision: question.route_revision, step_id: question.step_id } }));
+  }
+  display(q1);
   await assert.rejects(assess.execute('same-turn', { question_id: q1.question_id }), /wait for the learner answer/);
   ctx.source_message_id = 'answer1'; ctx.currentUserMessage = 'first answer';
+  await answerTurn();
+  const beforeAssessment = structuredClone(ctx.project.study);
   const result = await assess.execute('a1', { question_id: q1.question_id });
+  assert.deepEqual(ctx.project.study, beforeAssessment, 'tools only prepare isolated candidate study');
+  commitPreview();
   const body = JSON.parse((result.content[0] as { text: string }).text);
   assert.equal(body.question_correct, true); assert.equal(body.step_completed, false);
-  assert.deepEqual(body.remaining_targets, ['second']); assert.equal(ctx.project.study.step_passed, null);
+  assert.deepEqual(body.remaining_targets.map((target: { label: string }) => target.label), ['second']); assert.equal(ctx.project.study.step_passed, null);
+  await assert.rejects(assess.execute('resample-same-turn', { question_id: q1.question_id }), /judgment is locked/);
+  assert.equal(inputs.length, 1, 'a prepared assessment cannot be resampled within the same turn');
+  await answerTurn(); // A new API attempt with the same original message may retry safely.
   await assess.execute('retry', { question_id: q1.question_id });
-  assert.equal(q1.answers.length, 1); assert.deepEqual(inputs[1]!.earlierAnswers, []);
+  commitPreview();
+  assert.equal(ctx.project.study.teaching_question!.answer_attempts!.length, 1);
   ctx.currentUserMessage = 'edited first answer';
+  await answerTurn();
   await assess.execute('edited', { question_id: q1.question_id });
-  assert.deepEqual(q1.answers, ['edited first answer']);
+  commitPreview();
+  assert.deepEqual(ctx.project.study.teaching_question!.answer_attempts!.map(attempt => attempt.answer_parts), [['edited first answer']]);
   verdict = 'unclear'; ctx.source_message_id = 'chat'; ctx.currentUserMessage = 'unrelated topic';
-  await assess.execute('chat', { question_id: q1.question_id }); assert.equal(q1.answers.length, 1);
-  await register.execute('q2', { prompt: 'Second?', target_items: ['second'], evidence_ids: [evidence.stable_id] });
-  const q2 = ctx.project.study.teaching_question!;
+  await answerTurn();
+  await assess.execute('chat', { question_id: q1.question_id }); assert.equal(ctx.project.study.teaching_question!.answer_attempts!.length, 1);
+  const second = await register.execute('q2', { prompt: 'Second?', target_items: ['second'], evidence_ids: [evidence.stable_id] });
+  const q2 = JSON.parse((second.content[0] as { text: string }).text).question;
+  display(q2);
   verdict = 'mastered'; ctx.source_message_id = 'answer2'; ctx.currentUserMessage = 'second answer';
+  await answerTurn();
   await assess.execute('a2', { question_id: q2.question_id });
-  assert.deepEqual(inputs.at(-1)!.earlierAnswers, []); assert.ok(ctx.project.study.step_passed);
+  commitPreview();
+  assert.ok(ctx.project.study.step_passed);
   ctx.assessment.value = null; ctx.currentUserMessage = 'ordinary chat';
   assert.ok(ctx.project.study.step_passed, 'unassessed chat retains eligibility');
   verdict = 'misconception'; ctx.source_message_id = 'wrong'; ctx.currentUserMessage = 'wrong';
+  await answerTurn();
   await assess.execute('wrong', { question_id: q2.question_id });
+  commitPreview();
   assert.equal(ctx.project.study.step_passed, null); assert.deepEqual(ctx.project.study.misconceptions, ['wrong direction']);
-  await assert.rejects(tools.find(tool => tool.name === 'propose_learning_action')!.execute('advance', { action: 'advance_learning_step' }), /has not been passed/);
+  await assert.rejects(tools.find(tool => tool.name === 'propose_learning_action')!.execute('advance', { action: 'advance_learning_step', advance_mode: 'complete' }), /Normal completion requires verified mastery/);
 });
 
 test('legacy broad completion checks cannot be certified by registering a narrower question', async () => {
@@ -553,13 +624,14 @@ test('legacy broad completion checks cannot be certified by registering a narrow
   ctx.exposedEvidence.set(evidence.stable_id, evidence);
   const register = createConversationTools(ctx).find(tool => tool.name === 'register_teaching_question')!;
   await assert.rejects(register.execute('narrow', { prompt: 'Which branch?', target_items: ['Explain both branches and their evidence.'], evidence_ids: [evidence.stable_id] }), /legacy step/);
-  await register.execute('full', { prompt: 'Explain both branches and their evidence.', target_items: ['Explain both branches and their evidence.'], evidence_ids: [evidence.stable_id] });
-  assert.equal(ctx.project.study.teaching_question?.prompt, 'Explain both branches and their evidence.');
+  const registered = await register.execute('full', { prompt: 'Explain both branches and their evidence.', target_items: ['Explain both branches and their evidence.'], evidence_ids: [evidence.stable_id] });
+  assert.equal(ctx.project.study.teaching_question, undefined);
+  assert.equal(JSON.parse((registered.content[0] as { text: string }).text).question.prompt, 'Explain both branches and their evidence.');
 });
 
 test('canonicalized legacy question text remains recoverable with its original targets and display provenance', async () => {
   const prompt = 'Explain `entry.ts`?';
-  const ctx = context({ source_message_id: 'ask-canonical', reply: { value: null }, lessonRequired: true });
+  const ctx = context({ source_message_id: 'ask-canonical', reply: { value: null } });
   ctx.store.listSourceFiles = async () => [evidence.path];
   ctx.project.study.phase = 'explaining';
   ctx.project.study.dynamic_learning_plan = [{ step_id: 'legacy', order: 1, title: 'Entry', objective: 'Entry',
@@ -582,4 +654,96 @@ test('canonicalized legacy question text remains recoverable with its original t
   assert.equal(restoreDisplayedTeachingQuestion(ctx.project, ctx.project.messages, 'answer-canonical'), true);
   assert.equal(ctx.project.study.teaching_question!.prompt, question.prompt);
   assert.deepEqual(ctx.project.study.teaching_question!.target_items, [prompt]);
+});
+
+test('a confirmed program lesson cannot grade history, propose actions or defer its question', async () => {
+  const ctx = context({ confirmedLesson: true, currentUserMessage: CONFIRMED_LESSON_TASK, reply: { value: null } });
+  const before = structuredClone(ctx.project.study);
+  const tools = createConversationTools(ctx);
+  const tool = (name: string) => tools.find(tool => tool.name === name)!;
+  await assert.rejects(tool('interpret_teaching_turn').execute('answer', { parts: [{ kind: 'answer', text: CONFIRMED_LESSON_TASK }] }), /program-initiated/);
+  await assert.rejects(tool('assess_understanding').execute('grade', { question_id: 'old-question' }), /no learner answer/);
+  await assert.rejects(tool('propose_learning_action').execute('advance', { action: 'advance_learning_step', advance_mode: 'skip' }), /already confirmed/);
+  await assert.rejects(tool('submit_conversation_reply').execute('defer', { kind: 'answer', text: 'A deferred lesson.', question_policy: 'defer' }), /must submit kind=lesson/);
+  assert.equal(ctx.pendingLearningAction.value, null);
+  assert.equal(ctx.assessment.value, null);
+  assert.deepEqual(ctx.project.study, before);
+  await tool('submit_conversation_reply').execute('failed', { kind: 'unavailable' });
+  assert.equal(ctx.reply!.value!.kind, 'unavailable');
+  assert.match(ctx.reply!.value!.text, /已确认的学习步骤保留/);
+  assert.deepEqual(ctx.candidates!.project!.study, before);
+});
+
+test('a question from a confirmed system source is recoverable only with its executed action provenance', async () => {
+  const ctx = context({ confirmedLesson: true, currentUserMessage: CONFIRMED_LESSON_TASK, reply: { value: null } });
+  ctx.project.study.phase = 'explaining';
+  ctx.project.study.dynamic_learning_plan = [{ step_id: 'step', order: 1, title: 'Entry', objective: 'Entry',
+    component_ids: [], evidence_refs: [evidence.stable_id], completion_check: 'Explain entry.', learning_targets: ['Entry'] }];
+  const action = createLearningActionProposal(ctx.project, ctx.snapshot!, { action: 'start_learning_route', targetKind: 'repository', request: 'Teach entry.' });
+  completeLearningAction(ctx.project, action);
+  action.outcome!.lesson_run_id = 'confirmed-lesson-first-run';
+  const card = createMessage('assistant', 'Confirmed.', { learning_action: action });
+  ctx.source_message_id = confirmedLessonSourceId(action.action_id);
+  const source = createMessage('system', CONFIRMED_LESSON_TASK, { message_id: ctx.source_message_id,
+    original_run_id: action.outcome!.lesson_run_id, analysis_snapshot_id: 'snapshot:tools',
+    lesson_request: { action_id: action.action_id, snapshot_id: 'snapshot:tools', route_revision: 0, step_id: 'step' } });
+  ctx.project.messages = [card, source];
+  ctx.exposedEvidence.set(evidence.stable_id, evidence);
+  await createConversationTools(ctx).find(tool => tool.name === 'submit_conversation_reply')!.execute('lesson', {
+    kind: 'lesson', text: 'Here is the entry.', question: { prompt: 'Explain entry.', target_items: ['Entry'], evidence_ids: [evidence.stable_id] },
+  });
+  const question = ctx.reply!.value!.question!;
+  ctx.project.messages.push(createMessage('assistant', `Here is the entry.\n\n${question.prompt}`, {
+    teaching_question: structuredClone(question), teaching_context: { snapshot_id: 'snapshot:tools', route_revision: 0, step_id: 'step' },
+  }));
+  assert.equal(restoreDisplayedTeachingQuestion(ctx.project, ctx.project.messages, 'next-learner-answer'), true);
+  assert.equal(ctx.project.study.teaching_question!.question_id, question.question_id);
+  for (const tamper of ['action', 'source', 'binding'] as const) {
+    const altered = structuredClone(ctx.project);
+    altered.study.teaching_question = null;
+    if (tamper === 'action') altered.messages[0]!.learning_action!.status = 'pending';
+    if (tamper === 'source') altered.messages[1]!.content = 'An arbitrary system message.';
+    if (tamper === 'binding') altered.messages[1]!.lesson_request!.step_id = 'other-step';
+    assert.equal(restoreDisplayedTeachingQuestion(altered, altered.messages, 'next-learner-answer'), false, tamper);
+    assert.equal(altered.study.teaching_question, null, tamper);
+  }
+});
+
+
+test('assessment failures and irrelevant judgments lock the same turn before the worker runs', async () => {
+  for (const outcome of ['failed', 'irrelevant', 'thrown'] as const) {
+    let calls = 0;
+    const ctx = context({ source_message_id: 'current', currentUserMessage: 'Current answer.', reply: { value: null },
+      workerServices: { assess: (async () => {
+        calls++;
+        if (outcome === 'thrown') throw new Error('Controlled worker failure.');
+        return { completed: outcome === 'irrelevant', answerRelevant: outcome === 'irrelevant' ? false : undefined,
+          feedback: outcome === 'irrelevant' ? 'This is a follow-up.' : null, verdict: outcome === 'irrelevant' ? 'unclear' : null,
+          targetResults: [], reviewContext: null, trace: { usage: null, evidence_ids: [] } };
+      }) as never } });
+    ctx.project.study.phase = 'explaining';
+    ctx.project.study.dynamic_learning_plan = [{ step_id: 'step', order: 1, title: 'Entry', objective: 'Entry',
+      component_ids: [], evidence_refs: [evidence.stable_id], completion_check: 'Explain entry.', learning_targets: ['Entry'] }];
+    recordFixturePass(ctx);
+    const savedQuestion = ctx.project.messages.find(message => message.teaching_question)!.teaching_question!;
+    ctx.project.study.teaching_question = structuredClone(savedQuestion);
+    ctx.project.messages.push(createMessage('user', ctx.currentUserMessage, { message_id: 'current' }));
+    const before = structuredClone(ctx.project.study);
+    const tools = createConversationTools(ctx);
+    const tool = (name: string) => tools.find(tool => tool.name === name)!;
+    await tool('interpret_teaching_turn').execute('partition', { parts: [{ kind: 'answer', text: ctx.currentUserMessage }] });
+    await assert.rejects(tool('assess_understanding').execute('first', { question_id: savedQuestion.question_id }));
+    await assert.rejects(tool('assess_understanding').execute('repeat', { question_id: savedQuestion.question_id }), /attempt.*locked/);
+    await assert.rejects(tool('interpret_teaching_turn').execute('repartition', { parts: [{ kind: 'explain', text: ctx.currentUserMessage }] }), /cannot change/);
+    assert.equal(calls, 1, outcome + ' may not launch another worker');
+    assert.deepEqual(ctx.project.study, before);
+    if (outcome === 'irrelevant') {
+      await tool('submit_conversation_reply').execute('follow-up', { kind: 'answer', text: 'Here is the requested follow-up.' });
+      assert.equal(ctx.reply!.value!.kind, 'answer');
+    } else {
+      await assert.rejects(tool('submit_conversation_reply').execute('bypass', { kind: 'answer', text: 'The answer is correct.' }), /Assess the answer/);
+      await tool('submit_conversation_reply').execute('unavailable', { kind: 'unavailable' });
+      assert.equal(ctx.reply!.value!.kind, 'unavailable');
+    }
+  }
 });

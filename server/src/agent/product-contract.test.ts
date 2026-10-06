@@ -25,6 +25,41 @@ function reply(text: string) {
   return fauxAssistantMessage(fauxToolCall('submit_conversation_reply', { kind: 'answer', text }));
 }
 
+test('successful evidence repair keeps rejected drafts out of the trusted next turn', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-repaired-history-'));
+  try {
+    const { context, store } = await fixture(root);
+    const sessions = new PiSessionStore(join(root, 'sessions'));
+    const faux = fauxProvider({ provider: 'repaired-history' });
+    const models = createModels(); models.setProvider(faux.provider);
+    const originalRun = PiConversationRuntime.prototype.run;
+    t.mock.method(PiConversationRuntime.prototype, 'run', function(this: PiConversationRuntime, options: PiAgentRunOptions,
+      finalize: (result: PiRunResult) => Promise<PiRunFinalization<unknown>>) {
+      return originalRun.call(this, { ...options, modelRuntime: { models, model: faux.getModel() } }, finalize);
+    });
+    t.mock.method(MemoryMaintenance.prototype, 'schedule', () => {});
+    t.mock.method(FeedbackAnalysisWorker.prototype, 'schedule', () => {});
+    const config = { root, dataDir: root, nodeEnv: 'test', sessionSecret: 'test-only-secret',
+      freeProviderBaseUrl: 'https://api.deepseek.com', freeProviderModel: 'deepseek-chat',
+      freeProviderApiKey: 'never-used', keyEncryptionSecret: 'test-only-secret' } as ServerConfig;
+    const service = new ConversationService(config, store, sessions, new PiMemoryStore(join(root, 'memory')));
+    const base = { owner: { owner_id: context.project.owner_id, kind: 'guest' as const }, projectId: context.project.project_id };
+    faux.setResponses([
+      reply('REJECTED-DRAFT claims `missing.ts` is the entry.'),
+      input => { assert.match(JSON.stringify(input.messages), /Repair details/); return reply('尚无证据确认入口位置。'); },
+      input => {
+        assert.doesNotMatch(JSON.stringify(input.messages), /REJECTED-DRAFT|missing\.ts/);
+        assert.match(JSON.stringify(input.messages), /尚无证据确认入口位置/);
+        return reply('继续查找入口。');
+      },
+    ]);
+    const result = (await service.run({ ...base, content: '入口在哪里？' }))!;
+    assert.equal(result.assistant_message.context_eligible, true);
+    await service.run({ ...base, content: '继续' });
+    assert.equal(faux.state.callCount, 3);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('chat history admission preserves the last answer and rejects new work before model calls', async t => {
   const root = await mkdtemp(join(tmpdir(), 'wtr-chat-capacity-'));
   try {
@@ -400,6 +435,7 @@ test("online tool catalog contains no shell database or arbitrary file capabilit
       "get_learning_context",
       "get_project_overview",
       "get_static_file_facts",
+      "interpret_teaching_turn",
       "list_value_points",
       "propose_learning_action",
       "query_code_evidence",
@@ -496,8 +532,7 @@ test("citation existence accepts shared names, resolves directory context and ig
     const grouped = await validate("`src/task_queue/` 下有 `common.ts:1`，入口另见 `entry.ts:2`。");
     assert.deepEqual(grouped.errors, []);
     assert.match(grouped.text, /`src\/task_queue\/common.ts:1`/);
-    assert.equal(grouped.evidence[0]?.path, "src/task_queue/common.ts"); // Not in the graph.
-    assert.equal(grouped.evidence[0]?.start_line, 1);
+    assert.equal(grouped.evidence.find(row => row.path === "src/task_queue/common.ts")?.start_line, 1); // Not in the graph; canonical order is independent of prose order.
     assert.match(grouped.text, /`src\/entry.ts:2`/);
     const notInherited = await validate("`src/task_queue/` 下的文件。\n\n再看 `common.ts:1`。");
     assert.deepEqual(notInherited.errors, []);
@@ -537,14 +572,14 @@ test('lazy citation validation skips ordinary text and preserves custom paths an
     const oldEmpty = await validateAnswerCitations({ text: '普通聊天。', snapshot: null,
       snapshotId: null, getSnapshot: async () => { emptyReads++; return null; }, exposed,
       projectId: context.project.project_id, store });
-    assert.deepEqual(oldEmpty, { text: '普通聊天。', unresolved: [], evidence: [], errors: [] });
+    assert.deepEqual(oldEmpty, { text: '普通聊天。', unresolved: [], evidence: [], errors: [], coverage: { parsed: 0, resolved: 0, references: [] } });
     assert.equal(emptyReads, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("conversation service preserves model replies and appends visible citation corrections for subsequent turns", async (t) => {
+test("conversation service displays unverified replies without reinserting them into trusted subsequent turns", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-visible-history-"));
   try {
     const { context, store } = await fixture(root);
@@ -588,19 +623,10 @@ test("conversation service preserves model replies and appends visible citation 
     let visible = "";
     const originalAnswer = "这个文件可能是 `missing.ts`，尚未核实。";
     faux.setResponses([
-      reply(originalAnswer),
+      reply(originalAnswer), reply(originalAnswer), reply(originalAnswer),
       (input) => {
-        const original = [...input.messages].reverse().find(message => message.role === 'assistant');
-        assert.equal(original?.role, "assistant");
-        assert.equal(original?.role === "assistant" ? original.content.find(b => b.type === 'toolCall')?.arguments.text : '', originalAnswer);
-        assert.notEqual(originalAnswer, visible);
+        assert.equal(JSON.stringify(input.messages).includes(originalAnswer), false, 'Unverified repository claims must not enter trusted session history');
         assert.match(visible, /引用未核实/);
-        const correction = input.messages.at(-2);
-        assert.equal(correction?.role, "user");
-        assert.ok(correction && Array.isArray(correction.content));
-        const correctionText = correction.content.filter(b => b.type === "text").map(b => b.text).join("");
-        assert.match(correctionText, /Application display record \(context only, not a new user request\)/);
-        assert.ok(correctionText.endsWith(visible));
         const current = input.messages.at(-1);
         assert.equal(current?.role, "user");
         assert.ok(current && Array.isArray(current.content));
@@ -612,7 +638,7 @@ test("conversation service preserves model replies and appends visible citation 
       (input) => {
         assert.equal(input.messages.at(-1)?.role, "user");
         const answers = input.messages.filter(message => message.role === "assistant");
-        assert.equal(answers.length, 2);
+        assert.equal(answers.length, 1);
         return reply("你好！");
       },
     ]);
@@ -634,14 +660,9 @@ test("conversation service preserves model replies and appends visible citation 
       skillId: "primary-conversational-supervisor", skillVersion: "test" };
     const history = await sessions.snapshot(identity);
     assert.deepEqual(history.messages.map(message => message.role), [
-      'user', 'assistant', 'toolResult', 'user', 'user', 'assistant', 'toolResult', 'user', 'assistant', 'toolResult',
+      'user', 'assistant', 'toolResult', 'user', 'assistant', 'toolResult',
     ]);
-    const original = history.messages[1];
-    assert.equal(original?.role === "assistant" ? original.content.find(b => b.type === 'toolCall')?.arguments.text : '', originalAnswer);
-    const correction = history.messages[3];
-    assert.ok(correction?.role === "user");
-    assert.ok(Array.isArray(correction.content));
-    assert.ok(correction.content.filter(b => b.type === "text").map(b => b.text).join("").endsWith(visible));
+    assert.equal(JSON.stringify(history.messages).includes(originalAnswer), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

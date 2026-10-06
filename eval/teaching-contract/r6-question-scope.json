@@ -1,0 +1,67 @@
+{
+  "fixture_version": 1,
+  "verification_kind": "frozen_real_first_failures_not_rerun",
+  "source_report": "teaching-contract-rereview-2026-10-04-r3",
+  "source_evidence": [
+    "08",
+    "09",
+    "10",
+    "11",
+    "12"
+  ],
+  "repository": "developit/mitt",
+  "commit_sha": "6b41670516ed8e8b738612f60491995470aa63b3",
+  "question": {
+    "prompt": "这道题只看这一串动作：依次调用 on('foo', a)、on('foo', b)（a、b 是两个不同的函数），然后调用 off('foo')，即不传第二个参数。请按三步作答：每一步执行后，all 这个 Map 上 'foo' 键对应的值分别是什么（若是一组处理器，请按顺序写出来）；并说明这一步是改动了键上已有的那个数组，还是在键上写入了新的值。",
+    "target_items": [
+      "能描述 on 在处理器数组已存在与不存在时的两种分支处理",
+      "能解释 off('foo', handler) 只移除第一个匹配项，而 off('foo') 会把该类型置为空数组"
+    ],
+    "evidence_ranges": [
+      {
+        "path": "src/index.ts",
+        "start_line": 66,
+        "end_line": 73,
+        "label": "mitt.on (method)"
+      },
+      {
+        "path": "src/index.ts",
+        "start_line": 82,
+        "end_line": 91,
+        "label": "mitt.off (method)"
+      },
+      {
+        "path": "src/index.ts",
+        "start_line": 60,
+        "end_line": 95,
+        "label": "src/index.ts:60-95"
+      },
+      {
+        "path": "test/index_test.ts",
+        "start_line": 100,
+        "end_line": 159,
+        "label": "test/index_test.ts:100-159"
+      }
+    ]
+  },
+  "replacement_request": "请换一道更简单的题，只考先后执行 on(\"foo\", a)、on(\"foo\", b)，然后不传 handler 调用 off(\"foo\") 时，Map 里发生什么。先不考其他部分，不要公布答案。",
+  "replacement_visible_commitment": "已按你的要求换成更小的一道题：这一轮只问 `on('foo', a)`、`on('foo', b)`、`off('foo')` 这一串动作，其他部分（工厂返回值、大小写、`off` 传 handler 的情形）这轮都不考。\n\n为了让你能自己查而不是靠我讲，只需看这两段源码：\n\n- `src/index.ts:66-73`：`on` 先 `all.get(type)`，然后按取到与否走两个分支。\n- `src/index.ts:82-91`：`off` 同样先 `all.get(type)`，再按是否传入 `handler` 走两条不同的路；这题走的是不传 `handler` 的那条。\n\n想对照测试的话，`test/index_test.ts:136-145` 覆盖了「同一处理器注册两次」，`test/index_test.ts:147-155` 覆盖了不传 handler 的 `off('foo')`；注意后者里除了 `foo` 还有一个 `bar` 也在被观察。\n\n作答方式：请按三步写，每一步之后说明 `all` 上 `'foo'` 这个键此刻对应的值是什么（如果是一组处理器，按顺序列出），并说明这一步是改动了键上已有的那个数组本身，还是在键上写入了另一个值。\n\n这道题只看这一串动作：依次调用 on('foo', a)、on('foo', b)（a、b 是两个不同的函数），然后调用 off('foo')，即不传第二个参数。请按三步作答：每一步执行后，all 这个 Map 上 'foo' 键对应的值分别是什么（若是一组处理器，请按顺序写出来）；并说明这一步是改动了键上已有的那个数组，还是在键上写入了新的值。",
+  "first_partial_answer": "我先答 on 部分：第一次 foo 没有数组，on 会把 [a] 放进 Map；第二次取得已有数组，把 b push 到末尾，所以现在是 [a, b]。off 部分我还没想好。另外请解释为什么空数组也能进入 if (handlers) 分支，先不要进入下一步。",
+  "first_partial_feedback": "你答对了 on 这一段：foo 上还没有数组时，on 会写入一个新数组 [a]；第二次因为数组已存在，就把 b 追加到末尾，得到 [a, b]——并且你区分开了「这一步是写新值」还是「改动已有数组」，这正是本轮新证明的部分。不过这道题要看完整三步，第三步 off('foo')（不传第二个参数）执行后 'foo' 对应的值是什么、这一步是改动已有数组还是写入新值，你还没有作答，这是本问题目前真正缺的一环。请先补上 off('foo') 执行后的结果，并说明它与 off('foo', handler) 在行为上的区别（后者对匹配项的处理和前者不同）。",
+  "correct_complement": "补上 off 部分：不传 handler 时，会把 foo 键对应的值换成一个新的空数组，所以 all.get(\"foo\") 是 []，all.has(\"foo\") 仍然为 true，并没有删除键。先留在这一步。",
+  "wrong_complement_feedback": "这一步你把 off('foo') 不传第二个参数时的行为说对了：它把 'foo' 对应的值换成一个新的空数组，所以 get('foo') 是 []，而 has('foo') 仍为 true，键并没有被删掉——属于在键上写入新值，而不是改动键上原有的那个数组。这一点完全正确。on 的两个分支（没有数组时新建、已有数组时 push）你在上一轮已经答对并记下了，这里不用再重复。不过这道题的目标还包括对比的另一半：当 off('foo', a) 真的传入了 handler 时，只会移除数组里第一个匹配的处理器，数组不会被清空。你这次只讲了不传 handler 的情况，没有交代传入 handler 后数组会变成什么。请补一句：如果改为 off('foo', a)，foo 对应的数组会剩什么？",
+  "correct_full_complement_and_new_question_request": "补充两种 off 的区别：在 [a, b] 上调用 off(\"foo\", a)，原数组中只移除第一个与 a 相同的函数，剩 [b]；如果原来同一个 a 注册了两次，一次只删第一份。找不到则不删除。off(\"foo\") 则在这个键上换成新的空数组，键仍保留。请接着为本步剩余目标出一道题，先不要推进。",
+  "first_rejected_assessment": "这轮你补上了 off 的两种用法，讲得很准：off('foo', handler) 只删掉数组中第一个匹配的函数（同一个函数注册两次也只删一份，找不到就不动），off('foo') 则把这个键换成一个新的空数组、键本身仍然保留——这正是本题之前还缺的一块。on 的分支（已有数组就往后追加，没有就新建 [handler]）在前面的作答里已经讲清楚，这里不必再重复。合起来看，这道题的两个要点都已覆盖，本题可以算完成了。本步还有另外的目标尚未涉及——默认导出的结构、事件名大小写不做归一化、以及 all 这个 Map 的共享与外部注入——那些属于这道题之外、本步后续要单独推进的内容。",
+  "next_question": "这道题分三小问，都围绕入口与状态容器。(1) mitt 的默认导出是什么？调用它之后得到的对象上有哪些成员（请把成员名列出来）？(2) 依次调用 on('FOO', fn) 和 on('Bar', fn) 之后，Map 上会出现哪些键、有没有额外的键被创建出来？如果把这两次换成连续两次 on('foo', fn)（fn 是同一个函数），Map 上 'foo' 的值会变成什么？(3) 调用工厂时可以传入什么？传进去的那个东西与返回对象上的哪个成员是同一个对象？测试里用什么断言确认返回对象上带着它？",
+  "correct_recovery_answer": "回答这三问：(1) 默认导出是 mitt 工厂函数，调用后得到有 all、on、off、emit 的对象。(2) 会有 FOO 和 Bar 两个键，不会额外创建 foo 或 bar；如果改成两次 on(\"foo\", fn)，值就是 [fn, fn]，没有去重。(3) 可以传入事件到处理器数组的 Map，它与返回对象的 all 是同一个对象；不传才新建 Map。测试用 expect(inst).to.have.property(\"all\").that.is.a(\"map\") 检查 all 属性存在并且是 Map。刚才 off 反馈没被采纳，请另外为这个未记录的目标再出一道题，先不要推进。",
+  "second_rejected_assessment": "这三问都答对了。第(1)问正确说出默认导出是 mitt 工厂函数，调用后返回带 all、on、off、emit 四个成员的对象。第(2)问正确指出大小写不归一化——只出现 FOO、Bar 两个键，没有额外的 foo、bar；并说明同一处理器可被重复注册，两次 on('foo', fn) 后值是 [fn, fn]，不做去重。第(3)问正确说明调用工厂时可传入一个 Map，它与返回对象上的 all 是同一个对象，不传才新建，并点出测试用断言确认 all 存在且是 map。就本问题而言，三项目标已全部覆盖，可以算完成。需要区分的是：本步骤里 off 相关的目标（off('foo', handler) 只移除第一个匹配项、off('foo') 置为空数组）仍未被覆盖，那是本问题之外的后续内容，与本回答的质量无关。",
+  "expectations": {
+    "narrow_question_complete_after_complement": true,
+    "entire_off_target_proven_after_complement": false,
+    "cumulative_on_proof_retained": true,
+    "off_handler_branch_is_separate_future_learning": true,
+    "first_failure_preserved": true,
+    "replacement_and_assessment_evidence_remain_independent": true,
+    "two_registration_question_is_not_refuted_by_three_registration_test": true
+  }
+}

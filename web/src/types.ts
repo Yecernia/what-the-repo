@@ -31,8 +31,9 @@ export type LearningTargetKind = 'repository' | 'value_point' | 'component' | 'l
 export type LearningActionStatus = 'pending' | 'confirmed' | 'declined' | 'executed' | 'expired' | 'failed';
 
 export interface LearningActionCard {
+  source_message_id?: string;
   execution_policy?: 'confirm' | 'after_turn';
-  outcome?: { route_revision: number; next_step_id: string | null; next_step_title: string | null };
+  outcome?: { route_revision: number; next_step_id: string | null; next_step_title: string | null; lesson_run_id?: string };
   route_revision?: number;
   expected_step_id?: string | null;
   run_expires_at?: string | null;
@@ -59,12 +60,7 @@ export interface LearningActionCard {
   error: string | null;
 }
 
-export interface LearningIntent {
-  kind: 'skip_current_step' | 'start_current_step';
-  route_revision: number;
-  step_id: string;
-  snapshot_id: string;
-}
+export interface LessonRequestOptions { actionId: string; runId?: string }
 
 export interface ConversationSelection {
   snapshot_id: string;
@@ -123,6 +119,14 @@ export interface MessageThinkingSummaryEvent {
 }
 
 export interface Message {
+  context_eligible?: boolean;
+  lesson_request?: { action_id: string; snapshot_id: string; route_revision: number; step_id: string };
+  original_run_id?: string;
+  learning_action_result?: { action_id: string; route_revision: number; step_id: string | null };
+  teaching_question?: { question_id: string; snapshot_id: string; route_revision: number; step_id: string };
+  content_parts?: { body: string; action_receipt: string | null; evidence_blocks?: Array<{
+    kind: 'assessment' | 'explanation' | 'question'; text: string; evidence: EvidenceRef[]; review?: Message['evidence_review'];
+  }> };
   teaching_context?: { snapshot_id: string; route_revision: number; step_id: string };
   evidence_review?: {
     status: 'reviewed' | 'not_applicable' | 'unverified';
@@ -186,6 +190,7 @@ export interface AnalysisProgressEvent {
 }
 
 export interface StudyState {
+  snapshot_id?: string | null;
   route_revision?: number;
   phase: TeachingPhase;
   selected_value_point: string | null;

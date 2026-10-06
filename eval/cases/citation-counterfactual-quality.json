@@ -1,0 +1,441 @@
+{
+  "id": "citation-counterfactual-quality-v1",
+  "kind": "quality-rubric",
+  "semantic_run_status": "not_run",
+  "purpose": "Evaluator-only minimal-change counterfactual controls and retained full failure. No expected language-rule answer enters production prompts. Deterministic/faux tests do not prove real model semantics.",
+  "protocol": {
+    "fresh_history": true,
+    "score": "Score every material assertion in the complete first answer; keep any first failure separately from subsequent correction. Review exact original text and same evidence. A false core motivation fails despite correct later phases and caveats.",
+    "modes": [
+      "short-introduction",
+      "formal-teaching",
+      "directed-question"
+    ],
+    "required_analysis": [
+      "exact claim",
+      "changed operation",
+      "retained operations",
+      "range fixed time",
+      "element read time",
+      "mutation side effects",
+      "support conclusion"
+    ]
+  },
+  "cases": [
+    {
+      "id": "push-live",
+      "source": "const log = [];\nconst handlers = [\n  () => { log.push(\"A\"); handlers.push(() => log.push(\"C\")); },\n  () => log.push(\"B\"),\n];\nhandlers.map(fn => fn());",
+      "question": "Give log and compare removing only slice() with retaining it. Identify the unchanged operator, access range, read timing and mutation effects.",
+      "expected_log": [
+        "A",
+        "B"
+      ],
+      "expected_boundaries": [
+        "map determines the initial index range before callbacks; this does not copy the element values.",
+        "Each existing element is read when its index is visited; a prior mutation may affect that read.",
+        "A copy isolates subsequent source-array membership changes for this traversal, subject to callback completion."
+      ],
+      "fixed_reviews": [
+        {
+          "text": "Removing only slice() while retaining map makes this newly appended callback run in the same traversal.",
+          "supported": false
+        }
+      ]
+    },
+    {
+      "id": "push-copied",
+      "source": "const log = [];\nconst handlers = [\n  () => { log.push(\"A\"); handlers.push(() => log.push(\"C\")); },\n  () => log.push(\"B\"),\n];\nhandlers.slice().map(fn => fn());",
+      "question": "Give log and compare removing only slice() with retaining it. Identify the unchanged operator, access range, read timing and mutation effects.",
+      "expected_log": [
+        "A",
+        "B"
+      ],
+      "expected_boundaries": [
+        "map determines the initial index range before callbacks; this does not copy the element values.",
+        "Each existing element is read when its index is visited; a prior mutation may affect that read.",
+        "A copy isolates subsequent source-array membership changes for this traversal, subject to callback completion."
+      ],
+      "fixed_reviews": [
+        {
+          "text": "Removing only slice() while retaining map does not visit this callback appended beyond the initial length.",
+          "supported": true
+        },
+        {
+          "text": "Removing only slice() while retaining map makes this newly appended callback run in the same traversal.",
+          "supported": false
+        }
+      ]
+    },
+    {
+      "id": "splice-live",
+      "source": "const log = [];\nconst handlers = [\n  () => { log.push(\"A\"); handlers.splice(0, 1); },\n  () => log.push(\"B\"),\n];\nhandlers.map(fn => fn());",
+      "question": "Give log and compare removing only slice() with retaining it. Identify the unchanged operator, access range, read timing and mutation effects.",
+      "expected_log": [
+        "A"
+      ],
+      "expected_boundaries": [
+        "map determines the initial index range before callbacks; this does not copy the element values.",
+        "Each existing element is read when its index is visited; a prior mutation may affect that read.",
+        "A copy isolates subsequent source-array membership changes for this traversal, subject to callback completion."
+      ],
+      "fixed_reviews": [
+        {
+          "text": "Because map fixes its initial range, removing slice() prevents any source mutation from affecting which callbacks run.",
+          "supported": false
+        }
+      ]
+    },
+    {
+      "id": "splice-copied",
+      "source": "const log = [];\nconst handlers = [\n  () => { log.push(\"A\"); handlers.splice(0, 1); },\n  () => log.push(\"B\"),\n];\nhandlers.slice().map(fn => fn());",
+      "question": "Give log and compare removing only slice() with retaining it. Identify the unchanged operator, access range, read timing and mutation effects.",
+      "expected_log": [
+        "A",
+        "B"
+      ],
+      "expected_boundaries": [
+        "map determines the initial index range before callbacks; this does not copy the element values.",
+        "Each existing element is read when its index is visited; a prior mutation may affect that read.",
+        "A copy isolates subsequent source-array membership changes for this traversal, subject to callback completion."
+      ],
+      "fixed_reviews": [
+        {
+          "text": "Removing only slice() while retaining map allows this splice to shift B into the already-visited index, skipping B.",
+          "supported": true
+        },
+        {
+          "text": "Because map fixes its initial range, removing slice() prevents any source mutation from affecting which callbacks run.",
+          "supported": false
+        }
+      ]
+    },
+    {
+      "id": "replace-live",
+      "source": "const log = [];\nconst handlers = [\n  () => { log.push(\"A\"); handlers[1] = () => log.push(\"C\"); },\n  () => log.push(\"B\"),\n];\nhandlers.map(fn => fn());",
+      "question": "Give log and compare removing only slice() with retaining it. Identify the unchanged operator, access range, read timing and mutation effects.",
+      "expected_log": [
+        "A",
+        "C"
+      ],
+      "expected_boundaries": [
+        "map determines the initial index range before callbacks; this does not copy the element values.",
+        "Each existing element is read when its index is visited; a prior mutation may affect that read.",
+        "A copy isolates subsequent source-array membership changes for this traversal, subject to callback completion."
+      ],
+      "fixed_reviews": [
+        {
+          "text": "Because map fixes its initial range, removing slice() prevents replacements inside that range from changing the callback read.",
+          "supported": false
+        }
+      ]
+    },
+    {
+      "id": "replace-copied",
+      "source": "const log = [];\nconst handlers = [\n  () => { log.push(\"A\"); handlers[1] = () => log.push(\"C\"); },\n  () => log.push(\"B\"),\n];\nhandlers.slice().map(fn => fn());",
+      "question": "Give log and compare removing only slice() with retaining it. Identify the unchanged operator, access range, read timing and mutation effects.",
+      "expected_log": [
+        "A",
+        "B"
+      ],
+      "expected_boundaries": [
+        "map determines the initial index range before callbacks; this does not copy the element values.",
+        "Each existing element is read when its index is visited; a prior mutation may affect that read.",
+        "A copy isolates subsequent source-array membership changes for this traversal, subject to callback completion."
+      ],
+      "fixed_reviews": [
+        {
+          "text": "Removing only slice() while retaining map allows replacement at index 1 to change the callback read at that index.",
+          "supported": true
+        },
+        {
+          "text": "Because map fixes its initial range, removing slice() prevents replacements inside that range from changing the callback read.",
+          "supported": false
+        }
+      ]
+    }
+  ],
+  "retained_observations": [
+    {
+      "id": "r5-q04-first-full-emit-answer",
+      "input": "解释 emit 中复制数组的目的、能保证什么。",
+      "observed_first_output": "mitt 的 `emit` 里有两处 `slice()`，都在 `src/index.ts:103-121` 这个方法体内：一处属于类型匹配分支（`src/index.ts:107`），一处属于通配符 `'*'` 分支（`src/index.ts:116`）。\n\n**复制的是什么**\n\n`handlers = all!.get(type)`（`src/index.ts:104`）取到的是 Map 里存的那个数组**本身**；如果该事件类型还没有处理器，得到的就是 `undefined`，紧接着的 `if (handlers)`（`src/index.ts:105`）为假，这个分支整体跳过——这一点对后面的 `'*'` 分支同样成立（`src/index.ts:113-114`）。`slice()` 生成一个长度相同的新数组，元素仍是同一批函数引用，所以这是浅拷贝：复制的是\"本轮要调用哪些处理器\"这份名单，而不是处理器本身。\n\n**为什么需要复制**\n\n那张数组是被共享、会被就地修改的：`on` 直接往它里面 `push`（`src/index.ts:66-73`），`off` 带处理器时直接对它 `splice`（`src/index.ts:86`），不带处理器时把该键整个换成新的空数组（`src/index.ts:88`）。而处理器正是在遍历过程中被调用的（`src/index.ts:108-110`、`117-119`），它完全可以在自己执行时再 `on` / `off`。如果直接遍历 Map 里那个活数组：\n\n- 派发中 `push` 进来的新处理器会被本轮\"顺带\"调用；\n- 派发中 `splice` 掉前面的元素会让下标前移，导致本轮漏掉一个还没执行的处理器。\n\n先 `slice()` 再 `.map(...)`（`src/index.ts:107-110` 与 `116-119`）就把这两种影响挡在快照之外。\n\n**它具体保证了什么（限定于\"该分支的那一次遍历\"）**\n\n- 该分支遍历的是进入该分支那一刻该数组内容的快照：本轮不会调用派发期间新注册的处理器。\n- 在派发期间被 `off` 掉的处理器，只要它已经在快照里，本轮仍然会被调用——移除不会取消已经在名单里的调用。\n- `off(type)` 把该键置成新数组（`src/index.ts:88`），也不影响本轮，因为快照是另一个数组对象，里面仍握着原来的函数引用。\n\n**它不保证什么（边界）**\n\n- 快照只在**单个分支内**有效。类型匹配分支用的是第 104 行读取、第 107 行切片的数组；通配符分支是第 113 行重新 `get('*')`、第 116 行再切一次。所以类型匹配的处理器执行期间对 `'*'` 的增删，通配符分支**会**看到；反之，对同类型数组的增删与 `'*'` 分支无关。快照不跨分支，也不跨 emit 调用保留。\n- 这是浅拷贝：元素的函数引用是共享的，处理器内部状态、闭包都不因此被隔离。\n- 不隔离异常。`src/index.ts:108-110` 和 `117-119` 的处理器调用都没有 `try` / `catch`，所以某个处理器抛错会中断本轮剩余处理器的执行，后面的通配符分支也不会进入。\n- 不阻止重入：处理器内再次 `emit` 同一类型，那是一次新的读取和新的切片。\n- 方法注释（`src/index.ts:93-102`）写明 `'*'` 处理器在类型匹配处理器之后调用，并且不支持手动触发 `'*'`。结合两个分支各自读取的行为可以推出一个边界：如果你真的去 `emit('*')`，同一批通配符处理器会在两个分支各被调用一次，第二次多收到事件类型这个首参。\n\n一句话总结：`slice()` 让\"本轮调用哪些处理器\"在遍历开始时就被固定下来，避免处理器在派发中增删订阅而改变本轮的遍历；但它只固定名单和当前分支内的遍历，不固定另一个分支的名单，也不改变处理器的异常与重入行为。",
+      "observed_original_review": {
+        "supported": true,
+        "summary": "答案的核心断言均被所供证据直接支持：emit 完整方法体（src/index.ts:103-121）显示两处 .slice()（107、116）、两个分支各自读取（104、113）、无 try/catch 的 handler 调用（108-110、117-119）；on 的 push（66-73）、off 的 splice（86）与置空数组（88）显示共享数组被就地修改；注释（93-102）证实 '*' 后调用且不支持手动触发。答案对快照范围作了按分支的限定并明确跨分支可见性，未出现越界或过宽断言。未发现需反驳或证据不足之处。",
+        "issues": []
+      },
+      "observed_repeat_review": {
+        "supported": true,
+        "summary": "答案的仓库事实性断言均有对应证据：emit（103-121）内两处 slice（107 类型分支、116 通配符分支），get 取到 Map 内数组本身（104）、无处理器时为 undefined 且跳过分支（105、113-114），on 的 push（66-73），off 的 splice（86）与置空新数组（88），处理器在遍历中被直接调用（108-110、117-119），以及注释关于 '*' 在类型匹配之后、不支持手动触发的表述（93-102）。浅拷贝、快照仅限单分支、不隔离异常、不阻止重入等推断均与所给代码一致；对 emit('*') 的推断亦由两分支各自 get+slice 推得。",
+        "issues": []
+      },
+      "expected_review": {
+        "supported": false,
+        "required_issue_span": "派发中 `push` 进来的新处理器会被本轮\"顺带\"调用；",
+        "reason": "Removing only slice() retains map. The appended element lies outside its initial range. Correct later phase and exception prose does not repair this central motivation."
+      },
+      "evidence": [
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt (function)",
+          "end_line": 73,
+          "stable_id": "fact:symbol:c88c55815afc9597e68ef570ce552ba1",
+          "start_line": 66,
+          "excerpt": [
+            "\t\ton<Key extends keyof Events>(type: Key, handler: GenericEventHandler) {",
+            "\t\t\tconst handlers: Array<GenericEventHandler> | undefined = all!.get(type);",
+            "\t\t\tif (handlers) {",
+            "\t\t\t\thandlers.push(handler);",
+            "\t\t\t} else {",
+            "\t\t\t\tall!.set(type, [handler] as EventHandlerList<Events[keyof Events]>);",
+            "\t\t\t}",
+            "\t\t},"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt (function)",
+          "end_line": 86,
+          "stable_id": "fact:symbol:c88c55815afc9597e68ef570ce552ba1:lines:86:86:1",
+          "start_line": 86,
+          "excerpt": [
+            "\t\t\t\t\thandlers.splice(handlers.indexOf(handler) >>> 0, 1);"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt (function)",
+          "end_line": 88,
+          "stable_id": "fact:symbol:c88c55815afc9597e68ef570ce552ba1:lines:88:88:1",
+          "start_line": 88,
+          "excerpt": [
+            "\t\t\t\t\tall!.set(type, []);"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt (function)",
+          "end_line": 102,
+          "stable_id": "fact:symbol:c88c55815afc9597e68ef570ce552ba1:lines:93:102:1",
+          "start_line": 93,
+          "excerpt": [
+            "\t\t/**",
+            "\t\t * Invoke all handlers for the given type.",
+            "\t\t * If present, `'*'` handlers are invoked after type-matched handlers.",
+            "\t\t *",
+            "\t\t * Note: Manually firing '*' handlers is not supported.",
+            "\t\t *",
+            "\t\t * @param {string|symbol} type The event type to invoke",
+            "\t\t * @param {Any} [evt] Any value (object is recommended and powerful), passed to each handler",
+            "\t\t * @memberOf mitt",
+            "\t\t */"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt.emit (method)",
+          "end_line": 121,
+          "stable_id": "fact:symbol:ad7707b5c3721e54e83a075ad08c241a",
+          "start_line": 103,
+          "excerpt": [
+            "\t\temit<Key extends keyof Events>(type: Key, evt?: Events[Key]) {",
+            "\t\t\tlet handlers = all!.get(type);",
+            "\t\t\tif (handlers) {",
+            "\t\t\t\t(handlers as EventHandlerList<Events[keyof Events]>)",
+            "\t\t\t\t\t.slice()",
+            "\t\t\t\t\t.map((handler) => {",
+            "\t\t\t\t\t\thandler(evt!);",
+            "\t\t\t\t\t});",
+            "\t\t\t}",
+            "",
+            "\t\t\thandlers = all!.get('*');",
+            "\t\t\tif (handlers) {",
+            "\t\t\t\t(handlers as WildCardEventHandlerList<Events>)",
+            "\t\t\t\t\t.slice()",
+            "\t\t\t\t\t.map((handler) => {",
+            "\t\t\t\t\t\thandler(type, evt!);",
+            "\t\t\t\t\t});",
+            "\t\t\t}",
+            "\t\t}"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt.emit (method)",
+          "end_line": 104,
+          "stable_id": "fact:symbol:ad7707b5c3721e54e83a075ad08c241a:lines:104:104:1",
+          "start_line": 104,
+          "excerpt": [
+            "\t\t\tlet handlers = all!.get(type);"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt.emit (method)",
+          "end_line": 105,
+          "stable_id": "fact:symbol:ad7707b5c3721e54e83a075ad08c241a:lines:105:105:1",
+          "start_line": 105,
+          "excerpt": [
+            "\t\t\tif (handlers) {"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt.emit (method)",
+          "end_line": 107,
+          "stable_id": "fact:symbol:ad7707b5c3721e54e83a075ad08c241a:lines:107:107:1",
+          "start_line": 107,
+          "excerpt": [
+            "\t\t\t\t\t.slice()"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt.emit (method)",
+          "end_line": 110,
+          "stable_id": "fact:symbol:ad7707b5c3721e54e83a075ad08c241a:lines:107:110:1",
+          "start_line": 107,
+          "excerpt": [
+            "\t\t\t\t\t.slice()",
+            "\t\t\t\t\t.map((handler) => {",
+            "\t\t\t\t\t\thandler(evt!);",
+            "\t\t\t\t\t});"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt.emit (method)",
+          "end_line": 110,
+          "stable_id": "fact:symbol:ad7707b5c3721e54e83a075ad08c241a:lines:108:110:1",
+          "start_line": 108,
+          "excerpt": [
+            "\t\t\t\t\t.map((handler) => {",
+            "\t\t\t\t\t\thandler(evt!);",
+            "\t\t\t\t\t});"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt.emit (method)",
+          "end_line": 114,
+          "stable_id": "fact:symbol:ad7707b5c3721e54e83a075ad08c241a:lines:113:114:1",
+          "start_line": 113,
+          "excerpt": [
+            "\t\t\thandlers = all!.get('*');",
+            "\t\t\tif (handlers) {"
+          ]
+        },
+        {
+          "kind": "symbol",
+          "path": "src/index.ts",
+          "label": "mitt.emit (method)",
+          "end_line": 116,
+          "stable_id": "fact:symbol:ad7707b5c3721e54e83a075ad08c241a:lines:116:116:1",
+          "start_line": 116,
+          "excerpt": [
+            "\t\t\t\t\t.slice()"
+          ]
+        }
+      ],
+      "capture": "Complete original answer and identical evidence IDs/ranges/source retained from q01-emit-db.json and phase-review.json. Account, project, run, provider and snapshot-instance metadata excluded. No new model call."
+    }
+  ],
+  "retained_language_oracle": {
+    "description": "Independent standard JS oracle; no analyzed repository executed",
+    "handlersCalled": [
+      "A",
+      "B"
+    ],
+    "handlerCountAfter": 3,
+    "values": [
+      1,
+      7,
+      9
+    ],
+    "mapped": [
+      1,
+      7
+    ]
+  },
+  "retained_phase_exception_controls": [
+    {
+      "id": "later-phase-copy",
+      "source": "function dispatch(first, second) {\n  first.slice().forEach(fn => fn());\n  second.slice().forEach(fn => fn());\n}\nconst log = []; const second = [];\ndispatch([() => second.push(() => log.push(\"late\"))], second);",
+      "text": "All callbacks added during dispatch wait until the next dispatch.",
+      "expected": {
+        "supported": false,
+        "issue_kind": "contradicted"
+      },
+      "observed_review": {
+        "supported": false,
+        "summary": "The single repository claim asserts that all callbacks added during dispatch are deferred to the next dispatch. The supplied complete snippet shows the opposite: `second` is copied only after the first array's callbacks run, so a callback pushed into `second` during dispatch is copied and executed in the same dispatch call. No evidence supports the claim.",
+        "issues": [
+          {
+            "claim": "All callbacks added during dispatch wait until the next dispatch.",
+            "reason": "The excerpt disproves the universal \"All ... wait until the next dispatch\": dispatch runs the callbacks of `first` (`first.slice().forEach(...)`) before copying `second` (`second.slice().forEach(...)`). The first callback pushes a new callback into `second`, so when `second.slice()` is taken it is already present and runs in the same dispatch call, not a later one. The second copy is read after the earlier callback mutates the same array.",
+            "kind": "contradicted"
+          }
+        ]
+      }
+    },
+    {
+      "id": "both-copies-before-callbacks",
+      "source": "function dispatch(first, second) {\n  const a = first.slice(); const b = second.slice();\n  a.forEach(fn => fn()); b.forEach(fn => fn());\n}\nconst log = []; const second = [];\ndispatch([() => second.push(() => log.push(\"late\"))], second);",
+      "text": "Under normally returning callbacks, additions to these input arrays during dispatch cannot join either already-copied traversal.",
+      "expected": {
+        "supported": true,
+        "issues": []
+      },
+      "observed_review": {
+        "supported": true,
+        "summary": "The snippet copies both input arrays (`first.slice()`, `second.slice()`) before any callback runs, then iterates the copies. Additions to the input arrays made during callback execution therefore occur after both copies and cannot join either traversal, so the claim is directly supported under the stated normally-returning-callback assumption.",
+        "issues": []
+      }
+    },
+    {
+      "id": "no-guard-propagates-callback-error",
+      "source": "function invoke(callback, value) { callback(value); }\ninvoke(value => value.toUpperCase());",
+      "text": "Because invoke has no active argument check, this invocation cannot throw.",
+      "expected": {
+        "supported": false,
+        "issue_kind": "contradicted"
+      },
+      "observed_review": {
+        "supported": false,
+        "summary": "The premise that invoke contains no argument validation is directly shown by its body. The conclusion that this invocation cannot throw is contradicted: the callback receives no value, so value.toUpperCase() on undefined throws at runtime, and the unguarded call propagates that error. Missing validation only means the code does not reject the argument; it does not prevent downstream exceptions.",
+        "issues": [
+          {
+            "claim": "this invocation cannot throw",
+            "reason": "The snippet calls invoke with only a callback, so value is undefined and the invoked callback executes value.toUpperCase(), which throws a TypeError at runtime; the unguarded callback(value) call propagates it. The claim's object (this invocation) and its exception source (the unguarded callback invocation) are disproven within the same javascript-runtime scope. The absence of an argument check only means this code does not reject the argument, not that no exception can arise.",
+            "kind": "contradicted"
+          }
+        ]
+      }
+    },
+    {
+      "id": "guarded-callback-error",
+      "source": "function invoke(callback, value) {\n  try { callback(value); return \"returned\"; }\n  catch { return \"caught\"; }\n}\nconst result = invoke(value => value.toUpperCase());",
+      "text": "For this shown invocation, the callback error is caught and result is \"caught\".",
+      "expected": {
+        "supported": true,
+        "issues": []
+      },
+      "observed_review": {
+        "supported": true,
+        "summary": "The snippet's try/catch around callback(value) returns \"caught\" when the callback throws, and the shown invocation callbacks value.toUpperCase() on an absent value, so the answer's scoped claim for this invocation is directly supported.",
+        "issues": []
+      }
+    }
+  ]
+}

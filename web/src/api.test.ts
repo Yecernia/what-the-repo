@@ -19,13 +19,15 @@ describe('streamed messages', () => {
         .rejects.toMatchObject({ code: 'github_repository_unavailable', message: expect.stringMatching(language === 'en' ? /public/ : /公开仓库/) });
     }
   });
-  it('forwards structured skip intent only when supplied by the caller', async () => {
+  it('sends program lessons without learner payload and keeps ordinary messages unchanged', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
-    const intent = { kind: 'skip_current_step' as const, route_revision: 3, step_id: 'step-2', snapshot_id: 'snapshot-1' };
-    await apiClient.sendMessage('project-1', 'Skip this step', [], false, undefined, undefined, 'snapshot-1', intent);
-    expect(JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string).learning_intent).toEqual(intent);
+    await apiClient.sendMessage('project-1', undefined, [], false, undefined, undefined, 'snapshot-1', {actionId:'action-1',runId:'lesson-1'});
+    const body=JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string);
+    expect(body).toMatchObject({lesson_action_id:'action-1',run_id:'lesson-1',view_snapshot_id:'snapshot-1'});
+    expect(body).not.toHaveProperty('content'); expect(body).not.toHaveProperty('ui_contexts');
     await apiClient.sendMessage('project-1', 'Skip this step', []);
-    expect(JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string).learning_intent).toBeUndefined();
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string)).toMatchObject({content:'Skip this step',ui_contexts:[]});
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string)).not.toHaveProperty('lesson_action_id');
   });
   it('explains required repository reanalysis in both interface languages',async()=>{
     setUiLanguage('zh-CN');
@@ -122,15 +124,27 @@ describe('streamed messages', () => {
       'last-user',
       'previous-run',
       'snapshot-1',
-      { kind: 'skip_current_step', route_revision: 3, step_id: 'step-2', snapshot_id: 'snapshot-1' },
     )).resolves.toMatchObject(payload);
     const request = vi.mocked(fetch).mock.calls[0]![1];
     expect(JSON.parse(request!.body as string)).toMatchObject({
       replace_message_id: 'last-user', retry_run_id: 'previous-run', content: '你好', display_language: 'en',
-      learning_intent: { kind: 'skip_current_step', route_revision: 3, step_id: 'step-2', snapshot_id: 'snapshot-1' },
     });
     expect(read).toHaveBeenCalledTimes(2);
     expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it('uses the server lesson marker for the first SSE request and new ids only for explicit retry', async () => {
+    const payload={user_message:{message_id:'source',role:'system'},assistant_message:{message_id:'answer'}};
+    vi.stubGlobal('fetch',vi.fn().mockImplementation(async()=>new Response('event: result\ndata: '+JSON.stringify(payload)+'\n\n',{status:200,headers:{'Content-Type':'text/event-stream'}})));
+    const progress=vi.fn();
+    await apiClient.sendMessageStream('project',undefined,[],progress,false,undefined,undefined,'snapshot',undefined,{actionId:'action',runId:'first'});
+    const first=JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string);
+    expect(first).toMatchObject({lesson_action_id:'action',run_id:'first'});
+    expect(first).not.toHaveProperty('content');expect(first).not.toHaveProperty('ui_contexts');
+    expect(progress).toHaveBeenCalledWith(expect.objectContaining({run_id:'first',stage:'request_created'}));
+    await apiClient.sendMessageStream('project',undefined,[],()=>{},false,undefined,'first','snapshot',undefined,{actionId:'action'});
+    const retry=JSON.parse(vi.mocked(fetch).mock.calls[1]![1]!.body as string);
+    expect(retry).toMatchObject({lesson_action_id:'action',retry_run_id:'first'});expect(retry.run_id).not.toBe('first');
   });
 
   it('forwards the connected run id before model progress arrives', async () => {
@@ -315,4 +329,48 @@ describe('JSON request headers', () => {
     expect(guestHeaders.has('Content-Type')).toBe(false);
     expect(projectHeaders.get('Content-Type')).toBe('application/json');
   });
+});
+
+it('R4-2 resumes and reconnects using GET only, without content or new authorization', async () => {
+  vi.useFakeTimers();
+  const payload = { user_message: { message_id: 'u' }, assistant_message: { message_id: 'a' } };
+  const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(new Response(
+    `event: connected\ndata: {"run_id":"fixed","resumed":true}\n\nevent: result\ndata: ${JSON.stringify(payload)}\n\nevent: done\ndata: {}\n\n`,
+  ));
+  vi.stubGlobal('fetch', fetchMock);
+  const result = apiClient.resumeMessageStream('project', 'fixed', () => {});
+  await vi.advanceTimersByTimeAsync(500);
+  await expect(result).resolves.toEqual(payload);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  for (const [url, init] of fetchMock.mock.calls) {
+    expect(url).toContain('/runs/fixed/stream');
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+  }
+});
+
+it('R4-3 shows only allowlisted teaching failure copy and translates it', async () => {
+  const { conversationFailureMessage } = await import('./api');
+  const message = '本轮回答未通过内容检查，学习进度没有改变。原题仍然有效，可以继续作答或重试换题。';
+  expect(conversationFailureMessage('conversation_reply_invalid', message)).toBe(message);
+  expect(conversationFailureMessage('server_error', message)).toBe('服务端错误，请稍后重试。');
+  expect(conversationFailureMessage('conversation_reply_invalid', '本轮回答 token=private-secret')).not.toContain('private-secret');
+  setUiLanguage('en');
+  expect(conversationFailureMessage('conversation_reply_invalid', message)).toContain('previous question is still valid');
+});
+
+it.each(['send', 'resume'] as const)('R5-2 %s releases its fetch on subscription disposal without reconnecting', async mode => {
+  const controller = new AbortController();
+  const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+    expect(init.signal).toBe(controller.signal);
+    init.signal!.addEventListener('abort', () => reject(new DOMException('Disposed', 'AbortError')), { once: true });
+  }));
+  vi.stubGlobal('fetch', fetchMock);
+  const pending = mode === 'resume'
+    ? apiClient.resumeMessageStream('project', 'fixed', () => {}, controller.signal)
+    : apiClient.sendMessageStream('project', 'question', [], () => {}, false, undefined, undefined, null, controller.signal);
+  const rejection = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  controller.abort();
+  await rejection;
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });

@@ -1,4 +1,5 @@
 import { runAbortCode, executionErrorCode } from './execution-error.js';
+import { CONFIRMED_LESSON_TASK, currentConfirmedLesson, confirmedLessonSourceId, isConfirmedLessonSource } from '../domain/confirmed-lesson.js';
 import { acquireRepositoryReadLease, type RepositoryReadLease } from '../persistence/repository-read-lease.js';
 import { runtimeConfig } from '../admin/runtime-config.js';
 import { assertChatHistoryCapacity } from './chat-history-limits.js';
@@ -40,14 +41,19 @@ import { createConversationTools } from "../agent/conversation-tools.js";
 import { createFeedbackHintTool } from "../agent/conversation-tools.js";
 import type { FeedbackHint } from "../agent/feedback-hint.js";
 import type { TeachingWorkerTrace } from "../agent/teaching-workers.js";
+import type { reviewReplyContent } from '../agent/reply-content-review.js';
+import type { ConversationToolContext, ReplyEvidenceRepair } from '../agent/conversation-tools.js';
+import { distinctEvidence, combineBlockReviews, type ReplyEvidenceBlock } from '../agent/reply-evidence.js';
 import { generateLearningRoute, runUnderstandingAssessment } from "../agent/teaching-workers.js";
 import {
   applyCompletedLearningRoute,
   applyConfirmedLearningAction,
   assertLearningActionStillCurrent,
-  createLearningActionProposal,
   completeLearningAction,
+  learningActionReceipt,
+  refreshLearningActionMessage,
   currentLearningStep,
+  expireSupersededAdvanceCards,
   isRouteAction,
 } from "../agent/learning-actions.js";
 import {
@@ -56,8 +62,12 @@ import {
   PRIMARY_SKILL_ID,
   type UiSelection,
 } from "../agent/prompts.js";
-import { restoreDisplayedTeachingQuestion, learningActionReply, type ConversationReply } from '../agent/conversation-reply.js';
-import { validateAnswerCitations, withCitationNotice, withEvidenceReviewNotice } from "../agent/citations.js";
+import { normalizeTargetCoverage } from '../agent/target-coverage.js';
+import { reduceTeachingTurnCommit, type TeachingTurnCandidates } from '../agent/teaching-turn-candidate.js';
+import { prepareReplyEvidence } from '../agent/reply-validation.js';
+import { MAX_REVIEW_PACKETS } from '../agent/evidence-packets.js';
+import { MAX_REPLY_SUBMISSIONS, questionIsCurrent, questionWasDisplayed, restoreDisplayedTeachingQuestion, learningActionReply, type ConversationReply } from '../agent/conversation-reply.js';
+import { withCitationNotice, withEvidenceReviewNotice } from "../agent/citations.js";
 import { MemoryMaintenance } from "../agent/memory-maintenance.js";
 import { readLearner } from './learner-context.js';
 import { FeedbackAnalysisWorker } from "../agent/feedback.js";
@@ -94,7 +104,7 @@ export interface ConversationResult {
 }
 
 export interface ConversationRunInput {
-  learningIntent?: { kind: "skip_current_step" | "start_current_step"; route_revision: number; step_id: string; snapshot_id: string };
+  lessonActionId?: string;
   owner: ConversationOwner;
   projectId: string;
   content: string;
@@ -137,6 +147,7 @@ export class ConversationService {
       generateRoute?: typeof generateLearningRoute;
       assess?: typeof runUnderstandingAssessment;
       reviewEvidence?: typeof reviewAnswerEvidence;
+      reviewReplyContent?: typeof reviewReplyContent;
     } = {},
   ) {
     this.chatAdmission = new CapacityScheduler(permitStoreFor(store), 'chat', {
@@ -306,6 +317,7 @@ export class ConversationService {
         action.status = "expired";
         action.resolved_at = nowIso();
         action.error = "学习目标或分析快照已经变化。";
+        refreshLearningActionMessage(row, action);
       });
       const action = expired ? findLearningAction(expired, input.actionId) : null;
       if (!expired || !action) throw serviceError("not_found", "项目不存在", 404);
@@ -321,6 +333,7 @@ export class ConversationService {
         }
         action.status = "declined";
         action.resolved_at = nowIso();
+        refreshLearningActionMessage(row, action);
       });
       const action = declined ? findLearningAction(declined, input.actionId) : null;
       if (!declined || !action) throw serviceError("not_found", "项目不存在", 404);
@@ -344,9 +357,11 @@ export class ConversationService {
           action.status = "expired";
           action.resolved_at = nowIso();
           action.error = "当前路线、步骤或理解检查已经变化，请重新检查后继续。";
+          refreshLearningActionMessage(row, action);
           return;
         }
         completeLearningAction(row, action);
+        markConfirmedLesson(action);
         recordLearningActionResult(row, action);
       });
       const action = completed ? findLearningAction(completed, input.actionId) : null;
@@ -366,6 +381,7 @@ export class ConversationService {
       action.run_id = randomUUID();
       action.run_expires_at = new Date(Date.now() + LEARNING_ACTION_TIMEOUT_MS).toISOString();
       action.error = null;
+      refreshLearningActionMessage(row, action);
     });
     const reservedAction = reserved ? findLearningAction(reserved, input.actionId) : null;
     if (!reserved || !reservedAction?.target) throw serviceError("learning_action_invalid", "学习目标无效", 409);
@@ -377,6 +393,7 @@ export class ConversationService {
         action.status = "failed";
         action.error = message;
         action.run_expires_at = null;
+        refreshLearningActionMessage(row, action);
       });
       const action = failed ? findLearningAction(failed, input.actionId) : null;
       if (!failed || !action) throw serviceError("not_found", "项目不存在", 404);
@@ -430,6 +447,7 @@ export class ConversationService {
       usage: route.trace.usage,
       model: route.trace.model,
       provider: route.trace.provider,
+      diagnostics: route.trace.diagnostics,
       state_changed: route.completed && route.steps.length > 0,
       created_at: nowIso(),
     });
@@ -445,6 +463,7 @@ export class ConversationService {
       assertLearningActionStillCurrent(row, snapshot, action);
       applyCompletedLearningRoute(row, action, route.steps);
       completeLearningAction(row, action);
+      markConfirmedLesson(action);
       recordLearningActionResult(row, action);
     });
     const action = completed ? findLearningAction(completed, input.actionId) : null;
@@ -458,7 +477,7 @@ export class ConversationService {
   }
 
   async run(input: ConversationRunInput): Promise<ConversationResult | null> {
-    const content = input.content.trim().slice(0, 20_000);
+    const content = input.lessonActionId ? CONFIRMED_LESSON_TASK : input.content.trim().slice(0, 20_000);
     if (!content) throw serviceError("invalid_request", "content 不能为空", 400);
     if ([...this.runOwners.values()].some(run => run.projectId === input.projectId && run.ownerId === input.owner.owner_id)) {
       throw serviceError("session_busy", "上一轮仍在处理，请等待它结束或取消后再试", 409);
@@ -496,7 +515,45 @@ export class ConversationService {
       snapshotLease = await this.store.acquireSnapshotReadLease(leasedKey, this.config.repositoryReadLeaseMaxMinutes ?? 30);
       if (!snapshotLease) throw serviceError("snapshot_expired", "旧版已过期，请刷新到最新版本。", 410);
     }
-    if (!input.replaceMessageId && input.retryRunId) {
+    let lessonSource: Message | undefined;
+    let lessonTail: Message[] = [];
+    if (input.lessonActionId) {
+      if (input.replaceMessageId || view.historical || input.selections?.length) {
+        throw serviceError('invalid_request', '程序讲解请求不能编辑用户消息或更换来源。', 400);
+      }
+      const action = assertCurrentConfirmedLesson(project, input.lessonActionId);
+      const initialRun = action.outcome!.lesson_run_id!;
+      lessonSource = project.messages.find(message => message.message_id === confirmedLessonSourceId(action.action_id));
+      if (lessonSource) lessonTail = structuredClone(project.messages.slice(project.messages.indexOf(lessonSource) + 1));
+      if (lessonSource && !isConfirmedLessonSource(project, lessonSource)) {
+        throw serviceError('invalid_request', '程序讲解来源无效。', 400);
+      }
+      if (input.retryRunId) {
+        if (!input.runId || runId === initialRun || runId === lessonSource?.trace_id
+          || ![initialRun, lessonSource?.trace_id, lessonSource?.original_run_id].includes(input.retryRunId)) {
+          throw serviceError('invalid_request', '讲解重试关联无效。', 400);
+        }
+      } else if (runId !== initialRun) throw serviceError('invalid_request', '讲解运行标识无效。', 400);
+      const savedAnswer = lessonSource && project.messages[project.messages.indexOf(lessonSource) + 1];
+      const terminal = savedAnswer?.role === 'assistant' && savedAnswer.trace_id === lessonSource?.trace_id ? savedAnswer : undefined;
+      const successful = Boolean(terminal && !terminal.error && terminal.teaching_question && terminal.context_eligible !== false);
+      if (terminal && (!input.retryRunId || successful)) {
+        if (input.retryRunId && successful) throw serviceError('lesson_already_completed', '本步骤讲解已经完成。', 409);
+        return { user_message: structuredClone(lessonSource!), assistant_message: structuredClone(terminal),
+          teaching_phase: project.study.phase, validation_errors: [], tools_used: [], state_changed: false,
+          ...(terminal.error ? { error: { code: terminal.error, message: terminal.content } } : {}) };
+      }
+      if (lessonSource && !terminal && !input.retryRunId) {
+        throw serviceError('lesson_interrupted', '上一轮讲解已中断，请显式重试。', 409);
+      }
+      if (lessonSource && input.retryRunId) {
+        const index = project.messages.indexOf(lessonSource);
+        if (project.messages.slice(index + 1).some(message => message.message_id !== terminal?.message_id)) {
+          throw serviceError('last_message_changed', '讲解之后已有新消息，请检查聊天记录。', 409);
+        }
+      }
+    }
+    if (!input.lessonActionId && !input.replaceMessageId && input.retryRunId) {
       const prior = project.messages.find(message => message.role === "user"
         && (message.trace_id === input.retryRunId || message.original_run_id === input.retryRunId));
       if (!prior) throw serviceError("last_message_changed", "重试关联的消息已经变化，请刷新后重试。", 409);
@@ -509,7 +566,70 @@ export class ConversationService {
     const beforeTurn = input.replaceMessageId
       ? project.messages.slice(0, project.messages.findIndex(message => message.message_id === input.replaceMessageId))
       : project.messages;
+    const previousAnswer = input.replaceMessageId
+      ? project.messages.slice(beforeTurn.length + 1).find(message => message.role === 'assistant' && !message.error)
+      : undefined;
+    const actionTail = input.replaceMessageId && previousAnswer
+      ? project.messages.slice(project.messages.indexOf(previousAnswer) + 1) : [];
+    if (input.replaceMessageId && previousUser && actionTail.some(message => message.lesson_request)
+      && !(previousAnswer && isExecutedActionReplay(input, content, project.analysis.snapshot_id, previousUser, previousAnswer))) {
+      throw serviceError('last_message_changed', '已确认操作之后已有程序讲解，不能编辑原消息。', 409);
+    }
     assertChatHistoryCapacity(project.messages, content, input.replaceMessageId, this.config);
+    // Admission, ownership and snapshot leases are held. Stable replays need no provider.
+    if (input.replaceMessageId && previousUser && previousAnswer
+      && isExecutedActionReplay(input, content, project.analysis.snapshot_id, previousUser, previousAnswer)) {
+      const startedAt = Date.now();
+      const userMessage = structuredClone(previousUser);
+      userMessage.original_run_id ??= userMessage.trace_id ?? runId;
+      userMessage.trace_id = runId;
+      const receipt = learningActionReply(true)!;
+      const assistantMessage = { ...structuredClone(previousAnswer),
+        ...answerMessage(project, previousAnswer.content_parts!.body, previousAnswer.model ?? '', 'completed', 0, combinedUsage(), runId, []),
+        created_at: previousAnswer.created_at,
+        message_id: previousAnswer.message_id,
+        evidence: structuredClone(previousAnswer.evidence), evidence_review: structuredClone(previousAnswer.evidence_review),
+        content_parts: { ...structuredClone(previousAnswer.content_parts!), action_receipt: receipt },
+        unresolved_references: structuredClone(previousAnswer.unresolved_references),
+        context_eligible: previousAnswer.context_eligible,
+        learning_action: structuredClone(previousAnswer.learning_action),
+        teaching_question: structuredClone(previousAnswer.teaching_question),
+        teaching_context: structuredClone(previousAnswer.teaching_context),
+      };
+      delete assistantMessage.feedback;
+      assistantMessage.content = [assistantMessage.content_parts.body, receipt].filter(Boolean).join('\n\n');
+      const saved = await this.store.updateProject(input.projectId, input.owner.owner_id, row => {
+        input.signal?.throwIfAborted();
+        const latest = [...row.messages].reverse().find(message => message.role === 'user');
+        const index = row.messages.findIndex(message => message.message_id === previousUser.message_id);
+        const answer = row.messages.slice(index + 1).find(message => message.role === 'assistant' && !message.error);
+        if (!latest || !answer || !isDeepStrictEqual(latest, previousUser) || !isDeepStrictEqual(answer, previousAnswer)
+          || row.analysis.removed_by_admin
+          || !isExecutedActionReplay(input, content, project.analysis.snapshot_id, latest, answer)) {
+          throw serviceError('last_message_changed', '重发关联的消息或学习操作已经变化，请刷新后重试。', 409);
+        }
+        assertChatHistoryCapacity(row.messages, content, input.replaceMessageId, this.config);
+        const tail = row.messages.slice(row.messages.indexOf(answer) + 1);
+        if (!isDeepStrictEqual(tail, actionTail)) throw serviceError('last_message_changed', '后续讲解记录已经变化。', 409);
+        row.messages = [...row.messages.slice(0, index), userMessage, assistantMessage, ...tail];
+      });
+      if (!saved) throw serviceError('not_found', '项目不存在', 404);
+      await this.store.saveTrace(runId, { trace_id: runId, run_id: runId, project_id: input.projectId,
+        owner_id: input.owner.owner_id, snapshot_id: project.analysis.snapshot_id, skill_id: PRIMARY_SKILL_ID,
+        replay: true, replay_source_trace_id: previousAnswer.trace_id, source_message_id: userMessage.message_id,
+        learning_action_id: previousUser.learning_action_result!.action_id, state_changed: false, stop_reason: 'completed',
+        model: previousAnswer.model, usage: combinedUsage(), primary_usage: combinedUsage(), worker_runs: [], tools_used: [],
+        validation_errors: [], latency_ms: Date.now() - startedAt, events: [],
+        evidence_quality: measureEvidenceQuality({ events: [], observed_evidence_ids: previousAnswer.evidence.map(row => row.stable_id),
+          valid_evidence_ids: previousAnswer.evidence.map(row => row.stable_id), referenced_evidence_ids: [],
+          validation_errors: [], usage: combinedUsage(), model_calls: 0, first_valid_evidence_ms: null }),
+      }).catch(() => this.metrics.increment('what_the_repo_postcommit_errors_total', 1, { stage: 'replay_trace' }));
+      try { input.onEvent?.({ runId, sequence: admissionEvents + 1, timestamp: nowIso(), type: 'run_completed',
+        summary: '已恢复保存的回答，学习进度没有再次改变。', elapsedMs: Date.now() - startedAt });
+      } catch { this.metrics.increment('what_the_repo_postcommit_errors_total', 1, { stage: 'replay_terminal' }); }
+      return { user_message: userMessage, assistant_message: assistantMessage, teaching_phase: saved.study.phase,
+        validation_errors: [], tools_used: [], state_changed: false };
+    }
     const originalStudy = structuredClone(project.study);
     const config = await runtimeConfig(this.config, this.store);
     const settings = await this.store.loadSettings(input.owner.owner_id);
@@ -557,14 +677,22 @@ export class ConversationService {
     });
     const { profile, memories: agentMemories } = await readLearner(this.store, this.memories, input.owner.owner_id);
     const selections = (input.selections ?? []).filter((item) => item.snapshot_id === project.analysis.snapshot_id);
-    const userMessage = createMessage("user", content, {
+    const userMessage = createMessage(input.lessonActionId ? "system" : "user", content, {
       trace_id: runId,
       analysis_snapshot_id: project.analysis.snapshot_id,
       analysis_commit_sha: project.source.commit_sha,
     });
+    if (input.lessonActionId) {
+      const action = assertCurrentConfirmedLesson(project, input.lessonActionId);
+      if (lessonSource) Object.assign(userMessage, structuredClone(lessonSource), { trace_id: runId });
+      userMessage.message_id = confirmedLessonSourceId(action.action_id);
+      userMessage.original_run_id = action.outcome!.lesson_run_id;
+      userMessage.lesson_request = { action_id: action.action_id, snapshot_id: action.snapshot_id,
+        route_revision: action.outcome!.route_revision, step_id: action.outcome!.next_step_id! };
+    }
     if (selections.length) userMessage.attachments = selections.map((item) => ({ ...item }));
     if (input.replaceMessageId) userMessage.message_id = input.replaceMessageId;
-    userMessage.original_run_id = input.replaceMessageId
+    if (!input.lessonActionId) userMessage.original_run_id = input.replaceMessageId
       ? previousUser?.original_run_id ?? previousUser?.trace_id ?? runId : runId;
     if (input.replaceMessageId && previousUser?.learning_action_result) {
       userMessage.learning_action_result = structuredClone(previousUser.learning_action_result);
@@ -578,8 +706,12 @@ export class ConversationService {
         step_id: oldAction.expected_step_id ?? oldAction.target?.stable_id ?? null,
       };
     }
-    project.messages = [...beforeTurn, userMessage];
+    const lessonBefore = lessonSource ? project.messages.slice(0, project.messages.indexOf(lessonSource)) : beforeTurn;
+    project.messages = [...lessonBefore, userMessage];
     const questionRestored = restoreDisplayedTeachingQuestion(project, beforeTurn, userMessage.message_id);
+    normalizeTargetCoverage(project);
+    const turnBaseline = structuredClone(project);
+    const candidates: TeachingTurnCandidates = { project: null };
 
     const startedAt = Date.now();
     let turnStarted = false;
@@ -590,22 +722,89 @@ export class ConversationService {
     let stateChanged = false;
     const pendingLearningAction = { value: null as LearningActionCard | null };
     const reply = { value: null as ConversationReply | null };
-    if (input.learningIntent && !userMessage.learning_action_result) {
-      const intent = input.learningIntent;
-      if (!['skip_current_step', 'start_current_step'].includes(intent.kind) || intent.route_revision !== (project.study.route_revision ?? 0)
-        || intent.snapshot_id !== capturedSnapshotId
-        || intent.step_id !== project.study.dynamic_learning_plan?.[project.study.current_step]?.step_id) {
-        throw serviceError("learning_action_no_longer_current", "当前学习步骤已经变化，请刷新后重试。", 409);
-      }
-      const snapshot = await getSnapshot();
-      if (!snapshot) throw serviceError("snapshot_unavailable", "项目图谱尚未完成", 404);
-      if (intent.kind === 'skip_current_step') pendingLearningAction.value = createLearningActionProposal(project, snapshot, {
-        action: "advance_learning_step", targetKind: "learning_step", targetId: intent.step_id,
-        request: content, skipUnderstandingCheck: true, executionPolicy: "after_turn",
-      });
-    }
-    const assessment = { value: null as null | { verdict: string; masteredItems: string[]; evidenceIds: string[]; feedback?: string } };
+    const assessment: ConversationToolContext['assessment'] = { value: null };
     const feedbackHint: { value: FeedbackHint | null } = { value: null };
+    const submissionDiagnostics: Array<Record<string, unknown>> = [];
+    const submissionBudget = { used: 0 };
+    const preflightDiagnostics: Array<Record<string, unknown>> = [];
+    // Preserve first owner-feedback failures separately from the repaired result.
+    // Feedback is schema-bounded to 1,200 chars; no source excerpts or SDK args.
+    const assessmentReviewFailures: Array<Record<string, unknown>> = [];
+    type Review = Awaited<ReturnType<typeof reviewAnswerEvidence>>;
+    const reviewCache = new Map<string, Review>();
+    const executedReviews: Review[] = [];
+    const reviewBlock = async (block: ReplyEvidenceBlock, signal?: AbortSignal): Promise<Review> => {
+      // Turn-local cache includes every source/range/coverage input. Finalization
+      // revalidates sources before using an identical semantic review.
+      const key = JSON.stringify([capturedSnapshotId, block.kind, block.text, block.evidence,
+        block.citation_coverage, block.packet_coverage,
+        block.kind === 'assessment' ? block.assessment_context : null]);
+      const cached = reviewCache.get(key);
+      if (cached) return cached;
+      const reviewed = await (this.learningWorkers.reviewEvidence ?? reviewAnswerEvidence)({
+        text: block.text, evidence: block.evidence, projectId: input.projectId,
+        snapshotId: capturedSnapshotId ?? '', store: this.store, modelRuntime, signal,
+        purpose: block.kind === 'explanation' ? 'answer' : block.kind, citationCoverage: block.citation_coverage,
+        ...(block.kind === 'assessment' && block.assessment_context
+          ? { assessmentContext: block.assessment_context } : {}),
+      }).catch(() => unavailableEvidenceReview(undefined, block.text));
+      executedReviews.push(reviewed);
+      // Every result, including unavailable, belongs to this exact candidate.
+      // Changing the text or its bound inputs creates a different review.
+      reviewCache.set(key, reviewed);
+      return reviewed;
+    };
+    const prepareReply: NonNullable<ConversationToolContext['prepareReply']> = async (candidate, signal, attempt) => {
+      const prepared = await prepareReplyEvidence({ reply: candidate,
+        text: [candidate.text, candidate.question?.prompt].filter(Boolean).join('\n\n'),
+        getSnapshot, snapshotId: capturedSnapshotId, exposed: exposedEvidence,
+        projectId: input.projectId, store: this.store, signal });
+      const repairs: ReplyEvidenceRepair[] = [];
+      let reviewUnavailable = false;
+      for (const block of prepared.blocks) {
+        let reviewed: Review | undefined;
+        // Fix deterministic failures without spending a model request on a set
+        // of packets already known to be incomplete.
+        if (block.commit_eligible && input.reviewEvidence === true) reviewed = await reviewBlock(block, signal);
+        const supported = !reviewed || (reviewed.completed && !reviewed.evidenceIncomplete
+          && reviewed.coverage?.complete !== false && reviewed.answerCoverage?.complete !== false && ((reviewed.status === 'reviewed' && reviewed.supported)
+            || (block.kind === 'explanation' && reviewed.status === 'not_applicable' && !block.citation_coverage?.parsed)));
+        if (reviewed && !supported && (!reviewed.completed || reviewed.status === 'unverified' || reviewed.evidenceIncomplete
+          || reviewed.coverage?.complete === false || reviewed.answerCoverage?.complete === false
+          || reviewed.issues.length === 0)) reviewUnavailable = true;
+        if (block.commit_eligible && supported) continue;
+        if (block.kind === 'assessment' && assessmentReviewFailures.length < MAX_REPLY_SUBMISSIONS) {
+          assessmentReviewFailures.push({ attempt, feedback: block.text, evidence: block.evidence,
+            question_id: block.assessment_context?.registered_question.question_id,
+            source_message_id: block.assessment_context?.source_message_id,
+            validation_errors: block.validation_errors,
+            review: reviewed ? { status: reviewed.status, completed: reviewed.completed, supported: reviewed.supported,
+              stop_reason: reviewed.stopReason, summary: reviewed.summary, issues: reviewed.issues,
+              validation_errors: reviewed.validationErrors, answer_coverage: reviewed.answerCoverage,
+              coverage: reviewed.coverage, semantic_review: reviewed.semanticReview } : null });
+        }
+        const feedbackRepairAllowed = block.kind === 'assessment' && block.commit_eligible === true
+          && reviewed?.status === 'reviewed' && reviewed.completed && !reviewed.evidenceIncomplete
+          && reviewed.coverage?.complete !== false && reviewed.answerCoverage?.complete !== false
+          && reviewed.issues.length > 0 && reviewed.issues.every(issue => issue.subject === 'assessment_feedback');
+        repairs.push({ block_kind: block.kind, validation_errors: block.validation_errors,
+          packet_limit: MAX_REVIEW_PACKETS, packet_count: block.evidence.length,
+          unread_ranges: block.packet_coverage?.packets.filter(packet => packet.incomplete),
+          review_status: reviewed?.status, issues: reviewed?.issues,
+          feedback_repair_allowed: feedbackRepairAllowed,
+          instruction: block.kind === 'assessment'
+            ? !feedbackRepairAllowed
+              ? 'This assessment candidate cannot be adopted. Its judgment and feedback are locked: do not reassess it or rewrite its feedback to rescue it. Repair only other reply partitions identified below; finalization will discard this assessment candidate.'
+              : 'Only the assessment owner may repair feedback. Keep its judgment and evidence fixed; use the registered question conditions and remove unsupported mechanism restatements about other goals. Never borrow the new question evidence.'
+            : 'Read the exact supporting ranges and revise the claim if needed. A claim about the only implementation or all other files needs repository-wide evidence: narrow that claim to the inspected scope, rather than retaining its universal wording after reducing citations. Keep the lesson focused on the requested targets; remove unnecessary detours, never a requested explanation. Cite the actual behavior, not a nearby symbol.' });
+        if (preflightDiagnostics.length < 24) preflightDiagnostics.push({ attempt, block_kind: block.kind,
+          validation_errors: block.validation_errors, packet_count: block.evidence.length,
+          coverage_reasons: block.packet_coverage?.reasons, review_status: reviewed?.status,
+          issue_kinds: reviewed?.issues.map(issue => issue.kind) });
+      }
+      return reviewUnavailable ? { outcome: 'finalize' }
+        : repairs.length ? { outcome: 'repair', repairs } : { outcome: 'ready' };
+    };
     const tools = [
       ...createConversationTools({
       project,
@@ -625,21 +824,25 @@ export class ConversationService {
       toolsUsed,
       pendingLearningAction,
       reply,
-      lessonRequired: input.learningIntent?.kind === 'start_current_step' || /^(?:开始当前步骤|start (?:the )?current step)[。.!！\s]*$/iu.test(content),
+      prepareReply,
+      submissionDiagnostics,
+      submissionBudget,
+      confirmedLesson: Boolean(input.lessonActionId),
       assessment,
+      candidates,
       currentUserMessage: content,
       source_message_id: userMessage.message_id,
       modelRuntime,
       workerRuns,
-      workerServices: { assess: this.learningWorkers.assess },
+      workerServices: { assess: this.learningWorkers.assess, reviewReplyContent: this.learningWorkers.reviewReplyContent },
       }),
       createFeedbackHintTool(feedbackHint),
     ];
     assertProductSkillRun(primarySkill, {
       toolNames: tools.map((tool) => tool.name),
       inputSchemaId: "conversation-turn-v1",
-      outputSchemaId: "conversation-reply-v2",
-      contextBuilderId: "primary-conversation-context-v5",
+      outputSchemaId: "conversation-reply-v7",
+      contextBuilderId: "primary-conversation-context-v13",
     });
 
     const finalize = async (result: PiRunResult, runSignal?: AbortSignal, writeFence?: {permitId:string}) => {
@@ -654,71 +857,80 @@ export class ConversationService {
         result = { ...result, stopReason: runAbortCode(input.signal?.aborted ? input.signal.reason : runSignal?.reason) };
       }
       if (result.stopReason === 'completed' && !reply.value) {
-        result = { ...result, text: '', stopReason: 'provider_invalid_response' };
+        result = { ...result, text: '', stopReason: 'conversation_reply_invalid' };
       }
-      if (result.stopReason !== "completed" || reply.value?.kind === 'unavailable') project.study = structuredClone(originalStudy);
-      if (userMessage.learning_action_result || result.stopReason !== 'completed') pendingLearningAction.value = null;
+      if (input.lessonActionId && result.stopReason === 'completed' && reply.value?.kind !== 'lesson' && reply.value?.kind !== 'unavailable') {
+        result = { ...result, text: '', stopReason: 'conversation_reply_invalid' };
+        candidates.project = null; assessment.value = null; pendingLearningAction.value = null;
+      }
+      if (userMessage.learning_action_result || result.stopReason !== 'completed' || reply.value?.kind === 'unavailable') {
+        pendingLearningAction.value = null;
+        if (reply.value?.kind === 'unavailable') assessment.value = null;
+      }
       if (pendingLearningAction.value) pendingLearningAction.value.source_message_id = userMessage.message_id;
-      const action = pendingLearningAction.value?.action === "advance_learning_step"
-        && pendingLearningAction.value.execution_policy === 'after_turn'
-        ? pendingLearningAction.value
-        : null;
-      let directSkipApplied = false;
-      if (action && result.stopReason === "completed" && !input.signal?.aborted && !runSignal?.aborted) {
-        try {
-          applyConfirmedLearningAction(project, action);
-          completeLearningAction(project, action);
-          recordLearningActionResult(project, action);
-          directSkipApplied = true;
-          stateChanged = true;
-        } catch {
-          action.status = "expired";
-          action.error = "当前步骤或学习路线已经变化。";
-        }
-      }
-      // Operation prose is generated from the one validated decision and its actual result.
-      // Free model text cannot contradict a receipt, promise a missing card, or display an unregistered check.
+      // Stable teaching prose is reviewed separately from the mutable operation receipt.
       let visibleText = result.stopReason !== 'completed'
         ? result.stopReason === 'paused' ? '已暂停本轮处理，学习进度没有改变。'
-          : '本轮回答暂未完成，学习进度没有改变。可以重试这条消息。'
-        : learningActionReply(Boolean(userMessage.learning_action_result && !directSkipApplied))
-          ?? (pendingLearningAction.value
-            ? pendingLearningAction.value.status === 'expired' ? '当前步骤已经变化，这项学习操作未执行。'
-              : [action ? null : assessment.value?.feedback, pendingLearningAction.value.description].filter(Boolean).join('\n\n')
-            : reply.value!.text);
-      const question = result.stopReason === 'completed' ? reply.value?.question : null;
-      if (question && !visibleText.includes(question.prompt)) visibleText += `\n\n${question.prompt}`;
-      const validation = await validateAnswerCitations({
-        text: visibleText,
-        snapshot: null,
-        getSnapshot,
-        snapshotId: capturedSnapshotId,
-        exposed: exposedEvidence,
-        projectId: input.projectId,
-        store: this.store,
-      });
-      const validationErrors = [...validation.errors];
-      if (reply.value?.kind === 'unavailable') validationErrors.push('conversation_reply_unavailable');
-      let acceptedEvidence = validation.evidence;
+          : result.stopReason === 'conversation_reply_invalid'
+            ? '本轮回答未通过内容检查，学习进度没有改变。' + (project.study.teaching_question && questionIsCurrent(project, project.study.teaching_question)
+              && questionWasDisplayed(project, project.study.teaching_question, userMessage.message_id) ? '原题仍然有效，可以继续作答或重试换题。'
+                : input.lessonActionId ? '本次讲解尚未完成，已确认的进度保留。请重试本次讲解。' : '当前没有生效的题目，请重试本次请求。')
+            : '本轮回答暂未完成，学习进度没有改变。可以重试这条消息。'
+        : reply.value!.text;
+      let question = result.stopReason === 'completed' && reply.value?.kind !== 'unavailable' ? reply.value?.question : null;
+      if (question) visibleText = [visibleText, question.prompt].filter(Boolean).join('\n\n');
+      const reviewSignal = input.signal && runSignal ? AbortSignal.any([input.signal, runSignal]) : input.signal ?? runSignal;
+      const prepared = reply.value?.kind === 'unavailable'
+        ? { validation: { text: visibleText, evidence: [], errors: [], unresolved: [] }, blocks: [], errors: ['conversation_reply_unavailable'] }
+        : await prepareReplyEvidence({ reply: result.stopReason === 'completed' && reply.value ? reply.value
+            : { kind: 'answer', text: visibleText, question: null, evidenceBlocks: [] }, text: visibleText,
+          getSnapshot, snapshotId: capturedSnapshotId, exposed: exposedEvidence, projectId: input.projectId, store: this.store,
+          signal: reviewSignal?.aborted ? undefined : reviewSignal });
+      const validation = prepared.validation;
+      const validationErrors = [...prepared.errors];
+      const evidenceBlocks: ReplyEvidenceBlock[] = prepared.blocks;
+      // Do not broaden explicit anchors from independent explanations with the
+      // assessor's packets. Each block is reviewed against its own provenance.
+      let acceptedEvidence = distinctEvidence(evidenceBlocks.flatMap(block => block.evidence));
       let reviewStatus: Record<string, unknown> | null = null;
       let reviewUsage = combinedUsage();
+      let reviewRequestCount = 0;
       let reviewedText = validation.text;
+      const finalBlockReviews: Review[] = [];
       let evidenceReview: Message["evidence_review"];
       if (
         input.reviewEvidence === true
         && result.stopReason === "completed"
+        && Boolean(visibleText.trim())
+        && reply.value?.kind !== 'unavailable'
       ) {
-        const review = await (this.learningWorkers.reviewEvidence ?? reviewAnswerEvidence)({
-          text: visibleText,
-          evidence: validation.evidence,
-          projectId: input.projectId,
-          snapshotId: project.analysis.snapshot_id ?? "",
-          store: this.store,
-          modelRuntime,
-          signal: input.signal,
-        }).catch(() => unavailableEvidenceReview());
+        const reviews: Awaited<ReturnType<typeof reviewAnswerEvidence>>[] = [];
+        const supportedEvidence = [];
+        for (const block of evidenceBlocks) {
+          const reviewed: Review = block.commit_eligible ? await reviewBlock(block, reviewSignal)
+            : { ...unavailableEvidenceReview(undefined, block.text),
+              summary: '引用范围或证据覆盖不完整，未启动语义核对。', evidenceIncomplete: true,
+              coverage: block.packet_coverage, validationErrors: block.validation_errors };
+          reviews.push(reviewed);
+          finalBlockReviews.push(reviewed);
+          block.review = { status: reviewed.status, supported: reviewed.supported, summary: reviewed.summary, issues: reviewed.issues,
+            completed: reviewed.completed, evidenceIncomplete: reviewed.evidenceIncomplete,
+            ...(reviewed.coverage ? { coverage: reviewed.coverage } : {}),
+            ...(reviewed.answerCoverage ? { answerCoverage: reviewed.answerCoverage } : {}),
+            ...(reviewed.semanticReview ? { semanticReview: reviewed.semanticReview } : {}) };
+          block.commit_eligible &&= reviewed.completed && !reviewed.evidenceIncomplete && reviewed.coverage?.complete !== false && reviewed.answerCoverage?.complete !== false
+            && ((reviewed.status === 'reviewed' && reviewed.supported)
+              || (block.kind === 'explanation' && reviewed.status === 'not_applicable' && !block.citation_coverage?.parsed));
+          if (block.commit_eligible && reviewed.status === 'reviewed' && reviewed.supported) {
+            const ids = new Set(reviewed.acceptedEvidenceIds);
+            supportedEvidence.push(...block.evidence.filter(row => ids.has(row.stable_id)));
+          }
+        }
+        const review = combineBlockReviews(reviews);
+        acceptedEvidence = distinctEvidence(supportedEvidence);
         reviewStatus = {
           usage: review.usage,
+          request_count: reviewRequestCount,
           model: runtimeForSkill(modelRuntime, "citation-review").model.id,
           provider: runtimeForSkill(modelRuntime, "citation-review").model.provider,
           completed: review.completed,
@@ -730,21 +942,73 @@ export class ConversationService {
           issues: review.issues,
           summary: review.summary,
           evidence_incomplete: review.evidenceIncomplete,
+          validation_errors: review.validationErrors ?? [],
+          blocks: evidenceBlocks.map((block, index) => ({ kind: block.kind, evidence: block.evidence, ...reviews[index] })),
         };
         reviewedText = withEvidenceReviewNotice(validation.text, review);
         evidenceReview = { status: review.status, supported: review.supported, summary: review.summary, issues: review.issues };
-        reviewUsage = review.usage;
         if (review.status === "unverified") {
           validationErrors.push("citation_review_unavailable");
-          acceptedEvidence = [];
         } else if (review.status === "reviewed" && !review.supported) {
           validationErrors.push("citation_review_not_supported");
-          acceptedEvidence = [];
-        } else {
-          const acceptedIds = new Set(review.acceptedEvidenceIds);
-          acceptedEvidence = validation.evidence.filter((row) => acceptedIds.has(row.stable_id));
         }
       }
+      // One commit decision follows every deterministic and requested model check.
+      // Review-off still requires readable, complete evidence for teaching state.
+      if (input.reviewEvidence !== true && result.stopReason === 'completed') {
+        acceptedEvidence = distinctEvidence(evidenceBlocks.filter(block => block.commit_eligible).flatMap(block => block.evidence));
+      }
+      reviewUsage = combinedUsage(...executedReviews.map(review => review.usage));
+      reviewRequestCount = executedReviews.reduce((sum, review) => sum + (review.diagnostics?.requestCount ?? 0), 0);
+      if (reviewStatus) { reviewStatus.usage = reviewUsage; reviewStatus.request_count = reviewRequestCount; }
+      checkExecution();
+      if (reviewSignal?.aborted) {
+        result = { ...result, stopReason: runAbortCode(reviewSignal.reason) };
+        assessment.value = null;
+        pendingLearningAction.value = null;
+        question = null;
+        acceptedEvidence = [];
+        for (const block of evidenceBlocks) block.commit_eligible = false;
+        reviewedText = '本轮回答暂未完成，学习进度没有改变。可以重试这条消息。';
+      }
+      const commit = reduceTeachingTurnCommit({ baseline: turnBaseline, candidate: candidates.project,
+        completed: result.stopReason === 'completed', cancelled: Boolean(reviewSignal?.aborted),
+        replyKind: reply.value?.kind, hasAssessment: Boolean(assessment.value), question: question ?? null,
+        blocks: evidenceBlocks, validationErrors });
+      project.study = commit.project.study;
+      const { assessmentEligible, questionEligible, turnEligible, assessedQuestion } = commit;
+      question = commit.question;
+      if (result.stopReason === 'completed' && reply.value?.kind !== 'unavailable' && !reviewSignal?.aborted) {
+        // Render only the selected partitions. Rejected candidates and their
+        // quoted review claims must never remain as apparent success feedback.
+        const visibleBlocks = evidenceBlocks.filter(block =>
+          (block.kind !== 'assessment' || assessmentEligible) && (block.kind !== 'question' || questionEligible));
+        reviewedText = [assessmentEligible ? assessment.value?.statusText : '', ...visibleBlocks.map(block => block.text)]
+          .filter(Boolean).join('\n\n');
+        const visibleReviews = finalBlockReviews.filter((_, index) => visibleBlocks.includes(evidenceBlocks[index]!));
+        if (visibleReviews.length) reviewedText = withEvidenceReviewNotice(reviewedText, combineBlockReviews(visibleReviews));
+      }
+      if (!assessmentEligible) {
+        assessment.value = null;
+        reviewedText += '\n\n本次作答反馈未被采纳，原有学习记录和原题保留。可以重试这条消息，原作答不会作为已掌握证明。';
+        validationErrors.push('assessment_not_adopted');
+      }
+      if (!questionEligible) {
+        question = null;
+        for (const block of evidenceBlocks.filter(block => block.kind === 'question')) block.commit_eligible = false;
+        const oldQuestion = project.study.teaching_question;
+        const retained = oldQuestion && questionIsCurrent(project, oldQuestion) && questionWasDisplayed(project, oldQuestion, userMessage.message_id);
+        reviewedText += retained ? '\n\n本次换题未完成，原题仍然有效。可以继续回答原题，或重试换题。'
+          : input.lessonActionId ? '\n\n本次题目未生效，已确认的进度保留。请重试本次讲解。'
+            : '\n\n本次题目未生效，当前没有可作答的题目。请重试本次请求。';
+        validationErrors.push('teaching_question_not_activated');
+      }
+      const eligibleIds = new Set(evidenceBlocks.filter(block => block.commit_eligible).flatMap(block => block.evidence.map(row => row.stable_id)));
+      acceptedEvidence = acceptedEvidence.filter(row => eligibleIds.has(row.stable_id));
+      if (question) question.commit_eligibility = { deterministic: true, review: input.reviewEvidence === true ? 'passed' : 'disabled' };
+      if (!turnEligible) pendingLearningAction.value = null;
+      const receipt = pendingLearningAction.value ? learningActionReceipt(pendingLearningAction.value) : null;
+      validationErrors.splice(0, validationErrors.length, ...new Set(validationErrors));
       const totalUsage = combinedUsage(
         result.usage,
         ...workerRuns.map((worker) => worker.usage),
@@ -760,6 +1024,9 @@ export class ConversationService {
         runId,
         messageThinkingSummary(result.events),
       );
+      assistantMessage.content_parts = { body: assistantMessage.content, action_receipt: receipt,
+        evidence_blocks: evidenceBlocks };
+      assistantMessage.content = [assistantMessage.content, receipt].filter(Boolean).join('\n\n');
       assistantMessage.evidence = acceptedEvidence;
       const step = currentLearningStep(project);
       if (result.stopReason === 'completed' && step) assistantMessage.teaching_context = {
@@ -768,9 +1035,10 @@ export class ConversationService {
       if (question) assistantMessage.teaching_question = structuredClone(question);
       assistantMessage.evidence_review = evidenceReview;
       assistantMessage.unresolved_references = validation.unresolved;
-      assistantMessage.context_eligible = result.stopReason === "completed" && validationErrors.length === 0;
-      // The card is built and validated by the program, so a citation notice on the text does not drop it.
-      if ((result.stopReason === "completed" || directSkipApplied) && pendingLearningAction.value) {
+      assistantMessage.context_eligible = result.stopReason === "completed" && validationErrors.length === 0
+        && evidenceBlocks.every(block => block.commit_eligible);
+      // A card is exposed only when this turn is eligible to commit it.
+      if (turnEligible && pendingLearningAction.value) {
         assistantMessage.learning_action = pendingLearningAction.value;
       }
       const evidenceQuality = measureEvidenceQuality({
@@ -788,8 +1056,8 @@ export class ConversationService {
         validation_errors: validationErrors,
         usage: totalUsage,
         model_calls: result.events.filter((event) => event.type === "model_started").length
-          + workerRuns.length
-          + (reviewStatus ? 1 : 0),
+          + workerRuns.reduce((count, worker) => count + (worker.diagnostics?.requestCount ?? 0), 0)
+          + reviewRequestCount,
         first_valid_evidence_ms: acceptedEvidence.length
           ? result.events.find((event) => event.type === "tool_result_received")?.elapsedMs ?? null
           : null,
@@ -802,17 +1070,26 @@ export class ConversationService {
           input.signal?.throwIfAborted();
           runSignal?.throwIfAborted();
         }
-        const currentUser = [...row.messages].reverse().find(message => message.role === 'user');
+        if (input.lessonActionId) assertCurrentConfirmedLesson(row, input.lessonActionId);
+        const currentUser = input.lessonActionId ? row.messages.at(-1)
+          : [...row.messages].reverse().find(message => message.role === 'user');
         if (currentUser?.message_id !== userMessage.message_id || currentUser.trace_id !== runId) {
           throw serviceError('last_message_changed', '只能编辑最后一条消息，请刷新后重试。', 409);
         }
+        if (input.lessonActionId && !isConfirmedLessonSource(row, currentUser)) throw serviceError('invalid_request', '程序讲解来源无效。', 400);
         if (!isDeepStrictEqual(originalStudy, project.study) && !isDeepStrictEqual(row.study, originalStudy)) {
           throw serviceError('learning_action_no_longer_current', '学习状态已经变化，请刷新后重试。', 409);
         }
         if (userMessage.learning_action_result) currentUser.learning_action_result = userMessage.learning_action_result;
+        if (assessedQuestion && assessment.value) {
+          const displayed = row.messages.find(message => message.role === 'assistant'
+            && message.teaching_question?.question_id === assessedQuestion.question_id);
+          if (displayed) displayed.teaching_question = structuredClone(assessedQuestion);
+        }
         row.messages.push(assistantMessage);
         if (!isDeepStrictEqual(originalStudy, project.study) && isDeepStrictEqual(row.study, originalStudy)) {
           row.study = project.study;
+          expireSupersededAdvanceCards(row);
           stateChanged = true;
         }
       }, undefined, writeFence);
@@ -835,6 +1112,15 @@ export class ConversationService {
         validation_errors: validationErrors,
         review_requested: input.reviewEvidence === true,
         reply_kind: reply.value?.kind ?? null,
+        submission_diagnostics: submissionDiagnostics,
+        submission_budget: { used: submissionBudget.used, limit: MAX_REPLY_SUBMISSIONS },
+        evidence_preflight: preflightDiagnostics,
+        assessment_review_failures: assessmentReviewFailures,
+        evidence_review_runs: executedReviews.map((review, index) => ({ attempt: index + 1,
+          completed: review.completed, supported: review.supported, stop_reason: review.stopReason,
+          issues: review.issues, validation_errors: review.validationErrors,
+          usage: review.usage, diagnostics: review.diagnostics, semantic_review: review.semanticReview })),
+        commit_eligibility: { turn: turnEligible, assessment: assessmentEligible, question: questionEligible, blocks: evidenceBlocks },
         question_id: question?.question_id ?? project.study.teaching_question?.question_id ?? null,
         question_created_message_id: question?.created_message_id ?? project.study.teaching_question?.created_message_id ?? null,
         question_restored: questionRestored,
@@ -871,22 +1157,26 @@ export class ConversationService {
               visible: event.display.visible,
             } : {}),
           })),
-      });
-      if (["completed", "paused"].includes(result.stopReason)) this.feedbackWorker.schedule({
+      }).catch(() => this.metrics.increment('what_the_repo_postcommit_errors_total', 1, { stage: 'conversation_trace' }));
+      if (!input.lessonActionId && ["completed", "paused"].includes(result.stopReason)) try { this.feedbackWorker.schedule({
         ownerId: input.owner.owner_id,
         projectId: input.projectId,
         userMessageId: userMessage.message_id,
         hint: feedbackHint.value ?? undefined,
         modelRuntime: await this.feedbackRuntime(`feedback:${input.projectId}:${"messageId" in input ? input.messageId : runId}`),
-      });
+      }); } catch { this.metrics.increment('what_the_repo_postcommit_errors_total', 1, { stage: 'feedback_schedule' }); }
       const publicErrorCode = selectedModel === FREE_SELECTOR && result.stopReason === "provider_balance_insufficient" ? "platform_provider_balance_insufficient"
         : selectedModel === FREE_SELECTOR && ["provider_authentication_failed", "provider_permission_denied"].includes(result.stopReason) ? "provider_unavailable" : result.stopReason;
       return {
-        assistantText: assistantMessage.content,
+        assistantText: trustedMessageText(assistantMessage),
+        ...(assistantMessage.context_eligible === false || submissionDiagnostics.length || preflightDiagnostics.length
+          || result.events.some(event => event.type === 'tool_result_received' && event.toolName === 'submit_conversation_reply' && event.isError)
+          ? { trustedMessages: visibleContextMessages([userMessage, assistantMessage], project) } : {}),
+        stopReason: result.stopReason,
         value: {
           ...(!["completed", "paused"].includes(result.stopReason) ? { error: {
             code: publicErrorCode,
-            message: failureMessage(publicErrorCode),
+            message: publicErrorCode === 'conversation_reply_invalid' ? assistantMessage.content : failureMessage(publicErrorCode),
           } } : {}),
           user_message: userMessage,
           assistant_message: assistantMessage,
@@ -897,7 +1187,7 @@ export class ConversationService {
         },
         sessionCommit: result.stopReason === "paused"
           ? "accepted" as const
-          : result.stopReason !== "completed"
+          : result.stopReason !== "completed" || !trustedMessageText(assistantMessage)
             ? "discard" as const
           : "accepted" as const,
       };
@@ -921,24 +1211,43 @@ export class ConversationService {
         project,
         profile,
         selections,
-        currentUserMessage: content,
+
         displayLanguage: input.displayLanguage,
-        learningAction: pendingLearningAction.value,
+
       }),
       userMessage: content,
       replyContract: {
-        read: () => reply.value ? reply.value.text || reply.value.question?.prompt || null : null,
+        budget: submissionBudget,
+        onSchemaRejection: fields => {
+          if (submissionDiagnostics.length < 12) submissionDiagnostics.push({ attempt: submissionBudget.used, code: 'reply_schema_invalid', fields });
+        },
+        read: () => reply.value ? reply.value.text || reply.value.question?.prompt
+          || (reply.value.kind === 'action' && pendingLearningAction.value ? learningActionReceipt(pendingLearningAction.value) : null) : null,
         correction: 'The answer is not yet submitted. Finish with submit_conversation_reply. A lesson must include its exact registered question, targets and evidence; an action must have a successful proposal. Tool errors do not count as success. Use the original user message and existing saved question; never ask the learner to resend their answer to repair registration.',
       },
       turn: {
         messageId: userMessage.message_id,
         replace: Boolean(input.replaceMessageId),
-        previousMessages: visibleContextMessages(beforeTurn),
+        previousMessages: visibleContextMessages(lessonBefore, project),
       },
       beforePrompt: async (runSignal, writeFence) => {
         runSignal?.throwIfAborted();
         const saved = await this.store.updateProject(input.projectId, input.owner.owner_id, row => {
           runSignal?.throwIfAborted();
+          if (input.lessonActionId) {
+            assertCurrentConfirmedLesson(row, input.lessonActionId);
+            const existing = row.messages.find(message => message.message_id === userMessage.message_id);
+            if (lessonSource) {
+              if (!existing || !isDeepStrictEqual(existing, lessonSource)) throw serviceError('last_message_changed', '讲解来源已经变化。', 409);
+              if (!isDeepStrictEqual(row.messages.slice(row.messages.indexOf(existing) + 1), lessonTail)) {
+                throw serviceError('last_message_changed', '讲解之后已有新消息，请检查聊天记录。', 409);
+              }
+              row.messages = row.messages.slice(0, row.messages.indexOf(existing));
+            } else if (existing) throw serviceError('lesson_interrupted', '讲解来源已经存在，请恢复原运行。', 409);
+            else if (!isDeepStrictEqual(row.messages.map(message => message.message_id), lessonBefore.map(message => message.message_id))) {
+              throw serviceError('last_message_changed', '启动讲解前聊天记录已经变化。', 409);
+            }
+          }
           if (input.replaceMessageId) {
             const latest = [...row.messages].reverse().find(message => message.role === "user");
             if (latest?.message_id !== input.replaceMessageId || latest.content !== previousUser?.content) {
@@ -952,7 +1261,7 @@ export class ConversationService {
         }, undefined, writeFence);
         if (!saved) throw serviceError("not_found", "项目不存在", 404);
         turnStarted = true;
-        await this.memoryMaintenance.schedule({ ownerId: input.owner.owner_id, projectId: input.projectId });
+        if (!input.lessonActionId) await this.memoryMaintenance.schedule({ ownerId: input.owner.owner_id, projectId: input.projectId });
       },
       modelRuntime,
       thinkingLevel: provider.thinkingLevel ?? "medium",
@@ -979,17 +1288,26 @@ export class ConversationService {
   }
 }
 
-function visibleContextMessages(messages: Message[]): AgentMessage[] {
+function trustedMessageText(message: Message): string {
+  if (message.context_eligible !== false) return message.content;
+  return (message.content_parts?.evidence_blocks ?? []).filter(block => block.commit_eligible)
+    .map(block => block.text).join('\n\n');
+}
+
+function visibleContextMessages(messages: Message[], project?: Project): AgentMessage[] {
   return messages.flatMap((message, index): AgentMessage[] => {
     if ((message.error && message.error !== "paused") || message.placeholder || !message.content.trim()) return [];
-    if (message.role === "user") {
+    const programSource = Boolean(project && isConfirmedLessonSource(project, message));
+    if (message.role === "user" || programSource) {
       const answer = messages[index + 1];
       // Legacy sessions have no turn marker. Do not reintroduce unanswered failed turns.
-      if (answer?.role !== "assistant" || (answer.error && answer.error !== "paused") || answer.placeholder || !answer.content.trim()) return [];
+      if (answer?.role !== "assistant" || (answer.error && answer.error !== "paused") || answer.placeholder || !trustedMessageText(answer).trim()) return [];
     }
-    if (message.role === "user") return [{ role: "user", content: message.content, timestamp: Date.parse(message.created_at) }];
+    if (message.role === "user" || programSource) return [{ role: "user", content: message.content, timestamp: Date.parse(message.created_at) }];
     if (message.role !== "assistant") return [];
-    return [{ role: "assistant", content: [{ type: "text", text: message.content }],
+    const trusted = trustedMessageText(message);
+    if (!trusted.trim()) return [];
+    return [{ role: "assistant", content: [{ type: "text", text: trusted }],
       api: "openai-completions", provider: "history", model: message.model ?? "history",
       stopReason: "stop", timestamp: Date.parse(message.created_at),
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
@@ -1047,6 +1365,35 @@ function findLearningAction(project: Project, actionId: string): LearningActionC
     if (message.learning_action?.action_id === actionId) return message.learning_action;
   }
   return null;
+}
+
+function isExecutedActionReplay(input: ConversationRunInput, content: string, snapshotId: string | null, user: Message, answer: Message): boolean {
+  const action = answer.learning_action;
+  if (user.content !== content || !answer.content_parts || !user.learning_action_result) return false;
+  if (input.selections && !isDeepStrictEqual(input.selections, user.attachments ?? [])) return false;
+  // Earlier regenerated answers omitted the resolved card. The persisted source
+  // result is still authoritative for an exact resend, never for a new UI action.
+  if (!action) return !input.lessonActionId && user.analysis_snapshot_id === snapshotId
+    && answer.analysis_snapshot_id === snapshotId;
+  if (action.status !== 'executed'
+    || action.source_message_id !== user.message_id || user.learning_action_result?.action_id !== action.action_id
+    || user.learning_action_result.route_revision !== action.route_revision
+    || user.learning_action_result.step_id !== (action.expected_step_id ?? null)
+    || action.snapshot_id !== snapshotId) return false;
+  return !input.lessonActionId;
+}
+
+function markConfirmedLesson(action: LearningActionCard): void {
+  if (action.status === 'executed' && action.outcome?.next_step_id
+    && ['start_learning_route', 'switch_learning_target', 'advance_learning_step'].includes(action.action)) {
+    action.outcome.lesson_run_id ??= randomUUID();
+  }
+}
+
+export function assertCurrentConfirmedLesson(project: Project, actionId: string): LearningActionCard {
+  const action = currentConfirmedLesson(project, actionId);
+  if (!action) throw serviceError('learning_action_no_longer_current', '当前学习步骤已经变化，请刷新后重试。', 409);
+  return action;
 }
 
 function isRetryableLearningAction(action: LearningActionCard): boolean {

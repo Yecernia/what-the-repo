@@ -38,12 +38,17 @@ export interface StructuredWorkerResult<T> {
 
 type ExplorationPhase = "explore" | "converge" | "submit";
 
-function explorationPhase(remaining: number): ExplorationPhase {
-  return remaining <= 4 ? "submit" : remaining <= 10 ? "converge" : "explore";
+function explorationPhase(remaining: number, submitReserve = 4, convergeReserve = 10): ExplorationPhase {
+  return remaining <= submitReserve ? "submit" : remaining <= convergeReserve ? "converge" : "explore";
 }
 
-function phaseInstruction(phase: ExplorationPhase, remaining: number): string {
+function phaseInstruction(phase: ExplorationPhase, remaining: number, evidenceToolName?: string): string {
   const budget = `本批次或整个任务最多还可进行 ${remaining} 次模型请求（含本次）。上限是保护措施，不是探索目标；证据足够时立即提交。`;
+  if (!evidenceToolName) {
+    if (phase === "submit") return `${budget}\n现在进入提交修正阶段。所有探索工具都不可用，包括 read/get/list/query；只用已经核实的材料调用 submit_result。首次提交有校验错误时，最后一次请求仅修正对应字段并再次提交。证据不足以形成可靠路线时提交空 steps，由调用方明确显示失败；不要猜测证据、静默缩小用户范围或编造路线。`;
+    if (phase === "converge") return `${budget}\n现在收敛路线：只核实用户要求的主线、现有候选的关键机制和证据；不要机械翻完组件或源码分页。准备完整路线并尽早提交，为提交及一次字段修正留出最后两次请求。`;
+    return `${budget}\n按用户目标定位必要组件和实现，可以在一次请求中并列读取独立材料。只在当前机制跨页时继续源码分页；证据足够立即提交，为提交和修正保留预算。`;
+  }
   if (phase === "submit") return `${budget}\n现在进入提交修正阶段。只用已有且已核实的候选、组件和证据 ID 调用 submit_result；可用 repair_result_text 局部修正，或 get_repository_evidence 确认已有 ID。不要开始新研究。若证据不足，按现有未核实规则处理，不编造证据。提交校验反馈后只修对应字段并再次提交。`;
   if (phase === "converge") return `${budget}\n现在收敛候选：核实已有候选的关键机制、证据和边界，完成 official_design_review，准备提交；不要开启新的研究方向或广泛检索。证据足够时立即调用 submit_result，按校验反馈局部修正。`;
   return `${budget}\n逐步探索并维护可提交的候选；证据足够时立即调用 submit_result，不必用完额度。`;
@@ -84,12 +89,12 @@ export async function runStructuredWorker<T extends TSchema>(options: {
   signal?: AbortSignal;
   validateSubmitted?: (value: Static<T>) => string | readonly string[] | null | undefined;
   maxSubmitAttempts?: number;
-  /** Teaching/review tasks only; overrides may lower but never raise the default bounds. */
-  taskLimits?: { maxRequests?: number; timeoutMs?: number };
+  /** Teaching/review tasks only; explicit timeouts may extend the 120s default up to 600s. */
+  taskLimits?: { maxRequests?: number; timeoutMs?: number; maxOutputTokens?: number };
   repairTextFields?: readonly string[];
   diagnosticIdentity?: WorkerDiagnosticIdentity;
-  /** Explicit opt-in for bounded exploration; only value discovery enables it. */
-  explorationEndgame?: { evidenceToolName: string };
+  /** Opt-in bounded exploration; defaults retain analysis's existing endgame. */
+  explorationEndgame?: { evidenceToolName?: string; submitReserve?: number; convergeReserve?: number };
 }): Promise<StructuredWorkerResult<Static<T>>> {
   options = { ...options, modelRuntime: runtimeForSkill(options.modelRuntime, options.skillId) };
   const productSkill = options.productSkill ?? options.modelRuntime.skills?.[options.skillId] ?? await loadProductSkill(options.skillId);
@@ -183,10 +188,13 @@ export async function runStructuredWorker<T extends TSchema>(options: {
       return accept(toolCallId, value);
     },
   }] : [];
-  const model = options.modelRuntime.model;
-  const boundedTask = ["learning-route", "understanding-assessment", "citation-review"].includes(options.skillId);
+  const boundedTask = ["learning-route", "understanding-assessment", "citation-review", "reply-content-review"].includes(options.skillId);
+  const configuredModel = options.modelRuntime.model;
+  const model = boundedTask && options.taskLimits?.maxOutputTokens
+    ? { ...configuredModel, maxTokens: Math.max(1, Math.min(configuredModel.maxTokens, Math.floor(options.taskLimits.maxOutputTokens))) }
+    : configuredModel;
   const maxRequests = Math.max(1, Math.min(6, options.taskLimits?.maxRequests ?? 6));
-  const timeoutMs = Math.max(1, Math.min(120_000, options.taskLimits?.timeoutMs ?? 120_000));
+  const timeoutMs = Math.max(1, Math.min(600_000, options.taskLimits?.timeoutMs ?? 120_000));
   const externalSignal = options.signal;
   const taskController = boundedTask ? new AbortController() : null;
   const forwardAbort = () => taskController?.abort(externalSignal?.reason);
@@ -210,16 +218,20 @@ export async function runStructuredWorker<T extends TSchema>(options: {
           && ["component-explanation", "architecture-planning", "repository-value-discovery", "snapshot-language-overlay"].includes(options.skillId)
           && diagnostics.data.requestCount >= DEFAULT_WORKER_MAX_REQUESTS) throw new WorkerExecutionError("analysis_batch_call_limit_exceeded");
         if (options.explorationEndgame) {
+          const localRemaining = (boundedTask ? maxRequests : DEFAULT_WORKER_MAX_REQUESTS) - diagnostics.data.requestCount;
           const remaining = allowance
-            ? Math.min(allowance.batchRemaining, allowance.jobRemaining, DEFAULT_WORKER_MAX_REQUESTS - diagnostics.data.requestCount)
-            : DEFAULT_WORKER_MAX_REQUESTS - diagnostics.data.requestCount;
-          phase = explorationPhase(remaining);
-          const requestContext = appendRequestContext(context, phaseInstruction(phase, remaining));
+            ? Math.min(allowance.batchRemaining, allowance.jobRemaining, localRemaining)
+            : localRemaining;
+          phase = explorationPhase(remaining, options.explorationEndgame.submitReserve, options.explorationEndgame.convergeReserve);
+          const requestContext = appendRequestContext(context, phaseInstruction(phase, remaining, options.explorationEndgame.evidenceToolName));
           const request = diagnostics.request(requestContext);
           request.phase = phase;
           request.remaining = remaining;
           return streamWithProviderPermit(options.modelRuntime, candidate as typeof model, requestContext, {
             ...streamOptions,
+            ...(boundedTask && options.taskLimits?.maxOutputTokens ? {
+              maxTokens: Math.max(1, Math.min(model.maxTokens, Math.floor(options.taskLimits.maxOutputTokens))),
+            } : {}),
             ...(options.modelRuntime.networkTimeoutMs ? { timeoutMs: options.modelRuntime.networkTimeoutMs } : {}),
           }, request);
         }
@@ -230,13 +242,16 @@ export async function runStructuredWorker<T extends TSchema>(options: {
       }
       return streamWithProviderPermit(options.modelRuntime, candidate as typeof model, context, {
         ...streamOptions,
+        ...(boundedTask && options.taskLimits?.maxOutputTokens ? {
+          maxTokens: Math.max(1, Math.min(model.maxTokens, Math.floor(options.taskLimits.maxOutputTokens))),
+        } : {}),
         ...(options.modelRuntime.networkTimeoutMs ? { timeoutMs: options.modelRuntime.networkTimeoutMs } : {}),
       }, diagnostics.request(context));
     },
     getApiKey: () => options.modelRuntime.apiKey,
-    shouldStopAfterTurn: () => {
+    shouldStopAfterTurn: ({ message }) => {
       if (textRepair?.pending && textRepair.stats.attempts >= 3) textRepair.stats.exhausted = true;
-      return localFailure !== null || submitted !== null || textRepair?.stats.exhausted === true;
+      return message.stopReason === "length" || localFailure !== null || submitted !== null || textRepair?.stats.exhausted === true;
     },
     initialState: {
       systemPrompt: formatProductSkillInvocation(productSkill, options.systemPrompt),
@@ -291,6 +306,7 @@ export async function runStructuredWorker<T extends TSchema>(options: {
       .find((message): message is AssistantMessage => message.role === "assistant");
     const providerFailed = finalAssistant?.stopReason === "error";
     const providerAborted = finalAssistant?.stopReason === "aborted";
+    const outputTruncated = finalAssistant?.stopReason === 'length';
     const lastRequest = diagnostics.data.requests.at(-1);
     const providerCause = providerErrorCode([
       finalAssistant?.errorMessage, lastRequest?.transport.at(-1)?.status, lastRequest?.transport.at(-1)?.errorCode,
@@ -300,9 +316,9 @@ export async function runStructuredWorker<T extends TSchema>(options: {
       ?? (lastRequest?.status === "budget_rejected" ? providerCause
         : lastRequest?.status === "gate_error" ? "worker_internal_error" : null);
     return {
-      value: failure ? null : submitted,
+      value: failure || outputTruncated ? null : submitted,
       usage: usage(agent.state.messages),
-      stopReason: failure ?? (submitted
+      stopReason: failure ?? (outputTruncated ? 'worker_output_limit_exceeded' : submitted
         ? validationErrors.length ? "completed_with_validation_errors" : "completed"
         : textRepair?.stats.exhausted
           ? "text_repair_exhausted"

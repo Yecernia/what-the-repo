@@ -21,6 +21,7 @@ import {
   type ProviderSettings,
 } from "../domain/conversation.js";
 import { DEFAULT_DISPLAY_LANGUAGE, normalizeDisplayLanguage } from "../domain/display-language.js";
+import { isConfirmedLessonSource } from '../domain/confirmed-lesson.js';
 import type { EvidenceSnapshot } from "../domain/snapshot.js";
 import { workspaceSnapshot, workspaceSnapshotDetail, type WorkspaceDetailKind } from "../domain/workspace-snapshot.js";
 import type { AnalysisJob } from "../domain/jobs.js";
@@ -64,7 +65,7 @@ import { registerMcpRoutes } from "../mcp/server.js";
 import { configureProductSkillRegistry } from "../agent/skill-registry.js";
 import { KeyedMutex } from "../agent/mutex.js";
 import type { TaskQueue } from "../queue/task-queue.js";
-import { ConversationStreamHub, type ConversationStreamClient } from "./conversation-stream.js";
+import { ConversationStreamHub, type ConversationStreamClient, type ConversationStreamTerminalFrame } from "./conversation-stream.js";
 import { defaultRuntimeMetrics, METRIC_NAMES, type RuntimeMetrics } from "../observability/metrics.js";
 import { performance } from "node:perf_hooks";
 import { createPublicFetch, safePublicHttpsUrl } from "../security/outbound-url.js";
@@ -1736,6 +1737,33 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     }, true);
   });
 
+  // Automatic lesson runs remain single attempts after the in-memory stream expires.
+  // Durable messages carry completed lessons; a pre-source failure is in its run trace.
+  const persistedLessonTerminal = async (ownerId: string, projectId: string, runId: string, actionId?: string): Promise<ConversationStreamTerminalFrame | null> => {
+    const project = await store.loadProject(projectId, ownerId);
+    if (!project) throw httpError(404, "项目不存在", "not_found");
+    const source = project.messages.find(message => message.trace_id === runId && isConfirmedLessonSource(project, message)
+      && (!actionId || message.lesson_request!.action_id === actionId));
+    if (source) {
+      const answer = project.messages[project.messages.indexOf(source) + 1];
+      if (answer?.role === 'assistant' && answer.trace_id === runId) {
+        return { type: 'result', payload: { user_message: source, assistant_message: answer,
+          teaching_phase: project.study.phase, validation_errors: [], tools_used: [], state_changed: false,
+          ...(answer.error ? { error: { code: answer.error, message: answer.content } } : {}) } };
+      }
+    }
+    const failure = (await store.listRunTraces(projectId, runId)).find(trace => trace.owner_id === ownerId
+      && trace.stream_failed === true && typeof trace.lesson_action_id === 'string'
+      && (!actionId || trace.lesson_action_id === actionId)
+      && project.messages.some(message => message.learning_action?.action_id === trace.lesson_action_id
+        && message.learning_action?.status === 'executed' && message.learning_action?.outcome?.lesson_run_id));
+    if (failure) {
+      const code = publicErrorCode(503, failure.stop_reason);
+      return { type: 'error', payload: { code, message: failureMessage(code) } };
+    }
+    return source ? { type: 'error', payload: { code: 'lesson_interrupted', message: failureMessage('lesson_interrupted') } } : null;
+  };
+
   const sendMessage = async (
     request: RequestWithBody,
     reply: FastifyReply,
@@ -1745,20 +1773,25 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const { projectId } = request.params as { projectId: string };
     await repository.refreshMigrationNotice(owner.owner_id, projectId);
     const body = objectBody(request);
-    const content = textField(body, "content", 20_000, true);
-    const selections = parseUiSelections(body);
-    const intent = body.learning_intent as Record<string, unknown> | undefined;
-    if (intent !== undefined && (!intent || typeof intent.kind !== 'string' || !['skip_current_step', 'start_current_step'].includes(intent.kind)
-      || !Number.isSafeInteger(intent.route_revision) || Number(intent.route_revision) < 0
-      || typeof intent.step_id !== "string" || intent.step_id.length > 200
-      || typeof intent.snapshot_id !== "string" || intent.snapshot_id.length > 200)) {
-      throw httpError(400, "学习操作参数无效");
+    const lessonActionId = body.lesson_action_id === undefined ? undefined : textField(body, "lesson_action_id", 200, true);
+    if (body.learning_intent !== undefined || (lessonActionId && (body.content !== undefined || body.ui_contexts !== undefined || body.ui_context !== undefined || body.replace_message_id !== undefined))) {
+      throw httpError(400, "学习操作参数无效，请刷新后重试");
     }
+    const content = lessonActionId ? '' : textField(body, "content", 20_000, true);
+    const selections = parseUiSelections(body);
     const requestedRunId = typeof body.run_id === "string" && /^[A-Za-z0-9_-]{16,128}$/u.test(body.run_id)
       ? body.run_id
       : null;
     const runId = requestedRunId ?? randomUUID();
-    const existingStream = stream ? conversationStreams.get(runId) : undefined;
+    let existingStream = stream ? conversationStreams.get(runId) : undefined;
+    if (stream && !existingStream && lessonActionId) {
+      const terminal = await persistedLessonTerminal(owner.owner_id, projectId, runId, lessonActionId);
+      existingStream = conversationStreams.get(runId);
+      if (!existingStream && terminal) {
+        existingStream = conversationStreams.create({ runId, projectId, ownerId: owner.owner_id });
+        conversationStreams.finish(existingStream, terminal);
+      }
+    }
     if (existingStream) {
       if (existingStream.projectId !== projectId || existingStream.ownerId !== owner.owner_id) {
         throw httpError(404, "本轮回答不存在", "not_found");
@@ -1785,7 +1818,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       retryRunId: typeof body.retry_run_id === "string" ? body.retry_run_id.slice(0, 128) : undefined,
       selections,
       reviewEvidence: body.review_evidence === true,
-      learningIntent: intent as { kind: "skip_current_step" | "start_current_step"; route_revision: number; step_id: string; snapshot_id: string } | undefined,
+      lessonActionId,
       runId,
       signal: controller.signal,
       onEvent: (event) => {
@@ -1825,6 +1858,8 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
           owner_id: owner.owner_id,
           stop_reason: errorCode,
           stream_failed: true,
+          ...(lessonActionId ? { lesson_action_id: lessonActionId } : {}),
+          events: [],
           latency_ms: Date.now() - startedAt,
           created_at: nowIso(),
         }).catch(() => undefined);
@@ -1846,7 +1881,15 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     const owner = await requiredOwner(request, store, config);
     const { projectId, runId } = request.params as { projectId: string; runId: string };
     if (!(await store.loadProject(projectId, owner.owner_id))) throw httpError(404, "项目不存在");
-    const streamRun = conversationStreams.get(runId);
+    let streamRun = conversationStreams.get(runId);
+    if (!streamRun) {
+      const terminal = await persistedLessonTerminal(owner.owner_id, projectId, runId);
+      streamRun = conversationStreams.get(runId);
+      if (!streamRun && terminal) {
+        streamRun = conversationStreams.create({ runId, projectId, ownerId: owner.owner_id });
+        conversationStreams.finish(streamRun, terminal);
+      }
+    }
     if (!streamRun || streamRun.projectId !== projectId || streamRun.ownerId !== owner.owner_id) {
       throw httpError(404, "本轮回答不存在", "not_found");
     }

@@ -1,0 +1,242 @@
+{
+  "id": "teaching-submission-repair-quality-v1",
+  "kind": "quality-rubric",
+  "purpose": "Evaluator-only retained first failures for R5-3. Do not feed the observed failure or expected behavior as hints to the production model. No paid evaluation is implied.",
+  "source": "Local R5 audit, 2026-10-04; pinned developit/mitt commit 6b41670516ed8e8b738612f60491995470aa63b3. Instance identity, run, snapshot, account and provider metadata omitted.",
+  "evaluation": "Use the unchanged original messages in a clean route flow and one continuous teaching flow. Record first attempts separately from retries. Controlled tests establish lifecycle and state gates, not actual language-model success.",
+  "real_model_recheck": "not_run",
+  "cases": [
+    {
+      "id": "route-with-future-teaching-style",
+      "original_user_message": "我想系统学习 mitt，请为我安排三步短路线：第一步理解 on 和 off，第二步理解 emit 的数组复制，第三步理解公开类型。每步先简短讲解，再让我回答问题。",
+      "observed_first_output": "先给你一个准确的轮廓（下面每条都来自我这一轮读到的源码）：\n\n**整体样子**\n\n- 运行时的实现集中在 `src/index.ts` 一个文件里，仓库其余文件是配置、文档与测试。默认导出是泛型工厂函数 `mitt`（`src/index.ts:46-123`）：调用时可选传入一个已有的处理器 Map，没传就走 `all = all || new Map()`（`src/index.ts:52`）。\n- 工厂返回一个字面量对象（`src/index.ts:54-122`），把 Map 作为公开属性 `all` 暴露，并挂上 `on`、`off`、`emit` 三个方法。这三个方法读写的是闭包里同一个 Map，不走 `this`，所以可以把方法单独取出来传递。\n- 类型都集中在文件顶部 `src/index.ts:1-39`：`EventType`、`Handler`、`WildcardHandler`、`EventHandlerList` / `WildCardEventHandlerList`、`EventHandlerMap`，以及声明了四个成员的 `Emitter` 接口；`on`、`off`、`emit` 的公开声明就写在这个接口里。\n\n**你的三步分别落在哪里**\n\n1. **on 与 off**：`on` 实现在 `src/index.ts:66-72`——先 `all.get(type)`，已有数组就 `push(handler)`，没有就新建 `[handler]`；`off` 实现在 `src/index.ts:82-90`——传入 handler 时执行 `handlers.splice(handlers.indexOf(handler) >>> 0, 1)`，省略 handler 时执行 `all.set(type, [])` 把该类型整体清空。两者对应的公开声明在 `src/index.ts:26-33`。\n2. **emit 的数组复制**：`emit` 实现在 `src/index.ts:103-121`，里面有两段派发——先类型匹配的处理器，再 `'*'` 通配处理器——两段在遍历前都先 `.slice()` 复制一次。\n3. **公开类型**：`src/index.ts:1-39`，重点看 `EventHandlerMap`（`src/index.ts:18-21`）如何描述“事件名 → 处理器数组”，以及 `Emitter` 接口（`src/index.ts:23-39`）如何声明重载。\n\n**先埋一个区分**：对外可见的调用契约由接口 `Emitter`（`src/index.ts:23-39`）决定，而 `src/index.ts:66`、`82`、`103` 是实现的签名。两者并不逐字相同——接口里的 `off(type: '*', handler)` 要求显式传入 handler，实现签名却把它写成可选。第三阶段讲公开类型时，这个区分正好用得上。\n\n**接下来怎么进行**：路线是分析结果生成的，我在这里不自己编步骤清单；不过你点的三个主题就是这唯一实现文件的天然主线。每一步我都会先做简短讲解，再给你一道针对该步的问题，你答完我再看要不要往下走。\n\n> 证据不足：运行时的实现集中在 src/index.ts 一个文件里，仓库其余文件是配置、文档与测试。 — 所给证据包全部只包含 src/index.ts 的源码区间，没有任何其他文件的摘录，既不能证明其余文件只是配置/文档/测试，也不能证明运行时实现仅限于这一个文件，属于超出证据范围的整体性断言。\n>\n> 证据不足：你点的三个主题就是这唯一实现文件的天然主线。 — “唯一实现文件”同样是对整个仓库构成的断言，所给证据只覆盖 src/index.ts，未提供其他文件信息，无法确认其为唯一实现文件。",
+      "observed_attempts": [
+        {
+          "code": "reply_evidence_repair_required",
+          "kind": "action",
+          "reason": "The candidate needs evidence repair before submission. Preserve the requested explanation and question; repair their claims/ranges using source reads, then resubmit. Do not rewrite the assessment or remove the follow-up. If repair cannot complete, submit unavailable.",
+          "attempt": 1,
+          "has_text": false,
+          "has_question": false,
+          "has_supplement": true
+        },
+        {
+          "code": "reply_evidence_repair_required",
+          "kind": "action",
+          "reason": "The candidate needs evidence repair before submission. Preserve the requested explanation and question; repair their claims/ranges using source reads, then resubmit. Do not rewrite the assessment or remove the follow-up. If repair cannot complete, submit unavailable.",
+          "attempt": 2,
+          "has_text": false,
+          "has_question": false,
+          "has_supplement": true
+        }
+      ],
+      "observed_preflight": [
+        {
+          "attempt": 1,
+          "block_kind": "explanation",
+          "packet_count": 16,
+          "coverage_reasons": [
+            "budget_exceeded"
+          ],
+          "validation_errors": [
+            "evidence_packet_incomplete"
+          ]
+        },
+        {
+          "attempt": 2,
+          "block_kind": "explanation",
+          "issue_kinds": [
+            "insufficient_evidence"
+          ],
+          "packet_count": 12,
+          "review_status": "reviewed",
+          "coverage_reasons": [],
+          "validation_errors": []
+        },
+        {
+          "attempt": 3,
+          "block_kind": "explanation",
+          "issue_kinds": [
+            "insufficient_evidence",
+            "insufficient_evidence"
+          ],
+          "packet_count": 12,
+          "review_status": "reviewed",
+          "coverage_reasons": [],
+          "validation_errors": []
+        }
+      ],
+      "retained_final_blocks": [
+        {
+          "kind": "explanation",
+          "text": "先给你一个准确的轮廓（下面每条都来自我这一轮读到的源码）：\n\n**整体样子**\n\n- 运行时的实现集中在 `src/index.ts` 一个文件里，仓库其余文件是配置、文档与测试。默认导出是泛型工厂函数 `mitt`（`src/index.ts:46-123`）：调用时可选传入一个已有的处理器 Map，没传就走 `all = all || new Map()`（`src/index.ts:52`）。\n- 工厂返回一个字面量对象（`src/index.ts:54-122`），把 Map 作为公开属性 `all` 暴露，并挂上 `on`、`off`、`emit` 三个方法。这三个方法读写的是闭包里同一个 Map，不走 `this`，所以可以把方法单独取出来传递。\n- 类型都集中在文件顶部 `src/index.ts:1-39`：`EventType`、`Handler`、`WildcardHandler`、`EventHandlerList` / `WildCardEventHandlerList`、`EventHandlerMap`，以及声明了四个成员的 `Emitter` 接口；`on`、`off`、`emit` 的公开声明就写在这个接口里。\n\n**你的三步分别落在哪里**\n\n1. **on 与 off**：`on` 实现在 `src/index.ts:66-72`——先 `all.get(type)`，已有数组就 `push(handler)`，没有就新建 `[handler]`；`off` 实现在 `src/index.ts:82-90`——传入 handler 时执行 `handlers.splice(handlers.indexOf(handler) >>> 0, 1)`，省略 handler 时执行 `all.set(type, [])` 把该类型整体清空。两者对应的公开声明在 `src/index.ts:26-33`。\n2. **emit 的数组复制**：`emit` 实现在 `src/index.ts:103-121`，里面有两段派发——先类型匹配的处理器，再 `'*'` 通配处理器——两段在遍历前都先 `.slice()` 复制一次。\n3. **公开类型**：`src/index.ts:1-39`，重点看 `EventHandlerMap`（`src/index.ts:18-21`）如何描述“事件名 → 处理器数组”，以及 `Emitter` 接口（`src/index.ts:23-39`）如何声明重载。\n\n**先埋一个区分**：对外可见的调用契约由接口 `Emitter`（`src/index.ts:23-39`）决定，而 `src/index.ts:66`、`82`、`103` 是实现的签名。两者并不逐字相同——接口里的 `off(type: '*', handler)` 要求显式传入 handler，实现签名却把它写成可选。第三阶段讲公开类型时，这个区分正好用得上。\n\n**接下来怎么进行**：路线是分析结果生成的，我在这里不自己编步骤清单；不过你点的三个主题就是这唯一实现文件的天然主线。每一步我都会先做简短讲解，再给你一道针对该步的问题，你答完我再看要不要往下走。",
+          "packet_count": 12,
+          "issues": [
+            {
+              "kind": "insufficient_evidence",
+              "claim": "运行时的实现集中在 `src/index.ts` 一个文件里，仓库其余文件是配置、文档与测试。",
+              "reason": "所给证据包全部只包含 src/index.ts 的源码区间，没有任何其他文件的摘录，既不能证明其余文件只是配置/文档/测试，也不能证明运行时实现仅限于这一个文件，属于超出证据范围的整体性断言。"
+            },
+            {
+              "kind": "insufficient_evidence",
+              "claim": "你点的三个主题就是这唯一实现文件的天然主线。",
+              "reason": "“唯一实现文件”同样是对整个仓库构成的断言，所给证据只覆盖 src/index.ts，未提供其他文件信息，无法确认其为唯一实现文件。"
+            }
+          ]
+        }
+      ],
+      "evidence_limit": "Rejected preflight drafts were not retained; their exact prose and references cannot be reconstructed from hashes. Final displayed blocks above are the only observed prose, not invented earlier candidates.",
+      "expected": [
+        "Present the correct repository route confirmation in the first turn with all requested topics/order/pacing preserved in its request; do not require the user to rewrite the message.",
+        "A plan for future step explanations does not require a full current repository survey. A spontaneously added survey may be removed after evidence rejection without changing the request.",
+        "If any current explanation is supplied, it must pass the same 12-packet and semantic gates; do not retain a repository-wide uniqueness claim supported by one file."
+      ]
+    },
+    {
+      "id": "route-confirmation-retry-preserves-goal",
+      "original_user_message": "我现在想开始学习，请先给出学习路线的确认入口，不用先展开三个主题的详细解释。",
+      "observed_first_output": "范围说明。这次对上的学习对象是「验证与持续集成」这一块，它的文件只有下面这些：\n\n- `test/index_test.ts`：运行时语义测试。`test/index_test.ts:8-100` 覆盖默认导出是函数、可以传入既有处理器 Map、实例暴露 `all`，以及 `on` 的新事件类型、任意字符串（含 `'constructor'`）、追加到已有数组、重复注册、Symbol 事件名和「不做大小写归一化」。`test/index_test.ts:121-155` 覆盖 `off`：按引用移除时只移除第一个匹配项、`off('type')` 清空该类型全部处理器、同样不做大小写归一化。`test/index_test.ts:162-197` 覆盖 `emit`：按类型调用对应处理器，以及不忽略大小写。\n- 关于通配符，这个运行时测试是把 `'*'` 直接写进处理器表（`test/index_test.ts:194` 的 `events.set('*', [star])`），随后断言 `star` 以事件类型和载荷被调用。它没有经过 `on('*')` 注册，也没有断言类型处理器与 `'*'` 处理器的调用先后——顺序属于实现行为，不在这份测试的断言范围里。\n- `test/test-types-compilation.ts`：不执行断言，而是在严格编译下用 `@ts-expect-error` 标注应当报错的调用，把参数推断固定下来；`on('*')` 的注册只出现在这里。\n- `.github/workflows/main.yml` 与 `.github/workflows/compressed-size.yml`：前者在 PR 与推送到 main 时用 Node 14 依次执行安装、构建与测试；后者只在 PR 上按 `dist/` 产物做压缩体积对比。\n\n这些文件里没有 `src/index.ts` 的事件发射器实现本身。整个仓库的分析分成三块：核心运行时（`src/index.ts`）、验证与持续集成（`test/` 与 `.github/workflows/`）、包发布配置与项目文档（`package.json`、`tsconfig.json`、`.eslintrc`、`README.md` 等）。如果你要的是整个仓库，或者想先攻核心运行时，回我一句，我就按那个范围重新开一份。\n\n> 引用源码未完整读取，相关主张尚未核实。\n\n> 部分说明尚未通过证据核对，请先视为未核实。",
+      "observed_attempts": [
+        {
+          "code": "tool_request_rejected",
+          "kind": "answer",
+          "reason": "An action was proposed. Submit kind=action; the program will describe its actual status.",
+          "attempt": 1,
+          "has_text": true,
+          "has_question": false,
+          "has_supplement": false
+        },
+        {
+          "code": "reply_evidence_repair_required",
+          "kind": "action",
+          "reason": "The candidate needs evidence repair before submission. Preserve the requested explanation and question; repair their claims/ranges using source reads, then resubmit. Do not rewrite the assessment or remove the follow-up. If repair cannot complete, submit unavailable.",
+          "attempt": 2,
+          "has_text": false,
+          "has_question": false,
+          "has_supplement": true
+        }
+      ],
+      "observed_preflight": [
+        {
+          "attempt": 2,
+          "block_kind": "explanation",
+          "issue_kinds": [
+            "insufficient_evidence",
+            "insufficient_evidence"
+          ],
+          "packet_count": 9,
+          "review_status": "reviewed",
+          "coverage_reasons": [],
+          "validation_errors": []
+        },
+        {
+          "attempt": 3,
+          "block_kind": "explanation",
+          "packet_count": 15,
+          "coverage_reasons": [
+            "budget_exceeded"
+          ],
+          "validation_errors": [
+            "evidence_packet_incomplete"
+          ]
+        }
+      ],
+      "retained_final_blocks": [
+        {
+          "kind": "explanation",
+          "text": "范围说明。这次对上的学习对象是「验证与持续集成」这一块，它的文件只有下面这些：\n\n- `test/index_test.ts`：运行时语义测试。`test/index_test.ts:8-100` 覆盖默认导出是函数、可以传入既有处理器 Map、实例暴露 `all`，以及 `on` 的新事件类型、任意字符串（含 `'constructor'`）、追加到已有数组、重复注册、Symbol 事件名和「不做大小写归一化」。`test/index_test.ts:121-155` 覆盖 `off`：按引用移除时只移除第一个匹配项、`off('type')` 清空该类型全部处理器、同样不做大小写归一化。`test/index_test.ts:162-197` 覆盖 `emit`：按类型调用对应处理器，以及不忽略大小写。\n- 关于通配符，这个运行时测试是把 `'*'` 直接写进处理器表（`test/index_test.ts:194` 的 `events.set('*', [star])`），随后断言 `star` 以事件类型和载荷被调用。它没有经过 `on('*')` 注册，也没有断言类型处理器与 `'*'` 处理器的调用先后——顺序属于实现行为，不在这份测试的断言范围里。\n- `test/test-types-compilation.ts`：不执行断言，而是在严格编译下用 `@ts-expect-error` 标注应当报错的调用，把参数推断固定下来；`on('*')` 的注册只出现在这里。\n- `.github/workflows/main.yml` 与 `.github/workflows/compressed-size.yml`：前者在 PR 与推送到 main 时用 Node 14 依次执行安装、构建与测试；后者只在 PR 上按 `dist/` 产物做压缩体积对比。\n\n这些文件里没有 `src/index.ts` 的事件发射器实现本身。整个仓库的分析分成三块：核心运行时（`src/index.ts`）、验证与持续集成（`test/` 与 `.github/workflows/`）、包发布配置与项目文档（`package.json`、`tsconfig.json`、`.eslintrc`、`README.md` 等）。如果你要的是整个仓库，或者想先攻核心运行时，回我一句，我就按那个范围重新开一份。",
+          "packet_count": 15,
+          "issues": []
+        }
+      ],
+      "evidence_limit": "Rejected preflight drafts were not retained; their exact prose and references cannot be reconstructed from hashes. Final displayed blocks above are the only observed prose, not invented earlier candidates.",
+      "history": [
+        {
+          "role": "user",
+          "content": "我想系统学习 mitt，请为我安排三步短路线：第一步理解 on 和 off，第二步理解 emit 的数组复制，第三步理解公开类型。每步先简短讲解，再让我回答问题。"
+        }
+      ],
+      "expected": [
+        "Carry forward the explicit runtime/on/off/emit/public-types goal from user history rather than selecting an unrelated testing/CI component from a failed assistant answer.",
+        "Present a confirmation without expanding three lessons that the current user explicitly deferred.",
+        "No automatic route activation before the confirmation."
+      ]
+    },
+    {
+      "id": "complement-existing-answer-and-stay",
+      "original_user_message": "补上 off 部分：不传 handler 时，会把 foo 键对应的值换成一个新的空数组，所以 all.get(\"foo\") 是 []，all.has(\"foo\") 仍然为 true，并没有删除键。先留在这一步。",
+      "observed_first_output": "本轮回答未通过内容检查，学习进度没有改变。原题仍然有效，可以继续作答或重试换题。\n\n本次作答反馈未被采纳，原有学习记录保留。\n\n> 部分说明尚未通过证据核对，请先视为未核实。",
+      "observed_attempts": [
+        {
+          "code": "reply_evidence_repair_required",
+          "kind": "assessment",
+          "reason": "The candidate needs evidence repair before submission. Preserve the requested explanation and question; repair their claims/ranges using source reads, then resubmit. Do not rewrite the assessment or remove the follow-up. If repair cannot complete, submit unavailable.",
+          "attempt": 1,
+          "has_text": false,
+          "has_question": false,
+          "has_supplement": true
+        },
+        {
+          "code": "reply_schema_invalid",
+          "fields": [
+            "text"
+          ]
+        },
+        {
+          "code": "reply_evidence_repair_required",
+          "kind": "assessment",
+          "reason": "The candidate needs evidence repair before submission. Preserve the requested explanation and question; repair their claims/ranges using source reads, then resubmit. Do not rewrite the assessment or remove the follow-up. If repair cannot complete, submit unavailable.",
+          "attempt": 2,
+          "has_text": false,
+          "has_question": false,
+          "has_supplement": true
+        }
+      ],
+      "observed_preflight": [
+        {
+          "attempt": 1,
+          "block_kind": "explanation",
+          "issue_kinds": [
+            "insufficient_evidence",
+            "insufficient_evidence"
+          ],
+          "packet_count": 4,
+          "review_status": "reviewed",
+          "coverage_reasons": [],
+          "validation_errors": []
+        },
+        {
+          "attempt": 2,
+          "block_kind": "explanation",
+          "issue_kinds": [
+            "insufficient_evidence",
+            "insufficient_evidence",
+            "insufficient_evidence",
+            "insufficient_evidence",
+            "insufficient_evidence"
+          ],
+          "packet_count": 3,
+          "review_status": "reviewed",
+          "coverage_reasons": [],
+          "validation_errors": []
+        }
+      ],
+      "retained_final_blocks": [
+        {
+          "kind": "explanation",
+          "text": "本轮回答未通过内容检查，学习进度没有改变。原题仍然有效，可以继续作答或重试换题。",
+          "packet_count": 3,
+          "issues": []
+        }
+      ],
+      "evidence_limit": "Rejected preflight drafts were not retained; their exact prose and references cannot be reconstructed from hashes. Final displayed blocks above are the only observed prose, not invented earlier candidates.",
+      "setup": "A displayed on/off question already has a valid prior on proof; assess the original current off answer while staying on the same step. The original failed first attempt added no proof; an identical user retry succeeded in the retained audit.",
+      "expected": [
+        "Return the authoritative cumulative assessment in this same turn; preserve its target judgment and original answer provenance.",
+        "The instruction to stay is control, not an independent explanatory question. Any self-initiated supplement can be omitted; do not require a resend just to discard it.",
+        "SDK shape errors and content/evidence preflight share one limit of three submissions. No hidden fourth review can upgrade a failed candidate.",
+        "An actual independent question in an added variant remains required: do not label it control or drop it to execute an action."
+      ]
+    }
+  ]
+}

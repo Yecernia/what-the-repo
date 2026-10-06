@@ -436,7 +436,7 @@ export async function resolveChatProvider(input: Parameters<typeof resolveProvid
   const provider = await resolveProvider(input);
   if (!provider || provider.modelSelector !== FREE_SELECTOR) return provider;
   return { ...provider, maxOutputTokens: Math.min(provider.maxOutputTokens ?? 16_384,
-    input.config.freeChatMaxOutputTokens ?? 32_768) };
+    input.config.freeChatMaxOutputTokens ?? 65_536) };
 }
 
 export async function resolveProjectProvider(

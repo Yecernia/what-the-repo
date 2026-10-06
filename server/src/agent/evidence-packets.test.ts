@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createModels, type Api, type Model } from "@earendil-works/pi-ai";
+import { createModels, type Api, type Context, type Model } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import type { EvidenceRef } from "../domain/conversation.js";
 import type { EvidenceSnapshot, SnapshotEvidence } from "../domain/snapshot.js";
 import type { ProductStore } from "../persistence/store.js";
 import { loadEvidencePackets } from "./evidence-packets.js";
 import { reviewAnswerEvidence, unavailableEvidenceReview } from "./citation-review.js";
+
 import { validateAnswerCitations, withEvidenceReviewNotice } from "./citations.js";
 
 const evidence: EvidenceRef = { stable_id: "double", label: "double", path: "src/double.ts", start_line: 10, end_line: 46, kind: "symbol", snapshot_id: "snapshot" };
@@ -14,6 +15,18 @@ const lines = Array.from({ length: 55 }, (_, index) => index === 44 ? "return x 
 const store = { readSourceLines: async (_p: string, _s: string, _f: string, start: number, end: number) => ({ lines: lines.slice(start - 1, end), truncated: false }) } as ProductStore;
 const input = { evidence: [evidence], store, projectId: "project", snapshotId: "snapshot" };
 
+function reviewPayload(context: Context) {
+  const user = context.messages.find(message => message.role === 'user'); assert.ok(Array.isArray(user?.content));
+  const part = user.content.find(part => part.type === 'text'); assert.ok(part?.type === 'text');
+  return JSON.parse(part.text) as { task_phase: string; final_answer: string; focus_section_ids: number[];
+    answer_sections: Array<{ section_id: number; start: number; end: number }> };
+}
+function controlledReview(context: Context, outcome: string, ids: string[] = [], claim?: string, proof?: unknown) {
+  const payload = reviewPayload(context); assert.equal(payload.task_phase, 'direct_review');
+  return { sections: payload.focus_section_ids.map(section_id => ({ section_id, outcome, basis: 'Controlled final source comparison.', evidence_ids: ids,
+    issues: claim ? [{ claim, actual_assertion: 'The original return assertion.', conditions: 'Original conditions.', reason: 'The return multiplies by two. [click](https://bad.invalid)',
+      kind: outcome === 'contradicted' ? 'contradicted' : 'insufficient_evidence', ...(proof ? { counterevidence: 'Source returns double.', contradiction_proof: proof } : {}) }] : [] })) };
+}
 test("citation handoff prefers actual source ranges to earlier whole-file anchors", async () => {
   const whole: SnapshotEvidence = { ...evidence, stable_id: "whole", start_line: 1, end_line: null, kind: "file" };
   const first: SnapshotEvidence = { ...whole, stable_id: "read:10", start_line: 10, end_line: 20, kind: "source_excerpt" };
@@ -44,20 +57,15 @@ test("unavailable review hides exception details and preserves an unverified ans
 });
 
 test("a reviewer cannot claim support without accepting a supplied complete evidence ID", async () => {
-  const faux = fauxProvider({ provider: "citation-invalid-accepted-ids" });
-  const models = createModels(); models.setProvider(faux.provider);
+  const faux = fauxProvider({ provider: "citation-invalid-accepted-ids" }); const models = createModels(); models.setProvider(faux.provider);
   for (const ids of [[], ["invented"]]) {
-    faux.setResponses([fauxAssistantMessage(fauxToolCall("submit_result", {
-      repository_claims: ['returns double'], supported: true, accepted_evidence_ids: ids, unsupported_claims: [], summary: "supported",
-    }))]);
+    faux.setResponses(Array.from({ length: 2 }, () => context => fauxAssistantMessage(fauxToolCall('submit_result', controlledReview(context, 'supported', ids)))));
     const result = await reviewAnswerEvidence({ ...input, text: "returns double", modelRuntime: { models, model: faux.getModel() as Model<Api> } });
-    assert.equal(result.status, "unverified");
-    assert.equal(result.completed, false);
-    assert.equal(result.supported, false);
-    assert.equal(result.stopReason, "invalid_review_result");
+    assert.equal(result.status, "unverified"); assert.equal(result.completed, false); assert.equal(result.supported, false);
+    assert.deepEqual(result.acceptedEvidenceIds, []); assert.equal(result.semanticReview?.groups[0]?.runs.length, 2);
+    assert.ok(result.semanticReview?.groups[0]?.runs[0]?.validationErrors.length);
   }
 });
-
 test("evidence packets include the return in the declared long function range", async () => {
   const result = await loadEvidencePackets(input);
   assert.equal(result.incomplete, false);
@@ -95,38 +103,52 @@ test("evidence packets page complete ranges and mark oversized whole-file anchor
 });
 
 test("citation review distinguishes no evidence, greetings and explicit contradictions", async () => {
-  const faux = fauxProvider({ provider: "citation-evidence-test" });
-  const models = createModels(); models.setProvider(faux.provider);
+  const faux = fauxProvider({ provider: "citation-evidence-test" }); const models = createModels(); models.setProvider(faux.provider);
   const modelRuntime = { models, model: faux.getModel() as Model<Api> };
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('submit_result', {
-    repository_claims: ['This repository guarantees no duplicate IDs.'], supported: false,
-    accepted_evidence_ids: [], unsupported_claims: [], summary: 'Missing evidence',
-  }))]);
+  faux.setResponses([context => fauxAssistantMessage(fauxToolCall('submit_result', controlledReview(context, 'insufficient_evidence', [], 'This repository guarantees no duplicate IDs.')))]);
   const missing = await reviewAnswerEvidence({ ...input, evidence: [], text: "This repository guarantees no duplicate IDs.", modelRuntime });
-  assert.equal(missing.status, "unverified");
-  assert.equal(missing.issues[0].kind, "insufficient_evidence");
-  assert.equal(missing.evidenceIncomplete, false);
-  const greeting = await reviewAnswerEvidence({ ...input, evidence: [], text: "你好！", modelRuntime });
-  assert.equal(greeting.status, "not_applicable");
-  assert.equal(faux.state.callCount, 1);
+  assert.equal(missing.status, "unverified"); assert.equal(missing.completed, true); assert.equal(missing.issues[0]!.kind, "insufficient_evidence"); assert.equal(missing.evidenceIncomplete, false);
+  const greeting = await reviewAnswerEvidence({ ...input, evidence: [], text: "你好！", modelRuntime }); assert.equal(greeting.status, "not_applicable");
   faux.setResponses([context => {
     assert.match(JSON.stringify(context.messages), /return x \* 2/);
-    return fauxAssistantMessage(fauxToolCall("submit_result", { repository_claims: ['returns triple'], supported: false, accepted_evidence_ids: ["double"], unsupported_claims: ["returns triple"], summary: "returns double", issues: [{ claim: "returns triple [click](https://bad.invalid)", reason: "The return multiplies by two.", kind: "contradicted" }] }));
+    return fauxAssistantMessage(fauxToolCall('submit_result', controlledReview(context, 'contradicted', ['double'], 'returns triple',
+      { evidence_id: 'double', excerpt: 'return x * 2', claim_scope: 'javascript_runtime', evidence_scope: 'javascript_runtime' })));
   }]);
-  const reviewed = await reviewAnswerEvidence({ ...input, text: "returns triple", modelRuntime });
-  assert.equal(reviewed.status, "reviewed");
-  assert.equal(reviewed.issues[0].kind, "contradicted");
-  const notice = withEvidenceReviewNotice("returns triple", reviewed);
-  assert.match(notice, /multiplies by two/);
-  assert.doesNotMatch(notice, /\[click\]\(/);
-  faux.setResponses([fauxAssistantMessage(fauxToolCall("submit_result", {
-    repository_claims: ['returns double'], supported: true, accepted_evidence_ids: ["double"], unsupported_claims: [], summary: "looks correct",
-  }))]);
-  const unreadable = await reviewAnswerEvidence({ ...input, text: "returns double", modelRuntime,
-    store: { readSourceLines: async () => { throw new Error("source missing"); } } as unknown as ProductStore,
-  });
-  assert.equal(unreadable.status, "unverified");
-  assert.equal(unreadable.supported, false);
-  assert.deepEqual(unreadable.acceptedEvidenceIds, []);
-  assert.match(withEvidenceReviewNotice("returns double", unreadable), /coverage is incomplete/);
+  const reviewed = await reviewAnswerEvidence({ ...input, text: "returns triple", modelRuntime }); assert.equal(reviewed.status, "reviewed"); assert.equal(reviewed.issues[0]!.kind, "contradicted");
+  assert.equal(reviewed.diagnostics?.requestCount, 1); const notice = withEvidenceReviewNotice("returns triple", reviewed); assert.match(notice, /multiplies by two/); assert.doesNotMatch(notice, /\[click\]\(/);
+  faux.setResponses([context => fauxAssistantMessage(fauxToolCall('submit_result', controlledReview(context, 'insufficient_evidence', [], 'returns double')))]);
+  const unreadable = await reviewAnswerEvidence({ ...input, text: "returns double", modelRuntime, store: { readSourceLines: async () => { throw Error('source missing'); } } as unknown as ProductStore });
+  assert.equal(unreadable.status, 'unverified'); assert.equal(unreadable.supported, false); assert.deepEqual(unreadable.acceptedEvidenceIds, []); assert.equal(unreadable.diagnostics?.requestCount, 1);
+  assert.match(withEvidenceReviewNotice('returns double', unreadable), /coverage is incomplete/);
 });
+test('twelve packets complete; thirteen retain every reference and deterministically mark overflow', async () => {
+  const refs = Array.from({ length: 14 }, (_, i) => ({ ...evidence, stable_id: `id-${i}`, path: `src/${String(i).padStart(2, '0')}.ts`, start_line: 1, end_line: 1 }));
+  const complete = await loadEvidencePackets({ ...input, evidence: refs.slice(0, 12) });
+  assert.equal(complete.coverage.complete, true);
+  for (const rows of [refs, [...refs].reverse()]) {
+    const result = await loadEvidencePackets({ ...input, evidence: rows });
+    assert.equal(result.packets.length, 14);
+    assert.deepEqual(result.packets.map(row => row.evidence_id), refs.map(row => row.stable_id));
+    assert.equal(result.packets.filter(row => row.selected).length, 12);
+    assert.ok(result.packets.slice(12).every(row => row.reason === 'budget_exceeded' && row.budget === 'packet' && !row.excerpt.length));
+    assert.equal(result.coverage.complete, false);
+    assert.deepEqual(result.coverage.reasons, ['budget_exceeded']);
+  }
+  const thirteen = await loadEvidencePackets({ ...input, evidence: refs.slice(0, 13) });
+  assert.equal(thirteen.coverage.packets[12].selected, false);
+});
+
+test('coverage distinguishes actual reads, line and character budgets without broadening ranges', async () => {
+  const lineLimit = await loadEvidencePackets({ ...input, maxLines: 12 });
+  assert.equal(lineLimit.coverage.packets[0].budget, 'lines');
+  assert.equal(lineLimit.coverage.packets[0].requested_end_line, 46);
+  assert.equal(lineLimit.coverage.packets[0].actual_end_line, 21);
+  assert.equal(lineLimit.coverage.packets[0].read, true);
+  const chars = await loadEvidencePackets({ ...input, maxCharacters: 5 });
+  assert.equal(chars.coverage.packets[0].budget, 'characters');
+  assert.equal(chars.coverage.packets[0].read, false);
+  assert.doesNotMatch(JSON.stringify(chars.coverage), /filler/);
+  const unavailable = await loadEvidencePackets({ ...input, evidence: [{ ...evidence, start_line: 56, end_line: 56 }] });
+  assert.deepEqual(unavailable.coverage.reasons, ['range_unavailable']);
+});
+

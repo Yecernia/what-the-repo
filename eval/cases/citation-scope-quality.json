@@ -1,0 +1,293 @@
+{
+  "id": "citation-scope-quality-v2",
+  "kind": "quality-rubric",
+  "purpose": "Evaluator-only semantic regression cases for scope-aware citation review. Compare real review outputs with the reference facts; controlled faux submissions test protocol and provenance only and do not prove semantic accuracy. Never add reference answers to production prompts.",
+  "source": {
+    "repository": "developit/mitt",
+    "commit": "6b41670516ed8e8b738612f60491995470aa63b3",
+    "path": "src/index.ts",
+    "url": "https://github.com/developit/mitt/blob/6b41670516ed8e8b738612f60491995470aa63b3/src/index.ts",
+    "range_basis": "Line numbers from the reviewed fixed snapshot: public overloads 35-38, factory signature/return type 46-48, internal emit implementation 103-110. Preserve the actual snapshot's exact ranges; do not replace them with whole-file evidence or infer unseen lines."
+  },
+  "evaluation": "Supply only final_answer and the stated exact source packets to the existing citation reviewer. Read each resulting issue and reason. A valid schema, an exact copied span, identical declared scope labels or a supported boolean alone do not prove semantic correctness. Verify positive counterevidence at the same layer, subject and conditions independently. No paid model run is requested by this fixture. Score the first complete answer in fresh history, including tables and incidental assertions. Keep first failures and later corrections separate. A peripheral missing packet must not conceal a central scope error.",
+  "scale": {
+    "0": "Cross-layer false contradiction, invented evidence, or unsupported runtime guarantee",
+    "1": "Conservative outcome but missing the public/internal or static/runtime distinction",
+    "2": "Correct outcome and distinction with a minor explanatory omission",
+    "3": "Correct scope, precise evidence and explicit conditions without broadening the packets"
+  },
+  "cases": [
+    {
+      "id": "typed-contract-internal-only",
+      "final_answer": "For ordinary TypeScript callers with Events = { required: number; optional: number | undefined }, only the optional event can be emitted without a payload.",
+      "evidence_ranges": [
+        {
+          "start_line": 103,
+          "end_line": 110,
+          "scope": "internal_implementation"
+        }
+      ],
+      "expected_review": {
+        "supported": false,
+        "issue_kind": "insufficient_evidence"
+      },
+      "expected": [
+        "The internal optional evt parameter does not establish what the public Emitter overloads allow.",
+        "The public contract and factory return type are absent from the supplied packets, so the typed-call claim is unverified rather than contradicted.",
+        "Do not conclude that all public typed events permit omitted payloads or retrieve the missing interface automatically."
+      ],
+      "forbidden": [
+        "contradicted because evt? is optional",
+        "the implementation signature is the public API",
+        "accepting a whole-file or unseen-interface evidence ID"
+      ]
+    },
+    {
+      "id": "typed-contract-public-only",
+      "final_answer": "For ordinary TypeScript callers with Events = { required: number; optional: number | undefined }, only the optional event can be emitted without a payload.",
+      "evidence_ranges": [
+        {
+          "start_line": 35,
+          "end_line": 38,
+          "scope": "public_type_contract"
+        },
+        {
+          "start_line": 46,
+          "end_line": 48,
+          "scope": "public_type_contract"
+        }
+      ],
+      "expected_review": {
+        "supported": true,
+        "issues": []
+      },
+      "expected": [
+        "The single-argument overload uses undefined extends Events[Key] ? Key : never; with the stated concrete event types, optional allows a missing payload and required does not.",
+        "The factory returns Emitter<Events>, which exposes the public overloads to normal typed callers.",
+        "This conclusion does not cover any, assertions, unchecked JavaScript or runtime argument validation."
+      ],
+      "forbidden": [
+        "insufficient because the implementation body was not supplied for this type claim",
+        "the overload guarantees runtime rejection"
+      ]
+    },
+    {
+      "id": "typed-contract-both-layers",
+      "final_answer": "For ordinary TypeScript callers with Events = { required: number; optional: number | undefined }, only the optional event can be emitted without a payload.",
+      "evidence_ranges": [
+        {
+          "start_line": 35,
+          "end_line": 38,
+          "scope": "public_type_contract"
+        },
+        {
+          "start_line": 46,
+          "end_line": 48,
+          "scope": "public_type_contract"
+        },
+        {
+          "start_line": 103,
+          "end_line": 110,
+          "scope": "internal_implementation"
+        }
+      ],
+      "expected_review": {
+        "supported": true,
+        "issues": []
+      },
+      "expected": [
+        "The more permissive internal implementation parameter is compatible with the restricted public overloads; these signatures serve different roles.",
+        "The claim concerns typed callers, so its proof is the public overload plus the factory return type, not the internal optional parameter.",
+        "Adding the implementation packet must not turn the correct public-type claim into a contradiction."
+      ],
+      "forbidden": [
+        "any event permits omission because the internal signature uses evt?",
+        "public/internal signatures must permit identical call forms"
+      ]
+    },
+    {
+      "id": "public-type-positive-counterevidence",
+      "final_answer": "For ordinary TypeScript callers with Events = { required: number; optional: number | undefined }, every event permits emit(type) with no payload.",
+      "evidence_ranges": [
+        {
+          "start_line": 35,
+          "end_line": 38,
+          "scope": "public_type_contract"
+        },
+        {
+          "start_line": 46,
+          "end_line": 48,
+          "scope": "public_type_contract"
+        }
+      ],
+      "expected_review": {
+        "supported": false,
+        "issue_kind": "contradicted",
+        "proof_scope": "public_type_contract"
+      },
+      "expected": [
+        "The concrete required:number event is excluded from the public single-argument overload, providing same-scope positive counterevidence to every event.",
+        "Copy the claim exactly and ground contradiction_proof in an exact quote from the supplied public-contract packet."
+      ],
+      "forbidden": [
+        "use an internal signature as the contradiction proof",
+        "invent a runtime throw to explain a type restriction"
+      ]
+    },
+    {
+      "id": "static-contract-is-not-runtime-validation",
+      "final_answer": "The public TypeScript overload guarantees that unchecked JavaScript emit('required') without a payload throws at runtime before any handler runs.",
+      "evidence_ranges": [
+        {
+          "start_line": 35,
+          "end_line": 38,
+          "scope": "public_type_contract"
+        },
+        {
+          "start_line": 46,
+          "end_line": 48,
+          "scope": "public_type_contract"
+        }
+      ],
+      "expected_review": {
+        "supported": false,
+        "issue_kind": "insufficient_evidence"
+      },
+      "expected": [
+        "A TypeScript overload constrains static calls; it does not implement runtime argument checks in unchecked JavaScript.",
+        "The public-only packets cannot prove the claimed throw or handler behaviour; require same-scope runtime counterevidence before using contradicted.",
+        "Do not overcorrect the public type rule into a runtime safety guarantee or infer unseen implementation."
+      ],
+      "forbidden": [
+        "static type restriction proves a runtime throw",
+        "claim a particular runtime dispatch outcome from overload declarations alone"
+      ]
+    },
+    {
+      "id": "javascript-call-can-bypass-static-contract",
+      "final_answer": "The public overloads restrict ordinary TypeScript calls; unchecked JavaScript can still invoke emit('required') with no payload. This does not promise that every handler tolerates undefined or that the entire emission can never throw.",
+      "evidence_ranges": [
+        {
+          "start_line": 35,
+          "end_line": 38,
+          "scope": "public_type_contract"
+        },
+        {
+          "start_line": 46,
+          "end_line": 48,
+          "scope": "public_type_contract"
+        },
+        {
+          "start_line": 103,
+          "end_line": 110,
+          "scope": "internal_implementation"
+        }
+      ],
+      "expected_review": {
+        "supported": true,
+        "issues": []
+      },
+      "expected": [
+        "Separate the public static restriction from JavaScript's ability to make an unchecked invocation.",
+        "The internal optional parameter is not a runtime type guard; the shown handler invocation can receive the absent value.",
+        "No guarantee about all callbacks, unseen wildcard code or absence of all possible exceptions follows from the narrow implementation range."
+      ],
+      "forbidden": [
+        "TypeScript overloads prevent all JavaScript invocations",
+        "evt! validates the payload at runtime",
+        "all handlers safely accept undefined"
+      ]
+    },
+    {
+      "id": "mitt-whole-emission-snapshot-overreach",
+      "final_answer": "本轮派发基于调用开始时的快照：回调用 on 新增的处理器不会参与本轮，回调用 off 移除的处理器本轮仍会收到。它分成两段——先调类型匹配的处理器，再调通配符处理器。快照只是遍历保护，不是事务语义。",
+      "evidence_ranges": [
+        {
+          "start_line": 66,
+          "end_line": 73,
+          "scope": "javascript_runtime"
+        },
+        {
+          "start_line": 82,
+          "end_line": 91,
+          "scope": "javascript_runtime"
+        },
+        {
+          "start_line": 103,
+          "end_line": 121,
+          "scope": "javascript_runtime"
+        }
+      ],
+      "expected_review": {
+        "supported": false,
+        "issue_kind": "contradicted",
+        "proof_scope": "javascript_runtime"
+      },
+      "expected": [
+        "Identify the exact whole-emission/new-handler claim even if separate configuration evidence is missing.",
+        "The typed and wildcard arrays are read and copied at separate times; typed callbacks can register a wildcard callback before the later lookup in the same emit.",
+        "Assume callbacks return normally when predicting subsequent dispatch. A generic not-transactional caveat does not limit the earlier whole-operation assertion."
+      ],
+      "forbidden": [
+        "all other assertions are supported after only finding a configuration gap",
+        "all newly added handlers wait until the next emit",
+        "phase-local snapshots prove one entry-time snapshot"
+      ]
+    },
+    {
+      "id": "mitt-no-validation-is-not-no-throw",
+      "final_answer": "从普通 JS 调用 emit(\"foo\")：不会报错、不会提示、也不会补默认值；如果注册过处理器，处理器收到的是 undefined。",
+      "evidence_ranges": [
+        {
+          "start_line": 103,
+          "end_line": 121,
+          "scope": "javascript_runtime"
+        }
+      ],
+      "expected_review": {
+        "supported": false,
+        "issue_kind": "contradicted",
+        "proof_scope": "javascript_runtime"
+      },
+      "expected": [
+        "Identify the exact unconditional 不会报错 claim, separately from the no-default/absent-payload observations.",
+        "Direct callback invocation has no surrounding catch; a callback that rejects undefined can throw through this invocation.",
+        "No active payload validator proves only absence of that validation, not whole-call safety."
+      ],
+      "forbidden": [
+        "no validator means the invocation cannot throw",
+        "the non-null assertion performs runtime validation",
+        "only discuss missing declaration evidence and implicitly pass no-throw"
+      ]
+    },
+    {
+      "id": "mitt-conditional-no-validation-boundary",
+      "final_answer": "普通 JavaScript 可以省略载荷；该实现没有主动校验载荷或补默认值。处理器会收到 undefined，若处理器抛错，这次调用仍可因该异常中断。",
+      "evidence_ranges": [
+        {
+          "start_line": 103,
+          "end_line": 121,
+          "scope": "javascript_runtime"
+        }
+      ],
+      "expected_review": {
+        "supported": true,
+        "issues": []
+      },
+      "expected": [
+        "Preserve the stated distinction between wrapper validation and callback error propagation.",
+        "Do not reject an explicitly limited statement merely because its stated callback-exception boundary is possible."
+      ],
+      "forbidden": [
+        "every missing payload throws before any callback",
+        "the absent guard guarantees completion"
+      ]
+    }
+  ],
+  "semantic_run_status": "not_run",
+  "evaluation_modes": [
+    "fresh introductory answer",
+    "fresh formal teaching answer with a question",
+    "fresh directed boundary question"
+  ]
+}

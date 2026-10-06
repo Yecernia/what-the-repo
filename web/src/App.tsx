@@ -1,3 +1,6 @@
+import { lessonRecovery, protectsLessonDescendants, type LessonRecovery } from './lesson-recovery';
+import { Modal } from './Modal';
+import { findConversationRun, forgetConversationRun, rememberConversationRun } from './conversation-recovery';
 import { InlineMessageEditor } from './InlineMessageEditor';
 import { chatHistoryUsage, chatCapacityReached, isChatCapacityError } from './chat-capacity';
 import { useTextareaAutosize } from './useTextareaAutosize';
@@ -30,7 +33,7 @@ import ShieldCheck from '@sketchyicons/react/icons/shield-check';
 import ThumbsDown from '@sketchyicons/react/icons/thumbs-down';
 import ThumbsUp from '@sketchyicons/react/icons/thumbs-up';
 import Trash2 from '@sketchyicons/react/icons/trash-2';
-import { apiClient, userFacingError, conversationErrorMessage } from './api';
+import { apiClient, userFacingError, conversationErrorMessage, conversationFailureMessage } from './api';
 import { hasLanguageGlyph, LanguageGlyph, languageFromPath } from './language-glyph';
 import { RepositoryThumbnail } from './RepositoryThumbnail';
 import { LazyLoadBoundary } from './LazyLoadBoundary';
@@ -837,7 +840,7 @@ function messageEvidenceFileCount(message: Message): number {
 interface PendingConversationInfo {
   optimisticId: string;
   startedAt: number;
-  optimisticUser: Message;
+  optimisticUser?: Message;
   replaceMessageId?: string;
 }
 
@@ -861,7 +864,7 @@ function mergeLocalMessages(
   pending?: PendingConversationInfo,
 ): Project {
   if (current && current.project_id !== authoritative.project_id) return authoritative;
-  if (pending?.replaceMessageId) {
+  if (pending?.replaceMessageId && pending.optimisticUser) {
     const index = authoritative.messages.findIndex(message => message.message_id === pending.replaceMessageId);
     if (index >= 0) return { ...authoritative, messages: [...authoritative.messages.slice(0, index), pending.optimisticUser] };
   }
@@ -892,7 +895,20 @@ function mergeResponseMessages(
   replaceMessageId?: string,
 ): Project {
   const replacementIndex = replaceMessageId ? current.messages.findIndex(message => message.message_id === replaceMessageId) : -1;
-  if (replacementIndex >= 0) current = { ...current, messages: current.messages.slice(0, replacementIndex) };
+  if (replacementIndex >= 0 && !protectsLessonDescendants(current, replaceMessageId!)) current = { ...current, messages: current.messages.slice(0, replacementIndex) };
+  const programSource = incoming.find(message => message.role === 'system' && message.lesson_request);
+  const programAnswer = programSource && incoming.find(message => message.role === 'assistant' && message.trace_id === programSource.trace_id);
+  const sourceIndex = programSource ? current.messages.findIndex(message => message.message_id === programSource.message_id
+    && message.role === 'system' && message.lesson_request?.action_id === programSource.lesson_request!.action_id) : -1;
+  if (programSource && programAnswer && sourceIndex >= 0) {
+    const previousSource = current.messages[sourceIndex]!;
+    const next = current.messages[sourceIndex + 1];
+    const previousTerminal = next?.role === 'assistant' && Boolean(previousSource.trace_id) && next.trace_id === previousSource.trace_id ? next : undefined;
+    const removedIds = new Set([programSource.message_id, programAnswer.message_id, ...(previousTerminal ? [previousTerminal.message_id] : [])]);
+    const before = current.messages.slice(0, sourceIndex).filter(message => !removedIds.has(message.message_id));
+    const after = current.messages.slice(sourceIndex + 1).filter(message => !removedIds.has(message.message_id));
+    return { ...current, messages: [...before, programSource, programAnswer, ...after] };
+  }
   const incomingIds = new Set(incoming.map(message => message.message_id));
   const messages = [
     ...current.messages.filter(message => (
@@ -906,6 +922,9 @@ function mergeResponseMessages(
 
 interface PendingConversation extends PendingConversationInfo {
   token: string;
+  ownerId: string;
+  snapshotId: string | null;
+  controller: AbortController;
   runId: string | null;
   activity: RuntimeProgressEvent[];
   streamingAssistant: Message;
@@ -1010,9 +1029,7 @@ function SettingsDialog({
   const [memorySummaryDraft, setMemorySummaryDraft] = useState('');
   const [showMemorySummary, setShowMemorySummary] = useState(false);
   const [editingMemorySummary, setEditingMemorySummary] = useState(false);
-  const memoryDialogRef = useRef<HTMLDivElement>(null);
   const memoryPreviewRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { if (showMemorySummary) memoryDialogRef.current?.focus(); }, [showMemorySummary]);
   const closeMemorySummary = () => {
     setShowMemorySummary(false);
     setEditingMemorySummary(false);
@@ -1299,9 +1316,8 @@ function SettingsDialog({
   const providerVariants = providerVariantOptions(providerPresets, selectedFamily);
 
   return (
-    <div className="settings-panel" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="settings-dialog settings-page-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title"
-        inert={showMemorySummary} aria-hidden={showMemorySummary || undefined}><InkOutline paper />
+    <Modal onClose={onClose} labelledBy="settings-title" returnFocus={() => document.querySelector<HTMLButtonElement>('.account-action')}>
+      <div className="settings-dialog settings-page-dialog"><InkOutline paper />
         <PaperScroll>
         <div className="settings-heading">
           <div className="settings-title-wrap">
@@ -1366,8 +1382,8 @@ function SettingsDialog({
           {msg && <div style={{ fontSize: 12, color: isOk ? 'var(--ok)' : 'var(--err)' }}>{msg}</div>}
         </div>
         {connectionDialog && createPortal((
-          <div className="connection-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeConnectionDialog(); }}>
-            <div className="connection-modal" role="dialog" aria-modal="true" aria-labelledby="connection-dialog-title">
+          <Modal className="connection-modal-backdrop" onClose={closeConnectionDialog} labelledBy="connection-dialog-title">
+            <div className="connection-modal">
               <InkOutline paper />
               <PaperScroll label={t('滚动配置')}>
               <div className="connection-modal-heading">
@@ -1426,7 +1442,7 @@ function SettingsDialog({
               </div>
               </PaperScroll>
             </div>
-          </div>
+          </Modal>
         ), document.body)}
         <div className="settings-section settings-divider">
           <div className="profile-heading-row">
@@ -1469,17 +1485,8 @@ function SettingsDialog({
         </PaperScroll>
       </div>
       {showMemorySummary && createPortal(
-        <div className="settings-panel memory-panel" onClick={event => { if (event.target === event.currentTarget) closeMemorySummary(); }}>
-          <div ref={memoryDialogRef} tabIndex={-1} className="settings-dialog memory-dialog" role="dialog" aria-modal="true" aria-labelledby="memory-dialog-title"
-            onKeyDown={event => {
-              if (event.key === 'Escape') { event.stopPropagation(); closeMemorySummary(); }
-              if (event.key !== 'Tab') return;
-              const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), textarea, a[href]')];
-              const first = controls[0], last = controls[controls.length - 1];
-              if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) {
-                event.preventDefault(); last?.focus();
-              } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-            }}>
+        <Modal className="settings-panel memory-panel" onClose={closeMemorySummary} labelledBy="memory-dialog-title">
+          <div className="settings-dialog memory-dialog">
             <InkOutline paper />
             <div className="settings-heading">
               <h2 id="memory-dialog-title">{t("记忆摘要")}</h2>
@@ -1512,8 +1519,8 @@ function SettingsDialog({
               </>}
             </div>
           </div>
-        </div>, document.body)}
-    </div>
+        </Modal>, document.body)}
+    </Modal>
   );
 }
 
@@ -1540,6 +1547,10 @@ function NewProjectForm({ onCreated, onClose, initialValue = '' }: { onCreated: 
 
   async function createProject() {
     if (!value.trim()) { setError(t("请输入 GitHub 仓库地址")); return; }
+    if (!/^https:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+\/?$/i.test(value.trim())) {
+      setError(t('请输入完整的公开 GitHub 仓库地址，例如 https://github.com/owner/repo'));
+      return;
+    }
     setLoading(true); setError('');
     try {
       const r = await apiClient.createProject({
@@ -1636,9 +1647,8 @@ function SourceModal({ projectId, snapshotId, path, line, stableId, onClose }: {
   const displayPath = data?.path ?? path;
   const language = sourceLanguage(displayPath);
   return (
-    <div className="settings-panel" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="settings-dialog source-dialog" role="dialog" aria-modal="true"
-        aria-label={t("源码 {0}:{1}", path, line)}>
+    <Modal onClose={onClose} label={t("源码 {0}:{1}", path, line)}>
+      <div className="settings-dialog source-dialog">
         <div className="source-dialog-heading">
           <div className="source-dialog-title">
             <LanguageGlyph language={languageFromPath(path)} />
@@ -1675,7 +1685,7 @@ function SourceModal({ projectId, snapshotId, path, line, stableId, onClose }: {
         )}
         {!data && !err && <InkSpinner size={22} />}
       </div>
-    </div>
+    </Modal>
   );
 }
 const MessageMarkdown = memo(function MessageMarkdown({ msg, onEvidenceClick }: {
@@ -1770,8 +1780,6 @@ function MsgBubble({
   onEdit,
   onResend,
   edit,
-  skipStep,
-  startStep,
   onCancelLearningAction,
 }: {
   msg: Message;
@@ -1787,9 +1795,6 @@ function MsgBubble({
   onEdit?: () => void;
   onResend?: () => void;
   edit?: { content?: string; onCancel: () => void; onSubmit: (content: string) => void };
-  /** The current learning step, offered as a one-tap skip under the latest tutor reply. */
-  skipStep?: { title: string; onSkip: () => void };
-  startStep?: { title: string; onStart: () => void };
   onCancelLearningAction?: (actionId: string) => void;
 }) {
   const action = msg.learning_action;
@@ -1812,7 +1817,7 @@ function MsgBubble({
     ? action.action === 'advance_learning_step'
       ? (action.skip_understanding_check ? t('本步已记录为主动跳过，不计入已掌握。') : t('本步进度已记录。'))
         + (action.outcome?.next_step_id === null ? t('本条学习路线已结束。') : t('可从当前学习步骤继续。'))
-      : isRoute ? t('学习路线已生成，可以开始当前步骤。') : t('已退出当前学习路线，可以继续自由提问。')
+      : isRoute ? t('学习路线已生成。') : t('已退出当前学习路线，可以继续自由提问。')
     : action?.description;
   const [actionClock, setActionClock] = useState(Date.now);
   useEffect(() => {
@@ -1847,7 +1852,8 @@ function MsgBubble({
             events={activityEvents}
             startedAt={activityStartedAt}
             complete={!msg.message_id.startsWith('client:assistant:')}
-            terminalStatus={msg.error ? (['cancelled', 'paused'].includes(activityEvents.at(-1)?.status ?? '') ? 'cancelled' : 'failed') : undefined}
+            terminalStatus={msg.error ? (['cancelled', 'paused'].includes(activityEvents.at(-1)?.status ?? '') ? 'cancelled' : 'failed')
+              : msg.context_eligible === false ? 'incomplete' : undefined}
             durationMs={msg.latency_ms ?? undefined}
             fileCount={evidenceFileCount}
             testId="answer-activity"
@@ -1925,21 +1931,6 @@ function MsgBubble({
                 onClick={() => onCancelLearningAction(action.action_id)}>{t('取消生成')}</button>}
             </div>
           )}
-          {(startStep || skipStep) && <div className="learning-current-step" aria-label={t('当前学习步骤')}>
-          <p>{t('当前学习步骤')} · {startStep?.title ?? skipStep?.title}</p>
-          {startStep && <div className="learning-action-controls"><button type="button" className="btn btn-primary"
-            onClick={startStep.onStart}>{t('开始当前步骤')} · {startStep.title}</button></div>}
-          {skipStep && (
-            <div className="learning-skip-option">
-              <button type="button" className="learning-skip-button" onClick={skipStep.onSkip}
-                title={t("跳过“{0}”的理解检查，直接进入下一步", skipStep.title)}>
-                <span>{t("跳过当前步骤")}</span>
-                <small>{skipStep.title}</small>
-                <ChevronRight size={15} />
-              </button>
-            </div>
-          )}
-          </div>}
           {feedbackEnabled && msg.role === 'assistant' && !msg.error && !msg.placeholder && (
             <div className="message-feedback" aria-label={t("评价这条回答")}>
               {msg.model && <div className="message-model-name">{msg.model}</div>}
@@ -2034,7 +2025,7 @@ function ActivityDisclosure({
   complete?: boolean;
   exactStages?: boolean;
   testId?: string;
-  terminalStatus?: 'failed' | 'cancelled';
+  terminalStatus?: 'failed' | 'cancelled' | 'incomplete';
 }) {
   const [expanded, setExpanded] = useState(false);
   const mountedAt = useRef(Date.now());
@@ -2062,13 +2053,15 @@ function ActivityDisclosure({
     : Math.max(0, now - (startedAt ?? mountedAt.current));
   const hasDetails = phases.length > 0;
   const statusLabel = !complete && current ? activityStatusLabel(current.latest) : null;
-  const outcome = terminalStatus ?? (complete && ['failed', 'cancelled', 'paused'].includes(current?.latest.status ?? '')
-    ? (current?.latest.status === 'paused' ? 'cancelled' : current?.latest.status) : undefined);
+  const activityOutcome = complete && ['failed', 'cancelled', 'paused'].includes(current?.latest.status ?? '')
+    ? (current?.latest.status === 'paused' ? 'cancelled' : current?.latest.status) : undefined;
+  const outcome = terminalStatus === 'incomplete' ? activityOutcome ?? terminalStatus : terminalStatus ?? activityOutcome;
   const canExpand = hasDetails && (!complete || Boolean(outcome));
-  const summaryIcon = outcome === 'failed' ? 'failure' : outcome === 'cancelled' ? 'stop'
+  const summaryIcon = outcome === 'failed' ? 'failure' : outcome === 'cancelled' ? 'stop' : outcome === 'incomplete' ? 'revise'
     : complete ? 'done' : activityIconName(current?.latest, exactStages);
   const summaryLabel = outcome === 'failed' ? t('回答失败')
     : outcome === 'cancelled' ? t('已取消')
+    : outcome === 'incomplete' ? t('回答未完成')
     : complete
     ? completedActivityLabel(phases, fileCount)
     : statusLabel
@@ -2220,6 +2213,8 @@ export default function App() {
   const [rejectedEdit, setRejectedEdit] = useState<{ projectId: string; messageId: string; content: string } | null>(null);
   const [conversationError, setConversationError] = useState<{ projectId: string; text: string; capacity?: boolean } | null>(null);
   const [sending, setSending] = useState(false);
+  const lessonAttempts = useRef(new Set<string>());
+  const [lessonFailure, setLessonFailure] = useState<{ projectId: string; actionId: string; text: string; retryable: boolean } | null>(null);
   const [conversationActivity, setConversationActivity] = useState<RuntimeProgressEvent[]>([]);
   const [conversationStartedAt, setConversationStartedAt] = useState<number | null>(null);
   const [conversationRunId, setConversationRunId] = useState<string | null>(null);
@@ -2342,6 +2337,19 @@ export default function App() {
   const messageRefs = useRef(new Map<string, HTMLDivElement>());
   const conversationActivityRef = useRef<RuntimeProgressEvent[]>([]);
   const mainRef = useRef<HTMLDivElement>(null);
+  const [repositoryMaxWidth, setRepositoryMaxWidth] = useState(REPOSITORY_DEFAULT_WIDTH);
+  const repositoryMinWidth = Math.min(REPOSITORY_MIN_WIDTH, repositoryMaxWidth);
+  const displayedRepositoryWidth = Math.max(repositoryMinWidth, Math.min(repositoryMaxWidth, repositoryWidth));
+  useLayoutEffect(() => {
+    const main = mainRef.current;
+    if (!main) return;
+    const measure = () => setRepositoryMaxWidth(Math.max(0,
+      main.getBoundingClientRect().width - CHAT_PANE_MIN_WIDTH - PANE_RESIZER_WIDTH - REPOSITORY_PANE_MARGIN));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(main);
+    return () => observer.disconnect();
+  }, [identity, activeId]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const projectEpochRef = useRef(0);
@@ -2351,6 +2359,19 @@ export default function App() {
   const analysisTimerStartsRef = useRef(new Map<string, number>());
   const projectCacheRef = useRef(new Map<string, Project>());
   const pendingConversationsRef = useRef(new Map<string, PendingConversation>());
+  const ownerIdRef = useRef(identity?.owner_id ?? null);
+  ownerIdRef.current = identity?.owner_id ?? null;
+  useEffect(() => () => {
+    for (const pending of pendingConversationsRef.current.values()) pending.controller.abort();
+    pendingConversationsRef.current.clear();
+    projectCacheRef.current.clear();
+  }, [identity?.owner_id]);
+  const appMountedRef = useRef(true);
+  useEffect(() => {
+    appMountedRef.current = true;
+    return () => { appMountedRef.current = false; };
+  }, []);
+  const [recoveryView, setRecoveryView] = useState<{ ownerId: string; projectId: string; snapshotId: string | null } | null>(null);
   // Sidebar markers for projects the learner is not looking at: an answer still running there, or an answer or
   // analysis that finished (or failed) since the project was last opened.
   const [projectActivity, setProjectActivity] = useState<Record<string, ProjectActivity>>({});
@@ -2575,6 +2596,17 @@ export default function App() {
       const detail = await apiClient.getProject(projectId, viewSnapshotId);
       if (requestId !== loadRequestRef.current || activeIdRef.current !== projectId) return;
       const nextJob = detail.analysis_job;
+      const pending = pendingConversationsRef.current.get(projectId);
+      if (pending && pending.snapshotId !== detail.project.analysis.snapshot_id) {
+        pending.controller.abort();
+        pendingConversationsRef.current.delete(projectId);
+        if (pending.runId) forgetConversationRun(pending.ownerId, projectId, pending.runId);
+        setSending(false); setConversationStartedAt(null); setConversationRunId(null);
+        setStreamingAssistant(null); setConversationActivity([]);
+        conversationActivityRef.current = [];
+        markProject(projectId, null);
+        setConversationError({ projectId, text: t('项目快照已改变，无法恢复上一轮连接。请检查聊天记录后继续。') });
+      }
       const cachedProject = projectCacheRef.current.get(projectId) ?? null;
       const nextProject = mergeLocalMessages(
         detail.project,
@@ -2583,6 +2615,9 @@ export default function App() {
       );
       projectCacheRef.current.set(projectId, nextProject);
       setProject(nextProject);
+      if (identity) setRecoveryView(current => current?.ownerId === identity.owner_id
+        && current.projectId === projectId && current.snapshotId === detail.project.analysis.snapshot_id
+        ? current : { ownerId: identity.owner_id, projectId, snapshotId: detail.project.analysis.snapshot_id });
       const nextJobStatus = nextJob?.status ?? null;
       const jobIsActive = nextJobStatus === 'queued' || nextJobStatus === 'running';
       const jobIsTerminal = ['succeeded', 'failed', 'cancelled'].includes(nextJobStatus ?? '');
@@ -2613,7 +2648,99 @@ export default function App() {
         setLoadError(userFacingError(error, t("项目内容暂时无法加载，请稍后重试。")));
       }
     }
-  }, [rememberAnalysisStart, syncProjectSummary]);
+  }, [rememberAnalysisStart, syncProjectSummary, identity, markProject]);
+
+  useEffect(() => {
+    if (!identity || !activeId || recoveryView?.ownerId !== identity.owner_id
+      || recoveryView.projectId !== activeId || pendingConversationsRef.current.has(activeId)) return;
+    const projectId = activeId;
+    const ownerId = identity.owner_id;
+    const found = findConversationRun(ownerId, projectId, recoveryView.snapshotId);
+    if (found.unavailable) {
+      setConversationError({ projectId, text: found.unavailable === 'snapshot'
+        ? t('项目快照已改变，无法恢复上一轮连接。请检查聊天记录后继续。')
+        : t('上一轮连接已过期。请检查聊天记录后继续。') });
+      return;
+    }
+    const run = found.run;
+    if (!run) return;
+    const saved = projectCacheRef.current.get(projectId);
+    if (run.lessonActionId) return;
+    if (saved?.messages.some(message => message.role === 'assistant' && message.trace_id === run.runId)) {
+      forgetConversationRun(ownerId, projectId, run.runId);
+      return;
+    }
+    const controller = new AbortController();
+    const token = JSON.stringify([ownerId, projectId, run.snapshotId, run.runId]);
+    const assistant: Message = { message_id: `client:recovery:${run.runId}`, role: 'assistant', content: '',
+      created_at: new Date(run.startedAt).toISOString(), evidence: [], model: null, usage: null,
+      latency_ms: null, error: null, placeholder: false };
+    pendingConversationsRef.current.set(projectId, {
+      token, ownerId, snapshotId: run.snapshotId, controller, optimisticId: '',
+      startedAt: run.startedAt, runId: run.runId, activity: [], streamingAssistant: assistant,
+    });
+    // Navigation changes only the view; the subscription belongs to the original run.
+    const isCurrent = () => appMountedRef.current && ownerIdRef.current === ownerId
+      && pendingConversationsRef.current.get(projectId)?.token === token && !controller.signal.aborted;
+    const isDisplayed = () => activeIdRef.current === projectId
+      && projectCacheRef.current.get(projectId)?.analysis.snapshot_id === run.snapshotId;
+    markProject(projectId, 'running');
+    setSending(true);
+    setConversationStartedAt(run.startedAt);
+    setConversationRunId(run.runId);
+    setConversationError(null);
+    setConversationActivity([]);
+    conversationActivityRef.current = [];
+    setStreamingAssistant(assistant);
+    void apiClient.resumeMessageStream(projectId, run.runId, event => {
+      if (!isCurrent()) return;
+      const pending = pendingConversationsRef.current.get(projectId)!;
+      const activity = mergeProgressEvents(pending.activity, event);
+      const streamingAssistant = event.stage === 'assistant_delta' && event.delta
+        ? { ...pending.streamingAssistant, content: pending.streamingAssistant.content + event.delta }
+        : pending.streamingAssistant;
+      pendingConversationsRef.current.set(projectId, { ...pending, activity, streamingAssistant });
+      if (isDisplayed()) {
+        setConversationActivity(activity);
+        conversationActivityRef.current = activity;
+        setStreamingAssistant(streamingAssistant);
+      }
+    }, controller.signal).then(response => {
+      if (!isCurrent()) return;
+      forgetConversationRun(ownerId, projectId, run.runId);
+      const current = projectCacheRef.current.get(projectId);
+      if (current?.analysis.snapshot_id === run.snapshotId) {
+        projectCacheRef.current.set(projectId, mergeResponseMessages(current, '', [response.user_message, response.assistant_message]));
+      }
+      markProject(projectId, activeIdRef.current === projectId || response.error?.code === 'cancelled'
+        ? null : response.error ? 'failed' : 'done');
+      if (isDisplayed()) {
+        setProject(current => current?.project_id === projectId && current.analysis.snapshot_id === run.snapshotId
+          ? mergeResponseMessages(current, '', [response.user_message, response.assistant_message]) : current);
+        if (response.error && response.error.code !== 'cancelled') setConversationError({ projectId,
+          text: conversationFailureMessage(response.error.code, response.error.message) });
+      }
+    }).catch((error: unknown) => {
+      if (!isCurrent()) return;
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
+      const status = error && typeof error === 'object' && 'status' in error ? error.status : null;
+      if (code !== 'client_network_error') forgetConversationRun(ownerId, projectId, run.runId);
+      markProject(projectId, activeIdRef.current === projectId || code === 'cancelled' ? null : 'failed');
+      if (isDisplayed()) setConversationError({ projectId, text: code === 'cancelled' ? t('本轮回答已取消。')
+        : code === 'client_network_error' ? t('连接未能恢复。请重新打开项目检查聊天记录，确认结果后继续。')
+        : status === 403 || status === 401 ? t('当前账号无法恢复上一轮回答。请检查登录账号和聊天记录。')
+        : t('上一轮回答已无法恢复连接，可能已过期或服务已重启。请检查聊天记录后继续。') });
+    }).finally(() => {
+      if (!isCurrent()) return;
+      pendingConversationsRef.current.delete(projectId);
+      if (isDisplayed()) {
+        setSending(false); setConversationStartedAt(null); setConversationRunId(null);
+        setStreamingAssistant(null); setConversationActivity([]);
+        conversationActivityRef.current = [];
+        void loadProject(projectId, run.snapshotId);
+      }
+    });
+  }, [activeId, identity, recoveryView, loadProject, markProject]);
 
   // Language changes only reload the displayed snapshot. Project/chat loading
   // stays separate so drafts, navigation and running analysis are unaffected.
@@ -2665,17 +2792,30 @@ export default function App() {
 
   useEffect(() => {
     if (!identity) return;
+    let current = true;
     setLoadError('');
     Promise.all([
       apiClient.listProjects(),
       apiClient.getSettings(),
     ])
       .then(([ps, s]) => {
+        if (!current) return;
         setProjects(ps);
         setSettings(s);
+        try {
+          const remembered = localStorage.getItem(`what-the-repo-last-project:${identity.owner_id}`);
+          if (!activeIdRef.current && ps.some(project => project.project_id === remembered)) setActiveId(remembered);
+          else if (remembered && !ps.some(project => project.project_id === remembered)) localStorage.removeItem(`what-the-repo-last-project:${identity.owner_id}`);
+        } catch { /* Storage is optional; the server's project list is authoritative. */ }
       })
-      .catch(e => setLoadError(userFacingError(e, t("项目列表暂时无法加载，请稍后重试。"))));
+      .catch(e => { if (current) setLoadError(userFacingError(e, t("项目列表暂时无法加载，请稍后重试。"))); });
+    return () => { current = false; };
   }, [identity]);
+
+  useEffect(() => {
+    if (!identity || !activeId || !projects.some(project => project.project_id === activeId)) return;
+    try { localStorage.setItem(`what-the-repo-last-project:${identity.owner_id}`, activeId); } catch { /* Optional. */ }
+  }, [identity, activeId, projects]);
 
   useEffect(() => {
     projectEpochRef.current += 1;
@@ -2838,6 +2978,8 @@ export default function App() {
 
   async function logout() {
     await apiClient.logout();
+    if (identity) forgetConversationRun(identity.owner_id);
+    setRecoveryView(null);
     clearSnapshotCache();
     projectCacheRef.current.clear();
     setIdentity(null);
@@ -2847,6 +2989,7 @@ export default function App() {
     setSnapshot(null);
     setSettings(null);
     setCompletedActivities({});
+    for (const pending of pendingConversationsRef.current.values()) pending.controller.abort();
     pendingConversationsRef.current.clear();
     setProjectActivity({});
     setAccountMenuOpen(false);
@@ -2858,7 +3001,7 @@ export default function App() {
 
   // `replacement` with a message id edits or resends that message; without one it sends the given text as a new
   // message and leaves the learner's draft alone (used by the one-tap learning options).
-  async function sendMessage(replacement?: { messageId?: string; content: string; contexts?: ConversationSelection[]; learningIntent?: import('./types').LearningIntent }) {
+  async function sendMessage(replacement?: { messageId?: string; content: string; contexts?: ConversationSelection[] }) {
     const text = (replacement?.content ?? input).trim();
     if (
       !text
@@ -2869,10 +3012,13 @@ export default function App() {
     ) return;
     const projectId = activeId;
     const projectEpoch = projectEpochRef.current;
+    const ownerId = identity?.owner_id ?? null;
+    const controller = new AbortController();
     const targetId = replacement?.messageId;
     const replaceMessageId = targetId && !targetId.startsWith('client:') ? targetId : undefined;
     const retryRunId = targetId?.startsWith('client:') ? project.messages.find(message => message.message_id === targetId)?.trace_id ?? undefined : undefined;
     const targetIndex = targetId ? project.messages.findIndex(message => message.message_id === targetId) : -1;
+    const protectedReplay = Boolean(targetId && protectsLessonDescendants(project, targetId));
     const originalMessages = project.messages;
     const retainedUsage = targetIndex >= 0 ? chatHistoryUsage(originalMessages.slice(0, targetIndex)) : historyUsage;
     if (chatCapacityReached(retainedUsage, project.chat_limits, text)) {
@@ -2923,16 +3069,18 @@ export default function App() {
     markProject(projectId, 'running');
     pendingConversationsRef.current.set(projectId, {
       token: pendingToken,
+      ownerId: ownerId ?? '',
+      snapshotId: snapshot?.snapshot_id ?? project.analysis.snapshot_id,
+      controller,
       optimisticId,
       startedAt,
-      optimisticUser,
-      replaceMessageId,
+      ...(protectedReplay ? {} : { optimisticUser, replaceMessageId }),
       runId: null,
       activity: [],
       streamingAssistant: initialStreamingAssistant,
     });
     setProject(current => current?.project_id === projectId
-      ? { ...current, messages: [...(targetIndex >= 0 ? current.messages.slice(0, targetIndex) : current.messages), optimisticUser] }
+      ? protectedReplay ? current : { ...current, messages: [...(targetIndex >= 0 ? current.messages.slice(0, targetIndex) : current.messages), optimisticUser] }
       : current);
     try {
       const response = typeof apiClient.sendMessageStream === 'function'
@@ -2942,7 +3090,11 @@ export default function App() {
             sentContexts,
             event => {
               const pending = pendingConversationsRef.current.get(projectId);
-              if (!pending || pending.token !== pendingToken) return;
+              if (!appMountedRef.current || ownerIdRef.current !== ownerId || !pending || pending.token !== pendingToken) return;
+              if (event.stage === 'request_created' && event.run_id && identity) rememberConversationRun({
+                ownerId: identity.owner_id, projectId, snapshotId: snapshot?.snapshot_id ?? project.analysis.snapshot_id,
+                runId: event.run_id, startedAt,
+              });
               const nextActivity = mergeProgressEvents(pending.activity, event);
               const nextStreamingAssistant = event.stage === 'assistant_delta' && event.delta
                 ? { ...pending.streamingAssistant, content: `${pending.streamingAssistant.content}${event.delta}` }
@@ -2974,11 +3126,14 @@ export default function App() {
             replaceMessageId,
             retryRunId,
             snapshot?.snapshot_id ?? null,
-            ...(replacement?.learningIntent ? [replacement.learningIntent] : []),
+            controller.signal,
           )
         : await apiClient.sendMessage(projectId, text, sentContexts, reviewEvidence, replaceMessageId, retryRunId,
-          snapshot?.snapshot_id ?? null, ...(replacement?.learningIntent ? [replacement.learningIntent] : []));
+          snapshot?.snapshot_id ?? null);
+      if (!appMountedRef.current || ownerIdRef.current !== ownerId
+        || pendingConversationsRef.current.get(projectId)?.token !== pendingToken) return;
       const cachedAfterResponse = projectCacheRef.current.get(projectId);
+      if (identity) forgetConversationRun(identity.owner_id, projectId);
       if (cachedAfterResponse) {
         projectCacheRef.current.set(
           projectId,
@@ -2992,7 +3147,7 @@ export default function App() {
       }
       if (activeIdRef.current === projectId) {
         if (response.error && response.error.code !== 'cancelled') setConversationError({
-          projectId, text: conversationErrorMessage(response.error.code) ?? t('服务端错误，请稍后重试。'),
+          projectId, text: conversationFailureMessage(response.error.code, response.error.message),
         });
         if (projectEpochRef.current !== projectEpoch) {
           setSending(false);
@@ -3025,6 +3180,8 @@ export default function App() {
         void loadProject(projectId);
       }
     } catch (e: unknown) {
+      if (!appMountedRef.current || ownerIdRef.current !== ownerId
+        || pendingConversationsRef.current.get(projectId)?.token !== pendingToken) return;
       const failedPending = pendingConversationsRef.current.get(projectId);
       const streamErrorCode = typeof e === 'object'
         && e !== null
@@ -3032,6 +3189,7 @@ export default function App() {
         && typeof e.code === 'string'
         ? e.code
         : null;
+      if (identity && streamErrorCode !== 'client_network_error') forgetConversationRun(identity.owner_id, projectId);
       if (pendingConversationsRef.current.get(projectId)?.token === pendingToken) {
         pendingConversationsRef.current.delete(projectId);
         markProject(projectId, activeIdRef.current === projectId || streamErrorCode === 'cancelled' ? null : 'failed');
@@ -3108,7 +3266,8 @@ export default function App() {
       setStreamingAssistant(null);
     } finally {
       if (
-        activeIdRef.current === projectId
+        appMountedRef.current
+        && activeIdRef.current === projectId
         && projectEpochRef.current === projectEpoch
       ) {
         setSending(false);
@@ -3120,6 +3279,96 @@ export default function App() {
       }
     }
   }
+
+  const runLesson = useCallback(async (request: LessonRecovery, retry = false) => {
+    const { projectId, action } = request;
+    if (!identity || pendingConversationsRef.current.has(projectId)) return;
+    const ownerId = identity.owner_id;
+    const key = JSON.stringify([ownerId, projectId, action.action_id, request.runId]);
+    if (!retry && lessonAttempts.current.has(key)) return;
+    lessonAttempts.current.add(key);
+    const controller = new AbortController();
+    const token = 'lesson:' + key + ':' + Date.now();
+    const startedAt = Date.now();
+    const assistant: Message = { message_id: 'client:lesson:' + token, role: 'assistant', content: '',
+      created_at: new Date(startedAt).toISOString(), evidence: [], model: null, usage: null,
+      latency_ms: null, error: null, placeholder: false };
+    pendingConversationsRef.current.set(projectId, { token, ownerId, snapshotId: action.snapshot_id, controller,
+      optimisticId: '', startedAt, runId: retry ? null : request.runId, activity: [], streamingAssistant: assistant });
+    const current = () => appMountedRef.current && ownerIdRef.current === ownerId
+      && pendingConversationsRef.current.get(projectId)?.token === token;
+    const displayed = () => activeIdRef.current === projectId && displayedViewRef.current?.snapshotId === action.snapshot_id;
+    setLessonFailure(null);
+    markProject(projectId, 'running');
+    if (displayed()) { setSending(true); setStreamingAssistant(assistant); setConversationStartedAt(startedAt);
+      setConversationRunId(retry ? null : request.runId); setConversationActivity([]); }
+    const progress = (event: RuntimeProgressEvent) => {
+      if (!current()) return;
+      const pending = pendingConversationsRef.current.get(projectId)!;
+      const activity = mergeProgressEvents(pending.activity, event);
+      const streamingAssistant = event.stage === 'assistant_delta' && event.delta
+        ? { ...pending.streamingAssistant, content: pending.streamingAssistant.content + event.delta } : pending.streamingAssistant;
+      pendingConversationsRef.current.set(projectId, { ...pending, activity, streamingAssistant, runId: event.run_id ?? pending.runId });
+      if (event.run_id) {
+        lessonAttempts.current.add(JSON.stringify([ownerId, projectId, action.action_id, event.run_id]));
+        rememberConversationRun({ ownerId, projectId, snapshotId: action.snapshot_id, runId: event.run_id, startedAt, lessonActionId: action.action_id });
+      }
+      if (displayed()) { setConversationActivity(activity); setStreamingAssistant(streamingAssistant);
+        setConversationRunId(event.run_id ?? pending.runId); }
+    };
+    try {
+      const remembered = findConversationRun(ownerId, projectId, action.snapshot_id).run;
+      const resumeRunId = (remembered?.lessonActionId === action.action_id ? remembered.runId : undefined) ?? (!retry && request.state === 'resume' ? request.runId : undefined);
+      const response = resumeRunId
+        ? await apiClient.resumeMessageStream(projectId, resumeRunId, progress, controller.signal)
+        : await apiClient.sendMessageStream(projectId, undefined, [], progress, reviewEvidence, undefined,
+          retry ? request.source?.original_run_id ?? request.source?.trace_id ?? action.outcome!.lesson_run_id : undefined,
+          action.snapshot_id, controller.signal, { actionId: action.action_id, ...(retry ? {} : { runId: request.runId }) });
+      if (!current()) return;
+      forgetConversationRun(ownerId, projectId);
+      const incoming = [response.user_message, response.assistant_message];
+      const cached = projectCacheRef.current.get(projectId);
+      if (cached) projectCacheRef.current.set(projectId, mergeResponseMessages(cached, '', incoming));
+      if (displayed()) setProject(project => project?.project_id === projectId ? mergeResponseMessages(project, '', incoming) : project);
+      const failed = response.error || response.assistant_message.error || !response.assistant_message.teaching_question || response.assistant_message.context_eligible === false;
+      if (failed) setLessonFailure({ projectId, actionId: action.action_id, text: t('本步讲解尚未完成。'), retryable: true });
+      markProject(projectId, displayed() ? null : failed ? 'failed' : 'done');
+    } catch (error) {
+      if (!current()) return;
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+      if (code !== 'client_network_error') forgetConversationRun(ownerId, projectId);
+      setLessonFailure({ projectId, actionId: action.action_id,
+        text: code === 'lesson_already_completed' ? t('本步讲解已完成，请查看已有内容。') : code === 'learning_action_no_longer_current' ? t('当前学习步骤已改变，原讲解请求已失效。') : t('本步讲解已中断，可以重试讲解。'),
+        retryable: code !== 'learning_action_no_longer_current' && code !== 'lesson_already_completed' });
+      markProject(projectId, displayed() ? null : 'failed');
+    } finally {
+      if (current()) {
+        pendingConversationsRef.current.delete(projectId);
+        if (displayed()) { setSending(false); setStreamingAssistant(null); setConversationStartedAt(null);
+          setConversationRunId(null); setConversationActivity([]); }
+      }
+    }
+  }, [identity, reviewEvidence, markProject]);
+
+  useEffect(() => {
+    if (!project || project.project_id !== activeId || sending
+      || snapshot?.snapshot_id !== project.analysis.snapshot_id) return;
+    const request = lessonRecovery(project);
+    const remembered = identity && findConversationRun(identity.owner_id, project.project_id, project.analysis.snapshot_id).run;
+    if (remembered?.lessonActionId) {
+      if (!request || remembered.lessonActionId !== request.action.action_id) {
+        forgetConversationRun(identity!.owner_id, project.project_id, remembered.runId);
+        return;
+      }
+      if (project.messages.some(message => message.role === 'assistant' && message.trace_id === remembered.runId)) {
+        forgetConversationRun(identity!.owner_id, project.project_id, remembered.runId);
+      } else {
+        void runLesson({ ...request, runId: remembered.runId, state: 'resume' });
+        return;
+      }
+    }
+    if (request && (request.state === 'start' || request.state === 'resume')) void runLesson(request);
+  }, [project, activeId, sending, snapshot?.snapshot_id, runLesson, identity]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -3158,9 +3407,11 @@ export default function App() {
   async function controlConversation() {
     const projectId = activeIdRef.current;
     const runId = conversationRunId;
+    const ownerId = ownerIdRef.current;
     if (!projectId || !runId) return;
     try {
       await apiClient.cancelRun(projectId, runId);
+      if (!appMountedRef.current || ownerIdRef.current !== ownerId) return;
       const event: RuntimeProgressEvent = {
         run_id: runId,
         stage: 'run_cancelling',
@@ -3178,7 +3429,7 @@ export default function App() {
         }
       }
     } catch (error: unknown) {
-      if (activeIdRef.current === projectId) {
+      if (appMountedRef.current && ownerIdRef.current === ownerId && activeIdRef.current === projectId) {
         setLoadError(userFacingError(error, t("当前操作未完成，请重试。")));
       }
     }
@@ -3356,6 +3607,10 @@ export default function App() {
     try {
       await apiClient.deleteProject(id);
       removeSnapshotCache(id);
+      try {
+        if (identity && localStorage.getItem(`what-the-repo-last-project:${identity.owner_id}`) === id)
+          localStorage.removeItem(`what-the-repo-last-project:${identity.owner_id}`);
+      } catch { /* Optional. */ }
       projectCacheRef.current.delete(id);
       pendingConversationsRef.current.delete(id);
       for (const key of analysisTimerStartsRef.current.keys()) {
@@ -3375,6 +3630,12 @@ export default function App() {
     setRenameDraft(summary.title);
   }
 
+  function finishProjectRename(id: string) {
+    setRenamingProjectId(null);
+    setRenameDraft('');
+    requestAnimationFrame(() => document.getElementById(`project-open-${id}`)?.focus());
+  }
+
   async function renameProject(id: string) {
     const title = renameDraft.trim();
     if (!title) {
@@ -3387,8 +3648,7 @@ export default function App() {
       setProject(current => current?.project_id === id
         ? { ...current, title: updated.title, updated_at: updated.updated_at }
         : current);
-      setRenamingProjectId(null);
-      setRenameDraft('');
+      finishProjectRename(id);
     } catch (error: unknown) {
       setLoadError(userFacingError(error, t("项目名称暂时未更新，请稍后重试。")));
     }
@@ -3449,24 +3709,23 @@ export default function App() {
     const startWidth = renderedWidth || repositoryWidth;
     document.body.classList.add('col-resizing');
     const resize = (move: PointerEvent) => {
-      const mainWidth = mainRef.current?.getBoundingClientRect().width ?? window.innerWidth;
-      const maxWidth = Math.max(
-        0,
-        mainWidth - CHAT_PANE_MIN_WIDTH - PANE_RESIZER_WIDTH - REPOSITORY_PANE_MARGIN,
-      );
-      const minWidth = Math.min(REPOSITORY_MIN_WIDTH, maxWidth);
-      setRepositoryWidth(Math.min(
-        maxWidth,
-        Math.max(minWidth, startWidth - move.clientX + startX),
-      ));
+      setRepositoryWidth(clampRepositoryWidth(startWidth - move.clientX + startX));
     };
     const stop = () => {
       document.body.classList.remove('col-resizing');
       window.removeEventListener('pointermove', resize);
       window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      window.removeEventListener('blur', stop);
     };
     window.addEventListener('pointermove', resize);
     window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    window.addEventListener('blur', stop);
+  }
+
+  function clampRepositoryWidth(width: number) {
+    return Math.max(repositoryMinWidth, Math.min(repositoryMaxWidth, width));
   }
 
   if (!authReady) {
@@ -3592,17 +3851,7 @@ export default function App() {
         {!sidebarCollapsed && <div className="sidebar-body">
           {projects.map(p => (
             <div key={p.project_id}
-              className={`project-item${activeId === p.project_id ? ' active' : ''}${projectMenuId === p.project_id ? ' menu-open' : ''}`}
-              onClick={() => {
-                if (renamingProjectId === p.project_id) return;
-                const cachedProject = projectCacheRef.current.get(p.project_id) ?? null;
-                setProject(cachedProject);
-                setSnapshot(getMemorySnapshot(p.project_id, cachedProject?.analysis.snapshot_id, getUiLanguage()));
-                setActiveId(p.project_id);
-                setMobileSidebarOpen(false);
-                setShowNew(false);
-                setProjectMenuId(null);
-              }}>
+              className={`project-item${activeId === p.project_id ? ' active' : ''}${projectMenuId === p.project_id ? ' menu-open' : ''}`}>
               {renamingProjectId === p.project_id ? (
                 <form className="project-rename" onClick={event => event.stopPropagation()}
                   onSubmit={event => { event.preventDefault(); void renameProject(p.project_id); }}>
@@ -3610,21 +3859,33 @@ export default function App() {
                     maxLength={120} onChange={event => setRenameDraft(event.target.value)}
                     onKeyDown={event => {
                       if (event.key === 'Escape') {
-                        setRenamingProjectId(null);
-                        setRenameDraft('');
+                        event.preventDefault();
+                        finishProjectRename(p.project_id);
                       }
                     }} />
                   <button className="btn btn-icon" type="submit" aria-label={t("保存标题")} data-tooltip={t("保存")}>
                     <Check size={13} />
                   </button>
                   <button className="btn btn-icon" type="button" aria-label={t("取消重命名")} data-tooltip={t("取消")}
-                    onClick={() => { setRenamingProjectId(null); setRenameDraft(''); }}>
+                    onClick={() => finishProjectRename(p.project_id)}>
                     <X size={13} />
                   </button>
                 </form>
               ) : (
                 <>
-                  <div className="project-item-title">{p.title}</div>
+                  <button id={`project-open-${p.project_id}`} type="button" className="project-open-button" aria-current={activeId === p.project_id ? "page" : undefined}
+                    aria-label={t("打开项目 {0}", p.title)}
+                    onClick={() => {
+                      const cachedProject = projectCacheRef.current.get(p.project_id) ?? null;
+                      setProject(cachedProject);
+                      setSnapshot(getMemorySnapshot(p.project_id, cachedProject?.analysis.snapshot_id, getUiLanguage()));
+                      setActiveId(p.project_id);
+                      setMobileSidebarOpen(false);
+                      setShowNew(false);
+                      setProjectMenuId(null);
+                    }}>
+                    <span className="project-item-title">{p.title}</span>
+                  </button>
                   {activeId !== p.project_id && <ProjectActivityMark
                     state={projectActivity[p.project_id] === 'running' || analysisRunning(p.analysis_stage) ? 'running' : projectActivity[p.project_id]}
                     analysis={analysisRunning(p.analysis_stage)} />}
@@ -3834,16 +4095,7 @@ export default function App() {
                   </div>
                 )}
                 {project.messages.map((msg, index) => {
-                  const routeStep = ['explaining', 'assessing', 'remediating'].includes(project.study.phase)
-                    ? project.study.dynamic_learning_plan?.[project.study.current_step] : undefined;
-                  const offerSkip = Boolean(routeStep) && !sending && index === project.messages.length - 1
-                    && msg.role === 'assistant' && !msg.error && !msg.placeholder && msg.learning_action?.status !== 'pending'
-                    && (!msg.teaching_context || (msg.teaching_context.snapshot_id === project.analysis.snapshot_id
-                      && msg.teaching_context.route_revision === (project.study.route_revision ?? 0)
-                      && msg.teaching_context.step_id === routeStep?.step_id))
-                    && (!msg.learning_action?.outcome || (msg.learning_action.snapshot_id === project.analysis.snapshot_id
-                      && msg.learning_action.outcome.route_revision === (project.study.route_revision ?? 0)
-                      && msg.learning_action.outcome.next_step_id === routeStep?.step_id));
+                  if (msg.role === 'system' && msg.lesson_request) return null;
                   const previousModel = [...project.messages.slice(0, index)]
                     .reverse()
                     .find(message => message.role === 'assistant' && message.model)?.model ?? null;
@@ -3865,7 +4117,7 @@ export default function App() {
                         </div>
                       )}
                       <MsgBubble msg={msg}
-                        onEdit={!sending && msg.role === 'user' && !project.messages.slice(index + 1).some(message => message.role === 'user')
+                        onEdit={!sending && msg.role === 'user' && !protectsLessonDescendants(project, msg.message_id) && !project.messages.slice(index + 1).some(message => message.role === 'user')
                           ? () => { setRejectedEdit(null); setEditingMessageId(msg.message_id); } : undefined}
                         edit={editingMessageId === msg.message_id && !sending ? {
                           content: rejectedEdit?.projectId === project.project_id && rejectedEdit.messageId === msg.message_id
@@ -3886,22 +4138,22 @@ export default function App() {
                         }}
                         feedbackPending={Boolean(feedbackPending[msg.message_id])}
                         learningActionPending={Boolean(learningActionPending[msg.learning_action?.action_id ?? ''])}
-                        startStep={offerSkip && routeStep ? {
-                            title: routeStep.title,
-                            onStart: () => { void sendMessage({ content: t('开始当前步骤'),
-                              learningIntent: { kind: 'start_current_step', route_revision: project.study.route_revision ?? 0,
-                                step_id: routeStep.step_id, snapshot_id: project.analysis.snapshot_id! } }); },
-                          } : undefined}
-                        skipStep={offerSkip && routeStep ? {
-                          title: routeStep.title,
-                          onSkip: () => { void sendMessage({ content: t('跳过这一步的理解检查，直接进入下一步。'),
-                            learningIntent: { kind: 'skip_current_step', route_revision: project.study.route_revision ?? 0,
-                              step_id: routeStep.step_id, snapshot_id: project.analysis.snapshot_id! } }); },
-                        } : undefined}
                         messageRef={node => registerMessageRef(msg.message_id, node)} />
                     </Fragment>
                   );
                 })}
+                {(() => {
+                  const request = lessonRecovery(project);
+                  if (!request || sending || snapshot?.snapshot_id !== request.action.snapshot_id) return null;
+                  const failure = lessonFailure?.projectId === project.project_id && lessonFailure.actionId === request.action.action_id
+                    ? lessonFailure : request.state === 'failed' ? { text: '本步讲解尚未完成。', retryable: true } : null;
+                  return failure ? <div role="status" className="conversation-error-notice">
+                    <p>{failure.text}</p>
+                    {failure.retryable && <button type="button" className="btn" onClick={() => void runLesson(request, true)}>{t('重试讲解')}</button>}
+                  </div> : null;
+                })()}
+                {sending && pendingConversationsRef.current.get(project.project_id)?.token.startsWith('lesson:')
+                  && <p role="status">{t('正在讲解当前步骤。')}</p>}
                 {sending && streamingAssistant?.content ? (
                   <MsgBubble msg={streamingAssistant}
                     activity={conversationActivity}
@@ -4005,12 +4257,23 @@ export default function App() {
               className={`pane-resizer repository-resizer${repositoryOpen ? '' : ' hidden'}`}
               role="separator"
               aria-label={t("调整对话与项目视图宽度")} aria-orientation="vertical"
+              aria-controls="repository-view"
               aria-hidden={!repositoryOpen}
+              tabIndex={repositoryOpen && !isMobile && !isPhoneLandscape ? 0 : -1}
+              aria-valuemin={Math.round(repositoryMinWidth)} aria-valuemax={Math.round(repositoryMaxWidth)}
+              aria-valuenow={Math.round(displayedRepositoryWidth)}
+              onKeyDown={event => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter'].includes(event.key)) return;
+                event.preventDefault();
+                setRepositoryWidth(clampRepositoryWidth(event.key === 'Home' ? repositoryMinWidth
+                  : event.key === 'End' ? repositoryMaxWidth : event.key === 'Enter' ? REPOSITORY_DEFAULT_WIDTH
+                  : displayedRepositoryWidth + (event.key === 'ArrowLeft' ? 24 : -24)));
+              }}
               onPointerDown={startRepositoryResize}
-              onDoubleClick={() => setRepositoryWidth(REPOSITORY_DEFAULT_WIDTH)} />
-            <div className={`repository-pane${repositoryOpen ? ' open' : ' collapsed'}`}
+              onDoubleClick={() => setRepositoryWidth(clampRepositoryWidth(REPOSITORY_DEFAULT_WIDTH))} />
+            <div id="repository-view" className={`repository-pane${repositoryOpen ? ' open' : ' collapsed'}`}
               style={{
-                width: repositoryOpen ? repositoryWidth : 0,
+                width: repositoryOpen ? displayedRepositoryWidth : 0,
                 maxWidth: repositoryOpen
                   ? `calc(100% - ${CHAT_PANE_MIN_WIDTH + PANE_RESIZER_WIDTH + REPOSITORY_PANE_MARGIN}px)`
                   : 0,
@@ -4068,12 +4331,12 @@ export default function App() {
         && sourceModal.projectId === activeId
         && sourceModal.projectEpoch === projectEpochRef.current && (
         <LazyLoadBoundary key={`${sourceModal.projectId}:${sourceModal.snapshotId}:${sourceModal.path}:${sourceModal.line}:${sourceModal.stableId ?? ''}`}
-          fallback={<div className="settings-panel">
-            <div className="settings-dialog source-dialog" role="dialog" aria-modal="true" aria-label={t("源码预览失败")}>
+          fallback={<Modal onClose={() => setSourceModal(null)} label={t("源码预览失败")}>
+            <div className="settings-dialog source-dialog">
               <p role="alert">{t("源码预览失败，请关闭后重试。")}</p>
               <button type="button" className="btn" onClick={() => setSourceModal(null)}>{t("关闭源码预览")}</button>
             </div>
-          </div>}>
+          </Modal>}>
           <SourceModal
             projectId={sourceModal.projectId} snapshotId={sourceModal.snapshotId}
             path={sourceModal.path} line={sourceModal.line} stableId={sourceModal.stableId}

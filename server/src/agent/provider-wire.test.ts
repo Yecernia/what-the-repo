@@ -75,33 +75,38 @@ test("official presets retain output-limit fields for known and newly discovered
 
 test('free chat reserves and sends its configured output ceiling, including thinking, without changing analysis', async (t) => {
   t.mock.method(dns, 'lookup', async () => [{ address: '93.184.216.34', family: 4 }]);
-  const config = loadConfig({ WHAT_THE_REPO_LOAD_LOCAL_ENV: '0', NODE_ENV: 'test',
-    WHAT_THE_REPO_FREE_PROVIDER_BASE_URL: 'https://api.deepseek.com',
-    WHAT_THE_REPO_FREE_PROVIDER_MODEL: 'deepseek-v4-flash', WHAT_THE_REPO_FREE_PROVIDER_API_KEY: 'fixture-only',
-    WHAT_THE_REPO_FREE_CHAT_MAX_OUTPUT_TOKENS: '32768' });
   const context = { messages: [{ role: 'user' as const, content: 'ping', timestamp: 1 }] };
   const limits: number[] = [];
   t.mock.method(globalThis, 'fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body)); limits.push(body.max_tokens);
     return responseStream(body.model, false);
   });
-  for (const deploymentId of [undefined, 'deepseek']) {
-    config.freeProviderId = deploymentId;
-    const input = { config, store: {} as ProductStore, owner: { kind: 'guest' as const, owner_id: 'guest:wire' },
-      settings: { thinking_level: 'high' } as ProviderSettings, selectedModel: FREE_SELECTOR };
-    const original = (await resolveProvider(input))!;
-    const chat = (await resolveChatProvider(input))!;
-    assert.equal(original.maxOutputTokens, 384_000);
-    assert.equal(chat.maxOutputTokens, 32_768);
-    const runtime = createModelRuntime(chat);
-    assert.equal(runtime.model.maxTokens, 32_768);
-    assert.ok(providerReservation(runtime.model, context) < 0.05);
-    for (const reasoning of ['low', 'high'] as const) {
-      const result = await runtime.models.completeSimple(runtime.model, context, { apiKey: chat.apiKey, reasoning });
-      assert.equal(result.stopReason, 'stop');
-      assert.equal(limits.at(-1), 32_768);
+  for (const [configured, expected] of [[undefined, 65_536], ['32768', 32_768]] as const) {
+    const config = loadConfig({ WHAT_THE_REPO_LOAD_LOCAL_ENV: '0', NODE_ENV: 'test',
+      WHAT_THE_REPO_FREE_PROVIDER_BASE_URL: 'https://api.deepseek.com',
+      WHAT_THE_REPO_FREE_PROVIDER_MODEL: 'deepseek-v4-flash', WHAT_THE_REPO_FREE_PROVIDER_API_KEY: 'fixture-only',
+      ...(configured ? { WHAT_THE_REPO_FREE_CHAT_MAX_OUTPUT_TOKENS: configured } : {}) });
+    for (const deploymentId of [undefined, 'deepseek']) {
+      config.freeProviderId = deploymentId;
+      const input = { config, store: {} as ProductStore, owner: { kind: 'guest' as const, owner_id: 'guest:wire' },
+        settings: { thinking_level: 'high' } as ProviderSettings, selectedModel: FREE_SELECTOR };
+      const original = (await resolveProvider(input))!;
+      const chat = (await resolveChatProvider(input))!;
+      assert.equal(original.maxOutputTokens, 384_000);
+      assert.equal(chat.maxOutputTokens, expected);
+      const runtime = createModelRuntime(chat);
+      assert.equal(runtime.model.maxTokens, expected);
+      const reservation = providerReservation(runtime.model, context);
+      assert.ok(reservation >= expected * runtime.model.cost.output / 1_000_000,
+        'the reservation includes the entire allowed output, including reasoning');
+      assert.ok(reservation < 0.1);
+      for (const reasoning of ['low', 'high'] as const) {
+        const result = await runtime.models.completeSimple(runtime.model, context, { apiKey: chat.apiKey, reasoning });
+        assert.equal(result.stopReason, 'stop');
+        assert.equal(limits.at(-1), expected);
+      }
+      assert.equal((await resolveProvider(input))!.maxOutputTokens, 384_000);
     }
-    assert.equal((await resolveProvider(input))!.maxOutputTokens, 384_000);
   }
   for (const value of ['0', '1023', '1.5', '1048577', 'NaN']) assert.throws(() => loadConfig({
     WHAT_THE_REPO_LOAD_LOCAL_ENV: '0', NODE_ENV: 'test', WHAT_THE_REPO_FREE_CHAT_MAX_OUTPUT_TOKENS: value,

@@ -160,7 +160,13 @@ export interface SnapshotValuePoint {
   connectivity: number;
 }
 
+export interface LearningTargetDefinition {
+  target_id: string;
+  label: string;
+}
+
 export interface SnapshotLearningStep {
+  learning_target_defs?: LearningTargetDefinition[];
   learning_targets?: string[];
   step_id: string;
   order: number;

@@ -18,6 +18,7 @@ import type {
   Snapshot,
 } from './types';
 import { clearSnapshotCache } from './snapshot-cache';
+import { CONVERSATION_RECOVERY_KEY, CONVERSATION_RECOVERY_TTL, rememberConversationRun } from './conversation-recovery';
 import { getUiLanguage, setUiLanguage, UI_LANGUAGE_STORAGE_KEY } from './ui-language';
 import hljs from 'highlight.js/lib/common';
 import * as sourceHighlighting from './source-highlighting';
@@ -207,7 +208,7 @@ it('replaces the last turn after failure and edit, without persisting the bottom
     expect(replaceId).toBe(user.message_id);
     const isEdit = content === '修改后的问题';
     const answer: Message = isEdit ? { ...failed, message_id: 'new-answer', content: '新的回答', error: null, thinking_summary: [] } : failed;
-    const nextUser = { ...user, content };
+    const nextUser = { ...user, content: content! };
     saved = project({ messages: [nextUser, answer] });
     return { user_message: nextUser, assistant_message: answer, teaching_phase: 'orienting', validation_errors: [], tools_used: [], state_changed: false,
       ...(isEdit ? {} : { error: { code: 'provider_rate_limited', message: '上游请求过多，请稍后重试。' } }) };
@@ -285,7 +286,8 @@ it('keeps partial output and a failed summary after reconnect attempts end', asy
   expect(document.querySelector('.conversation-error')).toBeNull();
 });
 
-vi.mock('./api', () => ({
+vi.mock('./api', async importOriginal => ({
+  ...await importOriginal<typeof import('./api')>(),
   conversationErrorMessage: (code: string) => code === 'provider_rate_limited' ? '上游请求过多，请稍后重试。' : null,
   userFacingError: (_error: unknown, fallback = '请求未能完成，请稍后重试。') => fallback,
   apiClient: {
@@ -305,6 +307,7 @@ vi.mock('./api', () => ({
     selectModel: vi.fn(),
     sendMessage: vi.fn(),
     sendMessageStream: vi.fn(),
+    resumeMessageStream: vi.fn(),
     pauseRun: vi.fn(),
     cancelRun: vi.fn(),
     getRunEvents: vi.fn(),
@@ -833,7 +836,7 @@ describe('public compliance', () => {
 });
 
 describe('App project state synchronization', () => {
-  it('separates an executed skip receipt from the new step controls and binds start to that step', async () => {
+  it('retains the executed skip receipt without persistent next-step controls', async () => {
     const steps = ['第一课', '第二课'].map((title, index) => ({ step_id: `step-${index + 1}`, order: index + 1,
       title, objective: 'Input', evidence_refs: [], component_ids: [], completion_check: 'Input?' }));
     const action = learningAction({ action: 'advance_learning_step', status: 'executed', title: '已跳过第一课',
@@ -850,14 +853,11 @@ describe('App project state synchronization', () => {
     await userEvent.click(await screen.findByText('python-edge-cases'));
     const card = (await screen.findByText('已跳过第一课')).closest('.learning-action-card')!;
     expect(card).not.toHaveTextContent('确认后');
-    const current = screen.getByLabelText('当前学习步骤');
-    const start = within(current).getByRole('button', { name: /开始当前步骤 · 第二课/ });
-    expect(card.contains(start)).toBe(false);
-    expect(within(current).getByRole('button', { name: /跳过当前步骤 第二课/ })).toBeVisible();
-    await userEvent.click(start);
-    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[8]).toEqual({
-      kind: 'start_current_step', route_revision: 1, step_id: 'step-2', snapshot_id: 'snapshot-1',
-    });
+    expect(screen.queryByLabelText('当前学习步骤')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /开始当前步骤/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /跳过当前步骤/ })).not.toBeInTheDocument();
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+    expect(apiClient.resolveLearningAction).not.toHaveBeenCalled();
   });
 
   it.each(['stale', 'completed'])('does not offer current-step controls for %s receipts', async state => {
@@ -879,7 +879,7 @@ describe('App project state synchronization', () => {
     expect(screen.queryByText('确认后进入下一步。')).not.toBeInTheDocument();
   });
 
-  it('retains a start entry when an executed skip message is regenerated without its old card', async () => {
+  it('retains the regenerated skip receipt without introducing persistent step controls', async () => {
     const assistant: Message = { message_id: 'skip-replay', role: 'assistant',
       content: '本次仅重新生成回答，学习进度没有再次改变。', created_at: '2026-10-01T00:00:00Z',
       evidence: [], model: 'test-model', usage: null, latency_ms: 12, error: null, placeholder: false,
@@ -891,8 +891,9 @@ describe('App project state synchronization', () => {
     } }), null, true));
     render(<App />);
     await userEvent.click(await screen.findByText('python-edge-cases'));
-    expect(await screen.findByRole('button', { name: /开始当前步骤 · 第二课/ })).toBeVisible();
-    expect(screen.getByRole('button', { name: /跳过当前步骤 第二课/ })).toBeVisible();
+    expect(await screen.findByText(assistant.content)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /开始当前步骤/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /跳过当前步骤/ })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -1018,11 +1019,8 @@ describe('App project state synchronization', () => {
     expect(actionCard).not.toBeNull();
     expect(within(actionCard as HTMLElement).getByText('已完成')).toBeVisible();
     expect(screen.queryByRole('button', { name: '确认' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /开始当前步骤/ }));
-    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[1]).toBe('开始当前步骤');
-    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[8]).toEqual({
-      kind: 'start_current_step', route_revision: 0, step_id: 'first', snapshot_id: 'snapshot-1',
-    });
+    expect(screen.queryByRole('button', { name: /开始当前步骤/ })).not.toBeInTheDocument();
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1309,6 +1307,9 @@ describe('App project state synchronization', () => {
   });
 
   it('keeps chat primary and reveals resizable navigation panels on demand', async () => {
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 1440, height: 900, x: 0, y: 0, top: 0, left: 0, right: 1440, bottom: 900, toJSON: () => ({}),
+    });
     vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({
       messages: [{
         message_id: 'assistant-layout',
@@ -1347,6 +1348,7 @@ describe('App project state synchronization', () => {
     expect(screen.getByRole('button', { name: '展开项目栏' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '收起项目视图' }));
     expect(screen.getByTestId('repository-workspace')).toHaveAttribute('data-details-visible', 'false');
+    measure.mockRestore();
   });
 
   it('renames projects from the three-dot menu and keeps the sidebar title-only', async () => {
@@ -1681,35 +1683,65 @@ describe('App project state synchronization', () => {
     expect(activity.querySelector('.activity-history')).toBeNull();
   });
 
-  it('offers a one-tap skip for the current learning step without touching the draft', async () => {
-    const step = (order: number, title: string) => ({
-      step_id: `step-${order}`, order, title, objective: '看懂入口', evidence_refs: [], component_ids: [], completion_check: '说出入口',
-    });
-    const assistant: Message = {
-      message_id: 'assistant-check', role: 'assistant', content: '请回答本步的理解检查。',
-      created_at: '2026-08-16T00:00:01Z', evidence: [], model: 'test-model',
-      usage: null, latency_ms: 700, error: null, placeholder: false,
-    };
-    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({
-      messages: [assistant],
-      study: { ...project().study, phase: 'explaining', current_step: 0, total_steps: 2,
-        dynamic_learning_plan: [step(1, '入口在哪里'), step(2, '消息怎么排队')] },
-    }), null, true));
-    vi.mocked(apiClient.sendMessage).mockReturnValue(new Promise(() => undefined));
-
+  it('ordinary tutor replies have no persistent step controls and preserve the draft', async () => {
+    const step = (order: number, title: string) => ({ step_id: `step-${order}`, order, title,
+      objective: '看懂入口', evidence_refs: [], component_ids: [], completion_check: '说出入口' });
+    const assistant: Message = { message_id: 'assistant-check', role: 'assistant', content: '请回答本步的理解检查。',
+      created_at: '2026-08-16T00:00:01Z', evidence: [], model: 'test-model', usage: null,
+      latency_ms: 700, error: null, placeholder: false };
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [assistant], study: {
+      ...project().study, phase: 'explaining', current_step: 0, total_steps: 2,
+      dynamic_learning_plan: [step(1, '入口在哪里'), step(2, '消息怎么排队')],
+    } }), null, true));
     render(<App />);
     await userEvent.click(await screen.findByText('python-edge-cases'));
     await userEvent.type(screen.getByPlaceholderText('尽情提问'), '还没写完的问题');
-    await userEvent.click(await screen.findByRole('button', { name: /跳过当前步骤/ }));
-
-    await waitFor(() => expect(apiClient.sendMessage).toHaveBeenCalledWith(
-      'project-1', '跳过这一步的理解检查，直接进入下一步。', [], false,
-    ));
-    expect(vi.mocked(apiClient.sendMessageStream).mock.calls.at(-1)?.[8]).toEqual({
-      kind: 'skip_current_step', route_revision: 0, step_id: 'step-1', snapshot_id: 'snapshot-1',
-    });
-    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('还没写完的问题');
+    expect(screen.queryByRole('button', { name: /跳过当前步骤/ })).not.toBeInTheDocument();
     expect(document.querySelector('.learning-skip-button')).toBeNull();
+    expect(screen.queryByRole('button', { name: '确认' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /开始当前步骤/ })).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('还没写完的问题');
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+    expect(apiClient.resolveLearningAction).not.toHaveBeenCalled();
+  });
+
+  it('confirms a model-proposed skip through its action card without sending a new chat or consuming the draft', async () => {
+    const plan = ['第一课', '第二课'].map((title, index) => ({ step_id: `step-${index + 1}`, order: index + 1,
+      title, objective: 'Input', evidence_refs: [], component_ids: [], completion_check: 'Input?' }));
+    const pending = learningAction({ action: 'advance_learning_step', execution_policy: 'confirm',
+      target: { kind: 'learning_step', stable_id: 'step-1', label: '第一课' }, route_revision: 0,
+      expected_step_id: 'step-1', skip_understanding_check: true, title: '跳过第一课',
+      description: '确认后记录为主动跳过，不计入已掌握。', request: '我想跳过第一课。' });
+    const assistant: Message = { message_id: 'skip-option', role: 'assistant', content: '可以按你的请求跳过第一课。',
+      created_at: '2026-10-04T00:00:01Z', evidence: [], model: 'test-model', usage: null,
+      latency_ms: 12, error: null, placeholder: false, learning_action: pending };
+    const before = project({ messages: [assistant], study: { ...project().study, phase: 'explaining',
+      current_step: 0, total_steps: 2, route_revision: 0, dynamic_learning_plan: plan } });
+    const executed = { ...pending, status: 'executed' as const, title: '已跳过第一课',
+      outcome: { route_revision: 1, next_step_id: 'step-2', next_step_title: '第二课' } };
+    const after = project({ ...before, messages: [{ ...assistant, learning_action: executed,
+      content: '已记录为主动跳过。当前步骤是第二课。' }], study: { ...before.study,
+      current_step: 1, route_revision: 1, skipped_steps: ['step-1'] } });
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(before, null, true));
+    const terminal = deferred<Awaited<ReturnType<typeof apiClient.resolveLearningAction>>>();
+    vi.mocked(apiClient.resolveLearningAction).mockReturnValue(terminal.promise);
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByText('需要你的确认')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /跳过当前步骤/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('已记录为主动跳过。当前步骤是第二课。')).not.toBeInTheDocument();
+    await userEvent.type(screen.getByPlaceholderText('尽情提问'), '还没写完的问题');
+    await userEvent.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => expect(apiClient.resolveLearningAction).toHaveBeenCalledWith('project-1', pending.action_id, 'confirm'));
+    expect(screen.queryByRole('button', { name: '确认' })).not.toBeInTheDocument();
+    expect(apiClient.resolveLearningAction).toHaveBeenCalledTimes(1);
+    await act(async () => { terminal.resolve({ project: after, action: executed, state_changed: true }); await terminal.promise; });
+    expect(await screen.findByText('已记录为主动跳过。当前步骤是第二课。')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /开始当前步骤/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认' })).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('还没写完的问题');
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+    expect(apiClient.sendMessage).not.toHaveBeenCalled();
   });
 
   it('passes the optional evidence review choice with each message', async () => {
@@ -2983,6 +3015,72 @@ describe('App project state synchronization', () => {
     );
   });
 
+  it('TA27 restores a skip proposal after reconnect, confirms once and replays the saved result without new authorization', async () => {
+    const plan = ['第一课', '第二课'].map((title, index) => ({ step_id: `step-${index + 1}`, order: index + 1,
+      title, objective: 'Input', component_ids: [], evidence_refs: [], completion_check: 'Input?' }));
+    const user: Message = { message_id: 'recovered-user', role: 'user', content: '我想跳过第一课。',
+      created_at: '2026-10-03T00:00:00Z', evidence: [], model: null, usage: null, latency_ms: null, error: null, placeholder: false };
+    const pending = learningAction({ action: 'advance_learning_step', execution_policy: 'confirm', skip_understanding_check: true,
+      target: { kind: 'learning_step', stable_id: 'step-1', label: '第一课' }, route_revision: 0, expected_step_id: 'step-1',
+      title: '跳过第一课', description: '确认后记录为主动跳过，不计入已掌握。', request: user.content });
+    const proposed: Message = { ...user, message_id: 'recovered-answer', role: 'assistant', content: '可以按你的请求跳过第一课。',
+      learning_action: pending, teaching_context: { snapshot_id: 'snapshot-1', route_revision: 0, step_id: 'step-1' } };
+    const initialLesson: Message = { ...proposed, message_id: 'initial-lesson', content: '第一课的讲解。', learning_action: null };
+    let saved = project({ messages: [initialLesson], study: { ...project().study, phase: 'explaining', current_step: 0,
+      total_steps: 2, route_revision: 0, dynamic_learning_plan: plan } });
+    vi.mocked(apiClient.getProject).mockImplementation(async () => detail(saved, null, true));
+    const terminal = deferred<Awaited<ReturnType<typeof apiClient.sendMessageStream>>>();
+    vi.mocked(apiClient.sendMessageStream).mockImplementation((_id, _content, _selection, progress) => {
+      progress({ stage: 'reconnecting', label: '正在重新连接（1/5）', status: 'running', kind: 'summary', elapsed_ms: 1 });
+      return terminal.promise;
+    });
+    const view = render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await userEvent.type(screen.getByPlaceholderText('尽情提问'), user.content);
+    await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    expect(await screen.findByText('正在重新连接（1/5）')).toBeVisible();
+    expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(apiClient.sendMessageStream).mock.calls[0]?.[9]).toBeUndefined();
+    saved = project({ ...saved, messages: [initialLesson, user, proposed] });
+    await act(async () => { terminal.resolve({ user_message: user, assistant_message: proposed, teaching_phase: 'explaining',
+      validation_errors: [], tools_used: [], state_changed: false }); await terminal.promise; });
+    expect(await screen.findByText(proposed.content)).toBeVisible();
+    await waitFor(() => expect(screen.getAllByText(user.content)).toHaveLength(1));
+    expect(screen.getAllByText(proposed.content)).toHaveLength(1);
+    expect(apiClient.resolveLearningAction).not.toHaveBeenCalled();
+    expect(saved.study.current_step).toBe(0);
+    const executed = { ...pending, status: 'executed' as const, title: '已跳过第一课',
+      outcome: { route_revision: 1, next_step_id: 'step-2', next_step_title: '第二课' } };
+    const assistant: Message = { ...proposed, content: '已记录为主动跳过。当前步骤是第二课。', learning_action: executed,
+      teaching_context: { snapshot_id: 'snapshot-1', route_revision: 1, step_id: 'step-2' } };
+    vi.mocked(apiClient.resolveLearningAction).mockImplementation(async () => {
+      saved = project({ ...saved, messages: [initialLesson, user, assistant], study: { ...saved.study,
+        current_step: 1, route_revision: 1, skipped_steps: ['step-1'] } });
+      return { project: saved, action: executed, state_changed: true };
+    });
+    await userEvent.click(await screen.findByRole('button', { name: '确认' }));
+    expect(await screen.findByText(assistant.content)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /开始当前步骤/ })).not.toBeInTheDocument();
+    expect(apiClient.resolveLearningAction).toHaveBeenCalledTimes(1);
+    expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /跳过当前步骤/ })).not.toBeInTheDocument();
+    // A fresh page restores the persisted receipt before an exact last-message resend.
+    view.unmount();
+    vi.mocked(apiClient.sendMessageStream).mockImplementation(async (_id, content, _selection, _progress, _review, replaceId, _retry, _snapshot, _signal, lesson) => {
+      expect(content).toBe(user.content); expect(replaceId).toBe(user.message_id); expect(lesson).toBeUndefined();
+      return { user_message: user, assistant_message: assistant, teaching_phase: 'explaining', validation_errors: [], tools_used: [], state_changed: false };
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByText(assistant.content)).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: '重新发送' }));
+    await waitFor(() => expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getAllByText(assistant.content)).toHaveLength(1));
+    expect(screen.getAllByText(user.content)).toHaveLength(1);
+    expect(apiClient.resolveLearningAction).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /开始当前步骤/ })).not.toBeInTheDocument();
+  });
+
   it('shows the reply and unlocks the composer before refresh finishes', async () => {
     const userMessage: Message = {
       message_id: 'user-persisted',
@@ -3427,7 +3525,7 @@ describe('App project state synchronization', () => {
     vi.mocked(apiClient.getSource).mockResolvedValue({ snapshot_id: 'snapshot-1',
       path: 'skills/security-audit/validate-findings.cjs', start_line: 1, end_line: 49,
       lines: Array.from({ length: 49 }, (_, index) => `line ${index + 1}`), truncated: false });
-    const { container } = render(<App />);
+    render(<App />);
     await userEvent.click(await screen.findByText('python-edge-cases'));
     await waitFor(() => expect(screen.getByRole('button', { name: '打开源码 README.md:22-24' })).toBeVisible());
     for (const reference of ['missing.ts:7', 'common.ts:1', 'README.md:999', 'README.md']) {
@@ -3439,7 +3537,7 @@ describe('App project state synchronization', () => {
     await waitFor(() => expect(apiClient.getSource).toHaveBeenCalledWith(
       'project-1', 'snapshot-1', 'skills/security-audit/validate-findings.cjs', 1, 177, undefined,
     ));
-    await waitFor(() => expect(container.querySelector('.source-code-line.highlighted')).toHaveAttribute('data-line', '17'));
+    await waitFor(() => expect(document.querySelector('.source-code-line.highlighted')).toHaveAttribute('data-line', '17'));
   });
 
   it('opens only line-numbered file references without mistaking code members for files', async () => {
@@ -3954,4 +4052,335 @@ it('gives every attached card its own random pin colour and keeps it while the c
   expect(kept.get('component:new')).toBe(all.get('component:0'));
   const draws = new Set(Array.from({ length: 40 }, (_, index) => assignPinColors(new Map(), ['a'], () => index / 40).get('a')));
   expect(draws.size).toBe(PIN_COLORS);
+});
+
+describe('R4-2 reload recovery', () => {
+  const user: Message = { message_id: 'reload-user', role: 'user', content: '已保存问题', created_at: '2026-10-04T00:00:00Z', evidence: [], model: null, usage: null, latency_ms: null, error: null, placeholder: false };
+  const assistant: Message = { ...user, role: 'assistant', message_id: 'reload-answer', content: '原run恢复结果', trace_id: 'reload-run' };
+  const terminal = { user_message: user, assistant_message: assistant, teaching_phase: 'orienting' as const, validation_errors: [], tools_used: [], state_changed: false };
+  const remember = (startedAt = Date.now(), ownerId = 'github:1') => rememberConversationRun({ ownerId, projectId: 'project-1', snapshotId: 'snapshot-1', runId: 'reload-run', startedAt });
+
+  it('remounts during generation, resumes the fixed run, restores cancellation, and merges IDs once', async () => {
+    vi.mocked(apiClient.sendMessageStream).mockImplementation((_id, _text, _contexts, progress) => {
+      progress({ stage: 'request_created', run_id: 'reload-run', label: '', status: 'running', elapsed_ms: 0 });
+      return new Promise(() => {});
+    });
+    const first = render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await userEvent.type(screen.getByPlaceholderText('尽情提问'), '未持久化原文{enter}');
+    await waitFor(() => expect(localStorage.getItem(CONVERSATION_RECOVERY_KEY)).toContain('reload-run'));
+    expect(localStorage.getItem(CONVERSATION_RECOVERY_KEY)).not.toContain('未持久化原文');
+    first.unmount();
+    let saved = project({ messages: [user] });
+    vi.mocked(apiClient.getProject).mockImplementation(async () => detail(saved, null, true));
+    const response = deferred<typeof terminal>();
+    vi.mocked(apiClient.resumeMessageStream).mockReturnValue(response.promise);
+    const second = render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await waitFor(() => expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: '取消本轮回答' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: '取消本轮回答' }));
+    expect(apiClient.cancelRun).toHaveBeenCalledWith('project-1', 'reload-run');
+    saved = project({ messages: [user, assistant] });
+    await act(async () => { response.resolve(terminal); await response.promise; });
+    expect(await screen.findByText(assistant.content)).toBeVisible();
+    expect(screen.getAllByText(user.content)).toHaveLength(1);
+    expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(CONVERSATION_RECOVERY_KEY)).toBe('[]');
+    second.unmount();
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByText(assistant.content)).toBeVisible();
+    expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('converges on an already committed terminal after reload without subscribing or sending', async () => {
+    remember();
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ messages: [user, assistant] }), null, true));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByText(assistant.content)).toBeVisible();
+    await waitFor(() => expect(localStorage.getItem(CONVERSATION_RECOVERY_KEY)).toBe('[]'));
+    expect(apiClient.resumeMessageStream).not.toHaveBeenCalled();
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+  });
+
+  it.each(['expired', 'owner', 'snapshot', 'missing', 'forbidden', 'cancelled'])('clears unusable %s recovery and leaves the composer available', async kind => {
+    remember(kind === 'expired' ? Date.now() - CONVERSATION_RECOVERY_TTL : Date.now(), kind === 'owner' ? 'different-owner' : 'github:1');
+    if (kind === 'snapshot') vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ analysis: { ...project().analysis, snapshot_id: 'changed' } }), null, true));
+    vi.mocked(apiClient.resumeMessageStream).mockRejectedValue(Object.assign(new Error('unavailable'), { code: kind === 'cancelled' ? 'cancelled' : 'not_found', status: kind === 'forbidden' ? 403 : 404 }));
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await waitFor(() => expect(localStorage.getItem(CONVERSATION_RECOVERY_KEY)).toBe('[]'));
+    expect(screen.queryByRole('button', { name: '取消本轮回答' })).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText('尽情提问')).toBeEnabled();
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+  });
+});
+
+it('R4-2 aborts a disposed recovery subscription and resumes the same descriptor on remount', async () => {
+  rememberConversationRun({ ownerId: 'github:1', projectId: 'project-1', snapshotId: 'snapshot-1', runId: 'same-run', startedAt: Date.now() });
+  vi.mocked(apiClient.resumeMessageStream).mockImplementation(() => new Promise(() => {}));
+  const first = render(<App />);
+  await userEvent.click(await screen.findByText('python-edge-cases'));
+  await waitFor(() => expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1));
+  const signal = vi.mocked(apiClient.resumeMessageStream).mock.calls[0]![3]!;
+  first.unmount();
+  expect(signal.aborted).toBe(true);
+  render(<App />);
+  await userEvent.click(await screen.findByText('python-edge-cases'));
+  await waitFor(() => expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(apiClient.resumeMessageStream).mock.calls.map(call => call[1])).toEqual(['same-run', 'same-run']);
+  expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+});
+
+it('R4-3 explains failed question replacement while keeping the original question usable', async () => {
+  const text = '本轮回答未通过内容检查，学习进度没有改变。原题仍然有效，可以继续作答或重试换题。';
+  const user: Message = { message_id: 'failed-change-user', role: 'user', content: '换一道题', created_at: new Date().toISOString(), evidence: [], model: null, usage: null, latency_ms: null, error: null, placeholder: false };
+  const answer: Message = { ...user, message_id: 'failed-change-answer', role: 'assistant', content: text, error: 'conversation_reply_invalid' };
+  vi.mocked(apiClient.sendMessageStream).mockResolvedValue({ user_message: user, assistant_message: answer, teaching_phase: 'orienting', validation_errors: [], tools_used: [], state_changed: false, error: { code: 'conversation_reply_invalid', message: text } });
+  render(<App />);
+  await userEvent.click(await screen.findByText('python-edge-cases'));
+  await userEvent.type(screen.getByPlaceholderText('尽情提问'), '换一道题{enter}');
+  await waitFor(() => expect(document.querySelector('.conversation-error')).toHaveTextContent('原题仍然有效，可以继续作答或重试换题'));
+  expect(document.querySelector('.conversation-error')).not.toHaveTextContent('服务端错误');
+});
+
+describe('R5-2 recovered run background lifecycle', () => {
+  const user: Message = { message_id: 'background-user', role: 'user', content: '后台原问题', created_at: new Date().toISOString(), evidence: [], model: null, usage: null, latency_ms: null, error: null, placeholder: false };
+  const answer: Message = { ...user, message_id: 'background-answer', role: 'assistant', content: '后台最终答案', trace_id: 'background-run' };
+  const terminal = { user_message: user, assistant_message: answer, teaching_phase: 'orienting' as const, validation_errors: [], tools_used: [], state_changed: false };
+  const other = project({ project_id: 'project-2', title: 'other-recovery-project' });
+  function setup() {
+    rememberConversationRun({ ownerId: 'github:1', projectId: 'project-1', snapshotId: 'snapshot-1', runId: 'background-run', startedAt: Date.now() });
+    vi.mocked(apiClient.listProjects).mockResolvedValue([summary, { ...summary, project_id: 'project-2', title: other.title }]);
+    let saved = project({ messages: [user] });
+    vi.mocked(apiClient.getProject).mockImplementation(async id => detail(id === 'project-1' ? saved : other, null, true));
+    const response = deferred<typeof terminal>();
+    vi.mocked(apiClient.resumeMessageStream).mockReturnValue(response.promise);
+    return { response, save: (value: Project) => { saved = value; } };
+  }
+
+  it.each(['success', 'failure'] as const)('keeps the subscription while navigating and settles %s only in its own project', async outcome => {
+    const { response, save } = setup();
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await waitFor(() => expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1));
+    const [,, progress, signal] = vi.mocked(apiClient.resumeMessageStream).mock.calls[0]!;
+    await userEvent.click(screen.getByText(other.title));
+    await waitFor(() => expect(screen.getByPlaceholderText('尽情提问')).toBeEnabled());
+    expect(signal?.aborted).toBe(false);
+    act(() => progress({ stage: 'assistant_delta', label: '', delta: '后台片段', elapsed_ms: 1, status: 'running' }));
+    expect(screen.queryByText('后台片段')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('python-edge-cases'));
+    expect(await screen.findByText('后台片段')).toBeVisible();
+    expect(screen.getByRole('button', { name: '取消本轮回答' })).toBeEnabled();
+    expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByText(other.title));
+    if (outcome === 'success') {
+      save(project({ messages: [user, answer] }));
+      await act(async () => { response.resolve(terminal); await response.promise; });
+    } else {
+      await act(async () => { response.reject(Object.assign(new Error('missing'), { code: 'not_found', status: 404 })); await response.promise.catch(() => {}); });
+    }
+    expect(screen.queryByText(answer.content)).not.toBeInTheDocument();
+    await waitFor(() => expect(localStorage.getItem(CONVERSATION_RECOVERY_KEY)).toBe('[]'));
+    await userEvent.click(screen.getByText('python-edge-cases'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '取消本轮回答' })).not.toBeInTheDocument());
+    if (outcome === 'success') expect(await screen.findAllByText(answer.content)).toHaveLength(1);
+    expect(screen.getAllByText(user.content)).toHaveLength(1);
+    expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1);
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+  });
+
+  it('aborts on owner logout and ignores a late old-owner result after signing in again', async () => {
+    const { response } = setup();
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await waitFor(() => expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1));
+    const signal = vi.mocked(apiClient.resumeMessageStream).mock.calls[0]![3]!;
+    await userEvent.click(screen.getByRole('button', { name: /The Octocat/ }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '退出登录' }));
+    await waitFor(() => expect(signal.aborted).toBe(true));
+    vi.mocked(apiClient.createGuest).mockResolvedValue({ owner_id: 'guest:new-owner', login: 'guest', display_name: 'New guest', avatar_url: null, kind: 'guest', auth_mode: 'github' });
+    await userEvent.click(await screen.findByRole('button', { name: '以访客身份体验' }));
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await act(async () => { response.resolve(terminal); await response.promise; });
+    expect(screen.queryByText(answer.content)).not.toBeInTheDocument();
+    expect(localStorage.getItem(CONVERSATION_RECOVERY_KEY)).toBe('[]');
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+  });
+
+  it('aborts and forgets the old snapshot on returning to a changed project', async () => {
+    const { response, save } = setup();
+    render(<App />);
+    await userEvent.click(await screen.findByText('python-edge-cases'));
+    await waitFor(() => expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1));
+    const signal = vi.mocked(apiClient.resumeMessageStream).mock.calls[0]![3]!;
+    await userEvent.click(screen.getByText(other.title));
+    save(project({ analysis: { ...project().analysis, snapshot_id: 'snapshot-new' }, messages: [user] }));
+    await userEvent.click(screen.getByText('python-edge-cases'));
+    await waitFor(() => expect(signal.aborted).toBe(true));
+    await act(async () => { response.resolve(terminal); await response.promise; });
+    expect(screen.queryByText(answer.content)).not.toBeInTheDocument();
+    expect(localStorage.getItem(CONVERSATION_RECOVERY_KEY)).toBe('[]');
+    expect(screen.queryByRole('button', { name: '取消本轮回答' })).not.toBeInTheDocument();
+    expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('confirmed program lessons', () => {
+  function fixture(status: LearningActionCard['status'] = 'executed') {
+    const user: Message = { message_id:'lesson-user',role:'user',content:'学习这条路线',created_at:'2026-10-04T00:00:00Z',evidence:[],model:null,usage:null,latency_ms:null,error:null,placeholder:false };
+    const action=learningAction({status,source_message_id:user.message_id,outcome:{route_revision:1,next_step_id:'step-1',next_step_title:'第一课',lesson_run_id:'lesson-first'}});
+    const receipt: Message={...user,message_id:'lesson-card',role:'assistant',content:'路线已确认。',learning_action:action};
+    const source: Message={...user,message_id:'lesson-source',role:'system',content:'program-only-source',trace_id:'lesson-first',lesson_request:{action_id:action.action_id,snapshot_id:'snapshot-1',route_revision:1,step_id:'step-1'}};
+    const answer: Message={...user,message_id:'lesson-answer',role:'assistant',content:'自动讲解第一课。',trace_id:'lesson-first',teaching_question:{question_id:'question-1',snapshot_id:'snapshot-1',route_revision:1,step_id:'step-1'}};
+    const saved=project({messages:[user,receipt],study:{...project().study,snapshot_id:'snapshot-1',phase:'explaining',route_revision:1,total_steps:1,current_step:0,dynamic_learning_plan:[{step_id:'step-1',order:1,title:'第一课',objective:'Input',component_ids:[],evidence_refs:[],completion_check:'Input?'}]}});
+    const result={user_message:source,assistant_message:answer,teaching_phase:'explaining' as const,validation_errors:[],tools_used:[],state_changed:true};
+    return {saved,user,action,receipt,source,answer,result};
+  }
+  it('starts once after confirmation without learner source or clearing a genuine draft', async () => {
+    const f=fixture('pending'); let saved=f.saved;
+    vi.mocked(apiClient.getProject).mockImplementation(async()=>detail(saved,null,true));
+    const pending=deferred<Awaited<ReturnType<typeof apiClient.sendMessageStream>>>();
+    vi.mocked(apiClient.sendMessageStream).mockReturnValue(pending.promise);
+    vi.mocked(apiClient.resolveLearningAction).mockImplementation(async()=>{
+      const action={...f.action,status:'executed' as const};
+      saved={...saved,messages:[f.user,{...f.receipt,learning_action:action}]};
+      return {project:saved,action,state_changed:true};
+    });
+    render(<App/>); await userEvent.click(await screen.findByText('python-edge-cases'));
+    const composer=screen.getByPlaceholderText('尽情提问'); fireEvent.change(composer,{target:{value:'保留我的未发送草稿'}});
+    await userEvent.click(await screen.findByRole('button',{name:'确认'}));
+    await waitFor(()=>expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1));
+    const args=vi.mocked(apiClient.sendMessageStream).mock.calls[0]!;
+    expect(args[1]).toBeUndefined(); expect(args[9]).toEqual({actionId:f.action.action_id,runId:'lesson-first'});
+    expect(composer).toHaveValue('保留我的未发送草稿');
+    await act(async()=>{pending.resolve(f.result);await pending.promise});
+    expect(await screen.findByText(f.answer.content)).toBeVisible();
+    expect(screen.queryByText(f.source.content)).not.toBeInTheDocument();
+    expect(screen.getAllByText(f.user.content)).toHaveLength(1);
+    expect(composer).toHaveValue('保留我的未发送草稿');
+    expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1);
+  });
+  it('restores a confirmation gap and requires explicit retry after unavailable', async () => {
+    const f=fixture(); vi.mocked(apiClient.getProject).mockResolvedValue(detail(f.saved,null,true));
+    vi.mocked(apiClient.sendMessageStream).mockResolvedValueOnce({...f.result,assistant_message:{...f.answer,message_id:'failed-lesson-answer',content:'暂时无法讲解',teaching_question:undefined,context_eligible:false}}).mockResolvedValueOnce({...f.result,user_message:{...f.source,trace_id:'retry-run'},assistant_message:{...f.answer,trace_id:'retry-run'}});
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    await screen.findByRole('button',{name:'重试讲解'});
+    expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button',{name:'重试讲解'}));
+    await waitFor(()=>expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(2));
+    const args=vi.mocked(apiClient.sendMessageStream).mock.calls[1]!;
+    expect(args[1]).toBeUndefined();expect(args[6]).toBe('lesson-first');expect(args[9]).toEqual({actionId:f.action.action_id});
+    expect(await screen.findByText(f.answer.content)).toBeVisible();
+    expect(screen.queryByText('暂时无法讲解')).not.toBeInTheDocument();
+    expect(apiClient.resumeMessageStream).not.toHaveBeenCalled();
+  });
+  it('keeps an early provider failure visible without a source and retries only on click', async () => {
+    const f=fixture();vi.mocked(apiClient.getProject).mockResolvedValue(detail(f.saved,null,true));
+    vi.mocked(apiClient.sendMessageStream).mockRejectedValueOnce(Object.assign(new Error('provider'),{code:'provider_rate_limited'})).mockResolvedValueOnce(f.result);
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByRole('button',{name:'重试讲解'})).toBeVisible();
+    fireEvent.change(screen.getByPlaceholderText('尽情提问'),{target:{value:'still draft'}});
+    expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button',{name:'重试讲解'}));
+    await screen.findByText(f.answer.content);expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(2);
+    expect(screen.getByPlaceholderText('尽情提问')).toHaveValue('still draft');
+    expect(vi.mocked(apiClient.sendMessageStream).mock.calls[1]![6]).toBe('lesson-first');
+  });
+  it('resumes a saved program source, shows interruption once, and never automatically retries', async () => {
+    const f=fixture();vi.mocked(apiClient.getProject).mockResolvedValue(detail({...f.saved,messages:[...f.saved.messages,f.source]},null,true));
+    vi.mocked(apiClient.resumeMessageStream).mockRejectedValue(Object.assign(new Error('gone'),{code:'lesson_interrupted',status:404}));
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByRole('button',{name:'重试讲解'})).toBeVisible();
+    expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1);expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByPlaceholderText('尽情提问'),{target:{value:'keep'}});
+    expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1);
+  });
+  it('preserves a retry run on network failure and reconnects before starting another lesson', async () => {
+    const f=fixture();const failed={...f.answer,message_id:'old-fail',content:'old unavailable',teaching_question:undefined,context_eligible:false};
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail({...f.saved,messages:[...f.saved.messages,f.source,failed]},null,true));
+    vi.mocked(apiClient.sendMessageStream).mockImplementation(async(_id,_content,_contexts,progress)=>{
+      progress({stage:'request_created',run_id:'new-retry-run',label:'',kind:'summary',visible:false,status:'running',elapsed_ms:0});
+      throw Object.assign(new Error('disconnected'),{code:'client_network_error'});
+    });
+    vi.mocked(apiClient.resumeMessageStream).mockResolvedValue({...f.result,user_message:{...f.source,trace_id:'new-retry-run'},assistant_message:{...f.answer,trace_id:'new-retry-run'}});
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    await userEvent.click(await screen.findByRole('button',{name:'重试讲解'}));
+    await waitFor(()=>expect(screen.getByRole('button',{name:'重试讲解'})).toBeVisible());
+    expect(JSON.parse(localStorage.getItem(CONVERSATION_RECOVERY_KEY)??'[]')).toEqual(expect.arrayContaining([expect.objectContaining({runId:'new-retry-run'})]));
+    await userEvent.click(screen.getByRole('button',{name:'重试讲解'}));
+    await screen.findByText(f.answer.content);
+    expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1);
+    expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(apiClient.resumeMessageStream).mock.calls[0]![1]).toBe('new-retry-run');
+    expect(screen.queryByText('old unavailable')).not.toBeInTheDocument();
+  });
+  it.each([false,true])('refresh reconnects a program descriptor before another POST (old failed source=%s)',async withSource=>{
+    const f=fixture();const failed={...f.answer,teaching_question:undefined,error:'provider_failed'};
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail({...f.saved,messages:withSource?[...f.saved.messages,f.source,failed]:f.saved.messages},null,true));
+    rememberConversationRun({ownerId:'github:1',projectId:'project-1',snapshotId:'snapshot-1',runId:withSource?'new-retry-run':'lesson-first',startedAt:Date.now(),lessonActionId:f.action.action_id});
+    vi.mocked(apiClient.resumeMessageStream).mockRejectedValue(Object.assign(new Error('offline'),{code:'client_network_error'}));
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    await screen.findByRole('button',{name:'重试讲解'});
+    expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1);expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+    expect(vi.mocked(apiClient.resumeMessageStream).mock.calls[0]![1]).toBe(withSource?'new-retry-run':'lesson-first');
+    fireEvent.change(screen.getByPlaceholderText('尽情提问'),{target:{value:'draft after network failure'}});
+    expect(apiClient.resumeMessageStream).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(localStorage.getItem(CONVERSATION_RECOVERY_KEY)??'[]')).toEqual(expect.arrayContaining([expect.objectContaining({lessonActionId:f.action.action_id})]));
+  });
+  it('does not restart a completed lesson and exact receipt replay retains lesson descendants', async () => {
+    const f=fixture(); const saved={...f.saved,messages:[...f.saved.messages,f.source,f.answer]};
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(saved,null,true));
+    vi.mocked(apiClient.sendMessageStream).mockResolvedValue({...f.result,user_message:f.user,assistant_message:f.receipt});
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(await screen.findByText(f.answer.content)).toBeVisible();expect(apiClient.sendMessageStream).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button',{name:'编辑'})).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'重新发送'}));
+    await waitFor(()=>expect(apiClient.sendMessageStream).toHaveBeenCalledTimes(1));
+    expect(screen.getByText(f.answer.content)).toBeVisible();
+    expect(vi.mocked(apiClient.sendMessageStream).mock.calls[0]![9]).toBeUndefined();
+  });
+  it.each(['declined','failed'] as const)('does not automatically teach a %s action',async status=>{
+    const f=fixture(status);vi.mocked(apiClient.getProject).mockResolvedValue(detail(f.saved,null,true));
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));await screen.findByText(f.receipt.content);
+    expect(apiClient.sendMessageStream).not.toHaveBeenCalled();expect(apiClient.resumeMessageStream).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('saved answer qualification summaries',()=>{
+  const base: Message={message_id:'qualification-answer',role:'assistant',content:'已保存的说明。',created_at:'2026-10-04T00:00:00Z',evidence:[],model:'test-model',usage:null,latency_ms:361000,error:null,placeholder:false,trace_id:'qualification-run'};
+  it.each(['unverified','partial-assessment'] as const)('shows incomplete for persisted %s without hiding retained prose',async kind=>{
+    const body=kind==='partial-assessment'?'本题评分已采纳；补充说明尚未核实。':'未能完成证据核对，请将相关说明视为尚未核实。';
+    const answer:Message={...base,content:body,context_eligible:false,evidence_review:{status:'unverified',supported:false,summary:'Review unavailable.',issues:[]},
+      ...(kind==='partial-assessment'?{content_parts:{body,action_receipt:null,evidence_blocks:[{kind:'assessment' as const,text:'本题评分已采纳。',evidence:[],review:{status:'reviewed' as const,supported:true,summary:'Accepted.',issues:[]}},{kind:'explanation' as const,text:'补充说明尚未核实。',evidence:[]}]}}:{})};
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({messages:[answer]}),null,true));
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    const activity=await screen.findByTestId('answer-activity');
+    expect(within(activity).getByText('回答未完成')).toBeVisible();expect(activity).toHaveAttribute('data-status','incomplete');
+    expect(within(activity).queryByText(/已完成|回答完成/)).not.toBeInTheDocument();
+    expect(screen.getByText(body)).toBeVisible();expect(apiClient.getRunEvents).not.toHaveBeenCalled();
+  });
+  it('keeps normal accepted answers completed',async()=>{
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({messages:[{...base,context_eligible:true}]}),null,true));
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    const activity=await screen.findByTestId('answer-activity');expect(within(activity).getByText('已完成')).toBeVisible();
+    expect(within(activity).queryByText('回答未完成')).not.toBeInTheDocument();
+  });
+  it.each(['cancelled','failed'] as const)('preserves %s priority above incomplete qualification',async status=>{
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({messages:[{...base,context_eligible:false,
+      thinking_summary:[{sequence:1,timestamp:base.created_at,kind:'summary',stage:'finalization',label:status,status,elapsed_ms:1}]}]}),null,true));
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    const activity=await screen.findByTestId('answer-activity');expect(within(activity).getByText(status==='cancelled'?'已取消':'回答失败')).toBeVisible();
+    expect(within(activity).queryByText('回答未完成')).not.toBeInTheDocument();
+  });
+  it('renders incomplete qualification in English',async()=>{
+    setUiLanguage('en');vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({messages:[{...base,context_eligible:false}]}),null,true));
+    render(<App/>);await userEvent.click(await screen.findByText('python-edge-cases'));
+    expect(within(await screen.findByTestId('answer-activity')).getByText('Reply incomplete')).toBeVisible();
+  });
 });

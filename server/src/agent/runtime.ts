@@ -1,4 +1,5 @@
 import { runAbortCode } from '../services/execution-error.js';
+import { MAX_REPLY_SUBMISSIONS } from './conversation-reply.js';
 import { historicalSummary } from "./session-replay.js";
 import { serviceError } from '../services/errors.js';
 import {
@@ -304,13 +305,17 @@ export class PiConversationRuntime {
         cancelRequested: pendingControl === "cancel",
       };
       let submissionFailures = 0;
+      const submissionsUsed = () => options.replyContract?.budget?.used ?? submissionFailures;
       const agent = new Agent({
         sessionId: options.identity.sessionId,
         streamFn,
         getApiKey: () => options.modelRuntime.apiKey,
         toolExecution: "parallel",
         shouldStopAfterTurn: async () => active.pauseRequested || Boolean(options.replyContract?.read())
-          || (Boolean(options.replyContract) && submissionFailures >= 3),
+          || (Boolean(options.replyContract) && submissionsUsed() >= MAX_REPLY_SUBMISSIONS),
+        beforeToolCall: async () => options.replyContract && submissionsUsed() >= MAX_REPLY_SUBMISSIONS
+          ? { block: true, reason: 'The shared submission budget is exhausted. No further tool or review may be executed.', terminate: true }
+          : undefined,
         transformContext,
         initialState: {
           systemPrompt: options.systemPrompt,
@@ -367,7 +372,28 @@ export class PiConversationRuntime {
             toolName: event.toolName,
           });
         } else if (event.type === "tool_execution_end") {
-          if (options.replyContract && event.toolName === 'submit_conversation_reply' && event.isError) submissionFailures++;
+          if (options.replyContract && event.toolName === 'submit_conversation_reply' && event.isError) {
+            submissionFailures = Math.min(MAX_REPLY_SUBMISSIONS, submissionFailures + 1);
+            // SDK schema failures occur before execute(), so the tool's own
+            // rejection logger cannot see them. Never retain its arguments dump.
+            const failure = (event.result?.content ?? []).find((item: { type?: string; text?: string }) =>
+              item.type === 'text' && item.text?.startsWith('Validation failed for tool "submit_conversation_reply":'))?.text;
+            if (typeof failure === 'string') {
+              const exhausted = Boolean(options.replyContract.budget && options.replyContract.budget.used >= MAX_REPLY_SUBMISSIONS);
+              if (options.replyContract.budget && !exhausted) options.replyContract.budget.used++;
+              const header = failure.split('\n\nReceived arguments:')[0]!;
+              const fields = [...new Set(header.split('\n').slice(1).map(line => {
+                const path = line.trim().replace(/^-\s*/, '').split(':')[0] ?? '';
+                return /^(?:\/|\$\.)?(?:kind|text|supplement|question(?:[/.](?:prompt|target_items|evidence_ids)(?:[/.]\d+)?)?|question_id|question_policy)$/.test(path)
+                  ? path : 'schema';
+              }))];
+              if (!exhausted) options.replyContract.onSchemaRejection?.(fields);
+              // The SDK uses this same result for its next model context. Strip
+              // its raw argument dump and explain the real remaining allowance.
+              event.result.content = [{ type: 'text', text: (exhausted ? 'The shared submission budget is exhausted. This extra submission was not executed.' : header)
+                + `\nSubmission budget: ${submissionsUsed()}/${MAX_REPLY_SUBMISSIONS} used, ${Math.max(0, MAX_REPLY_SUBMISSIONS - submissionsUsed())} remaining (shared with content/evidence repair). For assessment/action omit text; use supplement only for required independent answers.` }];
+            }
+          }
           if (isInternalTool(event.toolName)) return;
           emit("tool_result_received", event.isError
             ? "工具未完成，正在调整查询"
@@ -430,10 +456,18 @@ export class PiConversationRuntime {
         await this.commitSession(
           stored.session,
           completed.sessionCommit,
-          pendingCompactions,
-          appended,
+          completed.trustedMessages ? [] : pendingCompactions,
+          completed.trustedMessages ?? appended,
           completed.assistantText,
         );
+        if (finalize && result.stopReason === 'completed') {
+          const reason = completed.stopReason ?? result.stopReason;
+          // Product persistence and final review precede the terminal UI event.
+          // A disconnected observer cannot undo that committed result.
+          try { emit(reason === 'completed' ? 'run_completed' : reason === 'cancelled' ? 'run_cancelled' : 'run_failed',
+            reason === 'completed' ? '已完成' : failureMessage(reason),
+            reason === 'completed' ? { usage: result.usage } : { errorCode: reason }); } catch { /* Recover from persisted product messages. */ }
+        }
         return completed.value;
       };
       let result: PiRunResult;
@@ -453,7 +487,7 @@ export class PiConversationRuntime {
           // Repair an omitted or rejected submission within this same turn; the learner's original
           // answer and application message identity are never replaced by these program instructions.
           for (let repair = 0; options.replyContract && !options.replyContract.read() && repair < 2
-            && submissionFailures < 3
+            && submissionsUsed() < MAX_REPLY_SUBMISSIONS
             && !runSignal.aborted && !active.cancelRequested && !active.pauseRequested
             && (agent.state.messages.at(-1) as AssistantMessage)?.stopReason !== 'error'; repair++) {
             await agent.prompt({ role: 'user', content: [{ type: 'text', text: options.replyContract.correction }], timestamp: Date.now() });
@@ -479,15 +513,16 @@ export class PiConversationRuntime {
               emit("run_failed", failureMessage(code), { errorCode: code });
               result = { runId: options.runId, text, stopReason: code, usage, events };
             } else if (!text.trim() && !active.pauseRequested) {
-              emit("run_failed", failureMessage("provider_invalid_response"), { errorCode: "provider_invalid_response" });
-              result = { runId: options.runId, text, stopReason: "provider_invalid_response", usage, events };
+              const code = options.replyContract ? 'conversation_reply_invalid' : 'provider_invalid_response';
+              emit("run_failed", failureMessage(code), { errorCode: code });
+              result = { runId: options.runId, text, stopReason: code, usage, events };
             } else {
               appended = agent.state.messages.slice(persistedMessageCount);
             if (active.pauseRequested) {
               emit("run_paused", "已暂停，可继续提问", { text, usage });
               result = { runId: options.runId, text, stopReason: "paused", usage, events };
             } else {
-              emit("run_completed", "已完成", { ...(options.replyContract ? {} : { text }), usage });
+              if (!finalize) emit("run_completed", "已完成", { ...(options.replyContract ? {} : { text }), usage });
               result = { runId: options.runId, text, stopReason: "completed", usage, events };
             }
             }

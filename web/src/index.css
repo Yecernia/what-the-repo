@@ -946,6 +946,12 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 }
 
 /* Settings overlay */
+.modal-shell { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; border: 0; padding: 0; color: var(--fg); }
+.modal-shell:not([open]) { display: none; }
+.modal-shell::backdrop { background: transparent; }
+.project-open-button { display: flex; flex: 1; min-width: 0; align-self: stretch; align-items: center; text-align: left; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.project-open-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.repository-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .settings-panel {
   position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: flex; align-items: center; justify-content: center;

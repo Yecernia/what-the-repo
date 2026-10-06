@@ -1,0 +1,63 @@
+{
+  "id": "reply-control-quality-v2",
+  "kind": "semantic-classification-rubric",
+  "purpose": "Evaluate the existing reply-content-review worker with real models. Controlled outputs verify contracts only; this fixture is not an executed semantic evaluation. Do not add another classifier or delete prose by keywords.",
+  "evaluation": "Run each case with its reply kind, action, question context and source-tagged blocks. Compare findings by block and exact span. Record requestCount, durationMs, outputTokens, submitAttempts, rejectedSubmissions and parent reply_submission_attempt. Incomplete/truncated runs are unavailable, not a pass. Both absence of false positives and detection of actual action instructions matter.",
+  "limits": { "thinking": "off", "maxRequests": 2, "timeoutMs": 15000, "maxOutputTokens": 1536, "maxReviewsPerTurn": 3 },
+  "cases": [
+    {
+      "id": "new-confirmation-question-introduction",
+      "replyKind": "lesson", "action": null, "questionContext": "new_question",
+      "blocks": [{ "kind": "assessment", "text": "选 C 正确。" }, { "kind": "explanation", "text": "你要的确认题在下面，它换了个角度：" }],
+      "expectedFindings": []
+    },
+    {
+      "id": "answer-in-own-words",
+      "replyKind": "lesson", "action": null, "questionContext": "new_question",
+      "blocks": [{ "kind": "assessment", "text": "回答正确。" }, { "kind": "explanation", "text": "下面这道题请用自己的话回答，不用复述代码。" }],
+      "expectedFindings": []
+    },
+    {
+      "id": "existing-question-hint",
+      "replyKind": "assessment", "action": null, "questionContext": "current_question",
+      "blocks": [{ "kind": "assessment", "text": "方向正确，请再说明 handler 的来源。" }, { "kind": "explanation", "text": "先观察参数，再用自己的话回答，以确认你理解了这个例子。" }],
+      "expectedFindings": []
+    },
+    {
+      "id": "real-action-instruction",
+      "replyKind": "action", "action": { "action": "advance_learning_step", "execution_policy": "confirm", "status": "pending" }, "questionContext": "current_question",
+      "blocks": [{ "kind": "assessment", "text": "回答正确。" }, { "kind": "explanation", "text": "请点击确认，确认后进入下一步" }],
+      "expectedFindings": [{ "block_kind": "explanation", "span": "请点击确认，确认后进入下一步" }]
+    },
+    {
+      "id": "old-instruction-quotation",
+      "replyKind": "assessment", "action": null, "questionContext": "current_question",
+      "blocks": [{ "kind": "assessment", "text": "回答正确。" }, { "kind": "explanation", "text": "之前的“请点击确认，确认后进入下一步”是容易误导的旧话术，这里只是在解释那句话。" }],
+      "expectedFindings": []
+    },
+    {
+      "id": "general-button-description",
+      "replyKind": "action", "action": { "action": "stop_guided_learning", "execution_policy": "confirm", "status": "pending" }, "questionContext": "none",
+      "blocks": [{ "kind": "explanation", "text": "通常确认按钮用于提交选择，取消按钮用于放弃选择；这是按钮用途的通用说明。" }],
+      "expectedFindings": []
+    },
+    {
+      "id": "invented-action-without-proposal",
+      "replyKind": "assessment", "action": null, "questionContext": "current_question",
+      "blocks": [{ "kind": "assessment", "text": "回答正确。请点击确认后进入下一步。" }],
+      "expectedFindings": [{ "block_kind": "assessment", "span": "请点击确认后进入下一步。" }]
+    },
+    {
+      "id": "duplicate-quote-different-source",
+      "replyKind": "action", "action": { "action": "advance_learning_step", "execution_policy": "confirm", "status": "pending" }, "questionContext": "current_question",
+      "blocks": [{ "kind": "assessment", "text": "旧话术“请点击确认后进入下一步。”容易误导，我们只讨论这句话的含义。" }, { "kind": "explanation", "text": "请点击确认后进入下一步。" }],
+      "expectedFindings": [{ "block_kind": "explanation", "span": "请点击确认后进入下一步。" }]
+    },
+    {
+      "id": "after-turn-state-forecast",
+      "replyKind": "action", "action": { "action": "advance_learning_step", "execution_policy": "after_turn", "status": "pending" }, "questionContext": "none",
+      "blocks": [{ "kind": "explanation", "text": "本步已经跳过，现在已经进入下一步。" }],
+      "expectedFindings": [{ "block_kind": "explanation", "span": "本步已经跳过，现在已经进入下一步。" }]
+    }
+  ]
+}

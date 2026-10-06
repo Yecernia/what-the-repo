@@ -1,0 +1,171 @@
+{
+  "id": "teaching-content-quality-v2",
+  "kind": "quality-rubric",
+  "purpose": "Evaluator-only reference questions and facts for real teaching-answer quality. Never include expected facts in production prompts. Controlled worker outputs and passing submission tests do not prove a real model understands these cases.",
+  "evaluation": "Give the question and setup to the teaching model, then independently compare the complete answer with every expected fact and misconception. Assess explanation and boundary accuracy, not keyword presence. No paid model run is implied by this asset.",
+  "scale": {
+    "0": "Incorrect result or a forbidden misconception",
+    "1": "Correct result with a missing mechanism or material boundary",
+    "2": "Correct result and mechanism, with only minor explanation gaps",
+    "3": "Accurate result, causal explanation and explicit scope boundaries"
+  },
+  "sources": {
+    "array_map": "https://tc39.es/ecma262/multipage/indexed-collections.html#sec-array.prototype.map",
+    "array_slice": "https://tc39.es/ecma262/multipage/indexed-collections.html#sec-array.prototype.slice",
+    "mitt": {
+      "repository": "developit/mitt",
+      "commit": "6b41670516ed8e8b738612f60491995470aa63b3",
+      "source": "https://github.com/developit/mitt/blob/6b41670516ed8e8b738612f60491995470aa63b3/src/index.ts",
+      "on_lines": [
+        66,
+        73
+      ],
+      "off_lines": [
+        82,
+        91
+      ],
+      "emit_lines": [
+        103,
+        121
+      ],
+      "range_basis": "Reviewed snapshot at the pinned commit; include the wildcard lookup/invocation after the typed phase. The previous 96-112 range omitted that later phase."
+    }
+  },
+  "cases": [
+    {
+      "id": "map-callback-mutation",
+      "question": "What are values and doubled after this code? Is 'map does not mutate the input' enough to conclude values is unchanged?",
+      "setup": "const values = [1, 2]; const doubled = values.map((value, index, source) => { source[index] = value + 10; return value * 2; });",
+      "expected": [
+        "values is [11, 12]; doubled is [2, 4], and they are different arrays.",
+        "map creates a result array, but this callback explicitly writes to the input through its source argument.",
+        "The callback receives the value read for that iteration before its write; returning value * 2 uses 1 and 2 here."
+      ],
+      "forbidden": [
+        "map guarantees callbacks cannot mutate the input",
+        "doubled must be [22, 24] because the input was changed"
+      ],
+      "evidence": [
+        "array_map"
+      ]
+    },
+    {
+      "id": "map-length-and-live-values",
+      "question": "What are values and mapped? Explain why a changed later element is visited but the newly pushed element is not.",
+      "setup": "const values = [1, 2]; const mapped = values.map((value, index, source) => { if (index === 0) { source[1] = 7; source.push(9); } return value; });",
+      "expected": [
+        "values is [1, 7, 9]; mapped is [1, 7].",
+        "map captures the iteration length at entry, but reads each present element when its index is reached.",
+        "map does not pre-copy every input value; changing index 1 before it is visited changes that callback's value."
+      ],
+      "forbidden": [
+        "map iterates over a full snapshot of all original values",
+        "pushing extends this map iteration",
+        "mapped is [1, 2]"
+      ],
+      "evidence": [
+        "array_map"
+      ]
+    },
+    {
+      "id": "slice-shallow-copy",
+      "question": "What are the two lengths and both n values? Does slice isolate all future changes?",
+      "setup": "const original = [{ n: 1 }]; const copied = original.slice(); copied.push({ n: 9 }); copied[0].n = 2;",
+      "expected": [
+        "original.length is 1, copied.length is 2, and original[0].n and copied[0].n are both 2.",
+        "The arrays have separate containers; pushing into copied does not push into original.",
+        "The first object is shared because slice is a shallow copy, so mutating that object is visible through both arrays."
+      ],
+      "forbidden": [
+        "slice performs a deep clone",
+        "all writes through copied necessarily leave original unchanged"
+      ],
+      "evidence": [
+        "array_slice"
+      ]
+    },
+    {
+      "id": "mitt-typed-handler-list-mutation",
+      "question": "Using mitt at the pinned source commit, what does the first emit log? Why does a removed handler still run while a newly registered one does not?",
+      "setup": "Create emitter and log=[]. Register typed handlers for 'tick' in order A then B. A appends 'A' to log, calls off('tick', B), and calls on('tick', C). B appends 'B'; C appends 'C'. Call emit('tick', 1) exactly once.",
+      "expected": [
+        "The first emit logs ['A', 'B'].",
+        "The typed phase copies its handler list before calling A; removing B changes the registered list, while B remains in the already-created copy.",
+        "C is absent from that current typed copy; the next emission can use the changed registered list. Copying functions does not deep-copy their captured state."
+      ],
+      "forbidden": [
+        "off immediately removes B from the current dispatch snapshot",
+        "C necessarily runs in the current typed phase",
+        "map itself protects iteration from list mutations"
+      ],
+      "evidence": [
+        "mitt.emit_lines",
+        "mitt.on_lines",
+        "mitt.off_lines",
+        "array_slice"
+      ]
+    },
+    {
+      "id": "mitt-typed-to-wildcard-mutation",
+      "question": "Does a wildcard handler registered by a typed handler run in the same emit? Compare this with adding a typed handler during the typed phase, and state the arguments.",
+      "setup": "Create an emitter from the pinned mitt source with no wildcard handlers. Register A for 'tick'. A calls on('*', W). W records its arguments. Call emit('tick', 7) once.",
+      "expected": [
+        "W runs in this same emission with ('tick', 7); A receives only the event value 7.",
+        "The wildcard lookup and copy happen after typed handlers finish, so A's registration occurs before the wildcard phase is copied.",
+        "Typed and wildcard lists are copied separately at their own phase boundaries. This differs from adding another typed handler after the typed copy already exists."
+      ],
+      "forbidden": [
+        "both handler lists are snapshotted together at emit entry",
+        "every new handler waits until the next emission",
+        "typed and wildcard handlers receive identical argument lists"
+      ],
+      "evidence": [
+        "mitt.emit_lines",
+        "mitt.on_lines"
+      ]
+    },
+    {
+      "id": "mitt-wildcard-list-mutation",
+      "question": "What does the first emit log if a wildcard handler removes another wildcard handler and registers a new one? Why is this different from registration during the typed phase?",
+      "setup": "Create an emitter from the pinned mitt source and log=[]. Register W1 then W2 for '*'. W1 logs 'W1', removes W2 via off('*', W2), and registers W3 via on('*', W3). W2 logs 'W2'; W3 logs 'W3'. Call emit('tick', 7) once.",
+      "expected": [
+        "The first emission logs ['W1', 'W2']; W3 does not run in that wildcard phase.",
+        "The wildcard copy exists before W1 runs, so its list mutations change future registrations without changing that copy.",
+        "A wildcard registration during the earlier typed phase can affect the current wildcard copy; registration during the wildcard phase happens too late for it."
+      ],
+      "forbidden": [
+        "wildcard mutations always affect the current wildcard dispatch",
+        "slice freezes the emitter registry for the entire emit",
+        "a shallow copy prevents all handler side effects"
+      ],
+      "evidence": [
+        "mitt.emit_lines",
+        "mitt.on_lines",
+        "mitt.off_lines",
+        "array_slice"
+      ]
+    },
+    {
+      "id": "mitt-absent-payload-and-callback-error",
+      "question": "Using the pinned source, distinguish unchecked JavaScript invoking emit(\"foo\") with an absent payload, active payload validation and guarantees about the whole invocation completing.",
+      "setup": "Register foo handler H(payload) that evaluates payload.toUpperCase(); invoke emit(\"foo\") from unchecked JavaScript. Separately consider no typed/wildcard handlers and a normally returning handler.",
+      "expected": [
+        "Separate the public static restriction from an unchecked JavaScript invocation.",
+        "The handler receives undefined; the wrapper has no active payload guard or default value.",
+        "H throws on property access and the shown dispatcher propagates the callback exception.",
+        "With no handlers no callback is invoked; a normally returning handler need not throw merely because payload is absent. No unconditional no-throw guarantee spans these scenarios."
+      ],
+      "forbidden": [
+        "JavaScript emit(\"foo\") never throws",
+        "the overload requires runtime rejection before dispatch",
+        "every handler throws on undefined",
+        "no parameter guard makes the whole call safe"
+      ],
+      "evidence": [
+        "mitt.emit_lines"
+      ]
+    }
+  ],
+  "semantic_run_status": "not_run",
+  "first_answer_protocol": "Use fresh introductory, formal-teaching and directed-answer contexts. Score the first complete answer, including tables and extra assertions; never provide expected facts or a corrective counterexample first. Later correction cannot replace its first score."
+}

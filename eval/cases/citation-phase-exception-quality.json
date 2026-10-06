@@ -1,0 +1,116 @@
+{
+  "id": "citation-phase-exception-quality-v1",
+  "kind": "quality-rubric",
+  "purpose": "Evaluator-only independent Q04/Q05 variants. Expected facts never enter production prompts; faux pipeline checks do not prove real semantic accuracy.",
+  "semantic_run_status": "not_run",
+  "protocol": {
+    "fresh_history": true,
+    "score": "First complete output, including summaries, tables and extra assertions. Retain failures separately from subsequent corrections.",
+    "modes": [
+      {
+        "id": "introduction",
+        "prompt_template": "Introduce this code briefly and explain its main mechanism and limitations: {source}"
+      },
+      {
+        "id": "formal-teaching",
+        "prompt_template": "Teach this code briefly, then ask one understanding question without giving its answer: {source}"
+      },
+      {
+        "id": "directed",
+        "prompt_template": "{question}\n{source}"
+      }
+    ],
+    "review": "Review the exact full generated answer with only this source packet. Independently inspect whether every central overbroad span was identified; an unsupported badge alone is not success. Also review claim_to_review as a fixed negative or limited positive control."
+  },
+  "scale": {
+    "0": "Wrong result or whole-operation/no-throw overreach",
+    "1": "Conservative result but central scope defect not identified",
+    "2": "Correct result and material boundary with minor omission",
+    "3": "Exact object, read time, phase and exception source; precise issue attribution"
+  },
+  "cases": [
+    {
+      "id": "later-phase-copy",
+      "source": "function dispatch(first, second) {\n  first.slice().forEach(fn => fn());\n  second.slice().forEach(fn => fn());\n}\nconst log = []; const second = [];\ndispatch([() => second.push(() => log.push(\"late\"))], second);",
+      "question": "Give the resulting log and the boundary of each copy. Does either copy freeze the whole dispatch?",
+      "expected": [
+        "log is [\"late\"].",
+        "The second copy occurs after the first callback mutates its source, so the late callback joins the same operation.",
+        "Each copy fixes only its own traversal membership at its read time."
+      ],
+      "claim_to_review": "All callbacks added during dispatch wait until the next dispatch.",
+      "expected_review": {
+        "supported": false,
+        "issue_kind": "contradicted"
+      }
+    },
+    {
+      "id": "both-copies-before-callbacks",
+      "source": "function dispatch(first, second) {\n  const a = first.slice(); const b = second.slice();\n  a.forEach(fn => fn()); b.forEach(fn => fn());\n}\nconst log = []; const second = [];\ndispatch([() => second.push(() => log.push(\"late\"))], second);",
+      "question": "Give the resulting log and explain what has been read before callbacks begin.",
+      "expected": [
+        "log is [].",
+        "Both membership copies exist before any callback runs; adding to second does not add a callback to b.",
+        "Membership stability is not isolation of shared state, reentrancy or a completion guarantee."
+      ],
+      "claim_to_review": "Under normally returning callbacks, additions to these input arrays during dispatch cannot join either already-copied traversal.",
+      "expected_review": {
+        "supported": true,
+        "issues": []
+      }
+    },
+    {
+      "id": "no-guard-propagates-callback-error",
+      "source": "function invoke(callback, value) { callback(value); }\ninvoke(value => value.toUpperCase());",
+      "question": "Is the omitted value actively validated? What happens at this call and where does any exception originate?",
+      "expected": [
+        "The wrapper does not actively validate or default the missing value.",
+        "The callback receives undefined and throws on property access.",
+        "No catch surrounds the callback, so the error propagates out of invoke."
+      ],
+      "claim_to_review": "Because invoke has no active argument check, this invocation cannot throw.",
+      "expected_review": {
+        "supported": false,
+        "issue_kind": "contradicted"
+      }
+    },
+    {
+      "id": "guarded-callback-error",
+      "source": "function invoke(callback, value) {\n  try { callback(value); return \"returned\"; }\n  catch { return \"caught\"; }\n}\nconst result = invoke(value => value.toUpperCase());",
+      "question": "What is result, and does lack of value validation imply this callback returns normally?",
+      "expected": [
+        "result is \"caught\".",
+        "The omitted value reaches the callback, which throws.",
+        "The catch handles this callback error; the shown call returns rather than propagating it. This does not cover arbitrary code outside the try."
+      ],
+      "claim_to_review": "For this shown invocation, the callback error is caught and result is \"caught\".",
+      "expected_review": {
+        "supported": true,
+        "issues": []
+      }
+    }
+  ],
+  "retained_observations": [
+    {
+      "id": "r4-q04-first-introduction",
+      "repository": "developit/mitt",
+      "commit": "6b41670516ed8e8b738612f60491995470aa63b3",
+      "input": "我想系统学习 mitt，请为我安排三步短路线：第一步理解 on 和 off，第二步理解 emit 的数组复制，第三步理解公开类型。每步先简短讲解，再让我回答问题。",
+      "observed_span": "本轮派发基于调用开始时的快照：回调用 `on` 新增的处理器不会参与本轮，回调用 `off` 移除的处理器本轮仍会收到。",
+      "observed_review": "A separate strict-configuration evidence gap was rejected, but this dispatch assertion was not identified.",
+      "baseline": "failed; retained observation, not a new model run",
+      "observed_first_output": "我先核对了一下这个仓库的分析结果：你点名的三个主题都确实存在，而且是仓库里被认定为关键知识点的地方，所以按这个划分来学是有实际依据的，不是硬凑的三步。\n\n**第一步：on 与 off。** 整个库的运行时集中在一个文件 `src/index.ts`，工厂函数 `mitt`（`src/index.ts:46-123`）把处理器表收进闭包，返回 `all`、`on`、`off`、`emit` 四个成员，方法读写闭包变量而不依赖 `this`。`on` 在 `src/index.ts:66-73`：它看该事件类型在 `Map` 里有没有数组，有就追加，没有就新建 `[handler]`——所以同一个处理器可以注册多次。`off` 在 `src/index.ts:82-91` 有两条分支：给了处理器就按引用删掉第一个匹配项，没给处理器就把该类型整体换成空数组。这里还藏着这个库最\"取巧\"的一处：删除用的是 `handlers.indexOf(handler) >>> 0`，找不到时 `-1` 被无符号右移成 4294967295，`splice` 在越界下标上什么都不做，于是省掉了显式的命中判断；代价是清空后键仍留在 `Map` 里。\n\n**第二步：emit 的数组复制。** `emit` 在 `src/index.ts:103-121`，它先对取到的处理器数组做一次 `slice` 复制再遍历，本轮派发基于调用开始时的快照：回调用 `on` 新增的处理器不会参与本轮，回调用 `off` 移除的处理器本轮仍会收到。它分成两段——先调类型匹配的处理器，再调 `'*'` 通配符处理器并把事件类型当作第一个参数传进去。要留意快照只是遍历保护，不是事务语义。\n\n**第三步：公开类型。** 类型层面导出了 `EventType`、`Handler`、`WildcardHandler`、`EventHandlerMap` 和 `Emitter` 接口（`src/index.ts:23-39`）。其中一个关键设计是 `emit` 的第二个重载：只有当某个事件的载荷类型允许 `undefined` 时，才允许不带载荷地写 `emit(type)`；其余事件必须传载荷。`test/test-types-compilation.ts` 把这份契约固定下来——它不执行任何断言，而是靠 `--strict` 下编译这个文件本身来当测试，应报错的调用用 `@ts-expect-error` 标注。运行时行为则由 `test/index_test.ts` 覆盖。\n\n> 证据不足：test/test-types-compilation.ts 把这份契约固定下来——它不执行任何断言，而是靠 --strict 下编译这个文件本身来当测试，应报错的调用用 @ts-expect-error 标注。 — 所给 packet 只有该测试文件自身的内容，能证明它用 @ts-expect-error 标注、且没有运行时断言；但 --strict 编译该文件充当测试属于构建/测试脚本配置，证据未提供 package.json、tsconfig 或测试脚本，该关键环节无从核实，故部分不支持。",
+      "capture": "User-visible text only; exclude run IDs, account/project identifiers, provider settings and unrelated turns. Source review artifacts from 2026-10-04; not a new inference run."
+    },
+    {
+      "id": "r4-q05-first-typed-runtime-answer",
+      "repository": "developit/mitt",
+      "commit": "6b41670516ed8e8b738612f60491995470aa63b3",
+      "input": "请核实公开 TypeScript API：const emitter = mitt<{ foo: string; bar?: number }>()。在开启严格检查时，emitter.emit(\"foo\")、emitter.emit(\"foo\", \"x\")、emitter.emit(\"bar\") 分别允许吗？如果从普通 JavaScript 调用 emit(\"foo\")，运行时会主动校验并报错吗？请区分公开接口与内部实现。",
+      "observed_span": "不会报错、不会提示、也不会补默认值",
+      "baseline": "failed no-throw overreach; retained observation, not a new model run",
+      "observed_first_output": "我读了 `src/index.ts` 的类型声明和仓库自己的类型测试，结论如下。先给判定，再分「公开接口」和「内部实现」说明依据。\n\n## 判定（严格检查下，`{ foo: string; bar?: number }`）\n\n| 调用 | 类型层（TypeScript） | 运行时（普通 JS） |\n|---|---|---|\n| `emit(\"foo\", \"x\")` | 允许 | 正常派发 |\n| `emit(\"foo\")` | **不允许**（编译期报错） | 不报错，`undefined` 被传给处理器 |\n| `emit(\"bar\")` | 允许 | 正常派发 |\n\n顺带两个同样的边界：`emit(\"foo\", 1)` 和 `emit(\"bar\", \"x\")` 都不允许，`emit(\"baz\")` 也不允许（`baz` 不在事件键里）。\n\n## 公开接口（声明层）\n\n`mitt()` 的返回类型是 `Emitter<Events>`（`src/index.ts:46-48`），所以对外契约就是这个接口。接口里 `emit` 有**两个重载**（`src/index.ts:35-38`）：\n\n1. `emit<Key extends keyof Events>(type: Key, event: Events[Key]): void` —— 键和载荷同时给出，载荷必须匹配。\n2. `emit<Key extends keyof Events>(type: undefined extends Events[Key] ? Key : never): void` —— 只给键，但仅当该事件的载荷类型接受 `undefined` 时才成立。\n\n由此：\n\n- `emit(\"foo\", \"x\")`：第一个重载，`Events[\"foo\"]` 是 `string`，允许。\n- `emit(\"foo\")`：第一个重载缺少必需参数；第二个重载的参数类型是 `undefined extends string ? \"foo\" : never`，在开启严格空值检查时 `undefined` 不能赋给 `string`，条件为假，于是收紧成 `never`，因此被拒。\n- `emit(\"bar\")`：`Events[\"bar\"]` 是 `number | undefined`，`undefined` 可以赋给它，条件为真，第二个重载收敛为 `\"bar\"`，允许。\n\n这不是我的推测，仓库自己的类型测试就是按这个断言的：`test/test-types-compilation.ts:63-78` 中，`emitter.emit('foo')` 和 `emitter.emit('foo', 1)` 上方标了 `@ts-expect-error`（即预期必须报错，见该文件第 68-71 行），`emitter.emit('foo', 'string')`（第 72 行）、`emitter.emit('bar')`、`emitter.emit('bar', 1)`（第 74-75 行）不带该标记，`emitter.emit('bar', 'string')` 带标记（第 76-77 行）。测试里声明的事件表（`test/test-types-compilation.ts:9-13`）和你给的形状一致。这些期望之所以成立，是因为该文件被 `--strict` 编译：脚本 `test-types` 的命令行带 `--strict`（`package.json:21`），`tsconfig.json:4` 也是 `\"strict\": true`。\n\n一个从声明推出的边界（我没有实际编译验证）：这套判定依赖严格空值检查。若关掉它，`undefined extends string` 会变成真，`emit(\"foo\")` 就会被接受——这也解释了为什么这条规则必须用条件类型表达，而不能写成可选参数。\n\n另外，`'*'` 只出现在 `on` / `off` 的重载里（`src/index.ts:27`、`src/index.ts:33`），`emit` 没有 `'*'` 重载，所以 `emit(\"*\")` 在类型层是被拒的，这与实现处 JSDoc 的说明一致：手动触发 `'*'` 不被支持（`src/index.ts:97`）。\n\n## 内部实现（为什么运行时完全不同）\n\n返回的对象字面量里，`emit` 只有**一个**签名：`(type: Key, evt?: Events[Key])`，`evt` 是可选的（`src/index.ts:103`）。这个内部签名本身其实会允许 `emit('foo')`；是公开接口的重载把它拦住的。实现的方法体（`src/index.ts:103-121`）只做两件事：\n\n- `all.get(type)` 拿到处理器数组；取不到就什么都不做，不抛错；\n- 取到就用 `.slice().map(...)` 依次调用 `handler(evt!)`，随后再对 `all.get('*')` 做一次同样的处理。\n\n整个方法体里没有任何对事件名或载荷的存在性、类型的判断。`evt!`（第 109、118 行）和 `as EventHandlerList<...>` / `as WildCardEventHandlerList<...>`（第 106、115 行）都是纯编译期写法，编译成 JavaScript 后不会留下任何检查代码。所以从普通 JS 调用 `emit(\"foo\")`：不会报错、不会提示、也不会补默认值——如果 `\"foo\"` 注册过处理器，处理器收到的是 `undefined`；如果没注册过，则静默无事发生（若注册了 `'*'` 处理器，它仍会被调用，第二参数同样为 `undefined`）。\n\n由此还有一个「类型层禁止、运行时并不禁止」的例子（这是我从方法体推出的，未运行验证）：在 JS 里调 `emit(\"*\")` 时，第一次查找 `all.get('*')` 会命中通配处理器并按普通处理器调用，紧接着第二次 `all.get('*')` 又把这批处理器按通配签名 `(type, evt)` 再调用一遍，等于同一个通配处理器被调用两次。\n\n## 一点边界说明\n\n`package.json:10` 和 `package.json:12` 把对外类型入口声明为 `index.d.ts`（由源码声明生成，构建开启了 `declaration`，见 `tsconfig.json:6`）。这个文件我没有读到，因此上面关于「公开接口」的证据都来自 `src/index.ts` 里的声明本体；如果你要核对发布出去的类型是否与源码一致，还需要另外看 `index.d.ts`。\n\n> 引用源码未完整读取，相关主张尚未核实。\n\n> 引用未核实：`index.d.ts`。当前源码中未确认对应文件或行号；相关说明请先视为未核实。",
+      "capture": "User-visible text only; exclude run IDs, account/project identifiers, provider settings and unrelated turns. Source review artifacts from 2026-10-04; not a new inference run."
+    }
+  ]
+}

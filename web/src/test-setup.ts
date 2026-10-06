@@ -9,6 +9,10 @@ if (typeof HTMLDialogElement !== 'undefined') {
     configurable: true,
     value: function (this: HTMLDialogElement) { this.setAttribute('open', ''); },
   });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+    configurable: true,
+    value: function (this: HTMLDialogElement) { this.removeAttribute('open'); },
+  });
 }
 
 class ResizeObserverMock {

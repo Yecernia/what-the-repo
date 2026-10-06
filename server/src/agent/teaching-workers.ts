@@ -1,5 +1,7 @@
 import { loadEvidencePackets } from './evidence-packets.js';
-import type { TeachingQuestion } from './teaching-question.js';
+import type { TeachingFeedbackScope, TeachingQuestion, TeachingQuestionResult, TeachingTargetAssessmentRecord, TeachingTargetResult } from './teaching-question.js';
+import { normalizeQuestionTargets, priorTargetCoverageForAssessment,
+  qualifiedQuestionSupportsForAssessment, boundedQuestionSupportContext, targetsForStep, type TargetCoverageResult } from './target-coverage.js';
 import { randomUUID } from "node:crypto";
 import { Type, type Static } from "typebox";
 import type {
@@ -24,20 +26,9 @@ import { createRepositoryExplorationTools } from "./repository-exploration-tools
 import { runStructuredWorker } from "./structured-worker.js";
 import type { PiMemoryRecord, PiModelRuntime, PiUsageSummary } from "./types.js";
 import { routeConversation } from '../services/learner-context.js';
-
-const ASSESSMENT_RESULT = Type.Object({
-  answer_relevant: Type.Boolean(),
-  verdict: Type.Union([
-    Type.Literal("mastered"),
-    Type.Literal("partial"),
-    Type.Literal("misconception"),
-    Type.Literal("unclear"),
-  ]),
-  feedback: Type.String({ minLength: 1, maxLength: 1_200 }),
-  mastered_items: Type.Array(Type.String({ maxLength: 300 }), { maxItems: 6 }),
-  misconceptions: Type.Array(Type.String({ maxLength: 300 }), { maxItems: 6 }),
-  evidence_ids: Type.Array(Type.String({ maxLength: 256 }), { maxItems: 10 }),
-});
+import type { WorkerDiagnostics } from './worker-diagnostics.js';
+import { runAssessmentStages, type AssessmentStageTrace } from './assessment-stages.js';
+import type { AssessmentReviewContext } from './assessment-review-context.js';
 
 const LEARNING_ROUTE_RESULT = Type.Object({
   steps: Type.Array(Type.Object({
@@ -70,6 +61,10 @@ function learningRouteLanguageError(
 }
 
 export interface TeachingWorkerTrace {
+  reply_submission_attempt?: number;
+  feedback_repair?: boolean;
+  diagnostics?: WorkerDiagnostics;
+  assessment_stages?: AssessmentStageTrace[];
   model?: string;
   provider?: string;
   worker_run_id: string;
@@ -84,56 +79,109 @@ export interface TeachingWorkerTrace {
 
 export async function runUnderstandingAssessment(input: {
   answer: string;
+  answerParts?: string[];
+  sourceMessageId?: string;
+  originalMessage?: string;
   question: TeachingQuestion;
-  /** Earlier answers to this registered question only. */
-  earlierAnswers?: string[];
   evidence: SnapshotEvidence[];
   project: Project;
   snapshot: EvidenceSnapshot;
   store: ProductStore;
   modelRuntime: PiModelRuntime;
   signal?: AbortSignal;
+  /** The assessment owner may repair prose once; every non-prose field stays fixed. */
+  feedbackRepair?: { feedback: string; offendingSpans: string[]; verdict: string;
+    answerRelevant: boolean; masteredItems: string[]; misconceptions: string[]; evidenceIds: string[];
+    targetResults: TeachingTargetResult[]; feedbackScope: TeachingFeedbackScope; questionResult?: TeachingQuestionResult;
+    evidenceIssues?: Array<{ claim: string; reason: string; kind: string }>; validationErrors?: string[] };
 }): Promise<{
   completed: boolean;
+  answerRelevant?: boolean;
   feedback: string | null;
   verdict: string | null;
   masteredItems: string[];
   misconceptions: string[];
   acceptedEvidenceIds: string[];
+  targetResults: TeachingTargetResult[];
+  questionResult?: TeachingQuestionResult;
+  feedbackScope: TeachingFeedbackScope | null;
+  /** Reuses the exact authorized source selection supplied to the assessment. */
+  reviewContext: AssessmentReviewContext | null;
   trace: TeachingWorkerTrace;
 }> {
   const workerRunId = `worker:assessment:${randomUUID()}`;
   const step = currentStep(input.snapshot, input.project.study);
-  const packetResult = await loadEvidencePackets({ evidence: input.evidence.map(row => ({ ...row, snapshot_id: input.snapshot.snapshot_id })), projectId: input.project.project_id, snapshotId: input.snapshot.snapshot_id, store: input.store, signal: input.signal });
+  let question: TeachingQuestion;
+  let priorCoverage: TargetCoverageResult;
+  let priorSupports: TeachingTargetAssessmentRecord[];
+  const answerParts = input.answerParts ?? [input.answer];
+  const originalMessage = input.originalMessage ?? input.answer;
+  try {
+    const sourceMessage = input.sourceMessageId
+      ? input.project.messages.find(message => message.message_id === input.sourceMessageId && message.role === 'user') : null;
+    if (!step || input.question.snapshot_id !== input.snapshot.snapshot_id
+      || input.question.route_revision !== (input.project.study.route_revision ?? 0)
+      || (input.sourceMessageId && input.question.created_message_id === input.sourceMessageId)
+      || (input.sourceMessageId && (!sourceMessage || sourceMessage.content !== originalMessage))
+      || input.question.evidence.some(bound => !input.evidence.some(row => bound.stable_id === row.stable_id
+        && bound.path === row.path && bound.start_line === row.start_line && bound.end_line === row.end_line))
+      || !answerParts.length || answerParts.some(part => !part.trim() || !originalMessage.includes(part)))
+      throw new Error('assessment_input_scope_mismatch');
+    question = normalizeQuestionTargets(input.question, step);
+    priorCoverage = priorTargetCoverageForAssessment(input.project, question, step, input.sourceMessageId);
+    priorSupports = qualifiedQuestionSupportsForAssessment(input.project, question, step, input.sourceMessageId);
+  } catch {
+    return { completed: false, answerRelevant: undefined, feedback: null, verdict: null,
+      masteredItems: [], misconceptions: [], acceptedEvidenceIds: [], targetResults: [], feedbackScope: null, reviewContext: null,
+      trace: { worker_run_id: workerRunId, skill_id: 'understanding-assessment', skill_version: 'input-rejected',
+        completed: false, stop_reason: 'assessment_input_scope_mismatch', usage: {
+          inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, costUsd: 0,
+        }, evidence_ids: [], state_candidate: false } };
+  }
+  // A caller cannot broaden a question's own evidence by passing globally exposed IDs.
+  const evidence = input.evidence.filter(row => question.evidence.some(bound => bound.stable_id === row.stable_id
+    && bound.path === row.path && bound.start_line === row.start_line && bound.end_line === row.end_line));
+  const packetResult = await loadEvidencePackets({ evidence: evidence.map(row => ({ ...row, snapshot_id: input.snapshot.snapshot_id })), projectId: input.project.project_id, snapshotId: input.snapshot.snapshot_id, store: input.store, signal: input.signal });
   const packets = packetResult.packets;
   const allowedIds = new Set(packets.filter(packet => !packet.incomplete).map((packet) => packet.evidence_id));
-  const result = await runStructuredWorker({
-    skillId: "understanding-assessment",
-    inputSchemaId: "understanding-assessment-input-v2",
-    outputSchemaId: "understanding-assessment-output-v2",
-    contextBuilderId: "understanding-assessment-context-v5",
-    modelRuntime: input.modelRuntime,
-    thinkingLevel: "medium",
-    signal: input.signal,
-    schema: ASSESSMENT_RESULT,
-    systemPrompt: [
-      "Judge ONLY current_question.prompt and current_question.target_items. Other step goals are not missing answers. A mastered verdict means this question is correct, not that the whole step is complete. Set answer_relevant=false for topic changes or ordinary chat; those are unclear, never new misconception or mastery.",
-      "Do not read other repository content or replace the original answer. Evidence IDs must come from the input. Finish by calling submit_result.",
-    ].join("\n"),
-    userPrompt: JSON.stringify({
-      current_question: { prompt: input.question.prompt, target_items: input.question.target_items, question_id: input.question.question_id },
-      evidence: packets,
-      original_user_answer: input.answer,
-      earlier_answers_to_this_question: input.earlierAnswers ?? [],
-    }),
+  const { context: supportContext, presentedSupports, omittedCount: supportOmittedCount } = boundedQuestionSupportContext(priorSupports);
+  const sourceContext = structuredClone({
+    registered_question: { question_id: question.question_id, created_message_id: question.created_message_id,
+      snapshot_id: question.snapshot_id, route_revision: question.route_revision, step_id: question.step_id,
+      prompt: question.prompt, targets: targetsForStep(step!).filter(target => question.target_ids!.includes(target.target_id)) },
+    source_message_id: input.sourceMessageId ?? 'current_answer', current_answer_parts: answerParts,
+    prior_target_coverage: Object.values(priorCoverage.coverage),
+    qualified_prior_question_supports: supportContext, omitted_prior_support_count: supportOmittedCount,
   });
-  const acceptedEvidenceIds = result.value
-    ? [...new Set(result.value.evidence_ids.filter((id) => allowedIds.has(id)))]
+  const result = await runAssessmentStages({ question, targets: targetsForStep(step!), prior: priorCoverage,
+    answerParts, priorSupports: presentedSupports, allowedIds,
+    modelRuntime: input.modelRuntime, signal: input.signal, feedbackRepair: input.feedbackRepair,
+    context: {
+      current_question: { prompt: question.prompt, question_id: question.question_id,
+        targets: targetsForStep(step!).filter(target => question.target_ids!.includes(target.target_id)).map(target => ({ ...target,
+          prior_status: priorCoverage.coverage[target.target_id]?.proven ? 'proven' : 'unproven',
+          prior_source_message_ids: presentedSupports.filter(record => record.results.some(result => result.target_id === target.target_id && result.outcome === 'proven'))
+            .map(record => record.message_id),
+          current_result_duty: 'Assess ONLY this current answer contribution. Unchanged historical proof => not_addressed, empty current answer_spans/evidence_ids. The program retains prior proof. Never copy prior answer text into current spans.',
+        })) },
+      evidence: packets,
+      qualified_prior_question_support: supportContext,
+      prior_support_omitted_count: supportOmittedCount,
+      current_answer_parts: answerParts,
+      source_message_id: input.sourceMessageId ?? null,
+      step_targets: Object.values(priorCoverage.coverage).filter(target => !question.target_ids!.includes(target.target_id))
+        .map(target => ({ target_id: target.target_id, label: target.label, prior_status: target.proven ? 'proven' : 'unproven' })),
+    },
+  });
+  const value = result.value;
+  const acceptedEvidenceIds = value
+    ? [...new Set(value.evidence_ids.filter((id) => allowedIds.has(id)))]
     : [];
-  const verdict = result.value?.answer_relevant === false ? "unclear" : result.value?.verdict ?? null;
+  const verdict = value?.answer_relevant === false ? "unclear" : value?.verdict ?? null;
   const evidenceRequired = verdict !== "unclear";
   const valid = Boolean(
     result.value
+    && result.stopReason === 'completed' && !result.validationErrors.length
     && step
     && (!packetResult.incomplete || verdict === "unclear")
     && input.question.step_id === step.step_id
@@ -143,21 +191,31 @@ export async function runUnderstandingAssessment(input: {
   );
   return {
     completed: valid,
-    feedback: result.value?.feedback ?? null,
+    answerRelevant: value?.answer_relevant,
+    feedback: value?.feedback ?? null,
     verdict,
-    masteredItems: result.value?.mastered_items ?? [],
-    misconceptions: result.value?.misconceptions ?? [],
+    masteredItems: value?.mastered_items ?? [],
+    misconceptions: value?.misconceptions ?? [],
     acceptedEvidenceIds,
+    targetResults: value?.target_results as TeachingTargetResult[] ?? [],
+    questionResult: value?.question_result,
+    feedbackScope: value?.feedback_scope ?? null,
+    reviewContext: valid && value ? { ...sourceContext, question_result: structuredClone(value.question_result),
+      target_results: structuredClone(value.target_results) } : null,
     trace: {
       worker_run_id: workerRunId,
       skill_id: "understanding-assessment",
       skill_version: result.skillVersion,
       model: result.model, provider: result.provider,
-      stop_reason: valid ? result.stopReason : result.value ? "assessment_validation_failed" : result.stopReason,
+      stop_reason: valid ? result.stopReason : result.value || result.stopReason === 'completed_with_validation_errors'
+        ? "assessment_validation_failed" : result.stopReason,
       completed: valid,
       usage: result.usage,
       evidence_ids: acceptedEvidenceIds,
       state_candidate: false,
+      diagnostics: result.diagnostics,
+      assessment_stages: result.stages,
+      feedback_repair: Boolean(input.feedbackRepair),
     },
   };
 }
@@ -214,17 +272,19 @@ export async function generateLearningRoute(input: {
     skillId: "learning-route",
     inputSchemaId: "learning-route-input-v4",
     outputSchemaId: "learning-route-output-v4",
-    contextBuilderId: "learning-route-context-v6",
+    contextBuilderId: "learning-route-context-v10",
     modelRuntime: input.modelRuntime,
     thinkingLevel: "medium",
     signal: input.signal,
     schema: LEARNING_ROUTE_RESULT,
     tools: exploration.tools,
+    explorationEndgame: { submitReserve: 2, convergeReserve: 4 },
     systemPrompt: [
       displayLanguageInstruction(displayLanguage),
       "The learner approved building a route for this target through a confirmation card.",
       "Honor recent user requirements and current study progress. These project-specific requirements outrank older inferred preferences. An edited memory summary is the learner's explicit override.",
       "The program binds the current snapshot and target and validates the final component and evidence IDs; the route itself writes no state.",
+      "This route has at most six model requests, including submission and correction. Use at most the first four for focused exploration/convergence; the final two permit only submit_result. Read independent necessary ranges together, and follow next_offset only when the requested mechanism crosses the page. Do not mechanically exhaust source/component pages. Submit the learner's full requested route as soon as its evidence is sufficient; preserve the requested scope. If no reliable route can be formed within the evidence budget, submit empty steps rather than inventing bindings or silently narrowing the request.",
     ].join("\n"),
     userPrompt: JSON.stringify({
       repository: input.project.source.display_name,
@@ -284,6 +344,7 @@ export async function generateLearningRoute(input: {
       usage: result.usage,
       evidence_ids: [...new Set(steps.flatMap((step) => step.evidence_refs))],
       state_candidate: Boolean(steps.length),
+      diagnostics: result.diagnostics,
     },
   };
 }

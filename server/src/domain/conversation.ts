@@ -47,13 +47,15 @@ export interface LearningActionTarget {
 }
 
 export interface LearningActionProgress {
+  /** Bind a normal completion card to the exact qualified coverage revision. */
+  qualification_sequence?: number;
   mastered_items: string[];
   evidence_ids: string[];
 }
 
 export interface LearningActionCard {
   execution_policy?: "confirm" | "after_turn";
-  outcome?: { route_revision: number; next_step_id: string | null; next_step_title: string | null };
+  outcome?: { route_revision: number; next_step_id: string | null; next_step_title: string | null; lesson_run_id?: string };
   route_revision?: number;
   expected_step_id?: string | null;
   source_message_id?: string;
@@ -123,11 +125,15 @@ export interface MessageThinkingSummaryEvent {
 }
 
 export interface Message {
+  /** Stable teaching content and mutable, program-generated action receipt. */
+  content_parts?: { body: string; action_receipt: string | null; evidence_blocks?: import('../agent/reply-evidence.js').ReplyEvidenceBlock[] };
   /** Scope of the displayed lesson; used to recover a question without inventing a new one. */
   teaching_context?: { snapshot_id: string; route_revision: number; step_id: string };
   teaching_question?: TeachingQuestion | null;
   evidence_review?: Pick<CitationReviewResult, "status" | "supported" | "summary" | "issues">;
   original_run_id?: string;
+  /** Trusted service-created trigger, never a learner answer or proof. */
+  lesson_request?: { action_id: string; snapshot_id: string; route_revision: number; step_id: string };
   /** Retained on retry/edit so regenerating prose cannot authorize another state change. */
   learning_action_result?: { action_id: string; route_revision: number; step_id: string | null };
   message_id: string;
@@ -204,6 +210,8 @@ export interface AnalysisProgressEvent {
 export const MAX_ANALYSIS_PROGRESS_EVENTS = 32;
 
 export interface StudyState {
+  /** Scoped, source-bound proofs; old mastery labels are never promoted to proofs. */
+  target_assessments?: import('../agent/teaching-question.js').TeachingTargetAssessmentRecord[];
   route_revision?: number;
   teaching_question?: TeachingQuestion | null;
   latest_assessment?: TeachingAssessment | null;
@@ -217,7 +225,7 @@ export interface StudyState {
   /** Stable step ids the user explicitly chose to skip rather than mark as mastered. */
   skipped_steps?: string[];
   /** The current step's passing assessment, so an advance offered in a later turn still counts as mastered. */
-  step_passed?: { step_id: string; mastered_items: string[]; evidence_ids: string[]; snapshot_id?: string; route_revision?: number; assessment_sequence?: number } | null;
+  step_passed?: { step_id: string; mastered_items: string[]; evidence_ids: string[]; snapshot_id?: string; route_revision?: number; assessment_sequence?: number; target_ids?: string[]; proof_version?: 1 } | null;
   misconceptions: string[];
   open_questions: string[];
   used_evidence: string[];
