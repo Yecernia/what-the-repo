@@ -86,6 +86,8 @@ for (const reload of [false, true]) {
       await expect.poll(() => page.evaluate(() => localStorage.getItem('conversation-active-runs-v1'))).toContain('recovery-project');
       if (reload) {
         await page.reload();
+        await expect(page.getByRole('heading', { name: '从好奇开始。' })).toBeVisible();
+        await page.getByRole('button', { name: '打开项目 Recovery fixture', exact: true }).click();
         await expect.poll(() => gets).toBe(1);
       }
       await expect(page.getByRole('button', { name: '取消本轮回答', exact: true })).toBeEnabled();
@@ -111,6 +113,8 @@ for (const reload of [false, true]) {
       await expect(page.getByText(user.content, { exact: true })).toHaveCount(1);
       await expect(page.getByRole('button', { name: '取消本轮回答', exact: true })).toHaveCount(0);
       await page.reload();
+      await expect(page.getByRole('heading', { name: '从好奇开始。' })).toBeVisible();
+      await page.getByRole('button', { name: '打开项目 Recovery fixture', exact: true }).click();
       await expect(page.getByText(assistant().content, { exact: true })).toHaveCount(1);
       expect(posts).toBe(1);
       expect(gets).toBe(reload ? 1 : 0);

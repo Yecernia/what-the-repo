@@ -1,7 +1,7 @@
 import { WorkspaceEvidenceList as EvidenceList } from './WorkspaceEvidenceList';
 import { usePhoneDevice } from './usePhoneDevice';
 import { t, translateFor, useUiLanguage } from './ui-language';
-import { memo, useId, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, memo, useContext, useId, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -42,6 +42,7 @@ import { useWorkspaceSplit } from './useWorkspaceSplit';
 import { apiClient } from './api';
 import { SplitGripIcon } from './WorkspaceSplitIcons';
 import { InkOutline } from './InkOutline';
+import { architectureTints, type ArchitectureTints } from './layer-tint';
 import { FieldIllustration } from './FieldIllustration';
 import { Ink } from './field-ink';
 import type {
@@ -175,25 +176,27 @@ export function contextKey(selection: Pick<ConversationSelection, 'kind' | 'stab
   return `${selection.kind}:${selection.stable_id}`;
 }
 
+/** Layer colours for the graph's cards: layer and scope cards are printed on them, component cards ink their layer line. */
+const LayerTintContext = createContext<ArchitectureTints>({ byLayer: new Map(), byComponent: new Map(), gridLayers: new Set(), gridComponents: new Set() });
+
 function ComponentNode({ data, selected }: NodeProps<ComponentFlowNode>) {
   useUiLanguage();
   const component = data.component;
+  const tints = useContext(LayerTintContext);
   const extraClass = [
     selected || data.focused ? ' selected' : '',
     data.external ? ' external' : '',
     data.dimmed ? ' dimmed' : '',
   ].join('');
   return (
-    <div className={`component-node${extraClass}`}><InkOutline />
+    <div className={`component-node${extraClass}`} data-tint={tints.byComponent.get(component.id)}><InkOutline grid={tints.gridComponents.has(component.id)} />
       <Handle id="left-target" type="target" position={Position.Left} />
       <Handle id="right-target" type="target" position={Position.Right} />
       <Handle id="top-target" type="target" position={Position.Top} />
       <Handle id="bottom-target" type="target" position={Position.Bottom} />
       <div className="component-node-layer">
         <Layers3 size={12} />
-        <span>{data.external
-          ? t("外部 · {0}", data.scopeName ?? component.architecture_layer_name ?? t("基础组件"))
-          : (data.scopeName ?? component.architecture_layer_name ?? t("基础组件"))}</span>
+        <span>{data.scopeName ?? component.architecture_layer_name ?? t("基础组件")}</span>
       </div>
       <div className="component-node-title">{component.name}</div>
       <div className="component-node-responsibility">
@@ -219,11 +222,15 @@ function LayerNode({ data }: NodeProps<LayerFlowNode>) {
   useUiLanguage();
   const layer = data.layer;
   const isScope = data.rangeKind === 'scope';
+  // A scope is printed on its own layer's paper, also when it comes from another layer.
+  const tints = useContext(LayerTintContext);
+  const layerId = data.targetLayerId ?? layer.id;
+  const tint = tints.byLayer.get(layerId);
   const meta = data.portal
     ? t("{0} 个相关组件 · {1} 条关系 · 点击展开", data.relatedComponentCount ?? data.componentCount, data.relationCount ?? 0)
     : t("{0} 个组件 · {1}", data.componentCount, data.overview ? t("查看关系") : isScope ? t("点击展开") : t("点击进入"));
   return (
-    <div className={`layer-node${isScope ? ' scope' : ''}${data.portal ? ' portal' : ''}${data.external ? ' external' : ''}${data.dimmed ? ' dimmed' : ''}${data.focused ? ' focused' : ''}`}><InkOutline />
+    <div className={`layer-node${isScope ? ' scope' : ''}${data.portal ? ' portal' : ''}${data.external ? ' external' : ''}${data.dimmed ? ' dimmed' : ''}${data.focused ? ' focused' : ''}`} data-tint={tint}><InkOutline grid={tints.gridLayers.has(layerId)} />
       <Handle id="left-target" type="target" position={Position.Left} />
       <Handle id="right-target" type="target" position={Position.Right} />
       <Handle id="top-target" type="target" position={Position.Top} />
@@ -231,7 +238,7 @@ function LayerNode({ data }: NodeProps<LayerFlowNode>) {
       <div className="layer-node-kicker">
         <Layers3 size={13} />
         <span>{data.portal
-          ? (data.external ? (isScope ? t("外部分组") : t("外部架构层")) : (isScope ? t("相关分组") : t("相关架构层")))
+          ? (isScope ? t("相关分组") : t("相关架构层"))
           : (isScope ? t("组件分组") : t("架构层"))}</span>
       </div>
       <div className="layer-node-title">{layer.name}</div>
@@ -474,8 +481,10 @@ function DetailsPanel({
   topic,
   tab,
   noValuePoints = false,
+  tints,
 }: {
   tab: WorkspaceTab;
+  tints?: ArchitectureTints;
   noValuePoints?: boolean;
   selected: SelectedItem | null;
   detailStatus?: 'loading' | 'error';
@@ -533,7 +542,9 @@ function DetailsPanel({
         </section>
         <section>
           <h4>{t("架构层")}</h4>
-          <p>{component.architecture_layer_name ?? t("暂未归类")}</p>
+          <p className="workspace-layer-name"
+            data-tint={component.architecture_layer_id ? tints?.byLayer.get(component.architecture_layer_id) : undefined}>
+            {component.architecture_layer_name ?? t("暂未归类")}</p>
           {component.architecture_layer_rationale && (
             <p className="workspace-secondary"><InlineWorkspaceText text={component.architecture_layer_rationale} evidence={component.evidence} onOpenEvidence={onOpenEvidence} /></p>
           )}
@@ -622,9 +633,11 @@ function DetailsPanel({
 
 function ArchitectureView({
   snapshot,
+  tints,
   onSelect,
 }: {
   snapshot: Snapshot;
+  tints: ArchitectureTints;
   onSelect: (item: SelectedItem) => void;
 }) {
   const phone = usePhoneDevice();
@@ -904,7 +917,7 @@ function ArchitectureView({
               >
                 <ChevronLeft size={14} /> {t(" 架构总览")}</button>
               <span className="architecture-breadcrumb-separator">›</span>
-              <span>{activeLayer?.name ?? t("架构层")}</span>
+              <span data-tint={tints.byLayer.get(navigation.layerId)}>{activeLayer?.name ?? t("架构层")}</span>
               {navigation.activeComponentId && (
                 <button
                   type="button"
@@ -932,6 +945,7 @@ function ArchitectureView({
           <div className="graph-density-note">
             {t("当前显示 {0}/{1} 条关系", initial.edges.length, initial.edges.length + initial.omittedEdgeCount)}</div>
         )}
+        <LayerTintContext.Provider value={tints}>
         <ReactFlow<ArchitectureFlowNode, Edge>
         ariaLabelConfig={ariaLabelConfig}
         nodes={phone ? displayedNodes.map(node => ({ ...node, draggable: false })) : displayedNodes}
@@ -982,6 +996,7 @@ function ArchitectureView({
           </Controls>
           <Background color="var(--graph-grid)" variant={BackgroundVariant.Dots} gap={22} size={1} />
         </ReactFlow>
+        </LayerTintContext.Provider>
       </div>
     </div>
   );
@@ -1116,6 +1131,7 @@ export function RepositoryWorkspace({
 }) {
   const [tab, setTab] = useState<WorkspaceTab>('architecture');
   const split = useWorkspaceSplit(tab === 'architecture');
+  const tints = useMemo(() => architectureTints(snapshot), [snapshot]);
   // Local layout properties avoid inheriting a changing CSS variable through every graph/evidence element.
   const canvasSize = (split.style as { '--workspace-canvas-share': string })['--workspace-canvas-share'];
   const phone = usePhoneDevice();
@@ -1258,7 +1274,7 @@ export function RepositoryWorkspace({
           {/* Keep the canvas mounted and measured so returning preserves its viewport and navigation. */}
           <div className="workspace-architecture-panel" aria-hidden={tab !== 'architecture'}
             inert={tab !== 'architecture'} style={{ opacity: tab === 'architecture' ? 1 : 0 }}>
-            <MemoArchitectureView snapshot={snapshot} onSelect={select} />
+            <MemoArchitectureView snapshot={snapshot} tints={tints} onSelect={select} />
           </div>
           {tab === 'value-points' && (
             <ValuePointsView snapshot={snapshot} selected={selected} onSelect={select} />
@@ -1287,6 +1303,7 @@ export function RepositoryWorkspace({
             topic={topic}
             tab={tab}
             noValuePoints={!snapshot.value_points.length}
+            tints={tints}
           />
         </aside>
       </div>

@@ -62,6 +62,13 @@ export function seasonOf(at: Date): Season {
   return shifted < 90 ? 'spring' : shifted < 180 ? 'summer' : shifted < 270 ? 'autumn' : 'winter';
 }
 
+/** The time of day by the viewer's own clock: morning 05-10, day 10-16, dusk 16-19, night 19-05. */
+export type DayPhase = 'morning' | 'day' | 'dusk' | 'night';
+export function phaseOf(at: Date): DayPhase {
+  const hour = at.getHours();
+  return hour < 5 || hour >= 19 ? 'night' : hour < 10 ? 'morning' : hour < 16 ? 'day' : 'dusk';
+}
+
 /** A local calendar date as a day number, taken as the same date in China, where the official calendar is kept. */
 function dayNumber(at: Date): number {
   return Math.round(Date.UTC(at.getFullYear(), at.getMonth(), at.getDate()) / DAY);

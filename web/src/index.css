@@ -101,6 +101,34 @@
   --syntax-title: #315fb4;
   --syntax-built-in: #7a4ca0;
   --syntax-meta: #806f21;
+  /* Flat colour laid under the illustration ink, as in the promo film. Daytime here; the illustration retunes the
+     halo by season and time of day, and the dark theme paints the night. */
+  --paint-halo-outer: #f4e1ae;
+  --paint-halo: #f1d07c;
+  --paint-lawn: #bccb93;
+  --paint-lawn-shade: #a5b87c;
+  --paint-canopy: #a6c98a;
+  --paint-trunk: #8d6c47;
+  --paint-bench: #cd6646;
+  --paint-sweater: #73a679;
+  --paint-trousers: #5d6b80;
+  --paint-skin: #fffaf0;
+  --paint-screen: #dfe4df;
+  --paint-screen-glow: rgba(241, 208, 124, 0);
+  /* Tinted papers for cards, each with an ink of the same hue for small text and icons on plain paper. */
+  --tint-green: #e8efd6;
+  --tint-green-ink: #436b33;
+  --tint-blue: #d8e5ee;
+  --tint-blue-ink: #3a6890;
+  --tint-yellow: #f7e6ad;
+  --tint-yellow-ink: #85620f;
+  --tint-rose: #f3d6d0;
+  --tint-rose-ink: #a04a3b;
+  --tint-lilac: #e6def0;
+  --tint-lilac-ink: #6a548f;
+  --tint-teal: #d6ebe6;
+  --tint-teal-ink: #2f6b60;
+  --tint-butter: #f6ebc8;
   --mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
   --radius-sm: 6px;
   --radius: 10px;
@@ -175,6 +203,32 @@
   --syntax-title: #8eb8ff;
   --syntax-built-in: #c5a1e5;
   --syntax-meta: #d1c06a;
+  /* The night: a dark sky disc instead of the sun, and the laptop screen lighting the learner. */
+  --paint-halo-outer: #2b3130;
+  --paint-halo: #313936;
+  --paint-lawn: #34402c;
+  --paint-lawn-shade: #2b3524;
+  --paint-canopy: #3d5638;
+  --paint-trunk: #5b4a35;
+  --paint-bench: #8f4f3c;
+  --paint-sweater: #4f7d5a;
+  --paint-trousers: #4a5468;
+  --paint-skin: #968f7e;
+  --paint-screen: #3a3f37;
+  --paint-screen-glow: rgba(241, 208, 124, .22);
+  --tint-green: #323d2e;
+  --tint-green-ink: #a9d39a;
+  --tint-blue: #2d3940;
+  --tint-blue-ink: #9cc3e3;
+  --tint-yellow: #3f3a29;
+  --tint-yellow-ink: #e2c47a;
+  --tint-rose: #3f302e;
+  --tint-rose-ink: #eaa79a;
+  --tint-lilac: #39333f;
+  --tint-lilac-ink: #cbb6e6;
+  --tint-teal: #2c3b38;
+  --tint-teal-ink: #94cfc3;
+  --tint-butter: #3b3729;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -882,7 +936,7 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .empty-state > .field-scene { width: min(440px, 80%); }
 .empty-state .field-scene > .field-illustration { max-height: 35vh; }
 .field-scene { margin: 0; text-align: center; }
-.field-scene figcaption { margin-top: -10px; color: var(--fg); font: 400 clamp(32px, 3.4vw, 46px)/1.25 var(--font-display); letter-spacing: -.025em; }
+.field-scene figcaption { position: relative; z-index: 1; margin-top: -10px; color: var(--fg); font: 400 clamp(32px, 3.4vw, 46px)/1.25 var(--font-display); letter-spacing: -.025em; }
 .brand-wordmark { display: block; width: 5.2em; max-width: 100%; height: auto; margin: 0 auto; overflow: visible; }
 /* Each stroke of the name is drawn once, in writing order (timings come from the component). */
 .brand-wordmark-stroke { stroke-dasharray: 1 2; animation: brand-stroke both linear; }
@@ -903,6 +957,7 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   --fg-tertiary: var(--paper-ink-tertiary);
 }
 .paper-face { fill: var(--paper-fill, var(--paper-base)); }
+.paper-grid-line { fill: none; stroke: var(--tint-ink, var(--fg-muted)); stroke-width: 1; opacity: .08; }
 .paper-folds { opacity: .28; mix-blend-mode: multiply; }
 .ink-outline-paper .paper-folds { opacity: .64; }
 .ink-stroke { fill: currentColor; stroke: currentColor; stroke-width: var(--ink-extra, 0); stroke-linejoin: round; }
@@ -1360,6 +1415,7 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .repository-thumbnail { width: 100%; height: 100%; }
 .repository-thumbnail line { stroke: var(--graph-edge); stroke-width: 12; }
 .repository-thumbnail rect { fill: var(--accent); stroke: var(--panel); stroke-width: 5; }
+.repository-thumbnail rect[data-tint] { fill: var(--tint-ink); }
 .repository-thumbnail-empty { width: 100%; height: 100%; background: var(--canvas); }
 .chat-empty > .field-illustration { width: 150px; margin: 6px 0 12px; }
 /* During analysis the illustration rests at the bottom, so expanding the steps above never pushes it. */
@@ -1664,7 +1720,7 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .learning-step:hover, .learning-step.selected { border-color: var(--accent); }
 .learning-step.selected { box-shadow: 3px 4px 0 var(--accent-soft), var(--shadow-sm); }
 .learning-step.current { border-color: var(--accent); border-style: dashed; }
-.learning-step.completed { opacity: .7; }
+.learning-step.completed { opacity: .7; background: var(--tint-green); }
 .learning-step-index {
   width: 28px; height: 28px; border-radius: var(--radius-sketch-circle);
   border: 1.5px solid var(--accent); background: transparent; color: var(--accent);
@@ -1839,10 +1895,124 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 @keyframes field-sway { 0%, 100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.6deg); } }
 @keyframes field-wind { 0%, 100% { transform: translateX(-3px); opacity: .45; } 50% { transform: translateX(6px); opacity: 1; } }
 
-/* Night replaces the breeze in dark mode; now and then one star brightens a little. */
+/* Night replaces the breeze in dark mode and after 19:00; now and then one star brightens a little. */
 .field-night { display: none; }
+.field-illustration[data-phase="night"] .field-day { display: none; }
+.field-illustration[data-phase="night"] .field-night { display: inline; }
 :root[data-theme="dark"] .field-day { display: none; }
 :root[data-theme="dark"] .field-night { display: inline; }
+/* Flat colour, as in the promo film (see field-ink.tsx). Standing alone the scene keeps a closed island of lawn and
+   its glow inside the drawing; on the login page the lawn runs off the page and the wordmark sits on it. */
+.field-backdrop-open { display: none; }
+.auth-illustration .field-backdrop-island { display: none; }
+.auth-illustration .field-backdrop-open { display: inline; }
+/* The login's text stands on the same lawn: it sits above the painted ground, and the small note, which may land on
+   the green, takes the full ink colour so it stays readable there. */
+.auth-layout > .auth-panel { position: relative; z-index: 1; }
+@media (min-width: 681px) {
+  .auth-panel .guest-notice { color: color-mix(in srgb, var(--fg) 85%, var(--fg-muted)); }
+  .auth-shell .site-compliance-footer { z-index: 1; color: color-mix(in srgb, var(--fg) 75%, var(--fg-muted)); }
+}
+/* On a phone the login stacks the scene above the text, so it keeps its island there too. */
+@media (max-width: 680px) {
+  .auth-illustration .field-backdrop-island { display: inline; }
+  .auth-illustration .field-backdrop-open { display: none; }
+}
+.field-screen-glow { pointer-events: none; }
+.field-illustration {
+  --paint-moon-unlit: #d6d9ee; --paint-moon-lit: #fbf1cf; --paint-moon-crater: #f2e4b8; --paint-moon-bloom: #fff8e2;
+  --paint-moon-bloom-strength: .9; --paint-starlight: #8a90c2;
+  --paint-chair: #45473f; --paint-chair-sheen: #5e6157; --paint-chair-shine: #8a8c80; --paint-cream: #f8f1dc; --paint-cup: #fbf6ea; --paint-knit: #e5b046; --paint-knit-stripe: #c98a32;
+  --paint-straw: #ecd08a; --paint-straw-stripe: #cd6646; --paint-drink: #f3d983;
+  /* Festival props, in the same family as the bench red and the knit mustard. */
+  --paint-red: #d4513d; --paint-gold: #e5b046; --paint-rose: #f0a3b3; --paint-leaf: #86a95f; --paint-stem: #6f8f4a;
+  --paint-twine: #c9a15a; --paint-pumpkin: #e0893a; --paint-white: #f8f3e8; --paint-plate: #f3efe6; --paint-plate-line: #6f93c2;
+  --paint-pink: #f6d9de; --paint-egg: #a9c9e8; --paint-egg-zigzag: #e39aad;
+}
+:root[data-theme="dark"] .field-illustration {
+  --paint-moon-unlit: #30373a; --paint-moon-lit: #7a745b; --paint-moon-crater: #6f6a53; --paint-moon-bloom: #a39b78;
+  --paint-moon-bloom-strength: .55; --paint-starlight: #ebe1b4;
+  --paint-chair: #30332d; --paint-chair-sheen: #3a3d36; --paint-chair-shine: #4b4e46; --paint-cream: #a49c86; --paint-cup: #dcd7c6; --paint-knit: #b08a3c; --paint-knit-stripe: #8e6a2c;
+  --paint-straw: #a89060; --paint-straw-stripe: #8f4f3c; --paint-drink: #a99256;
+  --paint-red: #b04a3b; --paint-gold: #bf963f; --paint-rose: #d4788b; --paint-leaf: #5e7d47; --paint-stem: #5b7a3e;
+  --paint-twine: #9a7b45; --paint-pumpkin: #bd7330; --paint-white: #dad5c5; --paint-plate: #cfcabb; --paint-plate-line: #6f8bb0;
+  --paint-pink: #d1b0b5; --paint-egg: #7d97b0; --paint-egg-zigzag: #b97b8b;
+}
+/* The seasons in the scene's colours: fresh light green in spring, deeper green in summer, a warmer yellow-green in
+   autumn, a pale snowy lawn in winter; and one outfit each (FieldOccasions.tsx). */
+.field-illustration[data-season="spring"] { --paint-canopy: #b4d692; --paint-lawn: #c4d49b; --paint-lawn-shade: #adc085; --paint-sweater: #a3cb8f; }
+.field-illustration[data-season="summer"] { --paint-canopy: #8fbc73; --paint-lawn: #b2c788; --paint-lawn-shade: #9bb173; --paint-sweater: #c9dce6; }
+.field-illustration[data-season="autumn"] { --paint-canopy: #bcc67f; --paint-lawn: #c4c78f; --paint-lawn-shade: #adb178; }
+.field-illustration[data-season="winter"] { --paint-lawn: #e4e9e4; --paint-lawn-shade: #cdd7d4; }
+:root[data-theme="dark"] .field-illustration[data-season="spring"] { --paint-canopy: #46613c; --paint-lawn: #36442d; --paint-lawn-shade: #2c3725; --paint-sweater: #5f8c62; }
+:root[data-theme="dark"] .field-illustration[data-season="summer"] { --paint-canopy: #36522f; --paint-lawn: #2f3e29; --paint-lawn-shade: #263221; --paint-sweater: #5d6f7a; }
+:root[data-theme="dark"] .field-illustration[data-season="autumn"] { --paint-canopy: #525834; --paint-lawn: #3a3f2b; --paint-lawn-shade: #303424; }
+:root[data-theme="dark"] .field-illustration[data-season="winter"] { --paint-lawn: #3b4241; --paint-lawn-shade: #313837; }
+/* The glow follows the viewer's clock in the light theme: pale lemon in the morning, the film's warm yellow by day,
+   apricot at dusk and a pale periwinkle at night, when the laptop lights the learner too. Dark mode is always night. */
+:root:not([data-theme="dark"]) .field-illustration[data-phase="morning"] { --paint-halo-outer: #f6edc4; --paint-halo: #f2e29a; }
+:root:not([data-theme="dark"]) .field-illustration[data-phase="dusk"] { --paint-halo-outer: #f5dcc6; --paint-halo: #f0bf98; }
+:root:not([data-theme="dark"]) .field-illustration[data-phase="night"] {
+  --paint-halo-outer: #e2e4f1; --paint-halo: #ccd1ec; --paint-screen-glow: rgba(255, 246, 220, .8);
+}
+/* At night (always in dark mode) the glow's inner disc is tonight's moon; its outer disc stays as faint moonlight. */
+.field-sky-moon { display: none; }
+:is(.field-illustration[data-phase="night"], :root[data-theme="dark"] .field-illustration, .field-illustration[data-occasion="april-fools"]) .field-sky-moon { display: inline; }
+:is(.field-illustration[data-phase="night"], :root[data-theme="dark"] .field-illustration, .field-illustration[data-occasion="april-fools"]) .field-sky-sun { display: none; }
+/* April Fools' Day: the sky and everything standing in it (.field-turn: the glow and the moon, the tree, the bench and
+   the learner, the props, the stars, the breeze) are painted and inked as in the other theme, while the ground (lawn,
+   shadows, ground lines, grass) keeps the page's, so the text standing on it stays readable. In the light theme the
+   sky is a dusky slate night with the moon in it, lighter than the dark theme's so it is no black hole on paper; in
+   the dark theme it is the light theme's sky of the hour. April 1 always falls in spring. */
+:root:not([data-theme="dark"]) .field-illustration[data-occasion="april-fools"] .field-turn {
+  --bg: #24261f; --panel: #303329; --fg: #e9eadc; --accent: #8cca98; --accent-soft: #3c4c33; --moon: #efe2a6; --warn: #e0a43c;
+  --paint-halo-outer: #5a6380; --paint-moon-unlit: #66708d; --paint-moon-lit: #d9cf9f; --paint-moon-crater: #cdc292;
+  --paint-moon-bloom: #f1e6b8; --paint-moon-bloom-strength: .6; --paint-screen-glow: rgba(241, 208, 124, .22);
+  --paint-starlight: #ebe1b4;
+  --paint-canopy: #46613c; --paint-trunk: #5b4a35; --paint-bench: #8f4f3c; --paint-sweater: #5f8c62; --paint-trousers: #4a5468;
+  --paint-skin: #968f7e; --paint-screen: #3a3f37;
+  --paint-cream: #a49c86; --paint-cup: #dcd7c6; --paint-knit: #b08a3c; --paint-knit-stripe: #8e6a2c;
+  --paint-straw: #a89060; --paint-straw-stripe: #8f4f3c; --paint-drink: #a99256;
+  --paint-red: #b04a3b; --paint-gold: #bf963f; --paint-rose: #d4788b; --paint-leaf: #5e7d47; --paint-stem: #5b7a3e;
+  --paint-twine: #9a7b45; --paint-pumpkin: #bd7330; --paint-white: #dad5c5; --paint-plate: #cfcabb; --paint-plate-line: #6f8bb0;
+  --paint-pink: #d1b0b5; --paint-egg: #7d97b0; --paint-egg-zigzag: #b97b8b;
+  --snow: #d6dad7; --snow-ink: #a7b0b0; --catkin: #d9d4c5; --pumpkin-face: #f2c14e;
+  --leaf-fill: color-mix(in srgb, #eba7b5 50%, #24261f);
+  color: var(--fg);
+}
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"] .field-turn {
+  --bg: #f2ecdf; --panel: #fff9ed; --fg: #30332b; --accent: #39815a; --accent-soft: #e1ecd9; --moon: #b5a152; --warn: #b57614;
+  --paint-halo-outer: #f4e1ae; --paint-halo: #f1d07c; --paint-screen-glow: rgba(241, 208, 124, 0);
+  --paint-moon-unlit: #d6d9ee; --paint-moon-lit: #fbf1cf; --paint-moon-crater: #f2e4b8; --paint-moon-bloom: #fff8e2;
+  --paint-moon-bloom-strength: .9; --paint-starlight: #8a90c2;
+  --paint-canopy: #b4d692; --paint-trunk: #8d6c47; --paint-bench: #cd6646; --paint-sweater: #a3cb8f; --paint-trousers: #5d6b80;
+  --paint-skin: #fffaf0; --paint-screen: #dfe4df;
+  --paint-cream: #f8f1dc; --paint-cup: #fbf6ea; --paint-knit: #e5b046; --paint-knit-stripe: #c98a32;
+  --paint-straw: #ecd08a; --paint-straw-stripe: #cd6646; --paint-drink: #f3d983;
+  --paint-red: #d4513d; --paint-gold: #e5b046; --paint-rose: #f0a3b3; --paint-leaf: #86a95f; --paint-stem: #6f8f4a;
+  --paint-twine: #c9a15a; --paint-pumpkin: #e0893a; --paint-white: #f8f3e8; --paint-plate: #f3efe6; --paint-plate-line: #6f93c2;
+  --paint-pink: #f6d9de; --paint-egg: #a9c9e8; --paint-egg-zigzag: #e39aad;
+  --snow: #fbfaf6; --snow-ink: #9ba4a6; --catkin: #f4f0e4; --pumpkin-face: #4a3322;
+  --leaf-fill: color-mix(in srgb, #eba7b5 50%, #f2ecdf);
+  color: var(--fg);
+}
+/* Where the island's small sky disc ends, lines in the other theme's ink get a border of the page's own ink. */
+.field-illustration { --field-page-ink: var(--fg); }
+.field-edge { display: none; stroke: var(--field-page-ink); }
+.field-illustration[data-occasion="april-fools"] .field-edge { display: inline; }
+@media (min-width: 681px) { .auth-illustration .field-illustration .field-edge { display: none; } }
+/* The grass stays ground, but on the login page its two tufts stand against the turned sky, so they take its green. */
+@media (min-width: 681px) {
+  :root:not([data-theme="dark"]) .auth-illustration .field-illustration[data-occasion="april-fools"] .field-grass { stroke: #8cca98; }
+  :root[data-theme="dark"] .auth-illustration .field-illustration[data-occasion="april-fools"] .field-grass { stroke: #39815a; }
+}
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"][data-phase="morning"] .field-turn { --paint-halo-outer: #f6edc4; --paint-halo: #f2e29a; }
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"][data-phase="dusk"] .field-turn { --paint-halo-outer: #f5dcc6; --paint-halo: #f0bf98; }
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"][data-phase="night"] .field-turn {
+  --paint-halo-outer: #e2e4f1; --paint-halo: #ccd1ec; --paint-screen-glow: rgba(255, 246, 220, .8);
+}
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"]:not([data-phase="night"]) .field-sky-moon { display: none; }
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"]:not([data-phase="night"]) .field-sky-sun { display: inline; }
 /* Seasons and festivals in the home illustration (see FieldOccasions.tsx); the date decides, nothing is fetched. */
 .field-illustration {
   --leaf-ink: var(--accent); --leaf-fill: color-mix(in srgb, var(--accent-soft) 45%, var(--bg));
@@ -1851,9 +2021,10 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 }
 :root[data-theme="dark"] .field-illustration { --snow: #d6dad7; --snow-ink: #a7b0b0; --catkin: #d9d4c5; --pumpkin-face: #f2c14e; }
 .field-illustration[data-season="autumn"] { --leaf-ink: #c07a35; --leaf-fill: color-mix(in srgb, #e0a94a 45%, var(--bg)); }
-/* Autumn turns only the little leaves drawn in the crown (and the falling ones) yellow; winter leaves bare branches. */
-.field-illustration[data-season="autumn"] .field-canopy > path:not(:first-child) { stroke: #c98a32; }
-.field-illustration[data-season="autumn"] .field-canopy > g:not(.field-blossoms) { fill: #c98a32; }
+/* Autumn turns only the little leaves drawn in the crown (and the falling ones) yellow; the crown's own line stays
+   green. Winter leaves bare branches. */
+.field-illustration[data-season="autumn"] .field-doodles path { stroke: #c98a32; }
+.field-illustration[data-season="autumn"] .field-doodle-dots { fill: #c98a32; }
 .field-illustration[data-season="winter"] .field-canopy { display: none; }
 /* April Fools' Day turns things round: the leaves drift up into the tree, the crown's leaves turn pink and its
    blossoms green, the moon comes out by day and the breeze by night, and the tea stands upside down in daylight. */
@@ -1861,10 +2032,12 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .field-illustration[data-occasion="april-fools"] {
   --leaf-ink: #d98397; --leaf-fill: color-mix(in srgb, #eba7b5 50%, var(--bg)); --blossom: #8fb86a;
 }
-.field-illustration[data-occasion="april-fools"] .field-canopy > path:not(:first-child) { stroke: #d98397; }
-.field-illustration[data-occasion="april-fools"] .field-canopy > g:not(.field-blossoms) { fill: #d98397; }
+.field-illustration[data-occasion="april-fools"] .field-doodles path { stroke: #d98397; }
+.field-illustration[data-occasion="april-fools"] .field-doodle-dots { fill: #d98397; }
 .field-illustration[data-occasion="april-fools"] .field-day { display: none; }
 .field-illustration[data-occasion="april-fools"] .field-night { display: inline; }
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"][data-phase="night"] .field-day { display: none; }
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"][data-phase="night"] .field-night { display: inline; }
 :root[data-theme="dark"] .field-illustration[data-occasion="april-fools"] .field-day { display: inline; }
 :root[data-theme="dark"] .field-illustration[data-occasion="april-fools"] .field-night { display: none; }
 /* The party popper on finishing a learning route: over everything, never in the way of a click. */
@@ -1882,8 +2055,8 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 @keyframes field-magpie-flap { from { transform: scaleY(1); } to { transform: scaleY(-.35); } }
 .field-rabbit-hop, .field-rabbit-ear { transform-origin: 50% 100%; }
 .field-night-only { display: none; }
-:root[data-theme="dark"] .field-night-only { display: inline; }
-:root[data-theme="dark"] .field-day-only { display: none; }
+:root[data-theme="dark"] .field-night-only, .field-illustration[data-phase="night"] .field-night-only { display: inline; }
+:root[data-theme="dark"] .field-day-only, .field-illustration[data-phase="night"] .field-day-only { display: none; }
 .field-lantern { transform-origin: 227px 250px; animation: field-lantern 5.5s ease-in-out infinite; }
 @keyframes field-lantern { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3.5deg); } }
 .field-firework { transform-box: fill-box; transform-origin: center; animation: field-firework 3.4s ease-out infinite; }
@@ -1899,6 +2072,13 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .field-star-twinkle { animation: field-twinkle 9s ease-in-out infinite; }
 .field-star-late { animation: field-twinkle 13s 5s ease-in-out infinite; }
 @keyframes field-twinkle { 0%, 84%, 100% { opacity: .75; transform: none; } 90% { opacity: 1; transform: scale(1.45) rotate(12deg); } }
+/* Asked for less motion, the scene keeps still: no sway, breeze, falling leaves, twinkling, steam, lantern or
+   fireworks (the festival animals sit still too, see FieldOccasions.tsx). */
+@media (prefers-reduced-motion: reduce) {
+  .field-illustration :is(.field-canopy, .field-branches, .field-breeze, .field-star, .field-steam path, .field-lantern, .field-firework,
+    .field-leaf-fall, .field-leaf-drift, .field-leaf-swing) { animation: none; }
+  .field-illustration .field-steam path { opacity: .6; }
+}
 
 /* Falling leaves, in three layers: the outer one only falls (never stopping, a little faster or slower in
    turns), the middle one sways sideways and drifts with the wind (to the right), easing at each turn like a
@@ -1966,63 +2146,31 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   23%, 100% { transform: rotate(8deg); }
 }
 
-/* The small figure's poses. Rest: arms hang behind the lid. The script eases between poses from wherever the
-   figure is and marks the figure .field-moving meanwhile; a pose's idle loops only start once that move is over. */
-.field-illustration-small :is(.field-lean, .field-rock) { transform-origin: 115px 118px; }
+/* The small figure's parts. Their pivots are here; field-motion.ts moves them (inline transforms and Web Animations,
+   no CSS animation), so the values below are only the first paint: at rest the hands are on the keyboard, behind
+   the lid; puzzled, one hand is behind the head. */
+.field-illustration-small :is(.field-lean, .field-rock, .field-sway) { transform-origin: 115px 118px; }
+/* The chair is pulled in about a line low behind the lid (so nothing below the body shows under the lid); breathing
+   and reclining hinge at the hips. */
+.field-illustration-small .field-pull { transform-origin: 115px 106px; }
+.field-illustration-small :is(.field-drift, .field-breath) { transform-origin: 115px 115px; }
+.field-illustration-small :is(.field-head-drift, .field-head-sway) { transform-origin: 113px 58px; }
 .field-illustration-small .field-head { transform-origin: 113px 58px; }
 .field-illustration-small .field-stretch-body { transform-origin: 115px 115px; }
-.field-illustration-small .field-upper-l { transform-origin: 97px 72px; transform: rotate(-123deg); }
-.field-illustration-small .field-fore-l { transform-origin: 70px 42px; transform: rotate(50deg); }
-.field-illustration-small .field-upper-r { transform-origin: 129px 72px; transform: rotate(123deg); }
-.field-illustration-small .field-fore-r { transform-origin: 156px 42px; transform: rotate(-50deg); }
-/* Waiting for the analysis: now and then the learner leans back in the chair, then returns. */
-.field-waiting:not(.field-moving) .field-lean { animation: field-lean 17s ease-in-out infinite; }
-.field-waiting:not(.field-moving) .field-rock { animation: field-rock 11s ease-in-out infinite; }
-.field-waiting:not(.field-moving) .field-head { animation: field-head 7.3s ease-in-out infinite; }
-.field-waiting:not(.field-moving) :is(.field-upper-l, .field-upper-r, .field-fore-l, .field-fore-r, .field-stretch-body) { animation: 53s ease-in-out infinite; }
-.field-waiting:not(.field-moving) .field-upper-l { animation-name: field-upper-l; }
-.field-waiting:not(.field-moving) .field-fore-l { animation-name: field-fore-l; }
-.field-waiting:not(.field-moving) .field-upper-r { animation-name: field-upper-r; }
-.field-waiting:not(.field-moving) .field-fore-r { animation-name: field-fore-r; }
-.field-waiting:not(.field-moving) .field-stretch-body { animation-name: field-stretch-body; }
-/* Puzzled (something failed): head tilted, one hand scratching it in short bursts, a small question mark. */
+.field-illustration-small .field-upper-l { transform-origin: 97px 72px; transform: rotate(-120deg); }
+.field-illustration-small .field-fore-l { transform-origin: 70px 42px; transform: rotate(104deg); }
+.field-illustration-small .field-upper-r { transform-origin: 129px 72px; transform: rotate(120deg); }
+.field-illustration-small .field-fore-r { transform-origin: 156px 42px; transform: rotate(-104deg); }
+.field-illustration-small.field-waiting :is(.field-upper-l, .field-fore-l, .field-upper-r, .field-fore-r) { transform: none; }
+/* The copy of a hand drawn in front of the face; the controller shows it only while the hand is at the face. */
+.field-illustration-small .field-front { opacity: 0; }
+/* Puzzled (something failed): head tilted, one hand scratching behind it now and then, a small question mark. */
 .field-puzzled .field-head { transform: rotate(5deg); }
-.field-puzzled .field-upper-l { transform: none; }
-.field-puzzled:not(.field-moving) .field-fore-l { animation: field-scratch 4.6s ease-in-out infinite; }
+.field-puzzled :is(.field-upper-l, .field-fore-l) { transform: none; }
 .field-puzzle-mark { opacity: 0; transition: opacity .4s ease; }
 .field-puzzled .field-puzzle-mark { opacity: 1; transition-delay: 1s; }
 .field-puzzled .field-puzzle-mark path { stroke-dasharray: 40; animation: field-puzzle-write .6s 1s ease-out both; }
-@keyframes field-scratch {
-  0%, 36%, 100% { transform: none; }
-  6%, 18%, 30% { transform: rotate(-9deg); }
-  12%, 24% { transform: rotate(3deg); }
-}
 @keyframes field-puzzle-write { from { stroke-dashoffset: 40; } to { stroke-dashoffset: 0; } }
-/* Independent idle loops; their periods (17 / 11 / 7.3 / 53 s) never line up the same way twice. */
-@keyframes field-lean {
-  0%, 14%, 44%, 70%, 94%, 100% { transform: none; }
-  22%, 36% { transform: translateY(2.5px) scale(.965); }
-  76%, 88% { transform: translateY(1.5px) scale(.98); }
-}
-@keyframes field-rock {
-  0%, 20%, 50%, 64%, 80%, 100% { transform: none; }
-  30% { transform: rotate(-1.6deg); }
-  40% { transform: rotate(-1.1deg); }
-  72% { transform: rotate(1.3deg); }
-}
-@keyframes field-head {
-  0%, 30%, 56%, 76%, 94%, 100% { transform: none; }
-  36%, 50% { transform: rotate(-4deg); }
-  82%, 88% { transform: rotate(3deg); }
-}
-/* A rare, slow stretch: one arm reaches up, the other out to the side, the body leans; then all fold back.
-   About 3 s up, 3 s held (reaching a touch further), 4 s back down, once every 53 s. */
-@keyframes field-upper-l { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(19deg); } 90% { transform: rotate(22deg); } }
-@keyframes field-fore-l { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(-114deg); } 90% { transform: rotate(-118deg); } }
-@keyframes field-upper-r { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(-1deg); } 90% { transform: rotate(-3deg); } }
-@keyframes field-fore-r { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(140deg); } 90% { transform: rotate(146deg); } }
-/* The body leans toward the lower arm while the other reaches up. */
-@keyframes field-stretch-body { 0%, 78%, 97%, 100% { transform: none; } 84% { transform: rotate(3.5deg); } 90% { transform: rotate(4.5deg); } }
 
 /* The mark: resting the pointer on it lifts the page for a closer look. */
 .field-mark-page { transform-origin: 30px 17px; transition: transform .35s var(--ease-out, ease-out); }
@@ -2038,6 +2186,12 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .field-mark { overflow: visible; }
 .field-heart { opacity: 0; transform-box: fill-box; transform-origin: center; }
 .field-heart-arms { opacity: 0; }
+/* The desk figure (FieldIllustration.tsx): in summer the forearms are bare below the short sleeves. */
+.field-illustration-small[data-season="summer"] .field-forearm:not([data-up]) { fill: var(--paint-skin); }
+.field-illustration-small[data-season="summer"] .field-forearm[data-up] { stroke: var(--paint-skin); }
+.field-illustration-small[data-season="summer"] .field-cuff { display: none; }
+.field-illustration-small[data-season="summer"] .field-bare { stroke: var(--paint-skin); }
+.field-moon-bloom { opacity: var(--paint-moon-bloom-strength); }
 .field-mark-busy .field-mark-page { animation: field-mark-leaf 3.2s linear infinite; }
 .field-mark-busy .field-mark-arm { animation: field-mark-reach 3.2s linear infinite; }
 .field-mark-busy .field-mark-lines { animation: field-mark-lines 6.4s step-end infinite; }
@@ -2147,7 +2301,7 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   .empty-state > .field-scene { width: min(360px, 100%); }
   .empty-state .field-scene > .field-illustration { max-height: 30vh; }
   .empty-state h2 { font-size: 24px; }
-  .chat-empty > .field-illustration { display: none; }
+  .chat-empty > .field-illustration { width: min(104px, 15vh); margin: 0 0 6px; }
   .btn, .send-button { min-height: 44px; }
   .btn-icon { min-width: 40px; min-height: 40px; }
 }
@@ -2205,6 +2359,17 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .layer-node.focused > .ink-outline, .component-node.selected > .ink-outline, .value-point-card.selected > .ink-outline { color: var(--accent); --ink-extra: 2px; }
 .layer-node.focused .layer-node-title, .component-node.selected .component-node-title, .value-point-card.selected h3 { color: var(--accent-dim); }
 :root[data-theme="dark"] :is(.layer-node.focused .layer-node-title, .component-node.selected .component-node-title, .value-point-card.selected h3) { color: var(--accent); }
+/* Layer identity: each architecture layer and its components are printed on the layer's paper (component-overview order); its ink marks it elsewhere. */
+[data-tint="green"] { --tint: var(--tint-green); --tint-ink: var(--tint-green-ink); }
+[data-tint="blue"] { --tint: var(--tint-blue); --tint-ink: var(--tint-blue-ink); }
+[data-tint="yellow"] { --tint: var(--tint-yellow); --tint-ink: var(--tint-yellow-ink); }
+[data-tint="rose"] { --tint: var(--tint-rose); --tint-ink: var(--tint-rose-ink); }
+[data-tint="lilac"] { --tint: var(--tint-lilac); --tint-ink: var(--tint-lilac-ink); }
+[data-tint="teal"] { --tint: var(--tint-teal); --tint-ink: var(--tint-teal-ink); }
+.layer-node[data-tint], .component-node[data-tint] { --paper-fill: var(--tint); }
+.layer-node[data-tint] .layer-node-kicker, .component-node[data-tint] .component-node-layer,
+.architecture-breadcrumb [data-tint], .workspace-layer-name[data-tint] { color: var(--tint-ink); }
+.value-point-card, .value-point-card.selected { --paper-fill: var(--tint-butter); }
 button:has(.hand-close-icon):is(:hover, :focus-visible) {
   --button-ink: var(--err); color: var(--err); background: transparent; border-color: transparent; box-shadow: none;
 }

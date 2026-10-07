@@ -915,6 +915,22 @@ describe('App project state synchronization', () => {
     }
     expect(screen.queryByText('Internal review summary')).not.toBeInTheDocument();
   });
+  it('opens on the home illustration after projects load, even with a remembered project', async () => {
+    window.localStorage.setItem('what-the-repo-last-project:github:1', 'project-1');
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project(), null, true));
+
+    render(<App />);
+    expect(await screen.findByText('python-edge-cases')).toBeInTheDocument();
+    await waitFor(() => expect(window.localStorage.getItem('what-the-repo-last-project:github:1')).toBeNull());
+    expect(screen.getByRole('heading', { name: '从好奇开始。' })).toBeVisible();
+    expect(apiClient.getProject).not.toHaveBeenCalled();
+    expect(screen.queryByPlaceholderText('尽情提问')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('python-edge-cases'));
+    expect(await screen.findByPlaceholderText('尽情提问')).toBeVisible();
+    expect(window.localStorage.getItem('what-the-repo-last-project:github:1')).toBeNull();
+  });
+
   it('shows a visible error when project deletion fails', async () => {
     vi.mocked(apiClient.getProject).mockResolvedValue(detail(project(), null, true));
     vi.mocked(apiClient.deleteProject).mockRejectedValue(new Error('删除暂时失败'));

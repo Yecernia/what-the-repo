@@ -80,7 +80,7 @@ test('native dialogs trap focus, close the topmost dialog with Escape and restor
   await expect(page.getByRole('button', { name: '设置', exact: true })).toBeFocused();
 });
 
-test('projects open with Enter/Space; source success and failure preserve focus; reload restores only this owner', async ({ page }) => {
+test('projects open with Enter/Space; source success and failure preserve focus; reload opens on home', async ({ page }) => {
   const fixture = await workspace(page);
   const alpha = page.getByRole('button', { name: '打开项目 Alpha', exact: true });
   await alpha.focus(); await page.keyboard.press('Enter');
@@ -101,7 +101,10 @@ test('projects open with Enter/Space; source success and failure preserve focus;
   fixture.failSource(); await source.click();
   await staysInDialog(page, /源码 src\/entry.ts:2/);
   await page.keyboard.press('Escape'); await expect(source).toBeFocused();
-  await page.reload(); await expect(beta).toHaveAttribute('aria-current', 'page');
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '从好奇开始。' })).toBeVisible();
+  await expect(beta).not.toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('.project-open-button[aria-current="page"]')).toHaveCount(0);
   fixture.changeOwner(); await page.reload();
   await expect(page.getByRole('button', { name: '打开项目 Alpha' })).toBeVisible();
   await expect(page.locator('.project-open-button[aria-current="page"]')).toHaveCount(0);

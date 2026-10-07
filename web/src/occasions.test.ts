@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { easterOf, lunarDate, occasionOf, seasonOf } from './occasions';
+import { easterOf, lunarDate, occasionOf, phaseOf, seasonOf } from './occasions';
 
 const on = (date: string, time = '12:00') => new Date(`${date}T${time}:00`);
 
@@ -55,5 +55,11 @@ describe('occasions', () => {
 
   it('computes Easter', () => {
     expect([2026, 2027, 2028].map(easterOf)).toEqual([[4, 5], [3, 28], [4, 16]]);
+  });
+
+  it('reads the time of day from the local clock', () => {
+    const at = (time: string) => phaseOf(on('2026-10-06', time));
+    expect([at('04:59'), at('05:00'), at('09:59'), at('10:00'), at('15:59'), at('16:00'), at('18:59'), at('19:00'), at('00:00')])
+      .toEqual(['night', 'morning', 'morning', 'day', 'day', 'dusk', 'dusk', 'night', 'night']);
   });
 });

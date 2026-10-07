@@ -1,11 +1,13 @@
 import { useMemo } from 'react';
 import { useUiLanguage } from './ui-language';
 import { buildLayerOverviewFlow } from './component-overview';
+import { architectureTints } from './layer-tint';
 import type { Snapshot } from './types';
 
 export function RepositoryThumbnail({ snapshot }: { snapshot: Snapshot }) {
   const uiLanguage = useUiLanguage();
   const flow = useMemo(() => buildLayerOverviewFlow(snapshot), [snapshot, uiLanguage]);
+  const tints = useMemo(() => architectureTints(snapshot), [snapshot]);
   const positions = new Map(flow.nodes.map(node => [
     node.id,
     {
@@ -45,6 +47,9 @@ export function RepositoryThumbnail({ snapshot }: { snapshot: Snapshot }) {
       })}
       {flow.nodes.map(node => {
         const point = positions.get(node.id)!;
+        // The overview's entries are layers, or a lone component standing in for its layer.
+        const tint = node.type === 'layer' ? tints.byLayer.get(node.data.layer.id)
+          : node.type === 'component' && node.data.targetLayerId ? tints.byLayer.get(node.data.targetLayerId) : undefined;
         return (
           <rect
             key={node.id}
@@ -53,6 +58,7 @@ export function RepositoryThumbnail({ snapshot }: { snapshot: Snapshot }) {
             width={point.width}
             height={point.height}
             rx={10}
+            data-tint={tint}
           />
         );
       })}

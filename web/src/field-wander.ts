@@ -4,7 +4,7 @@
  */
 export type Point = [number, number];
 
-export const between = (low: number, high: number) => low + Math.random() * (high - low);
+export const between = (low: number, high: number, random: () => number = Math.random) => low + random() * (high - low);
 
 /** How long an animal stays put before going somewhere else: usually a good while, only now and then briefly. */
 export const stayFor = () => Math.random() < .15 ? between(3000, 7000) : between(10_000, 28_000);

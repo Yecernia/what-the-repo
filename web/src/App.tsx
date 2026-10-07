@@ -2802,20 +2802,12 @@ export default function App() {
         if (!current) return;
         setProjects(ps);
         setSettings(s);
-        try {
-          const remembered = localStorage.getItem(`what-the-repo-last-project:${identity.owner_id}`);
-          if (!activeIdRef.current && ps.some(project => project.project_id === remembered)) setActiveId(remembered);
-          else if (remembered && !ps.some(project => project.project_id === remembered)) localStorage.removeItem(`what-the-repo-last-project:${identity.owner_id}`);
-        } catch { /* Storage is optional; the server's project list is authoritative. */ }
+        // The site opens on the home illustration; drop the key older builds used to reopen the last project.
+        try { localStorage.removeItem(`what-the-repo-last-project:${identity.owner_id}`); } catch { /* Optional. */ }
       })
       .catch(e => { if (current) setLoadError(userFacingError(e, t("项目列表暂时无法加载，请稍后重试。"))); });
     return () => { current = false; };
   }, [identity]);
-
-  useEffect(() => {
-    if (!identity || !activeId || !projects.some(project => project.project_id === activeId)) return;
-    try { localStorage.setItem(`what-the-repo-last-project:${identity.owner_id}`, activeId); } catch { /* Optional. */ }
-  }, [identity, activeId, projects]);
 
   useEffect(() => {
     projectEpochRef.current += 1;
@@ -3607,10 +3599,6 @@ export default function App() {
     try {
       await apiClient.deleteProject(id);
       removeSnapshotCache(id);
-      try {
-        if (identity && localStorage.getItem(`what-the-repo-last-project:${identity.owner_id}`) === id)
-          localStorage.removeItem(`what-the-repo-last-project:${identity.owner_id}`);
-      } catch { /* Optional. */ }
       projectCacheRef.current.delete(id);
       pendingConversationsRef.current.delete(id);
       for (const key of analysisTimerStartsRef.current.keys()) {
@@ -4084,7 +4072,7 @@ export default function App() {
                 )}
                 {project.messages.length === 0 && (
                   <div className={`chat-empty${isAnalyzing ? ' chat-empty-waiting' : ''}`}>
-                    <FieldIllustration compact pose={isAnalyzing ? 'waiting' : analysisCanRetry ? 'puzzled' : 'rest'}
+                    <FieldIllustration key={activeId} compact pose={isAnalyzing ? 'waiting' : analysisCanRetry ? 'puzzled' : 'rest'} draft={input}
                       ownRepository={/^https:\/\/github\.com\/yecernia\/what-the-repo(?:\.git)?\/?$/i.test(project?.source.value ?? '')} />
                     {/* When the analysis failed there is no project view to open; the notice above says what happened. */}
                     {isAnalyzing ? t("仓库准备好后就可以尽情提问。") : analysisCanRetry ? null : (

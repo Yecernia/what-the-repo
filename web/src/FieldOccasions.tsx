@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from 'react';
 import { Ink } from './field-ink';
+import { smoothPath } from './pen-path';
 import { arc, between, linger, pause, play, stayFor, type Point } from './field-wander';
 import type { Occasion, Season } from './occasions';
 
@@ -69,12 +70,12 @@ export function GroundSnow() {
 function Lantern() {
   return <g transform="translate(-41 -73)"><g className="field-lantern">
     <path d="M227 250 L227 266" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-    <rect x={219} y={265} width={16} height={5} rx={1.5} fill="#e2b340" stroke="currentColor" strokeWidth={1.8} />
-    <Ink points={[[227,269],[214,274],[211,283],[215,292],[227,297],[239,292],[243,283],[240,274]]} width={2.6} closed fill="#d6453b" />
-    <path d="M221 271 Q216 283 221 295 M233 271 Q238 283 233 295 M227 269 V297" fill="none" stroke="color-mix(in srgb, currentColor 45%, #d6453b)"
+    <rect x={219} y={265} width={16} height={5} rx={1.5} fill="var(--paint-gold)" stroke="currentColor" strokeWidth={1.8} />
+    <Ink points={[[227,269],[214,274],[211,283],[215,292],[227,297],[239,292],[243,283],[240,274]]} width={2.6} closed fill="var(--paint-red)" />
+    <path d="M221 271 Q216 283 221 295 M233 271 Q238 283 233 295 M227 269 V297" fill="none" stroke="color-mix(in srgb, currentColor 45%, var(--paint-red))"
       strokeWidth={1.4} />
-    <rect x={220} y={296} width={14} height={4.5} rx={1.5} fill="#e2b340" stroke="currentColor" strokeWidth={1.8} />
-    <path d="M224 301 L223 314 M227 301 L227 316 M230 301 L231 314" stroke="#e2b340" strokeWidth={2} strokeLinecap="round" />
+    <rect x={220} y={296} width={14} height={4.5} rx={1.5} fill="var(--paint-gold)" stroke="currentColor" strokeWidth={1.8} />
+    <path d="M224 301 L223 314 M227 301 L227 316 M230 301 L231 314" stroke="var(--paint-gold)" strokeWidth={2} strokeLinecap="round" />
   </g></g>;
 }
 
@@ -90,23 +91,26 @@ function Fireworks() {
       <circle r={2} fill={color} stroke="none" />
     </g>
   </g>;
-  return <g>{burst(528, 64, 22, '#d6453b', '0s')}{burst(566, 118, 15, '#e2a93a', '-1.4s')}</g>;
+  return <g>{burst(528, 64, 22, 'var(--paint-red)', '0s')}{burst(566, 118, 15, 'var(--paint-gold)', '-1.4s')}</g>;
 }
 
 /** Valentine's Day: a small heart scratched into the trunk. */
 function TrunkHeart() {
   return <path d="M146 331 C137 324 136 316 141 314 C144 313 146 315 146 318 C146 315 148 313 151 314 C156 316 155 324 146 331 Z"
-    fill="none" stroke="#cf5b72" strokeWidth={2.3} strokeLinejoin="round" />;
+    fill="none" stroke="var(--paint-rose)" strokeWidth={2.3} strokeLinejoin="round" />;
 }
 
 /** Dragon Boat Festival: a zongzi resting on the grass beside the tree. */
 function Zongzi() {
   return <g>
-    <Ink points={[[204,377],[218,351],[233,377]]} width={2.8} closed fill="#86a95f" />
-    <path d="M211 364 L226 366" stroke="#c9a15a" strokeWidth={2.4} strokeLinecap="round" />
-    <path d="M218 353 L214 376" stroke="color-mix(in srgb, currentColor 40%, #86a95f)" strokeWidth={1.4} strokeLinecap="round" />
+    <Ink points={[[204,377],[218,351],[233,377]]} width={2.8} closed fill="var(--paint-leaf)" />
+    <path d="M211 364 L226 366" stroke="var(--paint-twine)" strokeWidth={2.4} strokeLinecap="round" />
+    <path d="M218 353 L214 376" stroke="color-mix(in srgb, currentColor 40%, var(--paint-leaf))" strokeWidth={1.4} strokeLinecap="round" />
   </g>;
 }
+
+/** Asked for less motion, the festival animals simply sit still where they are drawn. */
+const stillScene = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 type RabbitSpot = 'grass' | 'bench' | 'feet' | 'tree';
 /** Where the rabbit sits, as moves from its place on the grass right of the bench; the tree is across the scene. */
@@ -130,7 +134,7 @@ export function MoonRabbit() {
   const trip = useRef<SVGGElement>(null), face = useRef<SVGGElement>(null), body = useRef<SVGGElement>(null);
   useEffect(() => {
     const [tripEl, faceEl, bodyEl] = [trip.current, face.current, body.current];
-    if (!tripEl || !faceEl || !bodyEl) return;
+    if (!tripEl || !faceEl || !bodyEl || stillScene()) return;
     const ears = [...bodyEl.querySelectorAll<SVGGElement>('.field-rabbit-ear')];
     const stop = new AbortController(), { signal } = stop;
     let spot: RabbitSpot = 'grass', pos = RABBIT_SPOTS.grass;
@@ -211,9 +215,9 @@ export function MoonRabbit() {
 /** Halloween: a carved pumpkin on the grass between the tree and the bench; its face glows at night. */
 function Pumpkin() {
   return <g>
-    <path d="M217 348 Q216 341 222 338" fill="none" stroke="#6f8f4a" strokeWidth={3} strokeLinecap="round" />
-    <Ink points={[[216,349],[202,351],[196,362],[201,374],[216,378],[232,374],[237,362],[231,351]]} width={2.8} closed fill="#e0893a" />
-    <path d="M210 350 Q205 363 210 377 M223 350 Q228 363 223 377" fill="none" stroke="color-mix(in srgb, currentColor 35%, #e0893a)" strokeWidth={1.5} />
+    <path d="M217 348 Q216 341 222 338" fill="none" stroke="var(--paint-stem)" strokeWidth={3} strokeLinecap="round" />
+    <Ink points={[[216,349],[202,351],[196,362],[201,374],[216,378],[232,374],[237,362],[231,351]]} width={2.8} closed fill="var(--paint-pumpkin)" />
+    <path d="M210 350 Q205 363 210 377 M223 350 Q228 363 223 377" fill="none" stroke="color-mix(in srgb, currentColor 35%, var(--paint-pumpkin))" strokeWidth={1.5} />
     <g fill="var(--pumpkin-face)">
       <path d="M205 361 L209 355 L213 361 Z" /><path d="M220 361 L224 355 L228 361 Z" />
       <path d="M204 366 L208 369 L212 366 L216 370 L220 366 L224 369 L229 366 L226 372 L208 372 Z" />
@@ -224,20 +228,20 @@ function Pumpkin() {
 /** Christmas: a Santa hat on the learner, in the bench-and-learner drawing (before its scale). */
 export function SantaHat() {
   return <g>
-    <Ink points={[[296,153],[311,127],[331,116],[347,124],[338,151]]} width={3} closed fill="#cf3f3a" />
-    <Ink points={[[289,160],[313,152],[341,157],[340,149],[313,145],[291,152]]} width={3} closed fill="#f6f1e6" />
-    <circle cx={349} cy={126} r={6} fill="#f6f1e6" stroke="currentColor" strokeWidth={2.6} />
+    <Ink points={[[296,153],[311,127],[331,116],[347,124],[338,151]]} width={3} closed fill="var(--paint-red)" />
+    <Ink points={[[289,160],[313,152],[341,157],[340,149],[313,145],[291,152]]} width={3} closed fill="var(--paint-white)" />
+    <circle cx={349} cy={126} r={6} fill="var(--paint-white)" stroke="currentColor" strokeWidth={2.6} />
   </g>;
 }
 
 /**
- * A cup of tea steaming beside the learner on the bench in dark mode (bench drawing, before its scale). On April
- * Fools' Day it stands upside down in daylight instead.
+ * A cup of tea steaming beside the learner on the bench after dark (bench drawing, before its scale); in winter a hot
+ * drink stands there all day. On April Fools' Day the cup stands upside down in daylight instead.
  */
-export function Tea({ upsideDown = false }: { upsideDown?: boolean }) {
-  return <g className={upsideDown ? 'field-day-only' : 'field-night-only'} data-bench-item="">
+export function Tea({ upsideDown = false, hot = false }: { upsideDown?: boolean; hot?: boolean }) {
+  return <g className={upsideDown ? 'field-day-only' : hot ? undefined : 'field-night-only'} data-bench-item="">
     <g transform={upsideDown ? 'rotate(180 410 281)' : undefined}>
-      <Ink points={[[398,272],[422,272],[419,290],[401,290]]} width={3} closed fill="var(--bg)" />
+      <Ink points={[[398,272],[422,272],[419,290],[401,290]]} width={3} closed fill="var(--bg)" paint="var(--paint-cup)" shift={[-1.6, -1.1]} />
       <path d="M421 276 C430 276 430 286 420 286" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" />
     </g>
     {!upsideDown && <g className="field-steam" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
@@ -246,40 +250,148 @@ export function Tea({ upsideDown = false }: { upsideDown?: boolean }) {
   </g>;
 }
 
+/** Summer: an iced drink with a straw on the bench beside the learner, in the tea's place (bench drawing). */
+export function IcedDrink() {
+  return <g data-bench-item="">
+    <path d="M414 270 L420 247 L427 244" fill="none" stroke="var(--paint-straw-stripe)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+    <path d={smoothPath([[401,268],[419,268],[418,289],[402,289]], true)} fill="var(--paint-drink)" transform="translate(-1.6 -1.1)" />
+    <g fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinejoin="round">
+      <path d="M404 272 L410 271 L411 277 L405 278 Z" /><path d="M410.5 278.5 L416 277 L417.5 282.5 L412 284 Z" />
+    </g>
+    <Ink points={[[399,263],[421,263],[419,290],[401,290]]} width={3} closed />
+  </g>;
+}
+
+/**
+ * The learner's outfit for the season, over the sweater (bench drawing): an open light cardigan over a cream top in
+ * spring, a light short-sleeved tee in summer. Autumn keeps the film's green sweater; winter adds a scarf (below).
+ */
+export function SeasonTop({ season }: { season: Season }) {
+  if (season === 'spring') {
+    return <g>
+      <Ink points={[[309,195],[341,197],[326,219]]} width={2.8} closed fill="var(--paint-cream)" />
+      <Ink points={[[326,219],[327,243]]} width={2.8} />
+    </g>;
+  }
+  if (season === 'summer') {
+    return <g>
+      {/* Short sleeves end halfway down the upper arm: bare below the hems, down the upper arm, round the elbow and
+          along the forearm to the hand; the other arm shows only a little above the lid. */}
+      <path d={smoothPath([[357,243],[389,245],[392,262],[386,278],[377,286],[364,288],[338,286],[329,276],[333,260],[352,260],[357,250]], true)}
+        fill="var(--paint-skin)" />
+      <path d={smoothPath([[273,233],[285,235],[281,245],[270,244]], true)} fill="var(--paint-skin)" />
+      <Ink points={[[355,242],[373,245],[391,244]]} width={3} />
+      <Ink points={[[272,232],[287,234]]} width={3} />
+      <Ink points={[[310,197],[325,204],[341,198]]} width={2.8} />
+    </g>;
+  }
+  return null;
+}
+
+/** Winter: a mustard knit scarf round the neck with one end hanging down (bench drawing, over the head's chin). */
+export function WinterScarf() {
+  return <g>
+    <Ink points={[[328,196],[339,222],[331,226],[321,199]]} width={2.8} closed fill="var(--paint-knit)" />
+    <path d="M326 207 L334 205 M329 215 L336 213" stroke="var(--paint-knit-stripe)" strokeWidth={2.4} strokeLinecap="round" fill="none" />
+    <Ink points={[[296,184],[318,190],[343,183],[347,192],[336,200],[318,203],[299,199],[292,191]]} width={3} closed fill="var(--paint-knit)" />
+    <path d="M305 189 Q308 195 306 200 M331 189 Q333 195 331 200" stroke="var(--paint-knit-stripe)" strokeWidth={2.2} strokeLinecap="round" fill="none" />
+  </g>;
+}
+
+/** Summer: a denim-blue bucket hat over the light blue tee (bench drawing), a shade deeper than the tee, with a cream
+ * band and a stitched, sloping brim. */
+function BucketHat() {
+  return <g>
+    <Ink points={[[298,153],[300,139],[310,132],[322,132],[331,138],[333,153]]} width={3} closed fill="var(--bg)" paint="var(--paint-plate-line)" />
+    <path d="M300 148 Q316 144 332 148" fill="none" stroke="var(--paint-cream)" strokeWidth={4} strokeLinecap="round" />
+    <Ink points={[[293,151],[316,148],[339,151],[349,164],[316,160],[283,164]]} width={3} closed fill="var(--bg)" paint="var(--paint-plate-line)" />
+    <path d="M291 158 Q316 154.5 342 158" fill="none" stroke="var(--paint-cream)" strokeWidth={1.6} strokeLinecap="round" strokeDasharray="3 3.5" />
+  </g>;
+}
+
+/** The season's hat (bench drawing): a bucket hat in summer, a knitted bobble hat in winter. */
+export function SeasonHat({ season }: { season: Season }) {
+  if (season === 'summer') return <BucketHat />;
+  if (season === 'winter') {
+    return <g>
+      <Ink points={[[290,160],[294,146],[305,137],[318,134],[331,139],[339,149],[341,160]]} width={3} closed fill="var(--paint-knit)" />
+      <Ink points={[[287,160],[314,154],[343,159],[343,167],[314,162],[287,168]]} width={3} closed fill="var(--paint-knit-stripe)" />
+      <circle cx={317} cy={130} r={6.5} fill="var(--paint-cream)" stroke="currentColor" strokeWidth={2.6} />
+    </g>;
+  }
+  return null;
+}
+
 /** The bench-and-learner drawing is shrunk into the scene; animals drawn in its units go through the same. */
 const BENCH_SCALE = 'translate(345 373) scale(.86) translate(-345 -373)';
 
 /** The Milky Way's course across the night sky, above the moon and clear of the crown. */
 const MILKY_WAY = 'M302 28 C382 30 472 48 596 110';
-/** Faint stars scattered along it, the same every night: [x, y, radius]. */
-const MILKY_WAY_DUST: Array<[number, number, number]> = (() => {
+const MILKY_WAY_POINTS = [[302, 28], [382, 30], [472, 48], [596, 110]];
+/** A point on the course at t (0 to 1) and the unit normal there. */
+function milkyWayAt(t: number): [number, number, number, number] {
+  const u = 1 - t, [p0, p1, p2, p3] = MILKY_WAY_POINTS;
+  const axis = (k: 0 | 1) => u ** 3 * p0[k] + 3 * u * u * t * p1[k] + 3 * u * t * t * p2[k] + t ** 3 * p3[k];
+  const slope = (k: 0 | 1) => 3 * u * u * (p1[k] - p0[k]) + 6 * u * t * (p2[k] - p1[k]) + 3 * t * t * (p3[k] - p2[k]);
+  const len = Math.hypot(slope(0), slope(1)) || 1;
+  return [axis(0), axis(1), -slope(1) / len, slope(0) / len];
+}
+const r1 = (value: number) => Math.round(value * 10) / 10;
+/** Where the stars of the river crowd together: two soft clusters along it. */
+const MILKY_WAY_CLUSTERS = [.3, .66];
+/**
+ * The river of stars, the same every night: a brighter core of uneven density (soft blobs along the course) and star
+ * dust in three sizes, thick near the middle, thinner at the edges, gathering in the clusters.
+ */
+const MILKY_WAY_STARS = (() => {
   let seed = 7;
   const next = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  const along = (t: number) => {
-    const u = 1 - t;
-    return [u ** 3 * 302 + 3 * u * u * t * 382 + 3 * u * t * t * 472 + t ** 3 * 596, u ** 3 * 28 + 3 * u * u * t * 30 + 3 * u * t * t * 48 + t ** 3 * 110];
-  };
-  return Array.from({ length: 34 }, (_, i) => {
-    const [x, y] = along((i + next()) / 34);
-    return [Math.round(x + (next() - .5) * 8), Math.round(y + (next() - .5) * 22), next() < .2 ? 1.5 : .9];
+  const gauss = () => (next() + next() + next() - 1.5) / 1.5;
+  const core = Array.from({ length: 16 }, (_, i) => {
+    const t = (i + .5) / 16, [x, y, nx, ny] = milkyWayAt(t), off = gauss() * 5;
+    const near = Math.max(...MILKY_WAY_CLUSTERS.map(c => 1 - Math.min(1, Math.abs(t - c) / .12)));
+    return [r1(x + nx * off), r1(y + ny * off), r1(9 + next() * 7 + near * 6), r1(.3 + next() * .35 + near * .35)];
   });
+  const dust = Array.from({ length: 170 }, () => {
+    const clustered = next() < .35, centre = MILKY_WAY_CLUSTERS[next() < .5 ? 0 : 1];
+    const t = clustered ? centre + gauss() * .05 : .02 + next() * .96;
+    const [x, y, nx, ny] = milkyWayAt(Math.min(.99, Math.max(.01, t))), spread = clustered ? 7 : next() < .65 ? 10 : 20;
+    const off = gauss() * spread, size = next();
+    return [r1(x + nx * off + (next() - .5) * 4), r1(y + ny * off), size < .62 ? .55 : size < .9 ? .9 : 1.35];
+  });
+  return { core, dust };
 })();
 
+/** A brighter star: a small soft halo, a dot and four short rays; it does not twinkle. */
+function BrightStar({ x, y, size }: { x: number; y: number; size: number }) {
+  return <g>
+    <circle cx={x} cy={y} r={size * 2.6} fill="currentColor" opacity={.16} />
+    <circle cx={x} cy={y} r={size} fill="currentColor" />
+    <path d={`M${x} ${y - size * 3.4} V${y + size * 3.4} M${x - size * 3.4} ${y} H${x + size * 3.4}`} stroke="currentColor"
+      strokeWidth={size * .7} strokeLinecap="round" opacity={.8} />
+  </g>;
+}
+
 /**
- * Qixi night: the Milky Way across the sky, with the Weaver Girl (Vega) and the Cowherd (Altair) shining on either
- * side of it. Only in dark mode, with the moon and the stars.
+ * Qixi night: the Milky Way flows across the sky as a river of stars (a faint wide glow, a brighter core of uneven
+ * density, dust in three sizes with two soft clusters), with the Weaver Girl (Vega) and the Cowherd (Altair) shining
+ * on either side of it. Calm: nothing in it twinkles.
  */
 export function MilkyWay() {
-  const glow = `field-milky-way-${useId().replace(/:/g, '')}`;
-  return <g className="field-milky-way">
-    {/* A soft glow rather than a band with edges; it never moves, so the blur is drawn once. */}
-    <filter id={glow} x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation={7} /></filter>
-    <path d={MILKY_WAY} fill="none" stroke="currentColor" strokeWidth={26} strokeLinecap="round" opacity={.13} filter={`url(#${glow})`} />
-    <g fill="currentColor" opacity={.55}>{MILKY_WAY_DUST.map(([x, y, r]) => <circle key={`${x}-${y}`} cx={x} cy={y} r={r} />)}</g>
-    <g stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
-      <path className="field-star field-star-twinkle" d="M356 62 L356.4 72 M351 67.2 L361.4 66.8" />
-      <path className="field-star field-star-late" d="M536 46 L536.4 56 M531 51.2 L541.4 50.8" />
+  const id = `field-milky-way-${useId().replace(/:/g, '')}`;
+  const { core, dust } = MILKY_WAY_STARS;
+  return <g className="field-milky-way" color="var(--paint-starlight)">
+    {/* Soft light rather than bands with edges; it never moves, so the blurs are drawn once. */}
+    <filter id={`${id}-wide`} x="-30%" y="-120%" width="160%" height="340%"><feGaussianBlur stdDeviation={14} /></filter>
+    <filter id={`${id}-core`} x="-30%" y="-120%" width="160%" height="340%"><feGaussianBlur stdDeviation={6} /></filter>
+    <path d={MILKY_WAY} fill="none" stroke="currentColor" strokeWidth={64} strokeLinecap="round" opacity={.09} filter={`url(#${id}-wide)`} />
+    <g fill="currentColor" opacity={.32} filter={`url(#${id}-core)`}>
+      {core.map(([x, y, r, o]) => <circle key={`${x}-${y}`} cx={x} cy={y} r={r} opacity={o} />)}
     </g>
+    <g fill="currentColor">{dust.map(([x, y, r], i) => <circle key={i} cx={x} cy={y} r={r} opacity={r > 1 ? .85 : r > .6 ? .65 : .45} />)}</g>
+    {/* Vega above the river (the Weaver Girl), Altair below it across the water (the Cowherd). */}
+    <BrightStar x={356} y={62} size={2} />
+    <BrightStar x={536} y={46} size={1.7} />
   </g>;
 }
 
@@ -304,7 +416,7 @@ export function Magpie() {
   useEffect(() => {
     const [tripEl, faceEl] = [trip.current, face.current];
     const head = tripEl?.querySelector<SVGGElement>('.field-magpie-head'), tail = tripEl?.querySelector<SVGGElement>('.field-magpie-tail');
-    if (!tripEl || !faceEl || !head || !tail) return;
+    if (!tripEl || !faceEl || !head || !tail || stillScene()) return;
     const stop = new AbortController(), { signal } = stop;
     let perch = 0, pos = MAGPIE_PERCHES[0].at;
     // Drawn facing left.
@@ -378,21 +490,21 @@ export function Dumplings() {
       <path d="M405 274 C401 268 409 264 405 257" /><path className="field-steam-second" d="M419 273 C415 267 423 263 419 256" />
     </g>
     {[[413, 283], [401, 286.5], [425, 286.5]].map(([x, y]) => <g key={x}>
-      <path d={`M${x - 10} ${y - 1} C${x - 6} ${y - 10} ${x + 6} ${y - 10} ${x + 10} ${y - 1} Q${x} ${y + 2} ${x - 10} ${y - 1} Z`} fill="#f6f1e4" stroke="currentColor" strokeWidth={2}
+      <path d={`M${x - 10} ${y - 1} C${x - 6} ${y - 10} ${x + 6} ${y - 10} ${x + 10} ${y - 1} Q${x} ${y + 2} ${x - 10} ${y - 1} Z`} fill="var(--paint-white)" stroke="currentColor" strokeWidth={2}
         strokeLinejoin="round" />
     </g>)}
-    <Ink points={[[389,285],[437,285],[432,291],[394,291]]} width={2.4} closed fill="#f3efe6" />
-    <path d="M395 288 H431" stroke="#6f93c2" strokeWidth={1.4} strokeLinecap="round" />
+    <Ink points={[[389,285],[437,285],[432,291],[394,291]]} width={2.4} closed fill="var(--paint-plate)" />
+    <path d="M395 288 H431" stroke="var(--paint-plate-line)" strokeWidth={1.4} strokeLinecap="round" />
   </g>;
 }
 
 /** Lantern Festival: a steaming bowl of tangyuan on the bench beside the learner (bench drawing), in place of tea. */
 export function Tangyuan() {
   return <g data-bench-item="">
-    {[[405, 276, '#f8f4ea'], [421, 276, '#f6d9de'], [413, 273, '#f8f4ea']].map(([x, y, fill]) => <circle key={x} cx={x} cy={y} r={5}
+    {[[405, 276, 'var(--paint-white)'], [421, 276, 'var(--paint-pink)'], [413, 273, 'var(--paint-white)']].map(([x, y, fill]) => <circle key={x} cx={x} cy={y} r={5}
       fill={String(fill)} stroke="currentColor" strokeWidth={2} />)}
-    <Ink points={[[395,277],[431,277],[427,285],[418,290],[408,290],[399,285]]} width={2.6} closed fill="#f3efe6" />
-    <path d="M398 281 H428" stroke="#d6453b" strokeWidth={1.8} strokeLinecap="round" />
+    <Ink points={[[395,277],[431,277],[427,285],[418,290],[408,290],[399,285]]} width={2.6} closed fill="var(--paint-plate)" />
+    <path d="M398 281 H428" stroke="var(--paint-red)" strokeWidth={1.8} strokeLinecap="round" />
     <g className="field-steam" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
       <path d="M407 265 C403 259 411 255 407 248" /><path className="field-steam-second" d="M419 265 C415 259 423 255 419 248" />
     </g>
@@ -402,10 +514,10 @@ export function Tangyuan() {
 /** Easter: a painted egg hidden in the grass between the tree and the bench. */
 function EasterEgg() {
   return <g transform="rotate(-12 216 366)">
-    <ellipse cx={216} cy={366} rx={9.5} ry={12} fill="#a9c9e8" stroke="currentColor" strokeWidth={2.4} />
-    <path d="M207 364 L211 360 L215 364 L219 360 L223 364 L225.5 361" fill="none" stroke="#e39aad" strokeWidth={2.2}
+    <ellipse cx={216} cy={366} rx={9.5} ry={12} fill="var(--paint-egg)" stroke="currentColor" strokeWidth={2.4} />
+    <path d="M207 364 L211 360 L215 364 L219 360 L223 364 L225.5 361" fill="none" stroke="var(--paint-egg-zigzag)" strokeWidth={2.2}
       strokeLinejoin="round" strokeLinecap="round" />
-    <circle cx={212} cy={371} r={1.6} fill="#f0c95c" /><circle cx={220} cy={371} r={1.6} fill="#f0c95c" />
+    <circle cx={212} cy={371} r={1.6} fill="var(--paint-gold)" /><circle cx={220} cy={371} r={1.6} fill="var(--paint-gold)" />
   </g>;
 }
 

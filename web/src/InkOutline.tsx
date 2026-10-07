@@ -2,7 +2,8 @@ import { useId, useLayoutEffect, useRef } from 'react';
 import { penPath, type PenPoint } from './pen-path';
 
 /** Paper and ink have separate edges. Measure layout size, never the graph's zoom. */
-export function InkOutline({ paper = false, aged = false }: { paper?: boolean; aged?: boolean }) {
+/** `grid` rules the sheet like graph paper in the card's ink (`--tint-ink`), a second paper for one colour. */
+export function InkOutline({ paper = false, aged = false, grid = false }: { paper?: boolean; aged?: boolean; grid?: boolean }) {
   const ref = useRef<SVGSVGElement>(null);
   const patternId = `paper-${useId().replace(/:/g, '')}`;
   // Write all contours in the observer's pre-paint phase. React state here can
@@ -32,9 +33,11 @@ export function InkOutline({ paper = false, aged = false }: { paper?: boolean; a
       {aged && <pattern id={patternId + '-wear'} patternUnits="userSpaceOnUse" width="900" height="600">
         {wornFibers.map((fiber, index) => <path key={index} d={fiber.d} fill="#f4f2e9" opacity={fiber.opacity} />)}
       </pattern>}
+      {grid && <pattern id={patternId + '-grid'} patternUnits="userSpaceOnUse" width="12" height="12"><path className="paper-grid-line" d="M12 .5H.5V12" /></pattern>}
     </defs>
     <path className="paper-shadow" data-paper-contour="sheet" transform="translate(1.5 3)" />
     <path className="paper-face" data-paper-contour="sheet" />
+    {grid && <path className="paper-grid" data-paper-contour="sheet" fill={`url(#${patternId}-grid)`} />}
     <path className="paper-folds" data-paper-contour="sheet" fill={`url(#${patternId})`} />
     {aged && <path className="paper-wear" data-paper-contour="sheet" fill={`url(#${patternId}-wear)`} />}
     <path className="ink-stroke" data-paper-contour="ink" fillRule="evenodd" vectorEffect="non-scaling-stroke" />
