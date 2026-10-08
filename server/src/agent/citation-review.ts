@@ -100,7 +100,7 @@ export async function reviewAnswerEvidence(input: {
       ...(locked.some(row => JSON.stringify(value.sections.find(candidate => candidate.section_id === row.section_id)) !== JSON.stringify(row))
         ? ['review_repair_changed_valid_section'] : [])];
     const result = await runStructuredWorker({
-      skillId: 'citation-review', inputSchemaId: 'citation-review-input-v15', outputSchemaId: 'citation-review-output-v14', contextBuilderId: 'citation-review-context-v27',
+      skillId: 'citation-review', inputSchemaId: 'citation-review-input-v16', outputSchemaId: 'citation-review-output-v14', contextBuilderId: 'citation-review-context-v28',
       modelRuntime: input.modelRuntime, signal, thinkingLevel: 'medium', schema: DIRECT_REVIEW_RESULT, maxSubmitAttempts: 1,
       taskLimits: { maxRequests: 1, timeoutMs: Math.max(1, Math.min(360_000, deadlineAt - Date.now())), maxOutputTokens: 65_536 },
       validateSubmitted: value => { const errors = validate(value);
@@ -108,6 +108,7 @@ export async function reviewAnswerEvidence(input: {
       systemPrompt: [
         'task_phase=direct_review. You alone make FINAL semantic judgments for every material assertion in each focus_section_id. Compare the exact original answer directly with original evidence; no intermediate claim extraction, source-case analyzer, second judge or execution matrix.',
         'final_answer is the complete original language, retained ONCE. answer_sections contains only lossless offsets; focus_section_ids assigns responsibility. All outside sections remain interpretation context. Review every assertion of focal paragraphs/list items under its actual subject, quantifier, phase and conditions. State only final outcome and concise grounds.',
+        'Each evidence packet stores shared source text once. Its references list the original evidence_id and source range for each citation. Return original reference IDs; a reference can prove only text within its own range, not the rest of its shared packet.',
         'For a finding copy an exact original span, describe its actual assertion/conditions and explain concrete same-condition source counterevidence or the actual source gap. Complete source IDs and matching proof layers establish provenance only, not semantic entailment. Unfinished review is unverified; missing source is insufficient_evidence; positive same-scope counterevidence is contradicted.',
         'For teaching assess exact repository premises, answerability and bound hypothetical/state provenance. Bound assessment_context is not source evidence. purpose=' + purpose,
         ...(assessmentDocument ? ['The candidate assessment record contains judgments to verify, not established facts. Check whether the actual saved question requirements and whole learning targets are supported by the learner originals in assessment_context and the source. Then check the owner feedback. Incomplete learning is not itself an error in a judgment that correctly records it. Do not replace learner evidence with assistant knowledge.'] : []),

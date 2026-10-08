@@ -2,6 +2,7 @@ import type { EvidenceRef } from "../domain/conversation.js";
 import type { EvidenceSnapshot, SnapshotEvidence } from "../domain/snapshot.js";
 import type { ProductStore } from "../persistence/store.js";
 import type { CitationReviewResult } from "./citation-review.js";
+import { normalizeDisplayLanguage } from '../domain/display-language.js';
 import { canonicalEvidence, evidenceIdentity, type CitationCoverage } from './evidence-packets.js';
 
 export interface CitationValidation {
@@ -368,11 +369,12 @@ export async function validateAnswerCitations(input: {
 }
 
 /** Keep uncertainty in the answer both the user and the next turn receive. */
-export function withCitationNotice(text: string, errors: readonly string[]): string {
-  if (!errors.length) return text;
+export function withCitationNotice(text: string, errors: readonly string[], language: string): string {
+  const citationErrors = errors.filter(error => /^(unknown_path:|invalid_line:|read_failed:|citation_reference_unresolved$|teaching_reference_outside_bound_evidence$|evidence_packet_incomplete$)/u.test(error));
+  if (!text.trim() || !citationErrors.length) return text;
   const locations = [...new Set(errors.filter((error) => /^(unknown_path|invalid_line):/u.test(error))
     .map((error) => error.slice(error.indexOf(":") + 1)))];
-  const chinese = /[\u4e00-\u9fff]/u.test(text);
+  const chinese = normalizeDisplayLanguage(language) === 'zh-CN';
   const notice = locations.length
     ? (chinese ? "引用未核实：" : "Unverified references: ") + locations.map((path) => `\`${path}\``).join("、")
       + (chinese ? "。当前源码中未确认对应文件或行号；相关说明请先视为未核实。" : ". These files or lines were not confirmed in the saved source; treat the related claims as unverified.")
@@ -381,9 +383,9 @@ export function withCitationNotice(text: string, errors: readonly string[]): str
 }
 
 /** Bounded plain text: reviewer content must not introduce links, HTML, or Markdown instructions. */
-export function withEvidenceReviewNotice(text: string, review: CitationReviewResult): string {
-  if (review.status === "not_applicable" || (review.status === "reviewed" && review.supported)) return text;
-  const chinese = /[\u4e00-\u9fff]/u.test(text);
+export function withEvidenceReviewNotice(text: string, review: CitationReviewResult, language: string): string {
+  if (!text.trim() || review.status === "not_applicable" || (review.status === "reviewed" && review.supported)) return text;
+  const chinese = normalizeDisplayLanguage(language) === 'zh-CN';
   const safe = (value: string) => value.replace(/[\r\n\u0000-\u001f\u007f]/gu, " ").replace(/[<>&`\[\]()*_#!\\]/gu, "").slice(0, 350);
   if (!review.completed && !review.evidenceIncomplete) return `${text}\n\n> ${chinese
     ? '未能完成证据核对，请将相关说明视为尚未核实。'

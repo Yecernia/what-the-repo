@@ -1,5 +1,5 @@
 import { Type, type Static } from 'typebox';
-import type { EvidencePacket } from './evidence-packets.js';
+import { referenceExcerpts, type EvidencePacket } from './evidence-packets.js';
 
 export const CITATION_PROOF_SCOPE = Type.Union([
   Type.Literal('public_type_contract'), Type.Literal('internal_implementation'),
@@ -62,15 +62,16 @@ export function directReviewGroups(sections: ReviewSection[], length: number): n
     Math.floor((group + 1) * sections.length / count)).map(section => section.section_id));
 }
 export function hasSameScopeProof(proof: DirectReviewValue['sections'][number]['issues'][number]['contradiction_proof'], packets: EvidencePacket[]): boolean {
-  return Boolean(proof && proof.claim_scope === proof.evidence_scope && packets.some(packet => packet.evidence_id === proof.evidence_id
-    && !packet.incomplete && packet.excerpt.length && packet.excerpt.join('\n').includes(proof.excerpt) && proof.excerpt.trim()));
+  return Boolean(proof && proof.claim_scope === proof.evidence_scope && proof.excerpt.trim()
+    && packets.some(packet => referenceExcerpts(packet, proof.evidence_id).some(excerpt => excerpt.includes(proof.excerpt))));
 }
 /** Structure/provenance checks only. These cannot establish semantic entailment or actual claim completeness. */
 export function validateDirectReview(value: DirectReviewValue, answer: string, sections: ReviewSection[], focus: number[], packets: EvidencePacket[], purpose: 'answer' | 'assessment' | 'question'): string[] {
   const errors = new Set<string>();
   if (value.sections.length !== focus.length || new Set(value.sections.map(row => row.section_id)).size !== focus.length
     || value.sections.some(row => !focus.includes(row.section_id))) errors.add('review_section_accounting');
-  const allowed = new Set(packets.filter(packet => !packet.incomplete && packet.excerpt.length).map(packet => packet.evidence_id));
+  const allowed = new Set(packets.filter(packet => !packet.incomplete && packet.excerpt.length)
+    .flatMap(packet => packet.references.map(ref => ref.evidence_id)));
   for (const row of value.sections) {
     const section = sections[row.section_id];
     if (!row.basis.trim()) errors.add('review_basis_empty');

@@ -540,8 +540,8 @@ test("citation existence accepts shared names, resolves directory context and ig
     const invalid = await validate("构建后可能有 `dist/main.js`，尚未核实；参见 `src/entry.ts:2-999`。");
     assert.equal(invalid.errors.length, 2);
     assert.deepEqual(invalid.evidence, []);
-    assert.match(withCitationNotice(invalid.text, invalid.errors), /引用未核实/);
-    assert.match(withCitationNotice("See `missing.ts`.", ["unknown_path:missing.ts"]), /Unverified references/);
+    assert.match(withCitationNotice(invalid.text, invalid.errors, 'zh-CN'), /引用未核实/);
+    assert.match(withCitationNotice("See `missing.ts`.", ["unknown_path:missing.ts"], 'en'), /Unverified references/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -626,7 +626,7 @@ test("conversation service displays unverified replies without reinserting them 
       reply(originalAnswer), reply(originalAnswer), reply(originalAnswer),
       (input) => {
         assert.equal(JSON.stringify(input.messages).includes(originalAnswer), false, 'Unverified repository claims must not enter trusted session history');
-        assert.match(visible, /引用未核实/);
+        assert.match(visible, /Unverified references/); // Program notice follows displayLanguage, not answer prose.
         const current = input.messages.at(-1);
         assert.equal(current?.role, "user");
         assert.ok(current && Array.isArray(current.content));

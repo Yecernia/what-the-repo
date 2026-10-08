@@ -1,4 +1,5 @@
 import { runAbortCode, executionErrorCode } from './execution-error.js';
+import { normalizeDisplayLanguage, projectDisplayLanguage } from '../domain/display-language.js';
 import { CONFIRMED_LESSON_TASK, currentConfirmedLesson, confirmedLessonSourceId, isConfirmedLessonSource } from '../domain/confirmed-lesson.js';
 import { acquireRepositoryReadLease, type RepositoryReadLease } from '../persistence/repository-read-lease.js';
 import { runtimeConfig } from '../admin/runtime-config.js';
@@ -788,7 +789,7 @@ export class ConversationService {
           && reviewed.coverage?.complete !== false && reviewed.answerCoverage?.complete !== false
           && reviewed.issues.length > 0 && reviewed.issues.every(issue => issue.subject === 'assessment_feedback');
         repairs.push({ block_kind: block.kind, validation_errors: block.validation_errors,
-          packet_limit: MAX_REVIEW_PACKETS, packet_count: block.evidence.length,
+          packet_limit: MAX_REVIEW_PACKETS, packet_count: block.packet_coverage?.packets.length ?? 0,
           unread_ranges: block.packet_coverage?.packets.filter(packet => packet.incomplete),
           review_status: reviewed?.status, issues: reviewed?.issues,
           feedback_repair_allowed: feedbackRepairAllowed,
@@ -798,7 +799,7 @@ export class ConversationService {
               : 'Only the assessment owner may repair feedback. Keep its judgment and evidence fixed; use the registered question conditions and remove unsupported mechanism restatements about other goals. Never borrow the new question evidence.'
             : 'Read the exact supporting ranges and revise the claim if needed. A claim about the only implementation or all other files needs repository-wide evidence: narrow that claim to the inspected scope, rather than retaining its universal wording after reducing citations. Keep the lesson focused on the requested targets; remove unnecessary detours, never a requested explanation. Cite the actual behavior, not a nearby symbol.' });
         if (preflightDiagnostics.length < 24) preflightDiagnostics.push({ attempt, block_kind: block.kind,
-          validation_errors: block.validation_errors, packet_count: block.evidence.length,
+          validation_errors: block.validation_errors, packet_count: block.packet_coverage?.packets.length ?? 0,
           coverage_reasons: block.packet_coverage?.reasons, review_status: reviewed?.status,
           issue_kinds: reviewed?.issues.map(issue => issue.kind) });
       }
@@ -863,6 +864,9 @@ export class ConversationService {
         result = { ...result, text: '', stopReason: 'conversation_reply_invalid' };
         candidates.project = null; assessment.value = null; pendingLearningAction.value = null;
       }
+      const proposedAction = pendingLearningAction.value;
+      const noticeLanguage = normalizeDisplayLanguage(input.displayLanguage ?? projectDisplayLanguage(project));
+      const chinese = noticeLanguage === 'zh-CN';
       if (userMessage.learning_action_result || result.stopReason !== 'completed' || reply.value?.kind === 'unavailable') {
         pendingLearningAction.value = null;
         if (reply.value?.kind === 'unavailable') assessment.value = null;
@@ -880,8 +884,10 @@ export class ConversationService {
       let question = result.stopReason === 'completed' && reply.value?.kind !== 'unavailable' ? reply.value?.question : null;
       if (question) visibleText = [visibleText, question.prompt].filter(Boolean).join('\n\n');
       const reviewSignal = input.signal && runSignal ? AbortSignal.any([input.signal, runSignal]) : input.signal ?? runSignal;
-      const prepared = reply.value?.kind === 'unavailable'
-        ? { validation: { text: visibleText, evidence: [], errors: [], unresolved: [] }, blocks: [], errors: ['conversation_reply_unavailable'] }
+      // Program failure notices carry no model-authored repository claims.
+      const prepared = result.stopReason !== 'completed' || reply.value?.kind === 'unavailable'
+        ? { validation: { text: visibleText, evidence: [], errors: [], unresolved: [] }, blocks: [],
+          errors: reply.value?.kind === 'unavailable' ? ['conversation_reply_unavailable'] : [] }
         : await prepareReplyEvidence({ reply: result.stopReason === 'completed' && reply.value ? reply.value
             : { kind: 'answer', text: visibleText, question: null, evidenceBlocks: [] }, text: visibleText,
           getSnapshot, snapshotId: capturedSnapshotId, exposed: exposedEvidence, projectId: input.projectId, store: this.store,
@@ -945,7 +951,7 @@ export class ConversationService {
           validation_errors: review.validationErrors ?? [],
           blocks: evidenceBlocks.map((block, index) => ({ kind: block.kind, evidence: block.evidence, ...reviews[index] })),
         };
-        reviewedText = withEvidenceReviewNotice(validation.text, review);
+        reviewedText = withEvidenceReviewNotice(validation.text, review, noticeLanguage);
         evidenceReview = { status: review.status, supported: review.supported, summary: review.summary, issues: review.issues };
         if (review.status === "unverified") {
           validationErrors.push("citation_review_unavailable");
@@ -986,7 +992,7 @@ export class ConversationService {
         reviewedText = [assessmentEligible ? assessment.value?.statusText : '', ...visibleBlocks.map(block => block.text)]
           .filter(Boolean).join('\n\n');
         const visibleReviews = finalBlockReviews.filter((_, index) => visibleBlocks.includes(evidenceBlocks[index]!));
-        if (visibleReviews.length) reviewedText = withEvidenceReviewNotice(reviewedText, combineBlockReviews(visibleReviews));
+        if (visibleReviews.length) reviewedText = withEvidenceReviewNotice(reviewedText, combineBlockReviews(visibleReviews), noticeLanguage);
       }
       if (!assessmentEligible) {
         assessment.value = null;
@@ -1006,8 +1012,23 @@ export class ConversationService {
       const eligibleIds = new Set(evidenceBlocks.filter(block => block.commit_eligible).flatMap(block => block.evidence.map(row => row.stable_id)));
       acceptedEvidence = acceptedEvidence.filter(row => eligibleIds.has(row.stable_id));
       if (question) question.commit_eligibility = { deterministic: true, review: input.reviewEvidence === true ? 'passed' : 'disabled' };
-      if (!turnEligible) pendingLearningAction.value = null;
+      if (!turnEligible) {
+        pendingLearningAction.value = null;
+        if (proposedAction) {
+          const operation = isRouteAction(proposedAction)
+            ? chinese ? '本次学习路线未创建或更新，确认卡未生效。' : 'The learning route was not created or updated; no confirmation card is active.'
+            : chinese ? '本次学习操作未执行，确认卡未生效。' : 'The learning action was not performed; no confirmation card is active.';
+          const progress = isDeepStrictEqual(turnBaseline.study, project.study)
+            ? chinese ? '学习进度没有改变。' : 'Your learning progress is unchanged.'
+            : chinese ? '本轮已采纳的作答记录保留，学习步骤没有推进。' : 'Accepted answer records are retained; the learning step has not advanced.';
+          const failure = [operation, progress, chinese ? '可以重试这条消息。' : 'You can retry this message.'].join(' ');
+          reviewedText = evidenceBlocks.length ? [reviewedText, failure].filter(Boolean).join('\n\n') : failure;
+        }
+      }
       const receipt = pendingLearningAction.value ? learningActionReceipt(pendingLearningAction.value) : null;
+      if (!reviewedText.trim() && !receipt) reviewedText = chinese
+        ? '本轮回答尚未完成，学习进度没有改变。可以重试这条消息。'
+        : 'This reply could not be completed. Your learning progress is unchanged. You can retry this message.';
       validationErrors.splice(0, validationErrors.length, ...new Set(validationErrors));
       const totalUsage = combinedUsage(
         result.usage,
@@ -1016,7 +1037,7 @@ export class ConversationService {
       );
       const assistantMessage = answerMessage(
         project,
-        withCitationNotice(reviewedText, validationErrors.filter(error => !error.startsWith("citation_review_"))),
+        withCitationNotice(reviewedText, validationErrors, noticeLanguage),
         provider.model,
         result.stopReason,
         Date.now() - startedAt,

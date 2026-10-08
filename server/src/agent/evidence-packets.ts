@@ -19,7 +19,7 @@ export interface EvidenceCoverage {
   complete: boolean;
   citations?: CitationCoverage;
   /** read means at least one source line was included; actual ranges report how much. */
-  packets: Array<Omit<EvidencePacket, 'excerpt' | 'label'> & { read: boolean }>;
+  packets: Array<Omit<EvidencePacket, 'excerpt'> & { read: boolean }>;
   reasons: Array<'budget_exceeded' | 'read_failed' | 'range_unavailable' | 'snapshot_mismatch' | 'invalid_reference' | 'missing_citation'>;
 }
 
@@ -39,8 +39,8 @@ export function canonicalEvidence(rows: EvidenceRef[]): EvidenceRef[] {
 }
 
 export interface EvidencePacket {
-  evidence_id: string;
-  label: string;
+  /** Original references share source text without sharing their provenance scope. */
+  references: Array<{ evidence_id: string; label: string; start_line: number; end_line: number | null }>;
   path: string;
   snapshot_id: string;
   requested_start_line: number;
@@ -52,6 +52,38 @@ export interface EvidencePacket {
   reason: "budget_exceeded" | "read_failed" | "range_unavailable" | "snapshot_mismatch" | null;
   selected: boolean;
   budget: 'packet' | 'lines' | 'characters' | null;
+}
+
+/** Plan overlapping reads per snapshot/path, preserving every original reference.
+ * Disjoint ranges never pull in unrequested source between them. */
+function planEvidencePackets(evidence: EvidenceRef[], snapshotId: string): EvidencePacket[] {
+  const packets: EvidencePacket[] = [];
+  for (const row of canonicalEvidence(evidence.map(row => ({ ...row, snapshot_id: row.snapshot_id ?? snapshotId })))) {
+    const start = Math.max(1, row.start_line ?? 1);
+    const reference = { evidence_id: row.stable_id, label: row.label, start_line: start, end_line: row.end_line };
+    const previous = packets.at(-1);
+    if (previous && previous.snapshot_id === row.snapshot_id && previous.path === row.path
+      && start <= (previous.requested_end_line ?? Infinity)) {
+      previous.references.push(reference);
+      previous.requested_end_line = previous.requested_end_line === null || row.end_line === null
+        ? null : Math.max(previous.requested_end_line, row.end_line);
+    } else {
+      packets.push({ references: [reference], path: row.path, snapshot_id: row.snapshot_id!,
+        requested_start_line: start, requested_end_line: row.end_line,
+        actual_start_line: null, actual_end_line: null, excerpt: [], incomplete: false, reason: null,
+        selected: false, budget: null });
+    }
+  }
+  return packets;
+}
+
+/** A reference may only prove text inside its own original range, even when its
+ * physical packet includes neighboring references. */
+export function referenceExcerpts(packet: EvidencePacket, evidenceId: string): string[] {
+  if (packet.incomplete || packet.actual_start_line === null || packet.actual_end_line === null) return [];
+  return packet.references.filter(ref => ref.evidence_id === evidenceId).flatMap(ref =>
+    ref.start_line >= packet.actual_start_line! && (ref.end_line ?? packet.actual_end_line!) <= packet.actual_end_line!
+      ? [packet.excerpt.slice(ref.start_line - packet.actual_start_line!, (ref.end_line ?? packet.actual_end_line!) - packet.actual_start_line! + 1).join('\n')] : []);
 }
 
 /** Source text, never graph labels, establishes coverage. Budgets apply to the whole packet set. */
@@ -66,31 +98,26 @@ export async function loadEvidencePackets(input: {
 }): Promise<{ packets: EvidencePacket[]; incomplete: boolean; coverage: EvidenceCoverage }> {
   let linesLeft = Math.max(0, Math.min(1200, input.maxLines ?? 1200));
   let charsLeft = Math.max(0, Math.min(60_000, input.maxCharacters ?? 60_000));
-  const packets: EvidencePacket[] = [];
-  for (const [index, row] of canonicalEvidence(input.evidence).entries()) {
+  const packets = planEvidencePackets(input.evidence, input.snapshotId);
+  for (const [index, packet] of packets.entries()) {
     input.signal?.throwIfAborted();
-    const start = Math.max(1, row.start_line ?? 1);
-    const packet: EvidencePacket = {
-      evidence_id: row.stable_id, label: row.label, path: row.path, snapshot_id: row.snapshot_id ?? input.snapshotId,
-      requested_start_line: start, requested_end_line: row.end_line,
-      actual_start_line: null, actual_end_line: null, excerpt: [], incomplete: false, reason: null,
-      selected: index < MAX_REVIEW_PACKETS, budget: null,
-    };
-    packets.push(packet);
-    if (row.snapshot_id && row.snapshot_id !== input.snapshotId) {
+    const start = packet.requested_start_line;
+    const endLine = packet.requested_end_line;
+    packet.selected = index < MAX_REVIEW_PACKETS;
+    if (packet.snapshot_id !== input.snapshotId) {
       packet.incomplete = true; packet.reason = "snapshot_mismatch"; continue;
     }
     if (!packet.selected) {
       packet.incomplete = true; packet.reason = 'budget_exceeded'; packet.budget = 'packet'; continue;
     }
     let offset = start;
-    while (row.end_line === null || offset <= row.end_line) {
+    while (endLine === null || offset <= endLine) {
       input.signal?.throwIfAborted();
       if (linesLeft <= 0 || charsLeft <= 0) { packet.reason = "budget_exceeded"; packet.budget = linesLeft <= 0 ? 'lines' : 'characters'; break; }
-      const end = Math.min(row.end_line ?? Number.MAX_SAFE_INTEGER, offset + Math.min(400, linesLeft) - 1);
+      const end = Math.min(endLine ?? Number.MAX_SAFE_INTEGER, offset + Math.min(400, linesLeft) - 1);
       const requestedCount = end - offset + 1;
       try {
-        const page = await input.store.readSourceLines(input.projectId, input.snapshotId, row.path, offset, end);
+        const page = await input.store.readSourceLines(input.projectId, input.snapshotId, packet.path, offset, end);
         input.signal?.throwIfAborted();
         for (const line of page.lines.slice(0, end - offset + 1)) {
           if (line.length + 1 > charsLeft) { packet.reason = "budget_exceeded"; packet.budget = 'characters'; break; }
@@ -99,7 +126,7 @@ export async function loadEvidencePackets(input: {
         offset = start + packet.excerpt.length;
         if (packet.reason) break;
         if (page.lines.length < requestedCount && !page.truncated) {
-          if (!packet.excerpt.length || (row.end_line !== null && offset <= row.end_line)) packet.reason = "range_unavailable";
+          if (!packet.excerpt.length || (endLine !== null && offset <= endLine)) packet.reason = "range_unavailable";
           break;
         }
         if (!page.lines.length) { packet.reason = "range_unavailable"; break; }
@@ -110,10 +137,14 @@ export async function loadEvidencePackets(input: {
     }
     packet.actual_start_line = packet.excerpt.length ? start : null;
     packet.actual_end_line = packet.excerpt.length ? start + packet.excerpt.length - 1 : null;
+    // An open-ended read can reach EOF before a finite reference in the same
+    // packet. EOF does not establish that missing finite range.
+    if (!packet.reason && packet.references.some(ref => ref.start_line > (packet.actual_end_line ?? 0)
+      || ref.end_line !== null && ref.end_line > (packet.actual_end_line ?? 0))) packet.reason = 'range_unavailable';
     packet.incomplete = packet.reason !== null;
   }
   const incomplete = packets.some(packet => packet.incomplete);
   return { packets, incomplete, coverage: { complete: !incomplete,
-    packets: packets.map(({ excerpt, label, ...packet }) => ({ ...packet, read: excerpt.length > 0 })),
+    packets: packets.map(({ excerpt, ...packet }) => ({ ...packet, read: excerpt.length > 0 })),
     reasons: [...new Set(packets.flatMap(packet => packet.reason ? [packet.reason] : []))] } };
 }

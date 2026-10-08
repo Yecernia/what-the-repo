@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm';
 import { createModels, type Api, type Context, type Model } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import type { ProductStore } from '../persistence/store.js';
-import type { EvidencePacket } from './evidence-packets.js';
+import { referenceExcerpts, type EvidencePacket } from './evidence-packets.js';
 import { reviewAnswerEvidence, unavailableEvidenceReview } from './citation-review.js';
 import { answerReviewSections, directReviewGroups, validateDirectReview, type DirectReviewValue, type ReviewSection } from './direct-citation-review.js';
 import { withEvidenceReviewNotice } from './citations.js';
@@ -22,7 +22,7 @@ function payload(context: Context): Payload {
 }
 // All faux conclusions are supplied outcomes. These tests verify protocols and gates, never semantic model accuracy.
 function positive(input: Payload): DirectReviewValue { return { sections: input.focus_section_ids.map(section_id => ({ section_id, outcome: 'supported', basis: 'Controlled source comparison.',
-  evidence_ids: [input.evidence.find(packet => !packet.incomplete && packet.excerpt.length)?.evidence_id ?? 'missing'], issues: [] })) }; }
+  evidence_ids: [input.evidence.find(packet => !packet.incomplete && packet.excerpt.length)?.references[0]?.evidence_id ?? 'missing'], issues: [] })) }; }
 function gap(input: Payload): DirectReviewValue { return { sections: input.focus_section_ids.map(section_id => ({ section_id, outcome: 'insufficient_evidence', basis: 'The source is missing.', evidence_ids: [],
   issues: [{ claim: input.final_answer.slice(input.answer_sections[section_id]!.start, input.answer_sections[section_id]!.end), actual_assertion: 'Controlled source assertion.', conditions: 'Original conditions.', reason: 'Missing evidence.', kind: 'insufficient_evidence' }] })) }; }
 function negative(input: Payload, claim = text, proof: Record<string, unknown> | null = { evidence_id: 'entry', excerpt: 'return input;', claim_scope: 'javascript_runtime', evidence_scope: 'javascript_runtime' }): DirectReviewValue {
@@ -37,7 +37,7 @@ function runtime(response: (input: Payload, call: number) => Record<string, unkn
 }
 test('unavailable notice localizes without exposing private errors', () => {
   for (const answer of ['这是仓库说明。', 'Repository explanation.']) { const review = unavailableEvidenceReview('secret <script>', answer);
-    assert.doesNotMatch(withEvidenceReviewNotice(answer, review), /secret|script/); assert.equal(review.stopReason, 'review_unavailable'); }
+    assert.doesNotMatch(withEvidenceReviewNotice(answer, review, 'en'), /secret|script/); assert.equal(review.stopReason, 'review_unavailable'); }
 });
 test('direct review contains complete original once and original source packets', async () => {
   const rt = runtime(input => { assert.equal(input.task_phase, 'direct_review'); assert.equal(input.final_answer, text);
@@ -241,16 +241,25 @@ for (const [name, answer, evidence, bad] of [
   ['complete exception positive', completeFixture.corrected_full_output, completeFixture.evidence, null],
   ['complete counterfactual negative', counterfactualFixture.retained_observations[0].observed_first_output, counterfactualFixture.retained_observations[0].evidence, counterfactualFixture.retained_observations[0].expected_review.required_issue_span],
 ] as const) test('fixed full original transport and controlled verdict: ' + name, async () => {
-  const rt = runtime(input => { assert.equal(input.final_answer, answer); assert.deepEqual(input.evidence.map(packet => packet.excerpt), evidence.map((ref: { excerpt: string[] }) => ref.excerpt));
+  const source = new Map<string, string>();
+  for (const ref of evidence) ref.excerpt.forEach((line: string, i: number) => {
+    const key = `${ref.path}:${ref.start_line + i}`;
+    if (source.has(key)) assert.equal(source.get(key), line, 'overlapping frozen excerpts agree');
+    source.set(key, line);
+  });
+  const rt = runtime(input => { assert.equal(input.final_answer, answer);
+    for (const ref of evidence) assert.ok(input.evidence.flatMap(packet => referenceExcerpts(packet, ref.stable_id)).includes(ref.excerpt.join('\n')), 'every original excerpt remains available within its original reference');
     assert.deepEqual(input.answer_sections.map(section => answer.slice(section.start, section.end)).join(''), answer);
     if (!bad || !input.focus_section_ids.some(id => answer.slice(input.answer_sections[id]!.start, input.answer_sections[id]!.end).includes(bad))) return positive(input);
     const packet = input.evidence.find(packet => packet.excerpt.length && !packet.incomplete)!;
-    return negative(input, bad, { evidence_id: packet.evidence_id, excerpt: packet.excerpt.join('\n').slice(0, 600), claim_scope: 'javascript_runtime', evidence_scope: 'javascript_runtime' });
+    return negative(input, bad, { evidence_id: packet.references[0]!.evidence_id, excerpt: referenceExcerpts(packet, packet.references[0]!.evidence_id)[0]!.slice(0, 600), claim_scope: 'javascript_runtime', evidence_scope: 'javascript_runtime' });
   });
   const result = await reviewAnswerEvidence({ ...base, text: answer, evidence: evidence.map((ref: Record<string, unknown>) => ({ ...ref, snapshot_id: 'snapshot' })),
     store: { readSourceLines: async (_p: string, _s: string, path: string, start: number, end: number) => {
-      const ref = evidence.find((ref: { path: string; start_line: number; end_line: number }) => ref.path === path && ref.start_line === start && ref.end_line === end);
-      assert.ok(ref, 'original frozen ranges only'); return { lines: ref.excerpt, truncated: false };
+      const lines = Array.from({ length: end - start + 1 }, (_, i) => {
+        const line = source.get(`${path}:${start + i}`); assert.notEqual(line, undefined, 'original frozen source lines only'); return line!;
+      });
+      return { lines, truncated: false };
     } } as unknown as ProductStore, modelRuntime: rt.modelRuntime });
   assert.equal(result.completed, true); assert.equal(result.supported, !bad); if (bad) assert.equal(result.issues[0]!.claim, bad);
   assert.ok(rt.calls() <= 4);

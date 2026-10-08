@@ -61,7 +61,7 @@ async function fixture(t: TestContext, options: { steps?: number; failBeforeProm
     return { ...unavailableEvidenceReview(), status: 'reviewed', completed: true, supported: true,
       summary: 'Controlled supported review.', stopReason: 'completed', coverage: loaded.coverage,
       answerCoverage: { complete: true, sections: [], omitted_material: [] },
-      acceptedEvidenceIds: loaded.packets.map(packet => packet.evidence_id) };
+      acceptedEvidenceIds: loaded.packets.flatMap(packet => packet.references.map(ref => ref.evidence_id)) };
   };
   const originalRun = ConversationService.prototype.run;
   t.mock.method(ConversationService.prototype, 'run', async function (this: ConversationService, input: Parameters<ConversationService['run']>[0]) {

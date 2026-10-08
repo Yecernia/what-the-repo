@@ -52,7 +52,7 @@ export async function runAssessmentStages(input: { question: TeachingQuestion; t
   const stages: AssessmentStageTrace[] = [];
   const signal = AbortSignal.any([...(input.signal ? [input.signal] : []), AbortSignal.timeout(input.feedbackRepair ? 20_000 : 120_000)]);
   const common = { skillId: 'understanding-assessment' as const, inputSchemaId: 'understanding-assessment-input-v7',
-    outputSchemaId: 'understanding-assessment-output-v6', contextBuilderId: 'understanding-assessment-context-v13', modelRuntime: input.modelRuntime,
+    outputSchemaId: 'understanding-assessment-output-v6', contextBuilderId: 'understanding-assessment-context-v14', modelRuntime: input.modelRuntime,
     thinkingLevel: 'medium' as const, signal };
   const validate = (value: AssessmentValue, checkLockedScope = false) => {
     const errors = targetResultValidationErrors(input.question, input.answerParts, value.target_results, input.allowedIds, input.priorSupports);

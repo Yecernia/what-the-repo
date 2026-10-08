@@ -17,6 +17,13 @@ export async function prepareReplyEvidence(input: {
   store: ProductStore;
   signal?: AbortSignal;
 }) {
+  // A receipt-only action has no authored claim to validate. Its permission,
+  // snapshot and confirmation checks belong to the learning-action state gate.
+  if (input.reply.kind === 'action' && !input.text.trim() && !input.reply.text.trim()
+    && !input.reply.question && !input.reply.evidenceBlocks?.length) {
+    return { validation: { text: '', evidence: [], unresolved: [], errors: [],
+      coverage: { parsed: 0, resolved: 0, references: [] } }, blocks: [] as ReplyEvidenceBlock[], errors: [] as string[] };
+  }
   const validation = await validateAnswerCitations({ text: input.text, snapshot: null, getSnapshot: input.getSnapshot,
     snapshotId: input.snapshotId, exposed: input.exposed, projectId: input.projectId, store: input.store });
   const blocks: ReplyEvidenceBlock[] = [];

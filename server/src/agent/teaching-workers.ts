@@ -143,7 +143,8 @@ export async function runUnderstandingAssessment(input: {
     && bound.path === row.path && bound.start_line === row.start_line && bound.end_line === row.end_line));
   const packetResult = await loadEvidencePackets({ evidence: evidence.map(row => ({ ...row, snapshot_id: input.snapshot.snapshot_id })), projectId: input.project.project_id, snapshotId: input.snapshot.snapshot_id, store: input.store, signal: input.signal });
   const packets = packetResult.packets;
-  const allowedIds = new Set(packets.filter(packet => !packet.incomplete).map((packet) => packet.evidence_id));
+  const allowedIds = new Set(packets.filter(packet => !packet.incomplete && packet.excerpt.length)
+    .flatMap(packet => packet.references.map(ref => ref.evidence_id)));
   const { context: supportContext, presentedSupports, omittedCount: supportOmittedCount } = boundedQuestionSupportContext(priorSupports);
   const sourceContext = structuredClone({
     registered_question: { question_id: question.question_id, created_message_id: question.created_message_id,
@@ -165,6 +166,7 @@ export async function runUnderstandingAssessment(input: {
           current_result_duty: 'Assess ONLY this current answer contribution. Unchanged historical proof => not_addressed, empty current answer_spans/evidence_ids. The program retains prior proof. Never copy prior answer text into current spans.',
         })) },
       evidence: packets,
+      evidence_format: 'Source excerpts are shared by overlapping references. Use original references[].evidence_id within its own start_line/end_line scope; sharing a packet does not broaden a reference.',
       qualified_prior_question_support: supportContext,
       prior_support_omitted_count: supportOmittedCount,
       current_answer_parts: answerParts,

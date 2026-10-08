@@ -176,9 +176,10 @@ export function displayForEvent(input: {
       const readable = toolLabel(input.summary);
       return {
         kind: "tool",
-        stage: "tool",
+        stage: name === 'submit_conversation_reply' ? 'answer' : 'tool',
         label: safeLabel,
-        text: `准备调用“${readable}”，获取与问题相关的只读证据。`,
+        text: name === 'submit_conversation_reply' ? '正在检查回答内容，尚未保存本轮结果。'
+          : `准备调用“${readable}”，获取与问题相关的只读证据。`,
         ...(name ? { toolName: name } : {}),
         status: "running",
         visible: true,
@@ -189,7 +190,7 @@ export function displayForEvent(input: {
       const readable = toolLabel(input.summary);
       return {
         kind: "tool",
-        stage: "tool",
+        stage: name === 'submit_conversation_reply' ? 'answer' : 'tool',
         label: safeLabel,
         text: input.isError
           ? `“${readable}”没有完成，正在调整查询方向。`

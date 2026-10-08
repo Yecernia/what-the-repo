@@ -91,6 +91,67 @@ function mockTurn(t: TestContext, propose: boolean, text = '收到。') {
   });
 }
 
+test('UJ-01 receipt-only route proposals survive broad exploration and remain pending until confirmation', async t => {
+  for (const reviewEvidence of [false, true]) await t.test(String(reviewEvidence), async t => {
+    const f = await fixture(t, undefined, undefined, async () => { assert.fail('no prose to review'); });
+    const bound = structuredClone(snapshot);
+    bound.graph.layers.push({ id: 'layer:entry', name: 'Entry', responsibility: 'Input', component_ids: [], certainty: 'verified', evidence: [
+      { stable_id: 'source:all', label: 'source', path: 'src/entry.ts', start_line: 1, end_line: 29, kind: 'symbol' },
+    ] });
+    await f.store.saveSnapshot(f.project.project_id, bound);
+    f.project.study.dynamic_learning_plan![0]!.evidence_refs = ['source:all'];
+    normalizeTargetCoverage(f.project);
+    f.project.study.teaching_question = null;
+    await f.store.saveProject(f.project);
+    t.mock.method(f.store, 'listSourceFiles', async () => ['src/entry.ts']);
+    t.mock.method(f.store, 'readSourceLines', async (_p: string, _s: string, path: string, start: number, end: number) => ({ path, start_line: start, end_line: end, total_lines: 29, lines: Array.from({ length: end - start + 1 }, () => 'source'), truncated: false }));
+    const before = structuredClone((await f.load()).study);
+    scriptedTurn(t, async runtime => {
+      await interpret(runtime, 'control');
+      await runtime.tools.find(tool => tool.name === 'get_learning_context')!.execute('context', {});
+      for (let i = 1; i <= 14; i++) await runtime.tools.find(tool => tool.name === 'read_source_excerpt')!.execute(`read:${i}`, { path: 'src/entry.ts', offset: i, limit: 1 });
+      await runtime.tools.find(tool => tool.name === 'propose_learning_action')!.execute('route', { action: 'start_learning_route', target_kind: 'repository' });
+      await runtime.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('reply', { kind: 'action', text: '' });
+    }, '', 'completed', false);
+    const result = (await f.service.run({ ...f.base, content: '请生成学习路线。', reviewEvidence }))!;
+    assert.equal(result.assistant_message.learning_action?.status, 'pending');
+    assert.equal(result.assistant_message.learning_action.execution_policy, 'confirm');
+    assert.deepEqual(result.validation_errors, []);
+    assert.deepEqual(result.assistant_message.content_parts?.evidence_blocks, []);
+    assert.deepEqual((await f.load()).study, before);
+    assert.equal(result.state_changed, false);
+  });
+});
+
+test('UJ-02 rejected receipt-only actions explain the failed operation in the conversation language', async t => {
+  for (const failure of ['budget_exhausted', 'unavailable']) for (const language of ['zh-CN', 'en']) for (const reviewEvidence of [false, true]) await t.test(`${failure}:${language}:${reviewEvidence}`, async t => {
+    const f = await fixture(t);
+    await f.store.updateProject(f.base.projectId, f.base.owner.owner_id, row => { row.display_language = language; normalizeTargetCoverage(row); row.study.teaching_question = null; });
+    const before = structuredClone((await f.load()).study);
+    scriptedTurn(t, async runtime => {
+      await interpret(runtime, 'control');
+      await runtime.tools.find(tool => tool.name === 'propose_learning_action')!.execute('route', { action: 'start_learning_route', target_kind: 'repository' });
+      await runtime.tools.find(tool => tool.name === 'submit_conversation_reply')!.execute('reply', { kind: failure === 'unavailable' ? 'unavailable' : 'action', text: '' });
+    }, '', failure === 'unavailable' ? 'completed' : failure, false);
+    const result = (await f.service.run({ ...f.base, content: '```js\nroute()\n```', reviewEvidence }))!;
+    assert.equal(result.assistant_message.learning_action ?? null, null);
+    assert.equal(result.assistant_message.content_parts?.action_receipt, null);
+    assert.equal(result.state_changed, false);
+    assert.deepEqual((await f.load()).study, before);
+    const text = result.assistant_message.content;
+    if (language === 'en') {
+      assert.match(text, /learning route.*not/i);
+      assert.match(text, /unchanged.*retry/is);
+      assert.doesNotMatch(text, /[\u3400-\u9fff]/u);
+    } else {
+      assert.match(text, /学习路线.*未/);
+      assert.match(text, /没有改变.*重试/s);
+    }
+    assert.doesNotMatch(text, /Some claims|部分说明尚未通过证据核对/);
+    assert.equal((await f.load()).messages.at(-1)?.content, text);
+  });
+});
+
 async function proposeSkip(options: PiAgentRunOptions) {
   return options.tools.find(tool => tool.name === 'propose_learning_action')!.execute('skip',
     { action: 'advance_learning_step', advance_mode: 'skip' });
@@ -994,7 +1055,7 @@ test('unavailable abandons a pending confirmation proposal after review failure 
   assert.equal(result.assistant_message.teaching_question, undefined);
   assert.equal(result.user_message.content, content);
   assert.equal(result.user_message.learning_action_result, undefined);
-  assert.match(result.assistant_message.content, /尚未完成/);
+  assert.match(result.assistant_message.content, /学习操作未执行/);
   outage = false;
   scriptedTurn(t, async options => {
     await interpret(options, [{ kind: 'control', text: '跳过这一步，' }, { kind: 'explain', text: '同时解释一下刚才的例子。' }]);
@@ -1079,7 +1140,7 @@ test('offending assessment prose has one owner repair, preserves its judgment an
       assert.deepEqual(saved.study, baseline);
       assert.equal(reply.learning_action ?? null, null);
       assert.equal(reply.teaching_question, undefined);
-      assert.match(reply.content, /尚未完成/);
+      assert.match(reply.content, /学习操作未执行/);
     }
   });
 });
@@ -1339,7 +1400,8 @@ test('R3 packet-budget rejection spends no review request and a focused second s
   const f = await fixture(t, undefined, undefined, async input => { reviewed.push(input); return supportedReview(input); });
   const evidence = await exposeRepairSources(t, f, 14);
   const sensitive = 'PRIVATE_CANDIDATE_ONLY_7b812';
-  const references = evidence.map(row => '`' + row.path + ':1`').join('、');
+  // The extra overlapping citation has its own identity but shares one source packet.
+  const references = evidence.map(row => '`' + row.path + ':1`').join('、') + '、`src/repair0.ts:1-2`';
   scriptedTurn(t, async runtime => {
     const tool = (name: string) => runtime.tools.find(tool => tool.name === name)!;
     await tool('get_learning_context').execute('context', {});
@@ -1363,7 +1425,7 @@ test('R3 packet-budget rejection spends no review request and a focused second s
   assert.equal(trace.submission_diagnostics[0].code, 'reply_evidence_repair_required');
   assert.equal(trace.submission_diagnostics[0].attempt, 1);
   assert.match(trace.submission_diagnostics[0].candidate_sha256, /^[a-f0-9]{64}$/);
-  assert.ok(trace.evidence_preflight.some((row: { attempt: number; coverage_reasons?: string[] }) => row.attempt === 1 && row.coverage_reasons?.includes('budget_exceeded')));
+  assert.ok(trace.evidence_preflight.some((row: { attempt: number; packet_count: number; coverage_reasons?: string[] }) => row.attempt === 1 && row.packet_count === 14 && row.coverage_reasons?.includes('budget_exceeded')));
   assert.doesNotMatch(JSON.stringify(trace), new RegExp(sensitive));
 });
 

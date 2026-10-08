@@ -411,7 +411,8 @@ export function createConversationTools(
   };
   const unavailable = () => {
     candidateProject.study = structuredClone(initialStudy);
-    context.pendingLearningAction.value = null;
+    // Retain the unexecuted proposal until finalization can explain its failure.
+    // An unavailable reply is never eligible to publish or execute this card.
     context.assessment.value = null;
     questionCandidate = null;
     if (context.reply) context.reply.value = { kind: 'unavailable',
@@ -1153,7 +1154,7 @@ export function createConversationTools(
 
   const submitReply = call(
     'submit_conversation_reply',
-    '正在核对回答与学习状态',
+    '正在核对回答',
     'Finish every reply with this tool. For answer, text is ordinary conversation. For lesson, text is explanation only: put the formal check solely in question, or reference a prepared question_id; never echo it in text. For assessment/action, OMIT text and use supplement only for a current independent explanation request; the program supplies assessment and receipt. Minimal examples: {kind:"assessment"} after grading an answer with no follow-up, {kind:"action"} after proposing a route. Never omit a requested answer or replace the assessment judgment. Schema and content failures share three submissions per turn. Never ask for a resend to repair registration.',
     REPLY_INPUT,
     async (_id, params, signal) => {
