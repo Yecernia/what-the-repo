@@ -32,7 +32,7 @@ function frame<T>(wire: string, event: string): T {
 type ResultFrame = { user_message: Message; assistant_message: Message; state_changed: boolean;
   teaching_phase: string; tools_used: string[]; validation_errors: string[] };
 
-async function fixture(t: TestContext, options: { steps?: number; failBeforePrompt?: boolean } = {}) {
+async function fixture(t: TestContext, options: { steps?: number; failBeforePrompt?: boolean; disconnectFirstLesson?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'wtr-confirmed-lesson-api-'));
   const store = new FileStore(root); await store.init();
   const config = { root, dataDir: root, host: '127.0.0.1', port: 8398, nodeEnv: 'test',
@@ -75,6 +75,9 @@ async function fixture(t: TestContext, options: { steps?: number; failBeforeProm
     assert.equal(input.userMessage, CONFIRMED_LESSON_TASK);
     if (options.failBeforePrompt) throw new Error('Controlled provider failure before source persistence');
     await input.beforePrompt?.(input.signal);
+    if (options.disconnectFirstLesson && runtimeCalls === 1) {
+      throw Object.assign(new Error('Controlled terminal disconnect after source persistence'), { code: 'client_network_error' });
+    }
     const tool = (name: string) => { const found = input.tools.find(row => row.name === name); assert.ok(found); return found; };
     await assert.rejects(tool('assess_understanding').execute('forbidden-assessment', {}), /no learner answer|cannot receive an assessment/i);
     await assert.rejects(tool('propose_learning_action').execute('forbidden-action', { action: 'advance_learning_step' }), /already confirmed|cannot propose another action/i);
@@ -250,4 +253,39 @@ test('provider failure before source persistence survives restart; only an expli
   assert.equal((await f.saved()).messages.some(row => row.lesson_request), false);
   assert.deepEqual(await f.store.listRunTraces(state.project_id, runId), originalTraces, 'retry must not overwrite first failed run');
   assert.equal((await f.store.listRunTraces(state.project_id, retryRun)).length, 1);
+});
+
+test('terminated lesson reports an interruption rather than a recoverable transport failure, including durable replay', async t => {
+  const f = await fixture(t, { disconnectFirstLesson: true }); const action = await f.decide('confirm');
+  assert.ok(action.outcome?.lesson_run_id); const runId = action.outcome.lesson_run_id;
+  const payload = { lesson_action_id: action.action_id, run_id: runId, review_evidence: true };
+  const first = await f.app.inject({ method: 'POST', url: `${f.base}/messages/stream`, headers: f.owner.headers, payload });
+  assert.equal(first.statusCode, 200);
+  const failure = frame<{ code: string }>(first.body, 'error');
+  assert.equal(failure.code, 'lesson_interrupted');
+  const before = await f.saved();
+  assert.equal(before.messages.filter(row => row.lesson_request).length, 1);
+  assert.equal(before.study.teaching_question, null);
+  const traces = await f.store.listRunTraces(before.project_id, runId);
+  assert.equal(traces[0]!.stop_reason, 'client_network_error', 'retain the actual cancellation cause');
+  for (const restart of [false, true]) {
+    if (restart) await f.restart();
+    for (const method of ['GET', 'POST'] as const) {
+      const replay = await f.app.inject({ method, url: method === 'GET' ? `${f.base}/runs/${runId}/stream?after=0` : `${f.base}/messages/stream`,
+        headers: f.owner.headers, ...(method === 'POST' ? { payload } : {}) });
+      assert.deepEqual(frame<{ code: string }>(replay.body, 'error'), failure);
+    }
+  }
+  assert.equal(f.counts().runtimeCalls, 1, 'reconnection cannot silently start another model run');
+  assert.deepEqual((await f.saved()).messages, before.messages);
+  const retry = await f.app.inject({ method: 'POST', url: `${f.base}/messages/stream`, headers: f.owner.headers,
+    payload: { ...payload, run_id: 'confirmed-lesson-disconnect-retry-0002', retry_run_id: runId } });
+  const result = frame<ResultFrame>(retry.body, 'result');
+  assert.ok(result.assistant_message.teaching_question);
+  assert.equal(f.counts().runtimeCalls, 2);
+  const after = await f.saved();
+  assert.equal(after.study.current_step, before.study.current_step);
+  assert.equal(after.study.teaching_question?.question_id, result.assistant_message.teaching_question!.question_id);
+  assert.equal(after.messages.filter(row => row.lesson_request).length, 1, 'retry replaces the interrupted source instead of duplicating it');
+  assert.deepEqual(await f.store.listRunTraces(before.project_id, runId), traces, 'first failure evidence remains intact');
 });

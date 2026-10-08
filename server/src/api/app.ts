@@ -1737,6 +1737,10 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     }, true);
   });
 
+  // A terminated lesson cannot be reconnected. Keep transport failures distinct so
+  // clients discard the old run and can explicitly retry instead of resuming forever.
+  const lessonTerminalCode = (code: string) => code === 'client_network_error' ? 'lesson_interrupted' : code;
+
   // Automatic lesson runs remain single attempts after the in-memory stream expires.
   // Durable messages carry completed lessons; a pre-source failure is in its run trace.
   const persistedLessonTerminal = async (ownerId: string, projectId: string, runId: string, actionId?: string): Promise<ConversationStreamTerminalFrame | null> => {
@@ -1758,7 +1762,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
       && project.messages.some(message => message.learning_action?.action_id === trace.lesson_action_id
         && message.learning_action?.status === 'executed' && message.learning_action?.outcome?.lesson_run_id));
     if (failure) {
-      const code = publicErrorCode(503, failure.stop_reason);
+      const code = lessonTerminalCode(publicErrorCode(503, failure.stop_reason));
       return { type: 'error', payload: { code, message: failureMessage(code) } };
     }
     return source ? { type: 'error', payload: { code: 'lesson_interrupted', message: failureMessage('lesson_interrupted') } } : null;
@@ -1863,11 +1867,12 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
           latency_ms: Date.now() - startedAt,
           created_at: nowIso(),
         }).catch(() => undefined);
+        const terminalCode = lessonActionId ? lessonTerminalCode(errorCode) : errorCode;
         conversationStreams.finish(streamRun, {
           type: "error",
           payload: {
-            message: failureMessage(errorCode),
-            code: errorCode,
+            message: failureMessage(terminalCode),
+            code: terminalCode,
           },
         });
       }
