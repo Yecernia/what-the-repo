@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef } from 'react';
-import { Ink } from './field-ink';
-import { smoothPath } from './pen-path';
+import { Ink, InkUnion } from './field-ink';
+import { limbOutline, smoothPath, type PenPoint } from './pen-path';
 import { arc, between, linger, pause, play, stayFor, type Point } from './field-wander';
 import type { Occasion, Season } from './occasions';
 
@@ -262,6 +262,39 @@ export function IcedDrink() {
   </g>;
 }
 
+const round = (value: number) => Math.round(value * 100) / 100;
+
+/**
+ * The drink beside the laptop in the desk drawing, matching the bench's: iced with a straw in summer, a mug of tea
+ * otherwise, which steams all day in winter and after dark in spring and autumn. Drawn with the bench drinks' shapes
+ * at desk scale (the lines kept as heavy as the desk's own), standing at `at` (the cup's bottom left). The iced drink
+ * keeps the bench's colours; the mug has a clay glaze of its own, so lifted to the mouth it never melts into the cream
+ * face.
+ * The straw leans towards the drinker. Steam is the bench's: the stylesheet animates it and stills it for reduced
+ * motion.
+ */
+export function DeskDrink({ season, at: [x, y] }: { season: Season; at: readonly [number, number] }) {
+  const k = .78, line = (desk: number) => round(desk / k);
+  const place = `translate(${round(x - 398 * k)} ${round(y - 290 * k)}) scale(${k})`;
+  if (season === 'summer') {
+    return <g transform={place}>
+      <path d={smoothPath([[399,263],[421,263],[419,290],[401,290]], true)} fill="var(--chat-bg, var(--bg))" />
+      <path d="M406 270 L401 251 L394.5 248.5" fill="none" stroke="var(--paint-straw-stripe)" strokeWidth={line(2.4)} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={smoothPath([[401,268],[419,268],[418,289],[402,289]], true)} fill="var(--paint-drink)" transform="translate(-2.2 -1.5)" />
+      <g fill="none" stroke="currentColor" strokeWidth={line(1.3)} strokeLinejoin="round">
+        <path d="M404 272 L410 271 L411 277 L405 278 Z" /><path d="M410.5 278.5 L416 277 L417.5 282.5 L412 284 Z" />
+      </g>
+      <Ink points={[[399,263],[421,263],[419,290],[401,290]]} width={line(2.6)} closed />
+    </g>;
+  }
+  return <g transform={place}>
+    <Ink points={[[398,272],[422,272],[419,290],[401,290]]} width={line(2.6)} closed fill="var(--chat-bg, var(--bg))" paint="var(--paint-mug)" shift={[-2.2, -1.5]} />
+    <path d="M421 276 C430 276 430 286 420 286" fill="none" stroke="currentColor" strokeWidth={line(2.3)} strokeLinecap="round" />
+    <g className={season === 'winter' ? 'field-steam' : 'field-steam field-night-only'} fill="none" stroke="currentColor" strokeWidth={line(1.5)} strokeLinecap="round">
+      <path d="M405 266 C401 260 409 256 405 249" /><path className="field-steam-second" d="M414 266 C410 260 418 256 414 249" />
+    </g>
+  </g>;
+}
 /**
  * The learner's outfit for the season, over the sweater (bench drawing): an open light cardigan over a cream top in
  * spring, a light short-sleeved tee in summer. Autumn keeps the film's green sweater; winter adds a scarf (below).
@@ -273,19 +306,55 @@ export function SeasonTop({ season }: { season: Season }) {
       <Ink points={[[326,219],[327,243]]} width={2.8} />
     </g>;
   }
-  if (season === 'summer') {
-    return <g>
-      {/* Short sleeves end halfway down the upper arm: bare below the hems, down the upper arm, round the elbow and
-          along the forearm to the hand; the other arm shows only a little above the lid. */}
-      <path d={smoothPath([[357,243],[389,245],[392,262],[386,278],[377,286],[364,288],[338,286],[329,276],[333,260],[352,260],[357,250]], true)}
-        fill="var(--paint-skin)" />
-      <path d={smoothPath([[273,233],[285,235],[281,245],[270,244]], true)} fill="var(--paint-skin)" />
-      <Ink points={[[355,242],[373,245],[391,244]]} width={3} />
-      <Ink points={[[272,232],[287,234]]} width={3} />
-      <Ink points={[[310,197],[325,204],[341,198]]} width={2.8} />
-    </g>;
-  }
+  if (season === 'summer') return <SummerTee />;
   return null;
+}
+
+/** Summer's learner in a real T-shirt, in place of the sweater (bench drawing): where each bare upper arm leaves its
+ * sleeve (`hem`, the arm's middle there), where it bends (`elbow`), its half-width, and where the forearm ends (behind
+ * the lid, so no hand shows); the sleeve's hem is `flare` either side of the arm's middle there, so the short sleeve
+ * stands off the arm. The left arm (on our right) goes on round the elbow to the laptop; of the other only the sleeve
+ * and a little of the bare arm show above the lid. */
+const TEE_ARMS = [
+  { hem: [379.9, 246.2], elbow: [386.5, 270.3], wrist: [334, 276], bare: 9, flare: 13 },
+  { hem: [277.8, 230], elbow: [268.5, 251], bare: 6.2, flare: 9.6 },
+] satisfies Array<{ hem: PenPoint; elbow: PenPoint; wrist?: PenPoint; bare: number; flare: number }>;
+/** A sleeve's hem straight across the arm: its end towards the body, then its outer end, `past` beyond each. */
+function teeHem({ hem, elbow, flare }: (typeof TEE_ARMS)[number], past = 0): [PenPoint, PenPoint] {
+  const length = Math.hypot(elbow[0] - hem[0], elbow[1] - hem[1]), [dx, dy] = [(elbow[0] - hem[0]) / length, (elbow[1] - hem[1]) / length];
+  const inward = Math.sign(325 - hem[0]), k = flare + past;
+  const end = (side: number): PenPoint => [Math.round((hem[0] + dy * side * k) * 10) / 10, Math.round((hem[1] - dx * side * k) * 10) / 10];
+  return [end(inward), end(-inward)];
+}
+const [RIGHT_HEM, LEFT_HEM] = TEE_ARMS.map(arm => teeHem(arm));
+/** The tee as one shape: a round neck, flatter shoulders than the sweater's, each seam a little dropped over the
+ * shoulder, from where a short sleeve angles out, wider at its straight hem than the arm; back up the sleeve's inside
+ * to a soft armpit, and the torso's own side runs on down from there, apart from the sleeve. */
+const TEE_BODY: PenPoint[] = [[305,196],[295,198.2],[285.6,202.4],[278.6,207.4],[272.6,215.4],[269.6,221.4],LEFT_HEM[1],LEFT_HEM[0],[288.6,238.4],[290,250],[282,268],[290,285],[298,293],[352,300],[371,292],[376,280],[377.6,266],[375.6,256],
+  [371,251.6],RIGHT_HEM[0],RIGHT_HEM[1],[393.4,236],[390.6,225.6],[385.4,215.4],[377.6,208.8],[367,203.4],[355,200.2],[344,198]];
+/** Each sleeve's seam, from the dropped shoulder down round to the armpit: the short sleeve is a piece of its own. On
+ * our right, where the torso runs on under the arm, a soft fold from the armpit. */
+const TEE_SEAMS: PenPoint[][] = [[[375.4,207.8],[369.4,217],[366.2,228.4],[366.4,239.6],[367.4,247.4]], [[281.4,204.6],[286.6,211.6],[289.2,220],[288.8,228],[287,233]]];
+const TEE_FOLD: PenPoint[] = [[363.4,241.6],[361.2,246.6],[357.4,250.4]];
+
+/** Summer on the bench: a light tee with short sleeves and a round neck, and below each straight hem a bare arm.
+ * The arm, its elbow and the forearm are one shape, with no line where they join; the hem's line goes across the
+ * sleeve's end, a little past its sides. */
+function SummerTee() {
+  const line = { fill: 'none', stroke: 'currentColor', strokeWidth: 5.1 * .95, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+  return <g className="field-tee">
+    <Ink points={TEE_BODY} width={5.5} closed fill="var(--bg)" paint="var(--paint-sweater)" />
+    <Ink points={[[310,197],[325,204],[341,198]]} width={2.8} />
+    {TEE_SEAMS.map((seam, i) => <Ink key={i} className="field-tee-seam" points={seam} width={2.6} />)}
+    <Ink points={TEE_FOLD} width={2.4} />
+    {TEE_ARMS.map((arm, i) => {
+      const { hem, elbow, bare } = arm, wrist = 'wrist' in arm ? arm.wrist : undefined, [inner, outer] = teeHem(arm, .8);
+      return <g key={i} className="field-tee-arm">
+        <InkUnion width={5.1} fill="var(--bg)" paint="var(--paint-skin)" paths={[limbOutline(hem, elbow, bare, true), ...wrist ? [limbOutline(elbow, wrist, bare)] : []]} />
+        <path d={`M${inner.join(' ')}L${outer.join(' ')}`} {...line} />
+      </g>;
+    })}
+  </g>;
 }
 
 /** Winter: a mustard knit scarf round the neck with one end hanging down (bench drawing, over the head's chin). */
@@ -409,16 +478,20 @@ const MAGPIE_PERCHES: Array<{ at: Point; walk?: [number, number]; ground?: boole
  * Qixi: a magpie (they build the bridge for the two lovers). It stays a good while, looking left and right,
  * pecking, flicking its tail, fluttering its wings or hopping about, then flies off to any other perch at random.
  * Its wing shows only when it flies or flutters, and it faces the way it goes. The trip moves it in the scene's own
- * units; its body is drawn in the bench's units like the bench it starts on.
+ * units; its body is drawn in the bench's units like the bench it starts on. When the friend leans on the backrest
+ * (`benchTaken`) it keeps off it: it starts on the right branch and never goes back to the backrest.
  */
-export function Magpie() {
+export function Magpie({ benchTaken = false }: { benchTaken?: boolean }) {
+  const first = benchTaken ? 1 : 0, [ox, oy] = MAGPIE_PERCHES[first].at;
   const trip = useRef<SVGGElement>(null), face = useRef<SVGGElement>(null);
   useEffect(() => {
     const [tripEl, faceEl] = [trip.current, face.current];
     const head = tripEl?.querySelector<SVGGElement>('.field-magpie-head'), tail = tripEl?.querySelector<SVGGElement>('.field-magpie-tail');
     if (!tripEl || !faceEl || !head || !tail || stillScene()) return;
     const stop = new AbortController(), { signal } = stop;
-    let perch = 0, pos = MAGPIE_PERCHES[0].at;
+    // Moves are measured from where it is first drawn.
+    const perchAt = (index: number): Point => [MAGPIE_PERCHES[index].at[0] - ox, MAGPIE_PERCHES[index].at[1] - oy];
+    let perch = first, pos = perchAt(first);
     // Drawn facing left.
     const faceRight = (right: boolean) => { faceEl.style.transform = right ? 'scaleX(-1)' : ''; };
     const withClass = async (name: string, action: () => Promise<void>) => {
@@ -427,7 +500,7 @@ export function Magpie() {
     };
     // The little things it does while it stays.
     const fidget = async () => {
-      const { at, walk, ground } = MAGPIE_PERCHES[perch], roll = Math.random();
+      const { walk, ground } = MAGPIE_PERCHES[perch], at = perchAt(perch), roll = Math.random();
       if (roll < .26) faceRight(!faceEl.style.transform);
       else if (roll < .5) {
         const deep = ground ? -46 : -24;
@@ -453,9 +526,9 @@ export function Magpie() {
     (async () => {
       for (;;) {
         await linger(stayFor(), signal, fidget);
-        let next = Math.floor(Math.random() * (MAGPIE_PERCHES.length - 1));
-        if (next >= perch) next++;
-        const to = MAGPIE_PERCHES[next].at;
+        const choices = MAGPIE_PERCHES.map((_, index) => index).filter(index => index !== perch && !(benchTaken && index === 0));
+        const next = choices[Math.floor(Math.random() * choices.length)];
+        const to = perchAt(next);
         const distance = Math.hypot(to[0] - pos[0], to[1] - pos[1]);
         faceRight(to[0] > pos[0]);
         await withClass('field-magpie-flying', () => play(tripEl, arc(pos, to, 14 + distance * .12, true), 550 + distance * 3.4, signal));
@@ -467,8 +540,8 @@ export function Magpie() {
       stop.abort();
       for (const element of [tripEl, faceEl, head, tail]) element.style.transform = '';
     };
-  }, []);
-  return <g ref={trip}><g ref={face} className="field-magpie-face"><g transform={BENCH_SCALE}>
+  }, [benchTaken, ox, oy, first]);
+  return <g transform={first ? `translate(${ox} ${oy})` : undefined}><g ref={trip}><g ref={face} className="field-magpie-face"><g transform={BENCH_SCALE}>
     <g className="field-magpie-tail"><Ink points={[[433,200],[453,209],[451,213],[432,205]]} width={2.2} closed fill="currentColor" /></g>
     <Ink points={[[411,206],[415,196],[425,192],[434,196],[436,204],[427,208]]} width={2.4} closed fill="currentColor" />
     <Ink points={[[418,204],[422,198],[430,200],[428,206]]} width={1} closed fill="var(--bg)" color="var(--bg)" />
@@ -480,7 +553,7 @@ export function Magpie() {
       <path d="M408 190.5 L402.5 192.5 L408 194.5 Z" fill="currentColor" />
       <circle cx={411.5} cy={190.8} r={1.3} fill="var(--bg)" />
     </g>
-  </g></g></g>;
+  </g></g></g></g>;
 }
 
 /** Winter solstice: a plate of dumplings on the bench beside the learner (bench drawing), in place of tea. */

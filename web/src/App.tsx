@@ -57,13 +57,16 @@ import { useThemePreference } from './theme';
 import { clearSnapshotCache, getMemorySnapshot, readCachedSnapshot, removeSnapshotCache, writeSnapshotCache } from './snapshot-cache';
 import { SketchDoodle } from './SketchDoodle';
 import { FieldIllustration, FieldMark, FieldScene } from './FieldIllustration';
+import { useLoginLawn } from './login-lawn';
 import { ConfettiBurst } from './ConfettiBurst';
 import { InkOutline } from './InkOutline';
 import { TabDoneBadge } from './TabDoneBadge';
 import { InkSpinner } from './InkSpinner';
 import { ProjectActivityMark, type ProjectActivity } from './ProjectActivityMark';
+import { ProjectGrowthMark } from './ProjectGrowthMark';
 import { PaperScroll } from './PaperScroll';
 import { ProviderModelList } from './ProviderModelList';
+import { useRouteFriend } from './route-friend';
 import './index.css';
 
 function ProjectGitHubLink({ compact = false }: { compact?: boolean }) {
@@ -2132,14 +2135,16 @@ function LoginScreen({
   onGuest: () => void;
 }) {
   const language = useUiLanguage();
+  const shellRef = useRef<HTMLElement>(null);
+  const lawn = useLoginLawn(shellRef);
   return (
-    <main className="auth-shell">
+    <main className="auth-shell" ref={shellRef}>
       <header className="auth-header">
         <div className="field-wordmark"><FieldMark /><span>what-the-repo</span></div>
         <LanguagePicker value={language} onChange={setUiLanguage} label={t('界面语言')} />
       </header>
       <div className="auth-layout">
-      <FieldScene className="auth-illustration" />
+      <FieldScene className="auth-illustration" lawn={lawn} />
       <section className="auth-panel" aria-labelledby="auth-title">
         <div className="auth-copy">
           <h1 id="auth-title">{language === 'en'
@@ -2194,6 +2199,9 @@ export default function App() {
       setRouteCelebrations(count => count + 1);
     }
   }, [project]);
+  // On the day a route was finished (as this browser saw it change), a friend joins the learner in the home scene.
+  const routeFriend = useRouteFriend(identity?.owner_id ?? null, projects,
+    project ? { projectId: project.project_id, phase: project.study.phase } : null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [snapshotTarget, setSnapshotTarget] = useState<{ projectId: string; snapshotId: string | null } | null>(null);
   const [repositoryStatus, setRepositoryStatus] = useState<{ projectId: string; viewSnapshotId: string | null; value: RepositoryViewStatus } | null>(null);
@@ -3862,7 +3870,7 @@ export default function App() {
               ) : (
                 <>
                   <button id={`project-open-${p.project_id}`} type="button" className="project-open-button" aria-current={activeId === p.project_id ? "page" : undefined}
-                    aria-label={t("打开项目 {0}", p.title)}
+                    aria-label={t("打开项目 {0}", p.title)} aria-describedby={`project-growth-${p.project_id}`}
                     onClick={() => {
                       const cachedProject = projectCacheRef.current.get(p.project_id) ?? null;
                       setProject(cachedProject);
@@ -3872,6 +3880,7 @@ export default function App() {
                       setShowNew(false);
                       setProjectMenuId(null);
                     }}>
+                    <ProjectGrowthMark id={`project-growth-${p.project_id}`} phase={p.teaching_phase} />
                     <span className="project-item-title">{p.title}</span>
                   </button>
                   {activeId !== p.project_id && <ProjectActivityMark
@@ -3994,7 +4003,7 @@ export default function App() {
             </div>
           ) : (
             <div className="empty-state">
-              <FieldScene />
+              <FieldScene friend={routeFriend} />
               <h2>{t('从好奇开始。')}</h2>
               <p>{t("快速理解，深入学习陌生仓库")}</p>
               <button className="btn btn-primary" onClick={() => setShowNew(true)}>
@@ -4071,7 +4080,7 @@ export default function App() {
                     onResolveReview={(stepId, action) => { void resolveLearningReview(stepId, action); }} />
                 )}
                 {project.messages.length === 0 && (
-                  <div className={`chat-empty${isAnalyzing ? ' chat-empty-waiting' : ''}`}>
+                  <div className="chat-empty">
                     <FieldIllustration key={activeId} compact pose={isAnalyzing ? 'waiting' : analysisCanRetry ? 'puzzled' : 'rest'} draft={input}
                       ownRepository={/^https:\/\/github\.com\/yecernia\/what-the-repo(?:\.git)?\/?$/i.test(project?.source.value ?? '')} />
                     {/* When the analysis failed there is no project view to open; the notice above says what happened. */}

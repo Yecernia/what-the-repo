@@ -1933,6 +1933,19 @@ describe('App project state synchronization', () => {
     );
   });
 
+  it('tells each sidebar project how far its learning has grown', async () => {
+    vi.mocked(apiClient.listProjects).mockResolvedValue([
+      summary,
+      { ...summary, project_id: 'project-2', title: 'second-project', teaching_phase: 'assessing' },
+      { ...summary, project_id: 'project-3', title: 'third-project', teaching_phase: 'completed' },
+    ]);
+    render(<App />);
+    await screen.findByText('third-project');
+    expect(screen.getByRole('button', { name: '打开项目 python-edge-cases' })).toHaveAccessibleDescription('还没开始学习');
+    expect(screen.getByRole('button', { name: '打开项目 second-project' })).toHaveAccessibleDescription('正在学习');
+    expect(screen.getByRole('button', { name: '打开项目 third-project' })).toHaveAccessibleDescription('已学完这条路线');
+  });
+
   it('ignores a late message failure after the user switches projects', async () => {
     const otherSummary: ProjectSummary = {
       ...summary,

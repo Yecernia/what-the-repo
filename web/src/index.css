@@ -105,8 +105,15 @@
      halo by season and time of day, and the dark theme paints the night. */
   --paint-halo-outer: #f4e1ae;
   --paint-halo: #f1d07c;
+  /* The desk figure's halo while an analysis runs (soft green) and after it failed (quiet grey); done is the glow. */
+  --paint-halo-waiting-outer: #e1eacd;
+  --paint-halo-waiting: #c9dca8;
+  --paint-halo-puzzled-outer: #e7e5df;
+  --paint-halo-puzzled: #d6d5ce;
   --paint-lawn: #bccb93;
   --paint-lawn-shade: #a5b87c;
+  /* The far meadow behind the login hill: the lawn seen through a little haze. */
+  --paint-meadow: #d4dab5;
   --paint-canopy: #a6c98a;
   --paint-trunk: #8d6c47;
   --paint-bench: #cd6646;
@@ -115,6 +122,12 @@
   --paint-skin: #fffaf0;
   --paint-screen: #dfe4df;
   --paint-screen-glow: rgba(241, 208, 124, 0);
+  --paint-screen-light: rgba(246, 214, 132, 0);
+  /* The sidebar's small plants: a seed in soil, a sprout, a small tree. */
+  --paint-growth-soil: #e3d2b1;
+  --paint-growth-seed: #c08e58;
+  --paint-growth-leaf: #a9cf84;
+  --paint-growth-crown: #8fbf6f;
   /* Tinted papers for cards, each with an ink of the same hue for small text and icons on plain paper. */
   --tint-green: #e8efd6;
   --tint-green-ink: #436b33;
@@ -203,19 +216,32 @@
   --syntax-title: #8eb8ff;
   --syntax-built-in: #c5a1e5;
   --syntax-meta: #d1c06a;
-  /* The night: a dark sky disc instead of the sun, and the laptop screen lighting the learner. */
+  /* The night: a dark sky disc instead of the sun, and the laptop screen lighting the learner. The figures keep the
+     light theme's ink and white skin (see .field-illustration below): drawn dark on the night, nothing glows but the
+     moon and the screen. */
   --paint-halo-outer: #2b3130;
   --paint-halo: #313936;
+  --paint-halo-waiting-outer: #2b3529;
+  --paint-halo-waiting: #35462f;
+  --paint-halo-puzzled-outer: #2e2f2d;
+  --paint-halo-puzzled: #383937;
   --paint-lawn: #34402c;
   --paint-lawn-shade: #2b3524;
+  --paint-meadow: #2d3426;
   --paint-canopy: #3d5638;
   --paint-trunk: #5b4a35;
   --paint-bench: #8f4f3c;
   --paint-sweater: #4f7d5a;
   --paint-trousers: #4a5468;
-  --paint-skin: #968f7e;
+  --paint-skin: #fffaf0;
   --paint-screen: #3a3f37;
-  --paint-screen-glow: rgba(241, 208, 124, .22);
+  /* No round glow at night: the screen's light is a fan on the learner (BenchScreenLight). */
+  --paint-screen-glow: rgba(246, 214, 132, 0);
+  --paint-screen-light: rgba(250, 220, 140, .42);
+  --paint-growth-soil: #4d4536;
+  --paint-growth-seed: #9a744a;
+  --paint-growth-leaf: #6f9a57;
+  --paint-growth-crown: #5f8c4c;
   --tint-green: #323d2e;
   --tint-green-ink: #a9d39a;
   --tint-blue: #2d3940;
@@ -396,6 +422,11 @@ body.col-resizing .pane-resizer::after { inset: 0 1px; background: var(--accent)
   font-size: 13px; font-weight: 500; letter-spacing: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* How far learning has grown in that project: a seed, a sprout, a small tree, drawn before the title. It sits in the
+   column of the sidebar's own icons, so titles line up with "新建项目". */
+.project-growth { flex: 0 0 auto; display: inline-flex; width: 16px; height: 16px; margin: -1px 12px 0 1px; color: var(--fg); }
+.project-growth svg { width: 100%; height: 100%; overflow: visible; }
+.project-growth-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .project-menu-wrap { grid-column: 3; position: relative; display: flex; align-items: center; justify-content: flex-end; }
 .project-menu-button { opacity: 0; color: var(--fg-muted); }
 /* A one-tap option under the latest tutor reply while a learning route is running. */
@@ -1418,10 +1449,11 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .repository-thumbnail rect[data-tint] { fill: var(--tint-ink); }
 .repository-thumbnail-empty { width: 100%; height: 100%; background: var(--canvas); }
 .chat-empty > .field-illustration { width: 150px; margin: 6px 0 12px; }
-/* During analysis the illustration rests at the bottom, so expanding the steps above never pushes it. */
-.chat-messages:has(> .chat-empty-waiting) { min-height: 100%; }
-.chat-empty-waiting { margin-top: auto; }
+/* The illustration rests at the bottom, next to the composer, during and after the analysis: expanding the steps
+   above never pushes it, and it stays put when the analysis ends. */
+.chat-messages:has(> .chat-empty) { min-height: 100%; }
 .chat-empty {
+  margin-top: auto;
   color: var(--fg-muted); font-size: 13px; text-align: center; padding: 28px 12px;
   display: flex; flex-direction: column; align-items: center; gap: 7px;
 }
@@ -1912,42 +1944,77 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 @media (min-width: 681px) {
   .auth-panel .guest-notice { color: color-mix(in srgb, var(--fg) 85%, var(--fg-muted)); }
   .auth-shell .site-compliance-footer { z-index: 1; color: color-mix(in srgb, var(--fg) 75%, var(--fg-muted)); }
+  /* The lawn falls from the bench through the guest button: the login lifts the scene and lowers the text just far
+     enough for that (useLoginLawn in login-lawn.ts sets both). */
+  .auth-layout > .auth-illustration { translate: 0 calc(-1 * var(--auth-scene-lift, 0px)); }
+  .auth-layout > .auth-panel { translate: 0 var(--auth-panel-drop, 0px); }
 }
 /* On a phone the login stacks the scene above the text, so it keeps its island there too. */
 @media (max-width: 680px) {
   .auth-illustration .field-backdrop-island { display: inline; }
   .auth-illustration .field-backdrop-open { display: none; }
 }
-.field-screen-glow { pointer-events: none; }
+.field-screen-glow, .field-screen-light { pointer-events: none; }
 .field-illustration {
   --paint-moon-unlit: #d6d9ee; --paint-moon-lit: #fbf1cf; --paint-moon-crater: #f2e4b8; --paint-moon-bloom: #fff8e2;
   --paint-moon-bloom-strength: .9; --paint-starlight: #8a90c2;
   --paint-chair: #45473f; --paint-chair-sheen: #5e6157; --paint-chair-shine: #8a8c80; --paint-cream: #f8f1dc; --paint-cup: #fbf6ea; --paint-knit: #e5b046; --paint-knit-stripe: #c98a32;
-  --paint-straw: #ecd08a; --paint-straw-stripe: #cd6646; --paint-drink: #f3d983;
+  --paint-straw: #ecd08a; --paint-straw-stripe: #cd6646; --paint-drink: #f3d983; --paint-breath: #fdfeff;
+  /* The desk figure's mug: a muted clay glaze, apart from the cream face it is lifted to, the knit and the halo. */
+  --paint-mug: #c4775f;
   /* Festival props, in the same family as the bench red and the knit mustard. */
   --paint-red: #d4513d; --paint-gold: #e5b046; --paint-rose: #f0a3b3; --paint-leaf: #86a95f; --paint-stem: #6f8f4a;
   --paint-twine: #c9a15a; --paint-pumpkin: #e0893a; --paint-white: #f8f3e8; --paint-plate: #f3efe6; --paint-plate-line: #6f93c2;
   --paint-pink: #f6d9de; --paint-egg: #a9c9e8; --paint-egg-zigzag: #e39aad;
 }
+/* The dark theme paints the night but draws it as the light theme does: its dark ink (also the tree's green line and
+   the trunk's brown-tinted one), white skin and cream, so in the dark nothing glows but the moon and the screen.
+   Steam stays near-white to be seen at all; the moon is luminous, with a soft bloom. */
 :root[data-theme="dark"] .field-illustration {
-  --paint-moon-unlit: #30373a; --paint-moon-lit: #7a745b; --paint-moon-crater: #6f6a53; --paint-moon-bloom: #a39b78;
-  --paint-moon-bloom-strength: .55; --paint-starlight: #ebe1b4;
-  --paint-chair: #30332d; --paint-chair-sheen: #3a3d36; --paint-chair-shine: #4b4e46; --paint-cream: #a49c86; --paint-cup: #dcd7c6; --paint-knit: #b08a3c; --paint-knit-stripe: #8e6a2c;
-  --paint-straw: #a89060; --paint-straw-stripe: #8f4f3c; --paint-drink: #a99256;
+  --fg: #30332b; --accent: #39815a; --warn: #b57614;
+  color: var(--fg);
+  --paint-moon-unlit: #30373a; --paint-moon-lit: #cdc294; --paint-moon-crater: #bfb385; --paint-moon-bloom: #ecdfab;
+  --paint-moon-bloom-strength: .8; --paint-starlight: #ebe1b4;
+  --paint-chair: #30332d; --paint-chair-sheen: #3a3d36; --paint-chair-shine: #4b4e46; --paint-cream: #f8f1dc; --paint-cup: #dcd7c6; --paint-knit: #b08a3c; --paint-knit-stripe: #8e6a2c;
+  --paint-straw: #a89060; --paint-straw-stripe: #8f4f3c; --paint-drink: #a99256; --paint-breath: #fdfeff;
+  --paint-mug: #93594a;
   --paint-red: #b04a3b; --paint-gold: #bf963f; --paint-rose: #d4788b; --paint-leaf: #5e7d47; --paint-stem: #5b7a3e;
   --paint-twine: #9a7b45; --paint-pumpkin: #bd7330; --paint-white: #dad5c5; --paint-plate: #cfcabb; --paint-plate-line: #6f8bb0;
   --paint-pink: #d1b0b5; --paint-egg: #7d97b0; --paint-egg-zigzag: #b97b8b;
 }
+/* The friend who comes on the day a route is finished (FieldFriend.tsx): the film's orange in autumn, a lighter
+   cardigan in spring, a bright tee in summer and a deeper coat with a red scarf and hat in winter. */
+.field-illustration {
+  --paint-friend: #e3a24b; --paint-friend-trousers: #6f6252; --paint-friend-shoe: #3b3d36; --paint-friend-scarf: #c4493a;
+}
+.field-illustration[data-season="spring"] { --paint-friend: #f0b36a; }
+.field-illustration[data-season="summer"] { --paint-friend: #f29f57; }
+.field-illustration[data-season="winter"] { --paint-friend: #d9853b; }
+:root[data-theme="dark"] .field-illustration {
+  --paint-friend: #b07c3c; --paint-friend-trousers: #4d4539; --paint-friend-shoe: #2b2c28; --paint-friend-scarf: #9a4236;
+}
+:root[data-theme="dark"] .field-illustration[data-season="spring"] { --paint-friend: #b8874f; }
+:root[data-theme="dark"] .field-illustration[data-season="summer"] { --paint-friend: #b97a45; }
+:root[data-theme="dark"] .field-illustration[data-season="winter"] { --paint-friend: #a5683a; }
+/* Calm, like the scene's other living things: now and then the thumb goes up a little more, and once in a while the
+   friend nods at the screen. Still when less motion is asked for. */
+.field-friend-wave { transform-origin: 449px 180px; /* the right shoulder (FieldFriend ARMS.r) */ animation: field-friend-thumb 9s 2s ease-in-out infinite; }
+.field-friend-head { transform-origin: 410px 162px; animation: field-friend-nod 13s 5s ease-in-out infinite; }
+@keyframes field-friend-thumb {
+  0%, 80%, 100% { transform: none; } 85% { transform: rotate(-5deg); } 89% { transform: rotate(-1deg); } 93% { transform: rotate(-4deg); }
+}
+@keyframes field-friend-nod { 0%, 70%, 100% { transform: none; } 75% { transform: rotate(-4deg); } 80% { transform: rotate(1deg); } 85% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .field-illustration :is(.field-friend-wave, .field-friend-head) { animation: none; } }
 /* The seasons in the scene's colours: fresh light green in spring, deeper green in summer, a warmer yellow-green in
    autumn, a pale snowy lawn in winter; and one outfit each (FieldOccasions.tsx). */
-.field-illustration[data-season="spring"] { --paint-canopy: #b4d692; --paint-lawn: #c4d49b; --paint-lawn-shade: #adc085; --paint-sweater: #a3cb8f; }
-.field-illustration[data-season="summer"] { --paint-canopy: #8fbc73; --paint-lawn: #b2c788; --paint-lawn-shade: #9bb173; --paint-sweater: #c9dce6; }
-.field-illustration[data-season="autumn"] { --paint-canopy: #bcc67f; --paint-lawn: #c4c78f; --paint-lawn-shade: #adb178; }
-.field-illustration[data-season="winter"] { --paint-lawn: #e4e9e4; --paint-lawn-shade: #cdd7d4; }
-:root[data-theme="dark"] .field-illustration[data-season="spring"] { --paint-canopy: #46613c; --paint-lawn: #36442d; --paint-lawn-shade: #2c3725; --paint-sweater: #5f8c62; }
-:root[data-theme="dark"] .field-illustration[data-season="summer"] { --paint-canopy: #36522f; --paint-lawn: #2f3e29; --paint-lawn-shade: #263221; --paint-sweater: #5d6f7a; }
-:root[data-theme="dark"] .field-illustration[data-season="autumn"] { --paint-canopy: #525834; --paint-lawn: #3a3f2b; --paint-lawn-shade: #303424; }
-:root[data-theme="dark"] .field-illustration[data-season="winter"] { --paint-lawn: #3b4241; --paint-lawn-shade: #313837; }
+.field-illustration[data-season="spring"] { --paint-canopy: #b4d692; --paint-lawn: #c4d49b; --paint-lawn-shade: #adc085; --paint-meadow: #d9dfb8; --paint-sweater: #a3cb8f; }
+.field-illustration[data-season="summer"] { --paint-canopy: #8fbc73; --paint-lawn: #b2c788; --paint-lawn-shade: #9bb173; --paint-meadow: #cfd7af; --paint-sweater: #c9dce6; }
+.field-illustration[data-season="autumn"] { --paint-canopy: #bcc67f; --paint-lawn: #c4c78f; --paint-lawn-shade: #adb178; --paint-meadow: #d9d8b3; }
+.field-illustration[data-season="winter"] { --paint-lawn: #e4e9e4; --paint-lawn-shade: #cdd7d4; --paint-meadow: #dbe2e2; }
+:root[data-theme="dark"] .field-illustration[data-season="spring"] { --paint-canopy: #46613c; --paint-lawn: #36442d; --paint-lawn-shade: #2c3725; --paint-meadow: #2e3727; --paint-sweater: #5f8c62; }
+:root[data-theme="dark"] .field-illustration[data-season="summer"] { --paint-canopy: #36522f; --paint-lawn: #2f3e29; --paint-lawn-shade: #263221; --paint-meadow: #2a3325; --paint-sweater: #5d6f7a; }
+:root[data-theme="dark"] .field-illustration[data-season="autumn"] { --paint-canopy: #525834; --paint-lawn: #3a3f2b; --paint-lawn-shade: #303424; --paint-meadow: #303426; }
+:root[data-theme="dark"] .field-illustration[data-season="winter"] { --paint-lawn: #3b4241; --paint-lawn-shade: #313837; --paint-meadow: #313634; }
 /* The glow follows the viewer's clock in the light theme: pale lemon in the morning, the film's warm yellow by day,
    apricot at dusk and a pale periwinkle at night, when the laptop lights the learner too. Dark mode is always night. */
 :root:not([data-theme="dark"]) .field-illustration[data-phase="morning"] { --paint-halo-outer: #f6edc4; --paint-halo: #f2e29a; }
@@ -1962,27 +2029,31 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 /* April Fools' Day: the sky and everything standing in it (.field-turn: the glow and the moon, the tree, the bench and
    the learner, the props, the stars, the breeze) are painted and inked as in the other theme, while the ground (lawn,
    shadows, ground lines, grass) keeps the page's, so the text standing on it stays readable. In the light theme the
-   sky is a dusky slate night with the moon in it, lighter than the dark theme's so it is no black hole on paper; in
-   the dark theme it is the light theme's sky of the hour. April 1 always falls in spring. */
+   sky is a dusky slate night with the moon in it, lighter than the dark theme's so it is no black hole on paper, and
+   drawn as the dark theme draws its night (the same ink, skin and cream as by day); in the dark theme it is the light
+   theme's sky of the hour. April 1 always falls in spring. */
 :root:not([data-theme="dark"]) .field-illustration[data-occasion="april-fools"] .field-turn {
-  --bg: #24261f; --panel: #303329; --fg: #e9eadc; --accent: #8cca98; --accent-soft: #3c4c33; --moon: #efe2a6; --warn: #e0a43c;
+  --bg: #24261f; --panel: #303329; --accent-soft: #3c4c33; --moon: #efe2a6;
   --paint-halo-outer: #5a6380; --paint-moon-unlit: #66708d; --paint-moon-lit: #d9cf9f; --paint-moon-crater: #cdc292;
-  --paint-moon-bloom: #f1e6b8; --paint-moon-bloom-strength: .6; --paint-screen-glow: rgba(241, 208, 124, .22);
+  --paint-moon-bloom: #f1e6b8; --paint-moon-bloom-strength: .6; --paint-screen-glow: rgba(246, 214, 132, 0);
+  --paint-screen-light: rgba(250, 220, 140, .42);
   --paint-starlight: #ebe1b4;
   --paint-canopy: #46613c; --paint-trunk: #5b4a35; --paint-bench: #8f4f3c; --paint-sweater: #5f8c62; --paint-trousers: #4a5468;
-  --paint-skin: #968f7e; --paint-screen: #3a3f37;
-  --paint-cream: #a49c86; --paint-cup: #dcd7c6; --paint-knit: #b08a3c; --paint-knit-stripe: #8e6a2c;
+  --paint-screen: #3a3f37;
+  --paint-cup: #dcd7c6; --paint-knit: #b08a3c; --paint-knit-stripe: #8e6a2c;
   --paint-straw: #a89060; --paint-straw-stripe: #8f4f3c; --paint-drink: #a99256;
   --paint-red: #b04a3b; --paint-gold: #bf963f; --paint-rose: #d4788b; --paint-leaf: #5e7d47; --paint-stem: #5b7a3e;
   --paint-twine: #9a7b45; --paint-pumpkin: #bd7330; --paint-white: #dad5c5; --paint-plate: #cfcabb; --paint-plate-line: #6f8bb0;
   --paint-pink: #d1b0b5; --paint-egg: #7d97b0; --paint-egg-zigzag: #b97b8b;
   --snow: #d6dad7; --snow-ink: #a7b0b0; --catkin: #d9d4c5; --pumpkin-face: #f2c14e;
+  --paint-friend: #b8874f; --paint-friend-trousers: #4d4539; --paint-friend-shoe: #2b2c28; --paint-friend-scarf: #9a4236;
   --leaf-fill: color-mix(in srgb, #eba7b5 50%, #24261f);
   color: var(--fg);
 }
 :root[data-theme="dark"] .field-illustration[data-occasion="april-fools"] .field-turn {
   --bg: #f2ecdf; --panel: #fff9ed; --fg: #30332b; --accent: #39815a; --accent-soft: #e1ecd9; --moon: #b5a152; --warn: #b57614;
   --paint-halo-outer: #f4e1ae; --paint-halo: #f1d07c; --paint-screen-glow: rgba(241, 208, 124, 0);
+  --paint-screen-light: rgba(246, 214, 132, 0);
   --paint-moon-unlit: #d6d9ee; --paint-moon-lit: #fbf1cf; --paint-moon-crater: #f2e4b8; --paint-moon-bloom: #fff8e2;
   --paint-moon-bloom-strength: .9; --paint-starlight: #8a90c2;
   --paint-canopy: #b4d692; --paint-trunk: #8d6c47; --paint-bench: #cd6646; --paint-sweater: #a3cb8f; --paint-trousers: #5d6b80;
@@ -1993,19 +2064,16 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   --paint-twine: #c9a15a; --paint-pumpkin: #e0893a; --paint-white: #f8f3e8; --paint-plate: #f3efe6; --paint-plate-line: #6f93c2;
   --paint-pink: #f6d9de; --paint-egg: #a9c9e8; --paint-egg-zigzag: #e39aad;
   --snow: #fbfaf6; --snow-ink: #9ba4a6; --catkin: #f4f0e4; --pumpkin-face: #4a3322;
+  --paint-friend: #f0b36a; --paint-friend-trousers: #6f6252; --paint-friend-shoe: #3b3d36; --paint-friend-scarf: #c4493a;
   --leaf-fill: color-mix(in srgb, #eba7b5 50%, #f2ecdf);
   color: var(--fg);
 }
-/* Where the island's small sky disc ends, lines in the other theme's ink get a border of the page's own ink. */
-.field-illustration { --field-page-ink: var(--fg); }
+/* In the dark theme, where the island's small sky disc ends, the turned sky's lines get a border of the page's own
+   (light) ink. Both themes now draw with the same ink, so the light theme needs none, and the grass keeps its green. */
+:root { --field-page-ink: var(--fg); }
 .field-edge { display: none; stroke: var(--field-page-ink); }
-.field-illustration[data-occasion="april-fools"] .field-edge { display: inline; }
+:root[data-theme="dark"] .field-illustration[data-occasion="april-fools"] .field-edge { display: inline; }
 @media (min-width: 681px) { .auth-illustration .field-illustration .field-edge { display: none; } }
-/* The grass stays ground, but on the login page its two tufts stand against the turned sky, so they take its green. */
-@media (min-width: 681px) {
-  :root:not([data-theme="dark"]) .auth-illustration .field-illustration[data-occasion="april-fools"] .field-grass { stroke: #8cca98; }
-  :root[data-theme="dark"] .auth-illustration .field-illustration[data-occasion="april-fools"] .field-grass { stroke: #39815a; }
-}
 :root[data-theme="dark"] .field-illustration[data-occasion="april-fools"][data-phase="morning"] .field-turn { --paint-halo-outer: #f6edc4; --paint-halo: #f2e29a; }
 :root[data-theme="dark"] .field-illustration[data-occasion="april-fools"][data-phase="dusk"] .field-turn { --paint-halo-outer: #f5dcc6; --paint-halo: #f0bf98; }
 :root[data-theme="dark"] .field-illustration[data-occasion="april-fools"][data-phase="night"] .field-turn {
@@ -2020,6 +2088,12 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
   --pumpkin-face: #4a3322;
 }
 :root[data-theme="dark"] .field-illustration { --snow: #d6dad7; --snow-ink: #a7b0b0; --catkin: #d9d4c5; --pumpkin-face: #f2c14e; }
+/* The festival animals are ink on paper in any light: a white rabbit and a black-and-white magpie. */
+.field-illustration :is(.field-rabbit-hop, .field-magpie-face) { --bg: #f2ecdf; }
+/* Steam is seen only as near-white at night; the failed analysis's question mark, off the desk disc on the chat page,
+   keeps the page's own ink. */
+:root[data-theme="dark"] .field-illustration .field-steam { color: var(--paint-breath); }
+:root[data-theme="dark"] .field-illustration .field-puzzle-mark { color: var(--field-page-ink); }
 .field-illustration[data-season="autumn"] { --leaf-ink: #c07a35; --leaf-fill: color-mix(in srgb, #e0a94a 45%, var(--bg)); }
 /* Autumn turns only the little leaves drawn in the crown (and the falling ones) yellow; the crown's own line stays
    green. Winter leaves bare branches. */
@@ -2162,12 +2236,26 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .field-illustration-small .field-upper-r { transform-origin: 129px 72px; transform: rotate(120deg); }
 .field-illustration-small .field-fore-r { transform-origin: 156px 42px; transform: rotate(-104deg); }
 .field-illustration-small.field-waiting :is(.field-upper-l, .field-fore-l, .field-upper-r, .field-fore-r) { transform: none; }
+/* A mitten turns at its wrist; the cup in the hand turns about the mitten's centre. */
+.field-illustration-small .field-wrist-l { transform-origin: 101px 38px; }
+.field-illustration-small .field-wrist-r { transform-origin: 125px 38px; }
+.field-illustration-small .field-cup { transform-origin: 117.1px 37px; }
+/* The cup is in the hand only while drinking; the breath puff only while hands are warmed. Neither shows with
+   reduced motion (no actions play then). */
+.field-illustration-small :is(.field-held-cup, .field-puff) { opacity: 0; }
+.field-illustration-small .field-puff { transform-box: fill-box; transform-origin: 20% 80%; }
+.field-illustration-small[data-night] .field-night-only { display: inline; }
 /* The copy of a hand drawn in front of the face; the controller shows it only while the hand is at the face. */
 .field-illustration-small .field-front { opacity: 0; }
 /* Puzzled (something failed): head tilted, one hand scratching behind it now and then, a small question mark. */
 .field-puzzled .field-head { transform: rotate(5deg); }
 .field-puzzled :is(.field-upper-l, .field-fore-l) { transform: none; }
 .field-puzzle-mark { opacity: 0; transition: opacity .4s ease; }
+/* The halo behind the desk figure follows the analysis state (FieldDesk): it eases from one colour to the next like
+   daybreak, and changes at once when less motion is asked for. Only a change of state eases (FieldDesk adds the
+   class for it): switching the theme repaints it at once, with the rest of the page. */
+.field-desk-easing .field-desk-halo { transition: fill 1.4s ease-in-out; }
+@media (prefers-reduced-motion: reduce) { .field-desk-easing .field-desk-halo { transition: none; } }
 .field-puzzled .field-puzzle-mark { opacity: 1; transition-delay: 1s; }
 .field-puzzled .field-puzzle-mark path { stroke-dasharray: 40; animation: field-puzzle-write .6s 1s ease-out both; }
 @keyframes field-puzzle-write { from { stroke-dashoffset: 40; } to { stroke-dashoffset: 0; } }
@@ -2186,11 +2274,6 @@ button:not(:disabled,[aria-disabled="true"]):is(:hover,:focus-visible) > :is(.ha
 .field-mark { overflow: visible; }
 .field-heart { opacity: 0; transform-box: fill-box; transform-origin: center; }
 .field-heart-arms { opacity: 0; }
-/* The desk figure (FieldIllustration.tsx): in summer the forearms are bare below the short sleeves. */
-.field-illustration-small[data-season="summer"] .field-forearm:not([data-up]) { fill: var(--paint-skin); }
-.field-illustration-small[data-season="summer"] .field-forearm[data-up] { stroke: var(--paint-skin); }
-.field-illustration-small[data-season="summer"] .field-cuff { display: none; }
-.field-illustration-small[data-season="summer"] .field-bare { stroke: var(--paint-skin); }
 .field-moon-bloom { opacity: var(--paint-moon-bloom-strength); }
 .field-mark-busy .field-mark-page { animation: field-mark-leaf 3.2s linear infinite; }
 .field-mark-busy .field-mark-arm { animation: field-mark-reach 3.2s linear infinite; }
