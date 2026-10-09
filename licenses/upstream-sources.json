@@ -88,5 +88,14 @@
     "url": "https://github.com/deepseek-ai/deepseek-harness/blob/d347e703908d0406b7a7ef80e3a0e594d86b2215/LICENSE",
     "path": "licenses/upstream/deepseek-harness.txt",
     "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be"
+  },
+  {
+    "name": "vscode",
+    "repo": "microsoft/vscode",
+    "ref": "e8f54c79d5c46126f427cccd37cceb531b0dcdf6",
+    "file": "LICENSE.txt",
+    "url": "https://github.com/microsoft/vscode/blob/e8f54c79d5c46126f427cccd37cceb531b0dcdf6/LICENSE.txt",
+    "path": "licenses/upstream/vscode.txt",
+    "sha256": "9480271317925265e806a9a196aaa33410a962fa9d4d1e248a4a5187bc8c9df9"
   }
 ]

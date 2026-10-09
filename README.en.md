@@ -4,7 +4,7 @@
 
 <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
-<p><img src=".github/assets/readme-hero.en.svg" width="720" alt="what-the-repo — Start with curiosity, understand it through the code. A line drawing: a thread spills out of a folder into a tangle, and a small figure pulls it straight and winds it into a neat ball."></p>
+<p><picture><source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme-hero.en.dark.svg"><img src=".github/assets/readme-hero.en.svg" width="720" alt="what-the-repo — Start with curiosity. Understand it through the code. Illustration: under a big tree someone reads code on a laptop on a park bench while a friend gives a thumbs-up from behind; three paper cards float around them: an architecture map, a value point and a learning route."></picture></p>
 
 <p>
   <a href="https://what-the-repo.com"><img src="https://img.shields.io/badge/Try%20online-39815A?style=flat-square" alt="Try what-the-repo online"></a>
@@ -22,19 +22,19 @@ what-the-repo turns that curiosity into focused learning: give it a public GitHu
 
 ## What it looks like
 
-These are real pages from studying [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness), with Chinese learning content.
+These are real pages from studying [microsoft/vscode](https://github.com/microsoft/vscode), with Chinese learning content.
 
 **Find what is worth learning.** Topics in architecture, implementation and engineering tradeoffs, each with the problem it solves and how it is built.
 
-![DSH’s value points, such as “everything is a plugin”, each showing the problem it solves and how it is built.](.github/assets/dsh-values.jpg)
+![VS Code’s value points, such as the service dependency graph with delayed instantiation and proposed API gating. The first is selected, showing the problem it solves, the core idea and how it is built.](.github/assets/vscode-values.jpg)
 
 **Set a goal and learn step by step.** A topic becomes a route of small steps, each explained with the code and followed by a few questions to check your understanding. Progress, conversations and a memory summary are kept, so you can pick up where you left off.
 
-![A ten-step DSH learning route: the first explanation and its understanding check on the left, the route and the current step’s goal on the right.](.github/assets/dsh-learning.jpg)
+![A six-step learning route through VS Code’s extension host: the end of the first explanation and its understanding check on the left, the route with the current step’s goal and completion check on the right.](.github/assets/vscode-learning.jpg)
 
 **Follow explanations back to the code.** Every conclusion links to the files and lines behind it, and facts are kept apart from inferences. When you need the wider picture, the architecture view connects components and their responsibilities.
 
-![Selecting DSH’s loop-safety component in the architecture view shows its related components and what it does.](.github/assets/dsh-component.jpg)
+![Selecting the extension API type declarations (vscode-dts) component in VS Code’s architecture view shows its related component groups and what it does.](.github/assets/vscode-component.jpg)
 
 ## Try asking
 

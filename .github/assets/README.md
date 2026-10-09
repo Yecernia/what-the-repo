@@ -2,19 +2,19 @@
 
 ## Promotional illustration
 
-`readme-hero.zh.svg` and `readme-hero.en.svg` are an original line drawing (a thread tangled out of a folder, pulled straight and wound into a ball), drawn with the pen outlines of [pen-path.ts](../../web/src/pen-path.ts) and the wordmark of [BrandWordmark.tsx](../../web/src/BrandWordmark.tsx). They have their own paper background, so they read the same in light and dark themes. Everything is vector paths, including the taglines, which are outlined from JasonHandwriting9p.
+`readme-hero.zh.svg` and `readme-hero.en.svg` show the product's bench scene by day: the learner reads code on a laptop under the tree while a friend gives a thumbs-up from behind the bench, and three paper cards (an architecture map, a value point and a learning route, worded after VS Code) float around them. `readme-hero.zh.dark.svg` and `readme-hero.en.dark.svg` are the same scene at night in the dark theme; the READMEs show them when the reader's system prefers a dark colour scheme. The scene, friend, cards, icons and wordmark are rendered from the product's own components ([FieldIllustration.tsx](../../web/src/FieldIllustration.tsx), [FieldFriend.tsx](../../web/src/FieldFriend.tsx), [BrandWordmark.tsx](../../web/src/BrandWordmark.tsx)) with its light and dark colour tokens, then saved as self-contained vector paths, including the text, which is outlined from JasonHandwriting9p.
 
-The tagline outlines come from JasonHandwriting9p under [SIL OFL 1.1](../../web/public/fonts/OFL-JasonHandwriting.txt). The drawing and the pen-stroke wordmark use the project's MIT license.
+The text outlines come from JasonHandwriting9p under [SIL OFL 1.1](../../web/public/fonts/OFL-JasonHandwriting.txt). The illustration and the pen-stroke wordmark use the project's MIT license.
 
 ## Product screenshots
 
-Product UI examples studying [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness). Both README languages use these Chinese examples.
+Product UI examples studying [microsoft/vscode](https://github.com/microsoft/vscode) at commit `e8f54c79d5c4`, captured at a 1280×800 window and exported at 1600×1000. Both README languages use these Chinese examples.
 
-- `dsh-values.jpg`: the value points view, with the first value point selected.
-- `dsh-learning.jpg`: a ten-step learning route beside the first step's explanation and its understanding check.
-- `dsh-component.jpg`: the loop-safety component selected in the Agent core layer of the architecture view, with its related components and description.
+- `vscode-values.jpg`: the value points view, with the first value point (service dependency graph and delayed instantiation) selected beside the start of the first lesson.
+- `vscode-learning.jpg`: a six-step learning route on the extension host beside the end of the first step's explanation and its understanding check.
+- `vscode-component.jpg`: the extension API type declarations (vscode-dts) component selected in the extension API and type contracts layer of the architecture view, with its related component groups and description.
 
-Font, icon and DSH source notices are listed in [third-party notices](../../THIRD_PARTY_NOTICES.md).
+Font, icon and VS Code source notices are listed in [third-party notices](../../THIRD_PARTY_NOTICES.md).
 
 ## Navigation badges
 

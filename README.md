@@ -4,7 +4,7 @@
 
 <p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
 
-<p><img src=".github/assets/readme-hero.zh.svg" width="720" alt="what-the-repo：从好奇开始，沿着代码弄懂它。线条插画：文件夹里冒出的线缠成一团，一个小人把它拉直、绕成整齐的线团。"></p>
+<p><picture><source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme-hero.zh.dark.svg"><img src=".github/assets/readme-hero.zh.svg" width="720" alt="what-the-repo：从好奇开始，沿着代码弄懂它。插画：大树下的长椅上，有人抱着笔记本电脑读代码，朋友站在长椅后面竖起大拇指；四周飘着架构图、价值点和学习路线三张纸卡片。"></picture></p>
 
 <p>
   <a href="https://what-the-repo.com"><img src="https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-39815A?style=flat-square" alt="在线体验 what-the-repo"></a>
@@ -22,19 +22,19 @@ what-the-repo 帮你把这份好奇变成有方向的学习：给它一个公开
 
 ## 看看它长什么样
 
-下面是学习 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 时的实际页面。
+下面是学习 [microsoft/vscode](https://github.com/microsoft/vscode) 时的实际页面。
 
 **找到值得学的地方。** 从架构设计、关键实现和工程取舍里挑出值得深入的主题，并说明它解决了什么问题、是怎么实现的。
 
-![DSH 的价值点：一切皆插件、能力 seam、模型可见即已记录等值得学习的设计，选中后显示它解决的问题和实现方式。](.github/assets/dsh-values.jpg)
+![VS Code 的价值点：服务依赖图与延迟实例化、提案 API 门控、工作台贡献的实例化时机等值得学习的设计；选中第一个后，右侧显示它解决的问题、核心思路和实现方式。](.github/assets/vscode-values.jpg)
 
 **定一个目标，一步步学。** 把想学的内容拆成分步路线，每一步结合代码讲解，再用几个问题检查自己是否真的懂了。进度、对话和记忆摘要都会保存，下次接着学。
 
-![DSH 的十步学习路线：左边是第一步讲解和理解检验，右边是路线和当前步骤的目标。](.github/assets/dsh-learning.jpg)
+![围绕 VS Code 扩展宿主的六步学习路线：左边是第一步讲解的结尾和理解检验，右边是路线、当前步骤的目标和完成检查。](.github/assets/vscode-learning.jpg)
 
 **顺着讲解看代码。** 每个结论都能点开对应的文件和行号核对，也会分清哪些是事实、哪些是推断。需要整体脉络时，架构图会把组件的职责和关系连起来。
 
-![在 DSH 架构图中选中“循环卫生防护”组件，显示与它相关的组件和它的作用。](.github/assets/dsh-component.jpg)
+![在 VS Code 架构图中选中“扩展 API 类型声明（vscode-dts）”组件，显示与它相关的组件分组和它的作用。](.github/assets/vscode-component.jpg)
 
 ## 可以这样问
 
