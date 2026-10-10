@@ -122,6 +122,12 @@ test("retention applies 7/30/7 day guest rules and restores a soft-deleted owner
     assert.ok(await store.loadProject(deleteProject.project_id, "guest:delete"));
     assert.ok(await store.loadUser("guest:active"));
 
+    assert.equal(await store.touchOwner("guest:recover", "2026-08-22T00:00:00.000Z", 0, false), null,
+      'a background poll cannot restore a retired guest');
+    const lastSeen = (await store.loadUser("guest:active"))!.last_seen_at;
+    await store.touchOwner("guest:active", "2026-08-22T00:00:00.000Z", 0, false);
+    assert.equal((await store.loadUser("guest:active"))!.last_seen_at, lastSeen,
+      'passive polling cannot extend guest retention');
     const restored = await store.touchOwner("guest:recover", "2026-08-22T00:00:00.000Z", 0);
     assert.equal(restored?.deleted_at, null);
     assert.equal((await store.loadUser("guest:recover"))?.deleted_at, null);

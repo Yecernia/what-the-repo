@@ -3828,7 +3828,14 @@ export class PostgresStore extends FileStore {
     ownerId: string,
     seenAt: string,
     minimumIntervalMs: number,
+    recordActivity = true,
   ): Promise<OwnerLifecycle | null> {
+    if (!recordActivity) {
+      const row = (await this.pool.query<{ last_seen_at: Date | string | null }>(
+        'SELECT last_seen_at FROM app_users WHERE owner_id=$1 AND deleted_at IS NULL', [ownerId],
+      )).rows[0];
+      return row ? { owner_id: ownerId, last_seen_at: iso(row.last_seen_at) ?? seenAt, deleted_at: null, purge_after: null } : null;
+    }
     const result = await this.pool.query<{
       owner_id: string;
       last_seen_at: Date | string;

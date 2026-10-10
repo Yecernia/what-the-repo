@@ -2220,13 +2220,16 @@ export class FileStore implements ProductStore {
     });
   }
   async loadUser(ownerId: string): Promise<Record<string, unknown> | null> { return readJson<Record<string, unknown>>(this.path("users", ownerId)); }
-  async touchOwner(ownerId: string, seenAt: string, minimumIntervalMs: number): Promise<OwnerLifecycle | null> {
+  async touchOwner(ownerId: string, seenAt: string, minimumIntervalMs: number, recordActivity = true): Promise<OwnerLifecycle | null> {
     return this.mutex.runExclusive(`owner:${ownerId}`, async () => {
       const user = await this.loadUser(ownerId);
       if (!user) return null;
       const purgeAfter = typeof user.purge_after === "string" ? user.purge_after : null;
       if (purgeAfter && Date.parse(purgeAfter) <= Date.parse(seenAt)) return null;
       const previous = typeof user.last_seen_at === "string" ? user.last_seen_at : null;
+      if (!recordActivity) return user.deleted_at ? null : {
+        owner_id: ownerId, last_seen_at: previous ?? seenAt, deleted_at: null, purge_after: purgeAfter,
+      };
       if (!previous || Date.parse(seenAt) - Date.parse(previous) >= minimumIntervalMs) user.last_seen_at = seenAt;
       // A request during the recovery window restores a soft-deleted guest.
       if (user.deleted_at) {

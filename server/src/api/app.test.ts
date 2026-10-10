@@ -80,6 +80,31 @@ function githubGatewayConfig(dataDir: string): ServerConfig {
   };
 }
 
+test('status polling does not renew activity, while a foreground heartbeat does', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wtr-presence-activity-'));
+  const store = new FileStore(root);
+  await store.init();
+  const app = buildApp({ config: config(root), store,
+    sessions: new PiSessionStore(join(root, 'pi-sessions')), memories: new PiMemoryStore(join(root, 'pi-memory')) });
+  try {
+    const guest = await app.inject({ method: 'POST', url: '/api/auth/guest' });
+    const cookie = guest.headers['set-cookie']!;
+    const headers = { cookie: (Array.isArray(cookie) ? cookie[0]! : cookie).split(';')[0]! };
+    const owner = guest.json<{ owner_id: string }>();
+    const previous = '2026-01-01T00:00:00.000Z';
+    await store.saveUser(owner.owner_id, { ...owner, kind: 'guest', last_seen_at: previous });
+    const project = createProject(owner.owner_id, 'https://github.com/example/repo', 'Example', 'free:test');
+    await store.saveProject(project);
+    for (const route of ['repository-status', 'analysis']) {
+      const response = await app.inject({ method: 'GET', url: `/api/projects/${project.project_id}/${route}`, headers });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal((await store.loadUser(owner.owner_id))!.last_seen_at, previous);
+    }
+    assert.equal((await app.inject({ method: 'POST', url: '/api/presence', headers })).statusCode, 200);
+    assert.notEqual((await store.loadUser(owner.owner_id))!.last_seen_at, previous);
+  } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("production API refuses to build without a signing Session Secret", async () => {
   const root = await mkdtemp(join(tmpdir(), "what-the-repo-api-session-secret-"));
   try {

@@ -19,6 +19,31 @@ import { StorageManager } from './storage.js';
 import { loadConfig } from '../config.js';
 
 const url = process.env.WTR_ADMIN_TEST_DATABASE_URL;
+test('isolated PostgreSQL: passive polling neither renews activity nor restores a retired owner', { skip: !url }, async () => {
+  const target = new URL(url!);
+  assert.equal(target.hostname, '127.0.0.1');
+  assert.match(target.pathname, /^\/wtr_admin_test_[a-z0-9_]+$/);
+  const root = await mkdtemp(join(tmpdir(), 'wtr-passive-owner-'));
+  const store = new PostgresStore({ root, databaseUrl: url!, migrationsRoot: join(process.cwd(), 'migrations'), encryptionSecret: 'passive-owner-test-secret' });
+  try {
+    await store.init();
+    const owner = 'guest:passive-owner';
+    const old = '2026-01-01T00:00:00.000Z';
+    const now = new Date().toISOString();
+    await store.pool.query('INSERT INTO app_users(owner_id,login,display_name,last_seen_at) VALUES($1,$2,$2,$3)', [owner, 'guest', old]);
+    assert.equal((await store.touchOwner(owner, now, 60_000, false))?.last_seen_at, old);
+    assert.equal((await store.pool.query('SELECT last_seen_at FROM app_users WHERE owner_id=$1', [owner])).rows[0].last_seen_at.toISOString(), old);
+    await store.pool.query("UPDATE app_users SET deleted_at=clock_timestamp(),purge_after=clock_timestamp()+interval '1 day' WHERE owner_id=$1", [owner]);
+    assert.equal(await store.touchOwner(owner, now, 60_000, false), null);
+    assert.ok((await store.pool.query('SELECT deleted_at FROM app_users WHERE owner_id=$1', [owner])).rows[0].deleted_at);
+    assert.equal((await store.touchOwner(owner, now, 60_000))?.deleted_at, null);
+    assert.equal((await store.pool.query('SELECT deleted_at FROM app_users WHERE owner_id=$1', [owner])).rows[0].deleted_at, null);
+  } finally {
+    await store.pool.query('DELETE FROM app_users WHERE owner_id=$1', ['guest:passive-owner']);
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test(
   'isolated PostgreSQL: concurrent budget admission, idempotent settlement, policies and cross-process MFA replay',
   { skip: !url },

@@ -462,7 +462,7 @@ async function settingsResponse(config: ServerConfig, store: ProductStore, owner
   };
 }
 
-async function ownerFromRequest(request: FastifyRequest, store: ProductStore, config: ServerConfig): Promise<Owner | null> {
+async function ownerFromRequest(request: FastifyRequest, store: ProductStore, config: ServerConfig, recordActivity = true): Promise<Owner | null> {
   const raw = request.cookies[IDENTITY_COOKIE];
   if (!raw) return null;
   if (config.nodeEnv === "production" && !config.sessionSecret) return null;
@@ -470,13 +470,13 @@ async function ownerFromRequest(request: FastifyRequest, store: ProductStore, co
   if (!parsed.valid || !parsed.value) return null;
   const owner = await store.loadUser(parsed.value) as Owner | null;
   if (!owner) return null;
-  const lifecycle = await store.touchOwner(owner.owner_id, nowIso(), OWNER_TOUCH_INTERVAL_MS);
+  const lifecycle = await store.touchOwner(owner.owner_id, nowIso(), OWNER_TOUCH_INTERVAL_MS, recordActivity);
   if (!lifecycle) return null;
   return owner;
 }
 
-async function requiredOwner(request: FastifyRequest, store: ProductStore, config: ServerConfig): Promise<Owner> {
-  const owner = await ownerFromRequest(request, store, config);
+async function requiredOwner(request: FastifyRequest, store: ProductStore, config: ServerConfig, recordActivity = true): Promise<Owner> {
+  const owner = await ownerFromRequest(request, store, config, recordActivity);
   if (!owner) throw httpError(401, "请先登录或选择访客体验");
   bindByokOwner(owner.owner_id);
   return owner;
@@ -1329,7 +1329,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     return reply.code(204).send();
   });
   app.get("/api/projects/:projectId/repository-status", async (request) => {
-    const owner = await requiredOwner(request, store, config);
+    const owner = await requiredOwner(request, store, config, false);
     const { projectId } = request.params as { projectId: string };
     const { view_snapshot_id: viewSnapshotId } = request.query as { view_snapshot_id?: string };
     return repository.getRepositoryStatus(owner.owner_id, projectId, viewSnapshotId);
@@ -1351,7 +1351,7 @@ export function buildApp(dependencies: ServerDependencies): FastifyInstance {
     return repository.requestRepositoryUpdate(owner, projectId);
   });
   app.get("/api/projects/:projectId/analysis", async (request) => {
-    const owner = await requiredOwner(request, store, config);
+    const owner = await requiredOwner(request, store, config, false);
     const { projectId } = request.params as { projectId: string };
     const status = await repository.getAnalysisStatus(owner.owner_id, projectId);
     return {

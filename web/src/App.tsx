@@ -2782,7 +2782,10 @@ export default function App() {
     const viewSnapshotId = snapshot?.snapshot_id ?? project.analysis.snapshot_id;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let pending = false;
     const poll = async () => {
+      if (disposed || pending || document.visibilityState !== 'visible' || !navigator.onLine) return;
+      pending = true;
       try {
         const value = await apiClient.getRepositoryStatus(projectId, viewSnapshotId);
         if (!disposed && activeIdRef.current === projectId) {
@@ -2790,12 +2793,28 @@ export default function App() {
           setRepositoryStatus({ projectId, viewSnapshotId, value });
         }
       } catch { /* The visible snapshot remains usable while status is unavailable. */ }
+      finally { pending = false; }
       // Status is small; poll faster only while an update is queued or running.
       const updating = activeStatusRef.current === 'queued' || activeStatusRef.current === 'running';
-      if (!disposed) timer = setTimeout(() => { void poll(); }, updating ? 5000 : 30_000);
+      if (!disposed && document.visibilityState === 'visible' && navigator.onLine)
+        timer = setTimeout(() => { void poll(); }, updating ? 5000 : 30_000);
     };
+    const resume = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      void poll();
+    };
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('online', resume);
+    window.addEventListener('offline', resume);
     void poll();
-    return () => { disposed = true; if (timer) clearTimeout(timer); };
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('visibilitychange', resume);
+      window.removeEventListener('online', resume);
+      window.removeEventListener('offline', resume);
+    };
   }, [activeId, project?.project_id, project?.source.kind, project?.analysis.snapshot_id, snapshot?.snapshot_id, repositoryPollNonce]);
 
   useEffect(() => {

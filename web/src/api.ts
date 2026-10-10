@@ -376,6 +376,7 @@ export const apiClient = {
   ),
   getRepositoryStatus: (id: string, viewSnapshotId?: string | null) => api<import('./types').RepositoryViewStatus>(
     `/api/projects/${id}/repository-status${viewSnapshotId ? `?view_snapshot_id=${encodeURIComponent(viewSnapshotId)}` : ''}`,
+    { signal: AbortSignal.timeout(20_000) },
   ),
   requestRepositoryUpdate: (id: string) => api<import('./types').RepositoryUpdateResult>(
     `/api/projects/${id}/repository-update`, { method: 'POST' },

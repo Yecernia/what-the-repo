@@ -2731,6 +2731,48 @@ describe('App project state synchronization', () => {
     expect(apiClient.getProject).toHaveBeenCalledTimes(3);
   });
 
+  it('pauses repository status polling while hidden or offline and resumes without overlap', async () => {
+    vi.useFakeTimers();
+    vi.mocked(apiClient.getProject).mockResolvedValue(detail(project({ source: {
+      kind: 'github', value: 'https://github.com/acme/repo',
+      display_name: 'acme/repo', commit_sha: 'commit-1',
+    } }), null, true));
+    let visibility: DocumentVisibilityState = 'visible';
+    let online = true;
+    const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
+    const onlineSpy = vi.spyOn(navigator, 'onLine', 'get').mockImplementation(() => online);
+    try {
+      render(<App />);
+      await flushReact();
+      fireEvent.click(screen.getByText('python-edge-cases'));
+      await flushReact();
+      const initial = vi.mocked(apiClient.getRepositoryStatus).mock.calls.length;
+      expect(initial).toBeGreaterThan(0);
+      visibility = 'hidden';
+      fireEvent(document, new Event('visibilitychange'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      expect(apiClient.getRepositoryStatus).toHaveBeenCalledTimes(initial);
+      const slow = deferred<RepositoryViewStatus>();
+      vi.mocked(apiClient.getRepositoryStatus).mockReturnValueOnce(slow.promise);
+      visibility = 'visible';
+      fireEvent(document, new Event('visibilitychange'));
+      await flushReact();
+      expect(apiClient.getRepositoryStatus).toHaveBeenCalledTimes(initial + 1);
+      fireEvent(window, new Event('online'));
+      expect(apiClient.getRepositoryStatus).toHaveBeenCalledTimes(initial + 1);
+      slow.resolve(repositoryViewStatus);
+      await flushReact();
+      online = false;
+      fireEvent(window, new Event('offline'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      expect(apiClient.getRepositoryStatus).toHaveBeenCalledTimes(initial + 1);
+      online = true;
+      fireEvent(window, new Event('online'));
+      await flushReact();
+      expect(apiClient.getRepositoryStatus).toHaveBeenCalledTimes(initial + 2);
+    } finally { visibilitySpy.mockRestore(); onlineSpy.mockRestore(); }
+  });
+
   it('installs a delayed terminal snapshot while the project stays active', async () => {
     vi.useFakeTimers();
     const runningProject = project({

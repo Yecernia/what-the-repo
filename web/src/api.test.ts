@@ -9,6 +9,24 @@ afterEach(() => {
 });
 
 describe('streamed messages', () => {
+  it('bounds repository status requests so a stalled connection can be retried', async () => {
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), ms);
+      return controller.signal;
+    });
+    const fetchMock = vi.fn().mockImplementationOnce((_url, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    })).mockResolvedValue(new Response('{"status":"recovered"}'));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const stalled = expect(apiClient.getRepositoryStatus('project-1', 'snapshot-1')).rejects.toMatchObject({ code: 'client_network_error' });
+      await vi.advanceTimersByTimeAsync(20_000);
+      await stalled;
+      await expect(apiClient.getRepositoryStatus('project-1', 'snapshot-1')).resolves.toEqual({ status: 'recovered' });
+    } finally { timeout.mockRestore(); }
+  });
   it('explains repository address errors on creation in both languages', async () => {
     for (const language of ['zh-CN', 'en'] as const) {
       setUiLanguage(language);

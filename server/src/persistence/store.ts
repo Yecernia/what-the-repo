@@ -385,7 +385,8 @@ export interface ProductStore {
   loadSettings(ownerId: string): Promise<ProviderSettings>;
   saveUser(ownerId: string, payload: Record<string, unknown>): Promise<void>;
   loadUser(ownerId: string): Promise<Record<string, unknown> | null>;
-  touchOwner(ownerId: string, seenAt: string, minimumIntervalMs: number): Promise<OwnerLifecycle | null>;
+  /** Passive polling authenticates without extending activity or restoring a retired owner. */
+  touchOwner(ownerId: string, seenAt: string, minimumIntervalMs: number, recordActivity?: boolean): Promise<OwnerLifecycle | null>;
   listGuestRetentionCandidates(now: string): Promise<GuestRetentionCandidate[]>;
   softDeleteGuestOwner(ownerId: string, deletedAt: string, purgeAfter: string): Promise<boolean>;
   deleteOwner(ownerId: string): Promise<boolean>;

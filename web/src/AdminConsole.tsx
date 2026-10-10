@@ -611,7 +611,7 @@ function Activity({ data, onUserPage, onRepositoryPage }: { data: AdminRow; onUs
   const pagination = record(data.userPagination);
   return (
     <>
-      <p className="admin-description">分析任务按仓库汇总本次分析状态与请求用户；用户列表在线优先。两个列表独立分页。</p>
+      <p className="admin-description">分析任务按仓库汇总本次分析状态与请求用户；用户列表在线优先。在线表示近 90 秒有前台页面心跳，页面放在后台会停止心跳。最近连接包含前台心跳和主动请求，不代表最近点击或输入。两个列表独立分页。</p>
       <Card title="分析任务">
         <Table
           data={rows(data.repositories)}
@@ -630,7 +630,7 @@ function Activity({ data, onUserPage, onRepositoryPage }: { data: AdminRow; onUs
           data={rows(data.users)}
           columns={[
             ['owner_id', '用户 / 访客', (_, row) => <UserIdentity row={row} />],
-            ['last_seen_at', '最近活动', (v) => time(v)],
+            ['last_seen_at', '最近连接', (v) => time(v)],
             ['deleted_at', '软删除', (v) => time(v)],
             ['purge_after', '恢复截止', (v) => time(v)],
           ]}
